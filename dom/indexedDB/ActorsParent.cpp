@@ -125,8 +125,10 @@
 #include "mozilla/dom/quota/ClientDirectoryLockHandle.h"
 #include "mozilla/dom/quota/ClientImpl.h"
 #include "mozilla/dom/quota/ConditionalCompilation.h"
+#include "mozilla/dom/quota/Date.h"
 #include "mozilla/dom/quota/DirectoryLock.h"
 #include "mozilla/dom/quota/DirectoryLockInlines.h"
+#include "mozilla/dom/quota/DirectoryMetadata.h"
 #include "mozilla/dom/quota/DecryptingInputStream_impl.h"
 #include "mozilla/dom/quota/EncryptingOutputStream_impl.h"
 #include "mozilla/dom/quota/ErrorHandling.h"
@@ -13389,7 +13391,7 @@ nsresult Maintenance::DirectoryWork() {
     // Loop over "<origin>/idb" directories.
     QM_TRY(CollectEachFile(
         *persistenceDir,
-        [this, &quotaManager, persistenceType, &idbDirName](
+        [this, &quotaManager, persistenceType, persistent, &idbDirName](
             const nsCOMPtr<nsIFile>& originDir) -> Result<Ok, nsresult> {
           if (NS_WARN_IF(QuotaClient::IsShuttingDownOnNonBackgroundThread()) ||
               IsAborted()) {
@@ -13406,10 +13408,31 @@ nsresult Maintenance::DirectoryWork() {
               // Get the necessary information about the origin
               // (GetOriginMetadata also checks if it's a valid origin).
 
-              QM_TRY_INSPECT(const auto& metadata,
-                             quotaManager->GetOriginMetadata(originDir),
-                             // Not much we can do here...
-                             Ok{});
+              QM_TRY_UNWRAP(auto metadata,
+                            quotaManager->GetOriginMetadata(originDir),
+                            // Not much we can do here...
+                            Ok{});
+
+              if (!persistent &&
+                  !quotaManager->IsTemporaryOriginInitializedInternal(
+                      metadata)) {
+                // XXX GetOriginMetadata, which skips loading the metadata file
+                // and instead relies on parsing the origin directory name and
+                // reconstructing the principal, may produce a different origin
+                // string than the one originally used to create the origin
+                // directory.
+                //
+                // For now, if this mismatch occurs, we fall back to the slower
+                // LoadFullOriginMetadataWithRestore.
+                //
+                // In the future, it would be useful to report anonymized
+                // origin strings via telemetry to help investigate and
+                // eventually fix this mismatch.
+                QM_TRY_UNWRAP(
+                    metadata,
+                    quotaManager->LoadFullOriginMetadataWithRestore(originDir),
+                    Ok{});
+              }
 
               // We now use a dedicated repository for private browsing
               // databases, but there could be some forgotten private browsing
@@ -13480,6 +13503,41 @@ nsresult Maintenance::DirectoryWork() {
                   }));
 
               if (!databasePaths.IsEmpty()) {
+                if (!persistent) {
+                  auto maybeOriginStateMetadata =
+                      quotaManager->GetOriginStateMetadata(metadata);
+
+                  auto originStateMetadata = maybeOriginStateMetadata.extract();
+
+                  // Skip origin maintenance if the origin hasn't been accessed
+                  // since its last recorded maintenance. This avoids
+                  // unnecessary I/O and prevents updating the accessed flag in
+                  // metadata, which helps preserve the effectiveness of the L2
+                  // quota info cache.
+                  //
+                  // This early-out is safe because maintenance is only needed
+                  // when something has changed (e.g., new access or activity).
+                  const Date accessDate =
+                      Date::FromTimestamp(originStateMetadata.mLastAccessTime);
+                  const Date maintenanceDate =
+                      Date::FromDays(originStateMetadata.mLastMaintenanceDate);
+
+                  if (accessDate <= maintenanceDate) {
+                    return Ok{};
+                  }
+
+                  originStateMetadata.mLastMaintenanceDate =
+                      Date::Today().ToDays();
+                  originStateMetadata.mAccessed = true;
+
+                  QM_TRY(MOZ_TO_RESULT(SaveDirectoryMetadataHeader(
+                      *originDir, originStateMetadata)));
+
+                  quotaManager->UpdateOriginMaintenanceDate(
+                      metadata, originStateMetadata.mLastMaintenanceDate);
+                  quotaManager->UpdateOriginAccessed(metadata);
+                }
+
                 mDirectoryInfos.EmplaceBack(persistenceType, metadata,
                                             std::move(databasePaths));
               }

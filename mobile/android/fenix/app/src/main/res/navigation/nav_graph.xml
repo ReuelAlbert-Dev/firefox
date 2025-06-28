@@ -183,10 +183,12 @@
         app:destination="@id/trust_panel_graph" />
     <action
         android:id="@+id/action_global_unlockPrivateTabsFragment"
-        app:launchSingleTop="true"
         app:popUpTo="@id/unlockPrivateTabsFragment"
-        app:popUpToInclusive="false"
+        app:popUpToInclusive="true"
         app:destination="@+id/unlockPrivateTabsFragment"/>
+    <action
+        android:id="@+id/action_global_customReviewPromptDialogFragment"
+        app:destination="@id/customReviewPromptDialogFragment" />
 
     <dialog
         android:id="@+id/tabsTrayFragment"
@@ -234,6 +236,15 @@
             android:defaultValue="@null"
             app:argType="string"
             app:nullable="true" />
+        <argument
+            android:name="sessionToStartSearchFor"
+            android:defaultValue="@null"
+            app:argType="string"
+            app:nullable="true" />
+        <argument
+            android:name="search_access_point"
+            android:defaultValue="NONE"
+            app:argType="org.mozilla.fenix.components.metrics.MetricsUtils$Source" />
         <argument
             android:name="focusOnAddressBar"
             android:defaultValue="false"
@@ -352,9 +363,6 @@
         <action
             android:id="@+id/action_browserFragment_to_trustPanelFragment"
             app:destination="@id/trust_panel_graph" />
-        <action
-            android:id="@+id/action_browserFragment_to_reviewQualityCheckDialogFragment"
-            app:destination="@id/reviewQualityCheckFragment" />
         <action
             android:id="@+id/action_browserFragment_to_translationsDialogFragment"
             app:destination="@id/translationsDialogFragment" />
@@ -486,10 +494,6 @@
             android:id="@+id/action_bookmarkAddFolderFragment_to_bookmarkSelectFolderFragment"
             app:destination="@id/bookmarkSelectFolderFragment" />
     </fragment>
-
-    <dialog
-        android:id="@+id/reviewQualityCheckFragment"
-        android:name="org.mozilla.fenix.shopping.ReviewQualityCheckFragment"/>
 
     <fragment
         android:id="@+id/savedLoginsAuthFragment"
@@ -704,6 +708,13 @@
         <action
             android:id="@+id/action_settingsFragment_to_openLinksInAppsFragment"
             app:destination="@id/openLinksInAppsFragment"
+            app:enterAnim="@anim/slide_in_right"
+            app:exitAnim="@anim/slide_out_left"
+            app:popEnterAnim="@anim/slide_in_left"
+            app:popExitAnim="@anim/slide_out_right" />
+        <action
+            android:id="@+id/action_settingsFragment_to_openDownloadsSettingsFragment"
+            app:destination="@id/openDownloadsSettingsFragment"
             app:enterAnim="@anim/slide_in_right"
             app:exitAnim="@anim/slide_out_left"
             app:popEnterAnim="@anim/slide_in_left"
@@ -937,6 +948,9 @@
     <fragment
         android:id="@+id/openLinksInAppsFragment"
         android:name="org.mozilla.fenix.settings.OpenLinksInAppsFragment" />
+    <fragment
+        android:id="@+id/openDownloadsSettingsFragment"
+        android:name="org.mozilla.fenix.settings.DownloadsSettingsFragment" />
     <fragment
         android:id="@+id/linkSharingFragment"
         android:name="org.mozilla.fenix.settings.LinkSharingFragment" />
@@ -1222,6 +1236,9 @@
     <fragment
         android:id="@+id/unlockPrivateTabsFragment"
         android:name="org.mozilla.fenix.biometricauthentication.UnlockPrivateTabsFragment">
+        <argument
+            android:name="navigationOrigin"
+            app:argType="org.mozilla.fenix.biometricauthentication.NavigationOrigin" />
     </fragment>
 
     <navigation
@@ -1758,4 +1775,7 @@
                 app:argType="org.mozilla.fenix.trackingprotection.CookieBannerUIMode" />
         </dialog>
     </navigation>
+    <dialog
+        android:id="@+id/customReviewPromptDialogFragment"
+        android:name="org.mozilla.fenix.reviewprompt.CustomReviewPromptBottomSheetFragment" />
 </navigation>

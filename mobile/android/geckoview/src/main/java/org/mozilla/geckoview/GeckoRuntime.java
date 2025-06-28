@@ -130,21 +130,12 @@ public final class GeckoRuntime implements Parcelable {
    */
   public static final String CRASHED_PROCESS_VISIBILITY_MAIN = "MAIN";
 
-  @Deprecated
-  @DeprecationSchedule(id = "GeckoRuntime-CRASHED_PROCESS_TYPE_MAIN", version = 142)
-  public static final String CRASHED_PROCESS_TYPE_MAIN = CRASHED_PROCESS_VISIBILITY_MAIN;
-
   /**
    * Value for {@link #EXTRA_CRASH_PROCESS_VISIBILITY} indicating a foreground child process, such
    * as a content process, crashed. The application may be able to recover from this crash, but it
    * was likely noticable to the user.
    */
   public static final String CRASHED_PROCESS_VISIBILITY_FOREGROUND_CHILD = "FOREGROUND_CHILD";
-
-  @Deprecated
-  @DeprecationSchedule(id = "GeckoRuntime-CRASHED_PROCESS_TYPE_FOREGROUND_CHILD", version = 142)
-  public static final String CRASHED_PROCESS_TYPE_FOREGROUND_CHILD =
-      CRASHED_PROCESS_VISIBILITY_FOREGROUND_CHILD;
 
   /**
    * Value for {@link #EXTRA_CRASH_PROCESS_VISIBILITY} indicating a background child process
@@ -153,23 +144,7 @@ public final class GeckoRuntime implements Parcelable {
    */
   public static final String CRASHED_PROCESS_VISIBILITY_BACKGROUND_CHILD = "BACKGROUND_CHILD";
 
-  @Deprecated
-  @DeprecationSchedule(id = "GeckoRuntime-CRASHED_PROCESS_TYPE_BACKGROUND_CHILD", version = 142)
-  public static final String CRASHED_PROCESS_TYPE_BACKGROUND_CHILD =
-      CRASHED_PROCESS_VISIBILITY_BACKGROUND_CHILD;
-
   private final MemoryController mMemoryController = new MemoryController();
-
-  @Deprecated
-  @DeprecationSchedule(id = "GeckoRuntime-CrashedProcessType", version = 142)
-  @Retention(RetentionPolicy.SOURCE)
-  @StringDef(
-      value = {
-        CRASHED_PROCESS_TYPE_MAIN,
-        CRASHED_PROCESS_TYPE_FOREGROUND_CHILD,
-        CRASHED_PROCESS_TYPE_BACKGROUND_CHILD
-      })
-  public @interface CrashedProcessType {}
 
   @Retention(RetentionPolicy.SOURCE)
   @StringDef(
@@ -281,14 +256,14 @@ public final class GeckoRuntime implements Parcelable {
   private WebPushController mPushController;
   private final ContentBlockingController mContentBlockingController;
   private final Autocomplete.StorageProxy mAutocompleteStorageProxy;
-  private final ProfilerController mProfilerController;
+  private final CrashPullController.CrashPullProxy mCrashPullProxy;
   private final GeckoScreenChangeListener mScreenChangeListener;
 
   private GeckoRuntime() {
     mWebExtensionController = new WebExtensionController(this);
     mContentBlockingController = new ContentBlockingController();
     mAutocompleteStorageProxy = new Autocomplete.StorageProxy();
-    mProfilerController = new ProfilerController();
+    mCrashPullProxy = new CrashPullController.CrashPullProxy();
     mScreenChangeListener = new GeckoScreenChangeListener();
 
     if (sRuntime != null) {
@@ -655,18 +630,6 @@ public final class GeckoRuntime implements Parcelable {
   }
 
   /**
-   * Returns a ProfilerController for this GeckoRuntime.
-   *
-   * @return an instance of {@link ProfilerController}.
-   */
-  @UiThread
-  @Deprecated
-  @DeprecationSchedule(id = "GeckoRuntime-getProfilerController", version = 142)
-  public @NonNull ProfilerController getProfilerController() {
-    return mProfilerController;
-  }
-
-  /**
    * Create a new runtime with the given settings and attach it to the given context.
    *
    * <p>Create will throw if there is already an active Gecko instance running, to prevent that,
@@ -765,6 +728,29 @@ public final class GeckoRuntime implements Parcelable {
   public @Nullable Autocomplete.StorageDelegate getAutocompleteStorageDelegate() {
     ThreadUtils.assertOnUiThread();
     return mAutocompleteStorageProxy.getDelegate();
+  }
+
+  /**
+   * Set the {@link CrashPullController.Delegate} instance set on this runtime.
+   *
+   * @param delegate The {@link CrashPullController.Delegate} handling crash pull from Remote
+   *     Settings.
+   */
+  @UiThread
+  public void setCrashPullDelegate(final @Nullable CrashPullController.Delegate delegate) {
+    ThreadUtils.assertOnUiThread();
+    mCrashPullProxy.setDelegate(delegate);
+  }
+
+  /**
+   * Get the {@link CrashPullController.Delegate} instance set on this runtime.
+   *
+   * @return The {@link CrashPullController.Delegate} set on this runtime.
+   */
+  @UiThread
+  public @Nullable CrashPullController.Delegate getCrashPullDelegate() {
+    ThreadUtils.assertOnUiThread();
+    return mCrashPullProxy.getDelegate();
   }
 
   @UiThread

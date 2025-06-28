@@ -8,6 +8,71 @@ const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
 );
 
+// Bug 1895789 to standarize contextmenu helpers in BrowserTestUtils
+async function openContextMenu() {
+  const contextMenu = document.getElementById("contentAreaContextMenu");
+  const promise = BrowserTestUtils.waitForEvent(contextMenu, "popupshown");
+  await BrowserTestUtils.synthesizeMouse(
+    null,
+    0,
+    0,
+    { type: "contextmenu" },
+    gBrowser.selectedBrowser
+  );
+  await promise;
+}
+
+async function hideContextMenu() {
+  const contextMenu = document.getElementById("contentAreaContextMenu");
+  const promise = BrowserTestUtils.waitForEvent(contextMenu, "popuphidden");
+  contextMenu.hidePopup();
+  await promise;
+}
+
+add_setup(async function () {
+  await SpecialPowers.pushPrefEnv({
+    set: [["test.wait300msAfterTabSwitch", true]],
+  });
+});
+
+/**
+ * Check page menu has summarize prompt
+ */
+add_task(async function test_page_menu_prompt() {
+  const sandbox = sinon.createSandbox();
+  const stub = sandbox.stub(GenAI, "handleAskChat");
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.provider", "http://localhost:8080"],
+      ["browser.ml.chat.page", true],
+      ["browser.ml.chat.page.menuBadge", true],
+    ],
+  });
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    await openContextMenu();
+    await TestUtils.waitForCondition(
+      () =>
+        document.getElementById("context-ask-chat").getItemAtIndex(0)?.label ==
+        "Summarize Page",
+      "page prompt added"
+    );
+    document.getElementById("context-ask-chat").getItemAtIndex(0).click();
+    await hideContextMenu();
+  });
+
+  Assert.equal(stub.callCount, 1, "one menu prompt");
+  Assert.equal(stub.firstCall.args[0].id, "summarize", "summarize prompt");
+  Assert.ok(stub.firstCall.args[0].badge, "new badge");
+  Assert.equal(
+    Services.prefs.getBoolPref("browser.ml.chat.page.menuBadge"),
+    false,
+    "badge dismissed"
+  );
+
+  sandbox.restore();
+  SidebarController.hide();
+});
+
 /**
  * Check badge toggle by prefs
  */
@@ -61,10 +126,7 @@ add_task(async function test_click_summarize_button() {
   const summarizeButton = document.getElementById("summarize-button");
 
   const sandbox = sinon.createSandbox();
-  const stub = sandbox.stub(
-    SidebarController.browser.contentWindow,
-    "summarizeCurrentPage"
-  );
+  const stub = sandbox.stub(GenAI, "summarizeCurrentPage");
 
   summarizeButton.click();
 
@@ -74,6 +136,45 @@ add_task(async function test_click_summarize_button() {
   );
   Assert.equal(stub.callCount, 1);
 
-  stub.restore();
+  sandbox.restore();
   SidebarController.hide();
+});
+
+/**
+ * Test provider-less summarization - onboarding then summarize
+ */
+add_task(async function test_provider_less_summarization() {
+  const origTabs = gBrowser.tabs.length;
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.ml.chat.provider", ""],
+      ["browser.ml.chat.sidebar", false],
+    ],
+  });
+
+  await GenAI.summarizeCurrentPage(window, "test");
+
+  await TestUtils.waitForCondition(
+    () => SidebarController.isOpen,
+    "Sidebar opened for onboarding"
+  );
+  Assert.equal(gBrowser.tabs.length, origTabs, "No tabs opened");
+
+  // Mock selecting a provider with onboarding
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ml.chat.provider", "http://localhost:8080"]],
+  });
+  const resolve = await TestUtils.waitForCondition(
+    () => SidebarController.browser.contentWindow.showOnboarding?.resolve,
+    "Chat loaded ready for onboarding"
+  );
+  resolve();
+
+  await TestUtils.waitForCondition(
+    () => gBrowser.tabs.length == origTabs + 1,
+    "Chat opened tab for summarize"
+  );
+
+  SidebarController.hide();
+  gBrowser.removeTab(gBrowser.selectedTab);
 });

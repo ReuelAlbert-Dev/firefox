@@ -992,8 +992,8 @@ class nsDocShell final : public nsDocLoader,
   void RefreshURIToQueue();
   nsresult Embed(nsIDocumentViewer* aDocumentViewer,
                  mozilla::dom::WindowGlobalChild* aWindowActor,
-                 bool aIsTransientAboutBlank, bool aPersist,
-                 nsIRequest* aRequest, nsIURI* aPreviousURI);
+                 bool aIsTransientAboutBlank, nsIRequest* aRequest,
+                 nsIURI* aPreviousURI);
   nsPresContext* GetEldestPresContext();
   nsresult CheckLoadingPermissions();
   nsresult LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType,
@@ -1089,8 +1089,8 @@ class nsDocShell final : public nsDocLoader,
   // aPreviousURI should be the URI that was previously loaded into the
   // nsDocshell
   // aPartitionedPrincipal is the partitioned principal of the current document.
-  void MoveLoadingToActiveEntry(bool aPersist, bool aExpired,
-                                uint32_t aCacheKey, nsIURI* aPreviousURI,
+  void MoveLoadingToActiveEntry(bool aExpired, uint32_t aCacheKey,
+                                nsIURI* aPreviousURI,
                                 nsIPrincipal* aPartitionedPrincipal);
 
   void ActivenessMaybeChanged();
@@ -1140,11 +1140,27 @@ class nsDocShell final : public nsDocLoader,
   bool IsSameDocumentAsActiveEntry(
       const mozilla::dom::SessionHistoryInfo& aSHInfo);
 
-  MOZ_CAN_RUN_SCRIPT nsresult
-  ReloadNavigable(JSContext* aCx, uint32_t aReloadFlags,
-                  nsIStructuredCloneContainer* aNavigationAPIState = nullptr,
-                  mozilla::dom::UserNavigationInvolvement aUserInvolvement =
-                      mozilla::dom::UserNavigationInvolvement::None);
+  using nsIWebNavigation::Reload;
+
+  /**
+   * Implementation of the spec algorithm #reload.
+   *
+   * Arguments the spec defines:
+   *
+   * @param aNavigationAPIState state for Navigation API.
+   * @param aUserInvolvement if the user is involved in the reload.
+   *
+   * Arguments we need internally:
+   *
+   * @param aReloadFlags see nsIWebNavigation.reload.
+   * @param aCx if the NavigateEvent is expected to fire aCx cannot be Nothing.
+   */
+  MOZ_CAN_RUN_SCRIPT
+  nsresult ReloadNavigable(
+      mozilla::Maybe<mozilla::NotNull<JSContext*>> aCx, uint32_t aReloadFlags,
+      nsIStructuredCloneContainer* aNavigationAPIState = nullptr,
+      mozilla::dom::UserNavigationInvolvement aUserInvolvement =
+          mozilla::dom::UserNavigationInvolvement::None);
 
  private:
   MOZ_CAN_RUN_SCRIPT

@@ -59,9 +59,10 @@
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
-#include "mozilla/RemoteDecoderManagerChild.h"
+#include "mozilla/RemoteMediaManagerChild.h"
 #include "mozilla/KeySystemConfig.h"
 #include "mozilla/WheelHandlingHelper.h"
+#include "nsRFPTargetSetIDL.h"
 #include "nsIRFPTargetSetIDL.h"
 #include "nsIWidget.h"
 #include "nsString.h"
@@ -1716,6 +1717,12 @@ void ChromeUtils::ClearResourceCache(
   }
 }
 
+void ChromeUtils::ClearBfcacheByPrincipal(GlobalObject& aGlobal,
+                                          nsIPrincipal* aPrincipal,
+                                          ErrorResult& aRv) {
+  aRv = CanonicalBrowsingContext::ClearBfcacheByPrincipal(aPrincipal);
+}
+
 #define PROCTYPE_TO_WEBIDL_CASE(_procType, _webidl) \
   case mozilla::ProcType::_procType:                \
     return WebIDLProcType::_webidl
@@ -2562,14 +2569,9 @@ bool ChromeUtils::ShouldResistFingerprinting(
 
   Maybe<RFPTargetSet> overriddenFingerprintingSettings;
   if (aOverriddenFingerprintingSettings) {
-    uint64_t low, hi;
-    aOverriddenFingerprintingSettings->GetLow(&low);
-    aOverriddenFingerprintingSettings->GetHigh(&hi);
-    std::bitset<128> bitset;
-    bitset |= hi;
-    bitset <<= 64;
-    bitset |= low;
-    overriddenFingerprintingSettings.emplace(RFPTargetSet(bitset));
+    overriddenFingerprintingSettings.emplace(
+        static_cast<nsRFPTargetSetIDL*>(aOverriddenFingerprintingSettings)
+            ->ToRFPTargetSet());
   }
 
   // This global object appears to be the global window, not for individual

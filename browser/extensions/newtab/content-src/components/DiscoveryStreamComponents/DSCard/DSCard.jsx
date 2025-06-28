@@ -306,11 +306,11 @@ export class _DSCard extends React.PureComponent {
     this.sectionsCardImagesSizes = {
       small: {
         width: 110,
-        height: 110,
+        height: 117,
       },
       medium: {
         width: 300,
-        height: refinedCardsLayout ? 162 : 150,
+        height: refinedCardsLayout ? 160 : 150,
       },
       large: {
         width: 190,
@@ -742,7 +742,6 @@ export class _DSCard extends React.PureComponent {
     }
 
     const {
-      pocketButtonEnabled,
       hideDescriptions,
       compactImages,
       imageGradient,
@@ -752,15 +751,17 @@ export class _DSCard extends React.PureComponent {
       readTime: displayReadTime,
     } = DiscoveryStream;
 
-    const layoutsVariantAEnabled = Prefs.values["newtabLayouts.variant-a"];
-    const layoutsVariantBEnabled = Prefs.values["newtabLayouts.variant-b"];
     const sectionsEnabled = Prefs.values["discoverystream.sections.enabled"];
-    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
 
     const smartCrop = Prefs.values["images.smart"];
     const faviconEnabled =
       Prefs.values["discoverystream.publisherFavicon.enabled"];
-    const excerpt = !hideDescriptions ? this.props.excerpt : "";
+    // Refined cards have their own excerpt hiding logic.
+    // We can ignore hideDescriptions if we are in sections and refined cards.
+    const excerpt =
+      !hideDescriptions || (sectionsEnabled && refinedCardsLayout)
+        ? this.props.excerpt
+        : "";
 
     let timeToRead;
     if (displayReadTime) {
@@ -804,7 +805,7 @@ export class _DSCard extends React.PureComponent {
           this.getSectionImageSize("2", sectionsCardsImageSizes["2"]),
           this.getSectionImageSize("1", sectionsCardsImageSizes["1"]),
         ];
-      } else if (layoutsVariantAorB) {
+      } else {
         sizes = this.standardCardImageSizes;
       }
       if (isListCard) {
@@ -955,8 +956,6 @@ export class _DSCard extends React.PureComponent {
                 showPrivacyInfo={!!this.props.flightId}
                 onMenuUpdate={this.onMenuUpdate}
                 onMenuShow={this.onMenuShow}
-                saveToPocketCard={saveToPocketCard}
-                pocket_button_enabled={pocketButtonEnabled}
                 isRecentSave={isRecentSave}
                 recommendation_id={this.props.recommendation_id}
                 tile_id={this.props.id}

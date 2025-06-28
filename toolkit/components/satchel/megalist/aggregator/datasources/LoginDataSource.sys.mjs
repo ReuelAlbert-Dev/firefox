@@ -362,19 +362,42 @@ export class LoginDataSource extends DataSourceBase {
 
       // Sort by origin, then by username, then by GUID
       this.#displayMode = DISPLAY_MODES.ALL;
-      Services.obs.addObserver(this, "passwordmgr-storage-changed");
-      Services.obs.addObserver(this, "passwordmgr-crypto-login");
-      Services.prefs.addObserver("signon.rememberSignons", this);
-      Services.prefs.addObserver(
-        "signon.management.page.breach-alerts.enabled",
-        this
-      );
-      Services.prefs.addObserver(
-        "signon.management.page.vulnerable-passwords.enabled",
-        this
-      );
+      this.#addObservers();
       this.#reloadDataSource();
     });
+  }
+
+  willDestroy() {
+    this.#removeObservers();
+  }
+
+  #addObservers() {
+    Services.obs.addObserver(this, "passwordmgr-storage-changed");
+    Services.obs.addObserver(this, "passwordmgr-crypto-login");
+    Services.prefs.addObserver("signon.rememberSignons", this);
+    Services.prefs.addObserver(
+      "signon.management.page.breach-alerts.enabled",
+      this
+    );
+    Services.prefs.addObserver(
+      "signon.management.page.vulnerable-passwords.enabled",
+      this
+    );
+  }
+
+  #removeObservers() {
+    Services.obs.removeObserver(this, "passwordmgr-storage-changed");
+    Services.obs.removeObserver(this, "passwordmgr-crypto-login");
+
+    Services.prefs.removeObserver("signon.rememberSignons", this);
+    Services.prefs.removeObserver(
+      "signon.management.page.breach-alerts.enabled",
+      this
+    );
+    Services.prefs.removeObserver(
+      "signon.management.page.vulnerable-passwords.enabled",
+      this
+    );
   }
 
   #recordLoginsUpdate(changeType) {
@@ -419,6 +442,8 @@ export class LoginDataSource extends DataSourceBase {
           l10nArgs: counts,
           url: IMPORT_FILE_REPORT_URL,
         });
+
+        this.#recordLoginsUpdate("import");
       } catch (e) {
         this.setNotification({
           id: "import-error",
@@ -520,9 +545,7 @@ export class LoginDataSource extends DataSourceBase {
     );
     const browsingContext = BrowserWindowTracker.getTopWindow().browsingContext;
 
-    const isOSAuthEnabled = LoginHelper.getOSAuthEnabled(
-      LoginHelper.OS_AUTH_FOR_PASSWORDS_PREF
-    );
+    const isOSAuthEnabled = LoginHelper.getOSAuthEnabled();
 
     const reason = "export_cpm";
     let { isAuthorized, telemetryEvent } = await LoginHelper.requestReauth(
@@ -680,17 +703,28 @@ export class LoginDataSource extends DataSourceBase {
     if (logins.length != 1) {
       return;
     }
+
+    let notificationId = "update-login-success";
     const modifiedLogin = logins[0].clone();
+
     if (login.hasOwnProperty("username")) {
+      const passwordModified = modifiedLogin.password !== login.password;
+      const usernameModified = modifiedLogin.username !== login.username;
+
+      if (!passwordModified && usernameModified) {
+        notificationId = "update-username-success";
+      }
       modifiedLogin.username = login.username;
     }
+
     if (login.hasOwnProperty("password")) {
       modifiedLogin.password = login.password;
     }
+
     try {
       Services.logins.modifyLogin(logins[0], modifiedLogin);
       this.setNotification({
-        id: "update-login-success",
+        id: notificationId,
         viewMode: VIEW_MODES.LIST,
       });
       this.#recordLoginsUpdate("edit");
@@ -793,11 +827,22 @@ export class LoginDataSource extends DataSourceBase {
     }
 
     const logins = await LoginHelper.getAllUserFacingLogins();
-    this.beforeReloadingDataSource();
-
     const breachesMap = lazy.BREACH_ALERTS_ENABLED
       ? await lazy.LoginBreaches.getPotentialBreachesByLoginGUID(logins)
       : new Map();
+
+    this.#syncReloadDataSource(logins, breachesMap);
+
+    this.doneReloadDataSource = true;
+  }
+
+  /**
+   * Implementation between `beforeReloadingDataSource` and `afterReloadingDataSource`
+   * should be synchronous because the two functions operates on member variable
+   * #linesToForget and they don't expect it to be changed in the middle of reloading.
+   */
+  #syncReloadDataSource(logins, breachesMap) {
+    this.beforeReloadingDataSource();
 
     const loginsWithAlerts = logins.filter(
       login =>
@@ -859,7 +904,6 @@ export class LoginDataSource extends DataSourceBase {
     this.#header.value.total = logins.length;
     this.#header.value.alerts = loginsWithAlerts.length;
     this.afterReloadingDataSource();
-    this.doneReloadDataSource = true;
   }
 
   #reloadEmptyDataSource() {
@@ -882,13 +926,6 @@ export class LoginDataSource extends DataSourceBase {
       message == "signon.management.page.breach-alerts.enabled" ||
       message == "signon.management.page.vulnerable-passwords.enabled"
     ) {
-      if (
-        topic == "passwordmgr-storage-changed" &&
-        message === "importLogins"
-      ) {
-        this.#recordLoginsUpdate("import");
-      }
-
       this.#reloadDataSource();
     }
   }

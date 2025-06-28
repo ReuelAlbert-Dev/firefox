@@ -39,9 +39,6 @@
 
 #include "gfxCrashReporterUtils.h"
 
-#include "gfxGDIFontList.h"
-#include "gfxGDIFont.h"
-
 #include "mozilla/layers/CanvasChild.h"
 #include "mozilla/layers/CompositorThread.h"
 
@@ -394,10 +391,6 @@ void gfxWindowsPlatform::InitAcceleration() {
   gfxVars::SetSystemTextQualityListener(
       gfxDWriteFont::SystemTextQualityChanged);
 
-  // CanUseHardwareVideoDecoding depends on DeviceManagerDx state,
-  // so update the cached value now.
-  UpdateCanUseHardwareVideoDecoding();
-
   // Our ScreenHelperWin also depends on DeviceManagerDx state.
   if (XRE_IsParentProcess() && !gfxPlatform::IsHeadless()) {
     ScreenHelperWin::RefreshScreens();
@@ -411,15 +404,33 @@ void gfxWindowsPlatform::InitWebRenderConfig() {
   UpdateBackendPrefs();
 }
 
-bool gfxWindowsPlatform::CanUseHardwareVideoDecoding() {
+void gfxWindowsPlatform::InitPlatformHardwareVideoConfig() {
+  FeatureState& featureDec =
+      gfxConfig::GetFeature(Feature::HARDWARE_VIDEO_DECODING);
+  FeatureState& featureEnc =
+      gfxConfig::GetFeature(Feature::HARDWARE_VIDEO_ENCODING);
+
   DeviceManagerDx* dm = DeviceManagerDx::Get();
   if (!dm) {
-    return false;
+    featureDec.ForceDisable(FeatureStatus::Unavailable,
+                            "Requires DeviceManagerDx",
+                            "FEATURE_FAILURE_NO_DEVICE_MANAGER_DX"_ns);
+    featureEnc.ForceDisable(FeatureStatus::Unavailable,
+                            "Requires DeviceManagerDx",
+                            "FEATURE_FAILURE_NO_DEVICE_MANAGER_DX"_ns);
+  } else if (!dm->TextureSharingWorks()) {
+    featureDec.ForceDisable(FeatureStatus::Unavailable,
+                            "Requires texture sharing",
+                            "FEATURE_FAILURE_BROKEN_TEXTURE_SHARING"_ns);
+    featureEnc.ForceDisable(FeatureStatus::Unavailable,
+                            "Requires texture sharing",
+                            "FEATURE_FAILURE_BROKEN_TEXTURE_SHARING"_ns);
+  } else if (dm->IsWARP()) {
+    featureDec.ForceDisable(FeatureStatus::Unavailable, "Cannot use with WARP",
+                            "FEATURE_FAILURE_D3D11_WARP_DEVICE"_ns);
+    featureEnc.ForceDisable(FeatureStatus::Unavailable, "Cannot use with WARP",
+                            "FEATURE_FAILURE_D3D11_WARP_DEVICE"_ns);
   }
-  if (!dm->TextureSharingWorks()) {
-    return false;
-  }
-  return !dm->IsWARP() && gfxPlatform::CanUseHardwareVideoDecoding();
 }
 
 bool gfxWindowsPlatform::InitDWriteSupport() {
@@ -568,38 +579,7 @@ mozilla::gfx::BackendType gfxWindowsPlatform::GetPreferredCanvasBackend() {
 }
 
 bool gfxWindowsPlatform::CreatePlatformFontList() {
-  if (DWriteEnabled()) {
-    if (gfxPlatformFontList::Initialize(new gfxDWriteFontList)) {
-      return true;
-    }
-
-    // DWrite font initialization failed! Don't know why this would happen,
-    // but apparently it can - see bug 594865.
-    // So we're going to fall back to GDI fonts & rendering.
-    DisableD2D(FeatureStatus::Failed, "Failed to initialize fonts",
-               "FEATURE_FAILURE_FONT_FAIL"_ns);
-  }
-
-  // Make sure the static variable is initialized...
-  gfxPlatform::HasVariationFontSupport();
-  // ...then force it to false, even if the Windows version was recent enough
-  // to permit it, as we're using GDI fonts.
-  sHasVariationFontSupport = false;
-
-  return gfxPlatformFontList::Initialize(new gfxGDIFontList);
-}
-
-// This function will permanently disable D2D for the session. It's intended to
-// be used when, after initially chosing to use Direct2D, we encounter a
-// scenario we can't support.
-//
-// This is called during gfxPlatform::Init() so at this point there should be no
-// DrawTargetD2D/1 instances.
-void gfxWindowsPlatform::DisableD2D(FeatureStatus aStatus, const char* aMessage,
-                                    const nsACString& aFailureId) {
-  gfxConfig::SetFailed(Feature::DIRECT2D, aStatus, aMessage, aFailureId);
-  Factory::SetDirect3D11Device(nullptr);
-  UpdateBackendPrefs();
+  return gfxPlatformFontList::Initialize(new gfxDWriteFontList);
 }
 
 already_AddRefed<gfxASurface> gfxWindowsPlatform::CreateOffscreenSurface(
@@ -1973,9 +1953,12 @@ void gfxWindowsPlatform::ImportGPUDeviceData(
     }
   }
 
-  // CanUseHardwareVideoDecoding depends on d3d11 state, so update
-  // the cached value now.
-  UpdateCanUseHardwareVideoDecoding();
+  // Hardware video decoding depends on d3d11 state, so update the cache.
+  InitPlatformHardwareVideoConfig();
+  gfxVars::SetCanUseHardwareVideoDecoding(
+      gfxConfig::IsEnabled(Feature::HARDWARE_VIDEO_DECODING));
+  gfxVars::SetCanUseHardwareVideoEncoding(
+      gfxConfig::IsEnabled(Feature::HARDWARE_VIDEO_ENCODING));
 
   // For completeness (and messaging in about:support). Content recomputes this
   // on its own, and we won't use ANGLE in the UI process if we're using a GPU

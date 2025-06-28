@@ -40,6 +40,7 @@ namespace gfx {
   _(DMABUF, Feature, "DMABUF")                                               \
   _(WINDOW_OCCLUSION, Feature, "WINDOW_OCCLUSION")                           \
   _(HARDWARE_VIDEO_DECODING, Feature, "Hardware video decoding")             \
+  _(HARDWARE_VIDEO_ENCODING, Feature, "Hardware video encoding")             \
   _(VIDEO_HARDWARE_OVERLAY, Feature, "hardware decoded video overlay")       \
   _(VIDEO_SOFTWARE_OVERLAY, Feature, "software decoded video overlay")       \
   _(HW_DECODED_VIDEO_ZERO_COPY, Feature, "Hardware decoded video zero copy") \
@@ -55,6 +56,13 @@ namespace gfx {
   _(HEVC_HW_DECODE, Feature, "HEVC hardware decoding")                       \
   _(REMOTE_CANVAS, Feature, "Remote canvas")                                 \
   _(DMABUF_WEBGL, Feature, "DMABuf for WebGL")                               \
+  _(VP8_HW_ENCODE, Feature, "VP8 hardware encoding")                         \
+  _(VP9_HW_ENCODE, Feature, "VP9 hardware encoding")                         \
+  _(H264_HW_ENCODE, Feature, "H.264 hardware encoding")                      \
+  _(AV1_HW_ENCODE, Feature, "AV1 hardware encoding")                         \
+  _(HEVC_HW_ENCODE, Feature, "HEVC hardware encoding")                       \
+  _(WMF_HW_DRM, Feature, "Windows Media Foundation hardware DRM")            \
+  _(GL_NORM16_TEXTURES, Feature, "OpenGL normalized 16-bit texture formats") \
   /* Add new entries above this comment */
 
 enum class Feature : uint32_t {

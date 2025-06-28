@@ -12,7 +12,9 @@ use std::{
     ptr,
 };
 
+use nsstring::nsCString;
 use serde::{Deserialize, Serialize};
+use wgc::id;
 
 /// A non-owning representation of `mozilla::webgpu::ErrorBuffer` in C++, passed as an argument to
 /// other functions in [this module](self).
@@ -36,6 +38,7 @@ pub struct ErrorBuffer {
     /// `message` up to `capacity - 1`, and null-terminate it.
     message: *mut c_char,
     message_capacity: usize,
+    device_id: *mut wgc::id::DeviceId,
 }
 
 impl ErrorBuffer {
@@ -48,15 +51,10 @@ impl ErrorBuffer {
     /// byte. If the textual form of `error` itself includes a zero byte (as Rust strings can), then
     /// the C++ code receiving this error message has no way to distinguish that from the
     /// terminating zero byte, and will see the message as shorter than it is.
-    pub(crate) fn init(&mut self, error: impl HasErrorBufferType) {
-        use std::fmt::Write;
+    pub(crate) fn init(&mut self, error: impl HasErrorBufferType, device_id: wgc::id::DeviceId) {
+        unsafe { *self.device_id = device_id };
 
-        let mut message = format!("{}", error);
-        let mut e = error.source();
-        while let Some(source) = e {
-            write!(message, ", caused by: {}", source).unwrap();
-            e = source.source();
-        }
+        let message = error_to_string(&error);
 
         let err_ty = error.error_type();
         // SAFETY: We presume the pointer provided by the caller is safe to write to.
@@ -95,6 +93,56 @@ impl ErrorBuffer {
             *self.message.add(length) = 0;
         }
     }
+}
+
+pub struct OwnedErrorBuffer {
+    device_id: Option<id::DeviceId>,
+    ty: ErrorBufferType,
+    message: nsCString,
+}
+
+impl OwnedErrorBuffer {
+    pub fn new() -> Self {
+        Self {
+            device_id: None,
+            ty: ErrorBufferType::None,
+            message: nsCString::new(),
+        }
+    }
+
+    pub(crate) fn init(&mut self, error: impl HasErrorBufferType, device_id: id::DeviceId) {
+        assert!(self.device_id.is_none());
+
+        let ty = error.error_type();
+        match ty {
+            ErrorBufferType::None => panic!(),
+            ErrorBufferType::DeviceLost => return, // will be surfaced via callback
+            ErrorBufferType::Internal => {}
+            ErrorBufferType::OutOfMemory => {}
+            ErrorBufferType::Validation => {}
+        }
+
+        self.device_id = Some(device_id);
+        self.ty = ty;
+
+        let message = error_to_string(&error);
+        self.message = nsCString::from(message);
+    }
+
+    pub(crate) fn get_inner_data(&self) -> Option<(id::DeviceId, ErrorBufferType, &nsCString)> {
+        Some((self.device_id?, self.ty, &self.message))
+    }
+}
+
+pub fn error_to_string(error: impl Error) -> String {
+    use std::fmt::Write;
+    let mut message = format!("{}", error);
+    let mut e = error.source();
+    while let Some(source) = e {
+        write!(message, ", caused by: {}", source).unwrap();
+        e = source.source();
+    }
+    message
 }
 
 /// Corresponds to an optional discriminant of [`GPUError`] type in the WebGPU API. Strongly
@@ -149,9 +197,9 @@ mod foreign {
             GetBindGroupLayoutError,
         },
         command::{
-            ClearError, CommandEncoderError, ComputePassError, CopyError, CreateRenderBundleError,
-            QueryError, QueryUseError, RenderBundleError, RenderPassError, ResolveError,
-            TransferError,
+            ClearError, CommandEncoderError, ComputePassError, CreateRenderBundleError,
+            EncoderStateError, QueryError, QueryUseError, RenderBundleError, RenderPassError,
+            ResolveError, TransferError,
         },
         device::{
             queue::{QueueSubmitError, QueueWriteError},
@@ -440,10 +488,9 @@ mod foreign {
     impl HasErrorBufferType for DeviceError {
         fn error_type(&self) -> ErrorBufferType {
             match self {
-                DeviceError::Invalid(_) | DeviceError::DeviceMismatch(_) => {
-                    ErrorBufferType::Validation
-                }
-                DeviceError::Lost => ErrorBufferType::DeviceLost,
+                DeviceError::DeviceMismatch(_) => ErrorBufferType::Validation,
+                DeviceError::Invalid(_) // This variant is only used by the device to say that it's already lost.
+                | DeviceError::Lost => ErrorBufferType::DeviceLost,
                 DeviceError::OutOfMemory => ErrorBufferType::OutOfMemory,
                 DeviceError::ResourceCreationFailed => ErrorBufferType::Internal,
                 _ => ErrorBufferType::Internal,
@@ -475,17 +522,9 @@ mod foreign {
         }
     }
 
-    impl HasErrorBufferType for CopyError {
+    impl HasErrorBufferType for EncoderStateError {
         fn error_type(&self) -> ErrorBufferType {
-            match self {
-                CopyError::Encoder(e) => e.error_type(),
-                CopyError::Transfer(e) => e.error_type(),
-
-                CopyError::InvalidResource(_) => ErrorBufferType::Validation,
-
-                // N.B: forced non-exhaustiveness
-                _ => ErrorBufferType::Validation,
-            }
+            ErrorBufferType::Validation
         }
     }
 
@@ -540,7 +579,7 @@ mod foreign {
     impl HasErrorBufferType for QueryError {
         fn error_type(&self) -> ErrorBufferType {
             match self {
-                QueryError::Encoder(e) => e.error_type(),
+                QueryError::EncoderState(e) => e.error_type(),
                 QueryError::Use(e) => e.error_type(),
                 QueryError::Resolve(e) => e.error_type(),
 

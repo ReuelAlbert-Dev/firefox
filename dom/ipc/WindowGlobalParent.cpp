@@ -28,6 +28,7 @@
 #include "mozilla/dom/MediaController.h"
 #include "mozilla/dom/NavigatorLogin.h"
 #include "mozilla/dom/WebAuthnTransactionParent.h"
+#include "mozilla/dom/WebIdentityParent.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/UseCounterMetrics.h"
@@ -1143,7 +1144,8 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvAccumulatePageUseCounters(
 // This is called on the top-level WindowGlobal, i.e. the one that is
 // accumulating the page use counters, not the (potentially descendant) window
 // that has finished providing use counter data.
-void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
+WindowGlobalParent::PageUseCounterResult
+WindowGlobalParent::FinishAccumulatingPageUseCounters() {
   MOZ_LOG(gUseCountersLog, LogLevel::Debug,
           ("Stop expecting page use counters: -> WindowContext %" PRIu64,
            InnerWindowId()));
@@ -1152,7 +1154,7 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
     MOZ_ASSERT_UNREACHABLE("Not expecting page use counter data");
     MOZ_LOG(gUseCountersLog, LogLevel::Debug,
             (" > not expecting page use counter data"));
-    return;
+    return WindowGlobalParent::PageUseCounterResult();
   }
 
   MOZ_ASSERT(mPageUseCounters->mWaiting > 0);
@@ -1161,14 +1163,16 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
   if (mPageUseCounters->mWaiting > 0) {
     MOZ_LOG(gUseCountersLog, LogLevel::Debug,
             (" > now waiting on %d", mPageUseCounters->mWaiting));
-    return;
+    return PageUseCounterResultBits::WAITING;
   }
 
+  PageUseCounterResult result;
   if (mPageUseCounters->mReceivedAny) {
     MOZ_LOG(gUseCountersLog, LogLevel::Debug,
             (" > reporting [%s]",
              nsContentUtils::TruncatedURLForDisplay(mDocumentURI).get()));
 
+    result += PageUseCounterResultBits::DATA_RECEIVED;
     Maybe<nsCString> urlForLogging;
     const bool dumpCounters = StaticPrefs::dom_use_counters_dump_page();
     if (dumpCounters) {
@@ -1202,6 +1206,7 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
     if (!any) {
       MOZ_LOG(gUseCountersLog, LogLevel::Debug,
               (" > page use counter data was received, but was empty"));
+      result += PageUseCounterResultBits::EMPTY_DATA;
     }
   } else {
     MOZ_LOG(gUseCountersLog, LogLevel::Debug,
@@ -1210,6 +1215,7 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
 
   mSentPageUseCounters = true;
   mPageUseCounters = nullptr;
+  return result;
 }
 
 Element* WindowGlobalParent::GetRootOwnerElement() {
@@ -1447,76 +1453,6 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvReloadWithHttpsOnlyException() {
   return IPC_OK();
 }
 
-IPCResult WindowGlobalParent::RecvGetIdentityCredential(
-    IdentityCredentialRequestOptions&& aOptions,
-    const CredentialMediationRequirement& aMediationRequirement,
-    bool aHasUserActivation, const GetIdentityCredentialResolver& aResolver) {
-  IdentityCredential::GetCredentialInMainProcess(
-      DocumentPrincipal(), this->BrowsingContext(), std::move(aOptions),
-      aMediationRequirement, aHasUserActivation)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [aResolver](const IPCIdentityCredential& aResult) {
-            return aResolver({Some(aResult), NS_OK});
-          },
-          [aResolver](nsresult aErr) {
-            aResolver({Maybe<IPCIdentityCredential>(Nothing()), aErr});
-          });
-  return IPC_OK();
-}
-
-IPCResult WindowGlobalParent::RecvStoreIdentityCredential(
-    const IPCIdentityCredential& aCredential,
-    const StoreIdentityCredentialResolver& aResolver) {
-  IdentityCredential::StoreInMainProcess(DocumentPrincipal(), aCredential)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [aResolver](const bool& aResult) { aResolver(NS_OK); },
-          [aResolver](nsresult aErr) { aResolver(aErr); });
-  return IPC_OK();
-}
-
-IPCResult WindowGlobalParent::RecvDisconnectIdentityCredential(
-    const IdentityCredentialDisconnectOptions& aOptions,
-    const DisconnectIdentityCredentialResolver& aResolver) {
-  IdentityCredential::DisconnectInMainProcess(DocumentPrincipal(), aOptions)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [aResolver](const bool& aResult) { aResolver(NS_OK); },
-          [aResolver](nsresult aErr) { aResolver(aErr); });
-  return IPC_OK();
-}
-
-IPCResult WindowGlobalParent::RecvPreventSilentAccess(
-    const PreventSilentAccessResolver& aResolver) {
-  nsIPrincipal* principal = DocumentPrincipal();
-  if (principal) {
-    nsCOMPtr<nsIPermissionManager> permissionManager =
-        components::PermissionManager::Service();
-    if (permissionManager) {
-      permissionManager->RemoveFromPrincipal(
-          principal, "credential-allow-silent-access"_ns);
-      aResolver(NS_OK);
-      return IPC_OK();
-    }
-  }
-
-  aResolver(NS_ERROR_NOT_AVAILABLE);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult WindowGlobalParent::RecvSetLoginStatus(
-    LoginStatus aStatus, const SetLoginStatusResolver& aResolver) {
-  nsIPrincipal* principal = DocumentPrincipal();
-  if (!principal) {
-    aResolver(NS_ERROR_DOM_NOT_ALLOWED_ERR);
-    return IPC_OK();
-  }
-  nsresult rv = NavigatorLogin::SetLoginStatus(principal, aStatus);
-  aResolver(rv);
-  return IPC_OK();
-}
-
 IPCResult WindowGlobalParent::RecvGetStorageAccessPermission(
     bool aIncludeIdentityCredential,
     GetStorageAccessPermissionResolver&& aResolve) {
@@ -1540,8 +1476,7 @@ IPCResult WindowGlobalParent::RecvGetStorageAccessPermission(
 
   if (aIncludeIdentityCredential) {
     bool canCollect;
-    rv = IdentityCredential::CanSilentlyCollect(topPrincipal, principal,
-                                                &canCollect);
+    rv = identity::CanSilentlyCollect(topPrincipal, principal, &canCollect);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       aResolve(nsIPermissionManager::UNKNOWN_ACTION);
       return IPC_OK();
@@ -1565,11 +1500,11 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
         .Add();
   }
 
-  bool finishedPageUseCounters = false;
+  PageUseCounterResult pageUseCounterResult;
   if (mPageUseCountersWindow) {
-    mPageUseCountersWindow->FinishAccumulatingPageUseCounters();
+    pageUseCounterResult =
+        mPageUseCountersWindow->FinishAccumulatingPageUseCounters();
     mPageUseCountersWindow = nullptr;
-    finishedPageUseCounters = true;
   }
 
   if (GetBrowsingContext()->IsTopContent() &&
@@ -1628,9 +1563,6 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
     otherContent->SendDiscardWindowContext(InnerWindowId(), callback, callback);
   });
 
-  // Note that our WindowContext has become discarded.
-  WindowContext::Discard();
-
   // Report content blocking log when destroyed.
   // There shouldn't have any content blocking log when a document is loaded in
   // the parent process(See NotifyContentBlockingEvent), so we could skip
@@ -1645,8 +1577,12 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
         GetContentBlockingLog()->ReportLog();
 
         if (mDocumentURI && net::SchemeIsHttpOrHttps(mDocumentURI)) {
+          bool incrementedTopLevelContentDocumentsDestroyed =
+              pageUseCounterResult.contains(
+                  PageUseCounterResultBits::DATA_RECEIVED);
           GetContentBlockingLog()->ReportCanvasFingerprintingLog(
-              DocumentPrincipal(), finishedPageUseCounters);
+              DocumentPrincipal(),
+              incrementedTopLevelContentDocumentsDestroyed);
           GetContentBlockingLog()->ReportFontFingerprintingLog(
               DocumentPrincipal());
           GetContentBlockingLog()->ReportEmailTrackingLog(DocumentPrincipal());
@@ -1654,6 +1590,9 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
       }
     }
   }
+
+  // Note that our WindowContext has become discarded.
+  WindowContext::Discard();
 
   // Destroy our JSWindowActors, and reject any pending queries.
   JSActorDidDestroy();
@@ -1822,6 +1761,11 @@ IPCResult WindowGlobalParent::RecvRecordUserActivationForBTP() {
 already_AddRefed<PWebAuthnTransactionParent>
 WindowGlobalParent::AllocPWebAuthnTransactionParent() {
   return MakeAndAddRef<WebAuthnTransactionParent>();
+}
+
+already_AddRefed<PWebIdentityParent>
+WindowGlobalParent::AllocPWebIdentityParent() {
+  return MakeAndAddRef<WebIdentityParent>();
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(WindowGlobalParent)

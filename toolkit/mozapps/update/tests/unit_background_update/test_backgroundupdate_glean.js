@@ -183,14 +183,14 @@ add_task(async function test_targeting_exists() {
     }),
     "test"
   );
-  await manager.unenroll("foo");
+  manager.unenroll("foo");
   await manager.enroll(
     NimbusTestUtils.factories.recipe.withFeatureConfig("bar", {
       featureId: "testFeature",
     }),
     "test"
   );
-  await manager.unenroll("bar");
+  manager.unenroll("bar");
   await manager.enroll(
     NimbusTestUtils.factories.recipe.withFeatureConfig("baz", {
       featureId: "testFeature",
@@ -202,7 +202,7 @@ add_task(async function test_targeting_exists() {
     NimbusTestUtils.factories.recipe("rol1", { isRollout: true }),
     "test"
   );
-  await manager.unenroll("rol1");
+  manager.unenroll("rol1");
   await manager.enroll(
     NimbusTestUtils.factories.recipe("rol2", { isRollout: true }),
     "test"
@@ -221,8 +221,9 @@ add_task(async function test_targeting_exists() {
     );
 
     // `environment.firefoxVersion` is a positive integer.
-    Assert.ok(
-      Glean.backgroundUpdate.targetingEnvFirefoxVersion.testGetValue() > 0
+    Assert.greater(
+      Glean.backgroundUpdate.targetingEnvFirefoxVersion.testGetValue(),
+      0
     );
 
     Assert.equal(
@@ -234,8 +235,8 @@ add_task(async function test_targeting_exists() {
       Glean.backgroundUpdate.targetingEnvProfileAge.testGetValue();
 
     Assert.ok(profileAge instanceof Date);
-    Assert.ok(0 < profileAge.getTime());
-    Assert.ok(profileAge.getTime() < Date.now());
+    Assert.less(0, profileAge.getTime());
+    Assert.less(profileAge.getTime(), Date.now());
 
     // `environment.profileAgeCreated` is an integer, milliseconds since the
     // Unix epoch.
@@ -251,8 +252,8 @@ add_task(async function test_targeting_exists() {
     let currentDate =
       Glean.backgroundUpdate.targetingEnvCurrentDate.testGetValue();
 
-    Assert.ok(0 < currentDate.getTime());
-    Assert.ok(currentDate.getTime() < Date.now());
+    Assert.less(0, currentDate.getTime());
+    Assert.less(currentDate.getTime(), Date.now());
 
     // `environment.currentDate` is in ISO string format.
     let targetCurrentDate = new Date(targetSnapshot.environment.currentDate);
@@ -292,7 +293,7 @@ add_task(async function test_targeting_exists() {
     }
   });
 
-  await manager.unenroll("baz");
-  await manager.unenroll("rol2");
+  manager.unenroll("baz");
+  manager.unenroll("rol2");
   await cleanup();
 });

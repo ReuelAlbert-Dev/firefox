@@ -160,7 +160,8 @@ class SessionHistoryInfo {
 
   void SetSaveLayoutStateFlag(bool aSaveLayoutStateFlag);
 
-  bool GetPersist() const { return mPersist; }
+  bool IsTransient() { return mTransient; }
+  void SetTransient() { mTransient = true; }
 
   nsID& NavigationKey() { return mNavigationKey; }
   const nsID& NavigationKey() const { return mNavigationKey; }
@@ -196,7 +197,7 @@ class SessionHistoryInfo {
   bool mLoadReplace = false;
   bool mURIWasModified = false;
   bool mScrollRestorationIsManual = false;
-  bool mPersist = true;
+  bool mTransient = false;
   bool mHasUserInteraction = false;
   bool mHasUserActivation = false;
 
@@ -367,7 +368,10 @@ class HistoryEntryCounterForBrowsingContext {
 #define NS_SESSIONHISTORYENTRY_IID \
   {0x5b66a244, 0x8cec, 0x4caa, {0xaa, 0x0a, 0x78, 0x92, 0xfd, 0x17, 0xa6, 0x67}}
 
-class SessionHistoryEntry : public nsISHEntry, public nsSupportsWeakReference {
+class SessionHistoryEntry
+    : public nsISHEntry,
+      public nsSupportsWeakReference,
+      public LinkedListElement<RefPtr<SessionHistoryEntry>> {
  public:
   SessionHistoryEntry(nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
   SessionHistoryEntry();

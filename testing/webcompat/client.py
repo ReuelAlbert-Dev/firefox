@@ -5,7 +5,8 @@
 import asyncio
 import contextlib
 import time
-from base64 import b64decode
+import zipfile
+from base64 import b64decode, b64encode
 from io import BytesIO
 from urllib.parse import quote
 
@@ -144,6 +145,8 @@ class Client:
                 self.context = orig_context
 
     def set_screen_size(self, width, height):
+        if self.request.config.getoption("platform_override") == "android":
+            return False
         if self.session.capabilities.get("setWindowRect"):
             self.session.window.size = (width, height)
             return True
@@ -524,7 +527,7 @@ class Client:
                 raise e
                 return
             s = str(e)
-            if "Address rejected" in s:
+            if "Address rejected" in s or "NS_ERROR_NET_TIMEOUT" in s:
                 pytest.skip(
                     f"{self.request.fspath.basename}: Site not responding. Please try again later."
                 )
@@ -1394,6 +1397,7 @@ class Client:
             """,
                 trending_list,
             )
+            time.sleep(0.5)
             with_scrollbar = trending_list.screenshot()
             self.execute_script(
                 """
@@ -1401,6 +1405,7 @@ class Client:
             """,
                 trending_list,
             )
+            time.sleep(0.5)
             without_scrollbar = trending_list.screenshot()
             assert (
                 with_scrollbar == without_scrollbar
@@ -1513,3 +1518,29 @@ class Client:
                 win.EventUtils.synthesizeKey("v", { accelKey: true }, win);
             """
             )
+
+    def make_base64_xpi(self, files):
+        buf = BytesIO()
+        with zipfile.ZipFile(file=buf, mode="w") as zip:
+            for filename, src in files.items():
+                zip.writestr(filename, data=src)
+        buf.seek(0)
+        return b64encode(buf.getvalue())
+
+    def install_addon(
+        self, srcfiles, method="addon", temp=True, allow_private_browsing=True
+    ):
+        arg = {"temporary": temp, "allowPrivateBrowsing": allow_private_browsing}
+        arg[method] = self.make_base64_xpi(srcfiles).decode()
+        return self.session.transport.send(
+            "POST",
+            f"/session/{self.session.session_id}/moz/addon/install",
+            arg,
+        )
+
+    def uninstall_addon(self, addon_id):
+        return self.session.transport.send(
+            "POST",
+            f"/session/{self.session.session_id}/moz/addon/uninstall",
+            {"id": addon_id},
+        )

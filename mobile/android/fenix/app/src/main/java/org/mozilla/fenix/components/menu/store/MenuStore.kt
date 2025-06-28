@@ -39,8 +39,6 @@ private fun reducer(state: MenuState, action: MenuAction): MenuState {
         is MenuAction.ToggleReaderView,
         is MenuAction.CustomizeReaderView,
         is MenuAction.Navigate,
-        is MenuAction.SaveMenuClicked,
-        is MenuAction.ToolsMenuClicked,
         is MenuAction.OnCFRShown,
         is MenuAction.OpenInRegularTab,
         is MenuAction.OnCFRDismiss,
@@ -98,10 +96,6 @@ private fun reducer(state: MenuState, action: MenuAction): MenuState {
 
         is MenuAction.UpdateAvailableAddons -> state.copyWithExtensionMenuState {
             it.copy(availableAddons = action.availableAddons)
-        }
-
-        is MenuAction.SetLoading -> state.copyWithBrowserMenuState {
-            it.copy(isLoading = action.isLoading)
         }
     }
 }

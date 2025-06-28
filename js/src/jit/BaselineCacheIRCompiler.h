@@ -118,14 +118,18 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void emitAtomizeString(Register str, Register temp, Label* failure);
 
   bool emitCallScriptedGetterShared(ValOperandId receiverId,
-                                    uint32_t getterOffset, bool sameRealm,
+                                    ObjOperandId calleeId, bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);
   bool emitCallScriptedSetterShared(ObjOperandId receiverId,
-                                    uint32_t setterOffset, ValOperandId rhsId,
+                                    ObjOperandId calleeId, ValOperandId rhsId,
                                     bool sameRealm,
                                     uint32_t nargsAndFlagsOffset,
                                     mozilla::Maybe<uint32_t> icScriptOffset);
+  bool emitCallScriptedFunctionShared(ObjOperandId calleeId,
+                                      Int32OperandId argcId, CallFlags flags,
+                                      uint32_t argcFixed,
+                                      mozilla::Maybe<uint32_t> icScriptOffset);
 
   template <typename IdType>
   bool emitCallScriptedProxyGetShared(ValOperandId targetId,

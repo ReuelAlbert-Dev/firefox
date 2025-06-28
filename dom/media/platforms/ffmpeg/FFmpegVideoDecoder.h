@@ -31,6 +31,9 @@ struct _VADRMPRIMESurfaceDescriptor;
 typedef struct _VADRMPRIMESurfaceDescriptor VADRMPRIMESurfaceDescriptor;
 
 namespace mozilla {
+namespace layers {
+class BufferRecycleBin;
+}
 
 class ImageBufferWrapper;
 
@@ -59,7 +62,7 @@ class FFmpegVideoDecoder<LIBAV_VER>
   FFmpegVideoDecoder(FFmpegLibWrapper* aLib, const VideoInfo& aConfig,
                      KnowsCompositor* aAllocator,
                      ImageContainer* aImageContainer, bool aLowLatency,
-                     bool aDisableHardwareDecoding,
+                     bool aDisableHardwareDecoding, bool a8BitOutput,
                      Maybe<TrackingId> aTrackingId);
 
   ~FFmpegVideoDecoder();
@@ -143,6 +146,12 @@ class FFmpegVideoDecoder<LIBAV_VER>
   RefPtr<KnowsCompositor> mImageAllocator;
 
 #ifdef MOZ_USE_HWDECODE
+ public:
+  static AVCodec* FindVideoHardwareAVCodec(
+      FFmpegLibWrapper* aLib, AVCodecID aCodec,
+      AVHWDeviceType aDeviceType = AV_HWDEVICE_TYPE_NONE);
+
+ private:
   // This will be called inside the ctor.
   void InitHWDecoderIfAllowed();
 
@@ -178,7 +187,6 @@ class FFmpegVideoDecoder<LIBAV_VER>
   MediaResult InitVAAPIDecoder();
   MediaResult InitV4L2Decoder();
   bool CreateVAAPIDeviceContext();
-  AVCodec* FindVAAPICodec();
   bool GetVAAPISurfaceDescriptor(VADRMPRIMESurfaceDescriptor* aVaDesc);
   void AddAcceleratedFormats(nsTArray<AVCodecID>& aCodecList,
                              AVCodecID aCodecID, AVVAAPIHWConfig* hwconfig);
@@ -274,6 +282,11 @@ class FFmpegVideoDecoder<LIBAV_VER>
   // FFmpegVideoDecoder::GetVideoBuffer().
   nsTHashSet<RefPtr<ImageBufferWrapper>> mAllocatedImages;
 #endif
+
+  // Convert dav1d output to 8-bit when GPU doesn't support higher bit images.
+  // See bug 1970771 for details.
+  Atomic<bool> m8BitOutput;
+  RefPtr<layers::BufferRecycleBin> m8BitRecycleBin;
 };
 
 #if LIBAVCODEC_VERSION_MAJOR >= 57 && LIBAVUTIL_VERSION_MAJOR >= 56

@@ -404,6 +404,17 @@ export const storybookTables = {
     },
     {
       value: {
+        brand: {
+          default: "0.733rem",
+          comment:
+            "11px / Note this token is to be used in rare cases because its hard to read. Please consult with the Design Systems and A11y teams for case-by-case feedback.",
+        },
+        platform: { default: "unset" },
+      },
+      name: "--font-size-xsmall",
+    },
+    {
+      value: {
         brand: { default: "0.867rem", comment: "13px" },
         platform: { default: "unset" },
       },
@@ -866,6 +877,7 @@ export const storybookTables = {
   ],
   "icon-size": [
     { value: "var(--icon-size-small)", name: "--icon-size-default" },
+    { value: "12px", name: "--icon-size-xsmall" },
     { value: "var(--size-item-small)", name: "--icon-size-small" },
     { value: "20px", name: "--icon-size-medium" },
     { value: "24px", name: "--icon-size-large" },
@@ -1463,6 +1475,14 @@ export const variableLookupTable = {
     brand: { default: "15px" },
     platform: { default: "unset" },
   },
+  "font-size-xsmall": {
+    brand: {
+      default: "0.733rem",
+      comment:
+        "11px / Note this token is to be used in rare cases because its hard to read. Please consult with the Design Systems and A11y teams for case-by-case feedback.",
+    },
+    platform: { default: "unset" },
+  },
   "font-size-small": {
     brand: { default: "0.867rem", comment: "13px" },
     platform: { default: "unset" },
@@ -1512,6 +1532,7 @@ export const variableLookupTable = {
     default: "light-dark(var(--color-red-60), var(--color-red-20))",
   },
   "icon-size-default": "var(--icon-size-small)",
+  "icon-size-xsmall": "12px",
   "icon-size-small": "var(--size-item-small)",
   "icon-size-medium": "20px",
   "icon-size-large": "24px",

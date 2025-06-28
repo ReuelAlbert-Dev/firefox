@@ -310,14 +310,25 @@ bool FFmpegVideoEncoder<LIBAV_VER>::SvcEnabled() const {
 }
 
 MediaResult FFmpegVideoEncoder<LIBAV_VER>::InitEncoder() {
-  MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
+  MediaResult result(NS_ERROR_DOM_MEDIA_NOT_SUPPORTED_ERR);
+  if (mConfig.mHardwarePreference != HardwarePreference::RequireSoftware) {
+    result = InitEncoderInternal(/* aHardware */ true);
+  }
+  // TODO(aosmond): We should be checking here for RequireHardware, but we fail
+  // encoding tests if we don't allow fallback to software on Linux in CI.
+  if (NS_FAILED(result.Code())) {
+    result = InitEncoderInternal(/* aHardware */ false);
+  }
+  return result;
+}
 
-  ForceEnablingFFmpegDebugLogs();
+MediaResult FFmpegVideoEncoder<LIBAV_VER>::InitEncoderInternal(bool aHardware) {
+  MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
 
   FFMPEGV_LOG("FFmpegVideoEncoder::InitEncoder");
 
   // Initialize the common members of the encoder instance
-  auto r = AllocateCodecContext(mLib, mCodecID);
+  auto r = AllocateCodecContext(aHardware);
   if (r.isErr()) {
     return r.inspectErr();
   }
@@ -463,11 +474,11 @@ MediaResult FFmpegVideoEncoder<LIBAV_VER>::InitEncoder() {
   }
 
   nsAutoCString h264Log;
-  if (mConfig.mCodecSpecific && mConfig.mCodecSpecific->is<H264Specific>()) {
+  if (mConfig.mCodecSpecific.is<H264Specific>()) {
     // TODO: Set profile, level, avcc/annexb for openh264 and others.
     if (mCodecName == "libx264") {
       const H264Specific& h264Specific =
-          mConfig.mCodecSpecific->as<H264Specific>();
+          mConfig.mCodecSpecific.as<H264Specific>();
       H264Settings s = GetH264Settings(h264Specific);
       mCodecContext->profile = s.mProfile;
       mCodecContext->level = s.mLevel;
@@ -701,9 +712,9 @@ FFmpegVideoEncoder<LIBAV_VER>::GetExtraData(AVPacket* aPacket) {
 
   // H264 Extra data comes with the key frame and we only extract it when
   // encoding into AVCC format.
-  if (mCodecID != AV_CODEC_ID_H264 || !mConfig.mCodecSpecific ||
-      !mConfig.mCodecSpecific->is<H264Specific>() ||
-      mConfig.mCodecSpecific->as<H264Specific>().mFormat !=
+  if (mCodecID != AV_CODEC_ID_H264 ||
+      !mConfig.mCodecSpecific.is<H264Specific>() ||
+      mConfig.mCodecSpecific.as<H264Specific>().mFormat !=
           H264BitStreamFormat::AVC ||
       !(aPacket->flags & AV_PKT_FLAG_KEY)) {
     return Err(
@@ -774,15 +785,6 @@ FFmpegVideoEncoder<LIBAV_VER>::GetExtraData(AVPacket* aPacket) {
   return extraData.forget();
 }
 
-void FFmpegVideoEncoder<LIBAV_VER>::ForceEnablingFFmpegDebugLogs() {
-#if DEBUG
-  if (!getenv("MOZ_AV_LOG_LEVEL") &&
-      MOZ_LOG_TEST(sFFmpegVideoLog, LogLevel::Debug)) {
-    mLib->av_log_set_level(AV_LOG_DEBUG);
-  }
-#endif  // DEBUG
-}
-
 Maybe<FFmpegVideoEncoder<LIBAV_VER>::SVCSettings>
 FFmpegVideoEncoder<LIBAV_VER>::GetSVCSettings() {
   MOZ_ASSERT(!mCodecName.IsEmpty());
@@ -813,16 +815,12 @@ FFmpegVideoEncoder<LIBAV_VER>::GetSVCSettings() {
     // Check if the number of temporal layers in codec specific settings
     // matches
     // the number of layers for the given scalability mode.
-    if (mConfig.mCodecSpecific) {
-      if (mConfig.mCodecSpecific->is<VP8Specific>()) {
-        MOZ_ASSERT(
-            mConfig.mCodecSpecific->as<VP8Specific>().mNumTemporalLayers ==
-            svc.mNumberTemporalLayers);
-      } else if (mConfig.mCodecSpecific->is<VP9Specific>()) {
-        MOZ_ASSERT(
-            mConfig.mCodecSpecific->as<VP9Specific>().mNumTemporalLayers ==
-            svc.mNumberTemporalLayers);
-      }
+    if (mConfig.mCodecSpecific.is<VP8Specific>()) {
+      MOZ_ASSERT(mConfig.mCodecSpecific.as<VP8Specific>().mNumTemporalLayers ==
+                 svc.mNumberTemporalLayers);
+    } else if (mConfig.mCodecSpecific.is<VP9Specific>()) {
+      MOZ_ASSERT(mConfig.mCodecSpecific.as<VP9Specific>().mNumTemporalLayers ==
+                 svc.mNumberTemporalLayers);
     }
 
     // Form an SVC setting string for libvpx.

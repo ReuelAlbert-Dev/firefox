@@ -10,6 +10,10 @@
 #include "MFTEncoder.h"
 #include "MediaData.h"
 #include "mozilla/Logging.h"
+#include "mozilla/gfx/gfxVars.h"
+
+using mozilla::media::EncodeSupport;
+using mozilla::media::EncodeSupportSet;
 
 namespace mozilla {
 
@@ -30,22 +34,48 @@ GUID CodecToSubtype(CodecType aCodec) {
   }
 }
 
-bool CanCreateWMFEncoder(CodecType aCodec) {
-  bool canCreate = false;
+static bool CanUseWMFHwEncoder(CodecType aCodec) {
+  if (!gfx::gfxVars::IsInitialized()) {
+    return false;
+  }
+
+  switch (aCodec) {
+    case CodecType::H264:
+      return gfx::gfxVars::UseH264HwEncode();
+    case CodecType::VP8:
+      return gfx::gfxVars::UseVP8HwEncode();
+    case CodecType::VP9:
+      return gfx::gfxVars::UseVP9HwEncode();
+    default:
+      return false;
+  }
+}
+
+EncodeSupportSet CanCreateWMFEncoder(
+    CodecType aCodec, const gfx::IntSize& aFrameSize,
+    const EncoderConfig::CodecSpecific& aCodecSpecific) {
+  EncodeSupportSet supports;
   mscom::EnsureMTA([&]() {
     if (!wmf::MediaFoundationInitializer::HasInitialized()) {
       return;
     }
-    // Try HW encoder first.
-    auto enc = MakeRefPtr<MFTEncoder>(false /* HW not allowed */);
-    canCreate = SUCCEEDED(enc->Create(CodecToSubtype(aCodec)));
-    if (!canCreate) {
-      // Try SW encoder.
-      enc = MakeRefPtr<MFTEncoder>(true /* HW not allowed */);
-      canCreate = SUCCEEDED(enc->Create(CodecToSubtype(aCodec)));
+    // Try HW encoder if allowed.
+    if (CanUseWMFHwEncoder(aCodec)) {
+      auto hwEnc =
+          MakeRefPtr<MFTEncoder>(MFTEncoder::HWPreference::HardwareOnly);
+      if (SUCCEEDED(hwEnc->Create(CodecToSubtype(aCodec), aFrameSize,
+                                  aCodecSpecific))) {
+        supports += EncodeSupport::HardwareEncode;
+      }
+    }
+    // Try SW encoder.
+    auto swEnc = MakeRefPtr<MFTEncoder>(MFTEncoder::HWPreference::SoftwareOnly);
+    if (SUCCEEDED(swEnc->Create(CodecToSubtype(aCodec), aFrameSize,
+                                aCodecSpecific))) {
+      supports += EncodeSupport::SoftwareEncode;
     }
   });
-  return canCreate;
+  return supports;
 }
 
 static already_AddRefed<MediaByteBuffer> ParseH264Parameters(
@@ -148,8 +178,8 @@ already_AddRefed<IMFMediaType> CreateOutputType(EncoderConfig& aConfig) {
     WMF_ENC_LOG("Create output type: set subtype error: %lx", hr);
     return nullptr;
   }
-  // A bitrate need to be set here, attempt to make an educated guess if none is
-  // provided. This could be per codec to have nicer defaults.
+  // A bitrate need to be set here, attempt to make an educated guess if none
+  // is provided. This could be per codec to have nicer defaults.
   size_t longDimension = std::max(aConfig.mSize.width, aConfig.mSize.height);
   if (!aConfig.mBitrate) {
     if (longDimension < 720) {
@@ -188,16 +218,14 @@ already_AddRefed<IMFMediaType> CreateOutputType(EncoderConfig& aConfig) {
     return nullptr;
   }
 
-  if (aConfig.mCodecSpecific) {
-    if (aConfig.mCodecSpecific->is<H264Specific>()) {
-      MOZ_ASSERT(aConfig.mCodec == CodecType::H264);
-      hr = FAILED(type->SetUINT32(
-          MF_MT_MPEG2_PROFILE,
-          GetProfile(aConfig.mCodecSpecific->as<H264Specific>().mProfile)));
-      if (hr) {
-        WMF_ENC_LOG("Create output type set profile error: %lx", hr);
-        return nullptr;
-      }
+  if (aConfig.mCodecSpecific.is<H264Specific>()) {
+    MOZ_ASSERT(aConfig.mCodec == CodecType::H264);
+    hr = FAILED(type->SetUINT32(
+        MF_MT_MPEG2_PROFILE,
+        GetProfile(aConfig.mCodecSpecific.as<H264Specific>().mProfile)));
+    if (hr) {
+      WMF_ENC_LOG("Create output type set profile error: %lx", hr);
+      return nullptr;
     }
   }
 

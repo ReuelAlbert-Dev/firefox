@@ -57,7 +57,9 @@ GtkCompositorWidget::~GtkCompositorWidget() {
   CleanupResources();
 #ifdef MOZ_WAYLAND
   if (mNativeLayerRoot) {
-    mNativeLayerRoot->Shutdown();
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "~GtkCompositorWidget::NativeLayerRootWayland::Shutdown()",
+        [root = RefPtr{mNativeLayerRoot}]() -> void { root->Shutdown(); }));
   }
 #endif
   RefPtr<nsIWidget> widget = mWidget.forget();

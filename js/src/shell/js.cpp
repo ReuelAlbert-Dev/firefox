@@ -111,6 +111,9 @@
 #include "jit/JitcodeMap.h"
 #include "jit/JitZone.h"
 #include "jit/shared/CodeGenerator-shared.h"
+#ifdef JS_CODEGEN_ARM64
+#  include "jit/arm64/vixl/Cpu-Features-vixl.h"
+#endif
 #include "js/Array.h"        // JS::NewArrayObject
 #include "js/ArrayBuffer.h"  // JS::{CreateMappedArrayBufferContents,NewMappedArrayBufferWithContents,IsArrayBufferObject,GetArrayBufferLengthAndData}
 #include "js/BuildId.h"      // JS::BuildIdCharVector, JS::SetProcessBuildIdOp
@@ -4080,7 +4083,7 @@ static bool Fuzzilli(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  if (StringEqualsAscii(operation, "FUZZILLI_CRASH")) {
+  if (StringEqualsLiteral(operation, "FUZZILLI_CRASH")) {
     int type;
     if (!ToInt32(cx, args.get(1), &type)) {
       return false;
@@ -4108,7 +4111,7 @@ static bool Fuzzilli(JSContext* cx, unsigned argc, Value* vp) {
       default:
         exit(1);
     }
-  } else if (StringEqualsAscii(operation, "FUZZILLI_PRINT")) {
+  } else if (StringEqualsLiteral(operation, "FUZZILLI_PRINT")) {
     static FILE* fzliout = fdopen(REPRL_DWFD, "w");
     if (!fzliout) {
       fprintf(
@@ -4127,7 +4130,7 @@ static bool Fuzzilli(JSContext* cx, unsigned argc, Value* vp) {
     }
     fprintf(fzliout, "%s\n", bytes.get());
     fflush(fzliout);
-  } else if (StringEqualsAscii(operation, "FUZZILLI_RANDOM")) {
+  } else if (StringEqualsLiteral(operation, "FUZZILLI_RANDOM")) {
     // This is an entropy source which can be called during fuzzing.
     // Its currently used to tests whether Fuzzilli detects non-deterministic
     // behavior.
@@ -5240,7 +5243,7 @@ static bool SetPrefValue(JSContext* cx, unsigned argc, Value* vp) {
 
   // Search for a matching pref and try to set it to the provided value.
 #define CHECK_PREF(NAME, CPP_NAME, TYPE, SETTER, IS_STARTUP_PREF)             \
-  if (IsPrefAvailable(NAME) && StringEqualsAscii(name, NAME)) {               \
+  if (IsPrefAvailable(NAME) && StringEqualsLiteral(name, NAME)) {             \
     if (IS_STARTUP_PREF) {                                                    \
       JS_ReportErrorASCII(cx, "%s is a startup pref and can't be set", NAME); \
       return false;                                                           \
@@ -7693,10 +7696,14 @@ static void SingleStepCallback(void* arg, jit::Simulator* sim, void* pc) {
   state.sp = (void*)sim->getRegister(jit::Simulator::sp);
   state.lr = (void*)sim->getRegister(jit::Simulator::ra);
   state.fp = (void*)sim->getRegister(jit::Simulator::fp);
+  // see WasmTailCallFPScratchReg and CollapseWasmFrameFast
+  state.tempFP = (void*)sim->getRegister(jit::Simulator::t3);
 #  elif defined(JS_SIMULATOR_LOONG64)
   state.sp = (void*)sim->getRegister(jit::Simulator::sp);
   state.lr = (void*)sim->getRegister(jit::Simulator::ra);
   state.fp = (void*)sim->getRegister(jit::Simulator::fp);
+  // see WasmTailCallFPScratchReg and CollapseWasmFrameFast
+  state.tempFP = (void*)sim->getRegister(jit::Simulator::t3);
 #  else
 #    error "NYI: Single-step profiling support"
 #  endif
@@ -12799,6 +12806,8 @@ bool InitOptionParser(OptionParser& op) {
       !op.addBoolOption('\0', "no-avx",
                         "No-op. AVX is currently disabled by default.") ||
 #endif
+      !op.addBoolOption('\0', "no-fjcvtzs",
+                        "Pretend CPU does not support FJCVTZS instruction.") ||
       !op.addBoolOption('\0', "more-compartments",
                         "Make newGlobal default to creating a new "
                         "compartment.") ||
@@ -13169,6 +13178,12 @@ bool SetGlobalOptionsPreJSInit(const OptionParser& op) {
     if (!sCompilerProcessFlags.append("--no-sse42")) {
       return false;
     }
+  }
+#endif
+#if defined(JS_CODEGEN_ARM64)
+  if (op.getBoolOption("no-fjcvtzs")) {
+    vixl::CPUFeatures fjcvtzs(vixl::CPUFeatures::kJSCVT);
+    fjcvtzs.DisableGlobally();
   }
 #endif
 #ifndef __wasi__

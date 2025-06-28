@@ -826,18 +826,38 @@
       this.tabContainer._updateCloseButtons();
     }
 
-    _notifyPinnedStatus(aTab) {
+    #notifyPinnedStatus(
+      aTab,
+      { telemetrySource = this.TabMetrics.METRIC_SOURCE.UNKNOWN } = {}
+    ) {
       // browsingContext is expected to not be defined on discarded tabs.
       if (aTab.linkedBrowser.browsingContext) {
         aTab.linkedBrowser.browsingContext.isAppTab = aTab.pinned;
       }
 
-      let event = document.createEvent("Events");
-      event.initEvent(aTab.pinned ? "TabPinned" : "TabUnpinned", true, false);
+      let event = new CustomEvent(aTab.pinned ? "TabPinned" : "TabUnpinned", {
+        bubbles: true,
+        cancelable: false,
+        detail: { telemetrySource },
+      });
       aTab.dispatchEvent(event);
     }
 
-    pinTab(aTab) {
+    /**
+     * Pin a tab.
+     *
+     * @param {MozTabbrowserTab} aTab
+     *   The tab to pin.
+     * @param {object} [options]
+     * @property {string} [options.telemetrySource="unknown"]
+     *   The means by which the tab was pinned.
+     *   @see TabMetrics.METRIC_SOURCE for possible values.
+     *   Defaults to "unknown".
+     */
+    pinTab(
+      aTab,
+      { telemetrySource = this.TabMetrics.METRIC_SOURCE.UNKNOWN } = {}
+    ) {
       if (aTab.pinned || aTab == FirefoxViewHandler.tab) {
         return;
       }
@@ -849,7 +869,7 @@
 
       aTab.setAttribute("pinned", "true");
       this._updateTabBarForPinnedTabs();
-      this._notifyPinnedStatus(aTab);
+      this.#notifyPinnedStatus(aTab, { telemetrySource });
     }
 
     unpinTab(aTab) {
@@ -868,7 +888,7 @@
       aTab.style.marginInlineStart = "";
       aTab._pinnedUnscrollable = false;
       this._updateTabBarForPinnedTabs();
-      this._notifyPinnedStatus(aTab);
+      this.#notifyPinnedStatus(aTab);
     }
 
     previewTab(aTab, aCallback) {
@@ -2910,7 +2930,7 @@
 
       // Additionally send pinned tab events
       if (pinned) {
-        this._notifyPinnedStatus(t);
+        this.#notifyPinnedStatus(t);
       }
 
       gSharedTabWarning.tabAdded(t);
@@ -4529,7 +4549,12 @@
      * @param {boolean} [options.skipGroupCheck]
      *   Skip separate processing of whole tab groups from the set of tabs.
      *   Used by removeTabGroup.
-     * TODO add docs
+     * @param {boolean} [options.isUserTriggered]
+     *   Whether or not the removal is the direct result of a user action.
+     *   Used for telemetry.
+     * @param {string} [options.telemetrySource]
+     *   The system, surface, or control the user used to take this action.
+     *   @see TabMetrics.METRIC_SOURCE for possible values.
      */
     removeTabs(
       tabs,
@@ -4678,13 +4703,12 @@
       }
 
       let isVisibleTab = aTab.visible;
-      let isLastTab = isVisibleTab && this.visibleTabs.length == 1;
       // We have to sample the tab width now, since _beginRemoveTab might
       // end up modifying the DOM in such a way that aTab gets a new
       // frame created for it (for example, by updating the visually selected
       // state).
       let tabWidth = window.windowUtils.getBoundsWithoutFlushing(aTab).width;
-
+      let isLastTab = this.#isLastTabInWindow(aTab);
       if (
         !this._beginRemoveTab(aTab, {
           closeWindowFastpath: true,
@@ -4762,6 +4786,25 @@
         aTab,
         this
       );
+    }
+
+    /**
+     * Returns `true` if `tab` is the last tab in this window. This logic is
+     * intended for cases like determining if a window should close due to `tab`
+     * being closed, therefore hidden tabs are not considered in this function.
+     *
+     * Note: must be called before `tab` is closed/closing.
+     *
+     * @param {MozTabbrowserTab} tab
+     * @returns {boolean}
+     */
+    #isLastTabInWindow(tab) {
+      for (const otherTab of this.tabs) {
+        if (otherTab != tab && otherTab.isOpen && !otherTab.hidden) {
+          return false;
+        }
+      }
+      return true;
     }
 
     _hasBeforeUnload(aTab) {
@@ -4843,11 +4886,7 @@
 
       var closeWindow = false;
       var newTab = false;
-      if (
-        aTab.visible &&
-        this.visibleTabs.length == 1 &&
-        !this.tabsInCollapsedTabGroups.length
-      ) {
+      if (this.#isLastTabInWindow(aTab)) {
         closeWindow =
           closeWindowWithLastTab != null
             ? closeWindowWithLastTab
@@ -6077,7 +6116,8 @@
     #moveTabNextTo(element, targetElement, moveBefore = false, metricsContext) {
       if (this.isTabGroupLabel(targetElement)) {
         targetElement = targetElement.group;
-        if (!moveBefore) {
+        if (!moveBefore && !targetElement.collapsed) {
+          // Right after the tab group label = before the first tab in the tab group
           targetElement = targetElement.tabs[0];
           moveBefore = true;
         }
@@ -6094,7 +6134,21 @@
         targetElement = this.tabs[this.pinnedTabCount - 1];
         moveBefore = false;
       } else if (!element.pinned && targetElement && targetElement.pinned) {
+        // If the caller asks to move an unpinned element next to a pinned
+        // tab, move the unpinned element to be the first unpinned element
+        // in the tab strip. Potential scenarios:
+        // 1. Moving an unpinned tab and the first unpinned tab is ungrouped:
+        //    move the unpinned tab right before the first unpinned tab.
+        // 2. Moving an unpinned tab and the first unpinned tab is grouped:
+        //    move the unpinned tab right before the tab group.
+        // 3. Moving a tab group and the first unpinned tab is ungrouped:
+        //    move the tab group right before the first unpinned tab.
+        // 4. Moving a tab group and the first unpinned tab is grouped:
+        //    move the tab group right before the first unpinned tab's tab group.
         targetElement = this.tabs[this.pinnedTabCount];
+        if (targetElement.group) {
+          targetElement = targetElement.group;
+        }
         moveBefore = true;
       }
 

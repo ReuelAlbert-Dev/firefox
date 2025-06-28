@@ -87,6 +87,7 @@
 
 typedef mozilla::layers::Image Image;
 typedef mozilla::layers::PlanarYCbCrImage PlanarYCbCrImage;
+typedef mozilla::layers::BufferRecycleBin BufferRecycleBin;
 
 namespace mozilla {
 
@@ -213,27 +214,6 @@ static AVPixelFormat ChooseD3D11VAPixelFormat(AVCodecContext* aCodecContext,
 #endif
 
 #if defined(MOZ_USE_HWDECODE) && defined(MOZ_WIDGET_GTK)
-AVCodec* FFmpegVideoDecoder<LIBAV_VER>::FindVAAPICodec() {
-  AVCodec* decoder = FindHardwareAVCodec(mLib, mCodecID);
-  if (!decoder) {
-    FFMPEG_LOG("  We're missing hardware accelerated decoder");
-    return nullptr;
-  }
-  for (int i = 0;; i++) {
-    const AVCodecHWConfig* config = mLib->avcodec_get_hw_config(decoder, i);
-    if (!config) {
-      break;
-    }
-    if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX &&
-        config->device_type == AV_HWDEVICE_TYPE_VAAPI) {
-      return decoder;
-    }
-  }
-
-  FFMPEG_LOG("  HW Decoder does not support VAAPI device type");
-  return nullptr;
-}
-
 static void VAAPIDisplayReleaseCallback(struct AVHWDeviceContext* hwctx) {
   auto displayHolder = static_cast<VADisplayHolder*>(hwctx->user_opaque);
   displayHolder->Release();
@@ -273,11 +253,6 @@ bool FFmpegVideoDecoder<LIBAV_VER>::CreateVAAPIDeviceContext() {
 }
 
 void FFmpegVideoDecoder<LIBAV_VER>::AdjustHWDecodeLogging() {
-  if (!getenv("MOZ_AV_LOG_LEVEL") &&
-      MOZ_LOG_TEST(sFFmpegVideoLog, LogLevel::Debug)) {
-    mLib->av_log_set_level(AV_LOG_DEBUG);
-  }
-
   if (!getenv("LIBVA_MESSAGING_LEVEL")) {
     if (MOZ_LOG_TEST(sFFmpegVideoLog, LogLevel::Debug)) {
       setenv("LIBVA_MESSAGING_LEVEL", "1", false);
@@ -312,7 +287,8 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitVAAPIDecoder() {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  AVCodec* codec = FindVAAPICodec();
+  AVCodec* codec =
+      FindVideoHardwareAVCodec(mLib, mCodecID, AV_HWDEVICE_TYPE_VAAPI);
   if (!codec) {
     FFMPEG_LOG("  couldn't find ffmpeg VA-API decoder");
     return NS_ERROR_DOM_MEDIA_FATAL_ERR;
@@ -400,19 +376,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitV4L2Decoder() {
   }
 
   // Select the appropriate v4l2 codec
-  AVCodec* codec = nullptr;
-  if (mCodecID == AV_CODEC_ID_H264) {
-    codec = mLib->avcodec_find_decoder_by_name("h264_v4l2m2m");
-  }
-  if (mCodecID == AV_CODEC_ID_VP8) {
-    codec = mLib->avcodec_find_decoder_by_name("vp8_v4l2m2m");
-  }
-  if (mCodecID == AV_CODEC_ID_VP9) {
-    codec = mLib->avcodec_find_decoder_by_name("vp9_v4l2m2m");
-  }
-  if (mCodecID == AV_CODEC_ID_HEVC) {
-    codec = mLib->avcodec_find_decoder_by_name("hevc_v4l2m2m");
-  }
+  AVCodec* codec = FindVideoHardwareAVCodec(mLib, mCodecID);
   if (!codec) {
     FFMPEG_LOG("No appropriate v4l2 codec found");
     return NS_ERROR_DOM_MEDIA_FATAL_ERR;
@@ -565,7 +529,7 @@ bool FFmpegVideoDecoder<LIBAV_VER>::UploadSWDecodeToDMABuf() const {
 FFmpegVideoDecoder<LIBAV_VER>::FFmpegVideoDecoder(
     FFmpegLibWrapper* aLib, const VideoInfo& aConfig,
     KnowsCompositor* aAllocator, ImageContainer* aImageContainer,
-    bool aLowLatency, bool aDisableHardwareDecoding,
+    bool aLowLatency, bool aDisableHardwareDecoding, bool a8BitOutput,
     Maybe<TrackingId> aTrackingId)
     : FFmpegDataDecoder(aLib, GetCodecId(aConfig.mMimeType)),
       mImageAllocator(aAllocator),
@@ -580,7 +544,9 @@ FFmpegVideoDecoder<LIBAV_VER>::FFmpegVideoDecoder(
       mImageContainer(aImageContainer),
       mInfo(aConfig),
       mLowLatency(aLowLatency),
-      mTrackingId(std::move(aTrackingId)) {
+      mTrackingId(std::move(aTrackingId)),
+      // Value may be changed later when codec is known after initialization.
+      m8BitOutput(a8BitOutput) {
   FFMPEG_LOG("FFmpegVideoDecoder::FFmpegVideoDecoder MIME %s Codec ID %d",
              aConfig.mMimeType.get(), mCodecID);
   // Use a new MediaByteBuffer as the object will be modified during
@@ -637,9 +603,17 @@ RefPtr<MediaDataDecoder::InitPromise> FFmpegVideoDecoder<LIBAV_VER>::Init() {
     return InitPromise::CreateAndResolve(TrackInfo::kVideoTrack, __func__);
   }
   MediaResult rv = InitSWDecoder(nullptr);
-  return NS_SUCCEEDED(rv)
-             ? InitPromise::CreateAndResolve(TrackInfo::kVideoTrack, __func__)
-             : InitPromise::CreateAndReject(rv, __func__);
+  if (NS_FAILED(rv)) {
+    return InitPromise::CreateAndReject(rv, __func__);
+  }
+  // Enable 8-bit conversion only for dav1d.
+  m8BitOutput =
+      m8BitOutput && 0 == strncmp(mCodecContext->codec->name, "libdav1d", 8);
+  if (m8BitOutput) {
+    FFMPEG_LOG("Enable 8-bit output for dav1d");
+    m8BitRecycleBin = MakeRefPtr<BufferRecycleBin>();
+  }
+  return InitPromise::CreateAndResolve(TrackInfo::kVideoTrack, __func__);
 }
 
 static gfx::ColorRange GetColorRange(enum AVColorRange& aColorRange) {
@@ -722,7 +696,8 @@ bool FFmpegVideoDecoder<LIBAV_VER>::IsLinuxHDR() const {
     return false;
   }
   return mInfo.mColorPrimaries.value() == gfx::ColorSpace2::BT2020 &&
-         mInfo.mTransferFunction.value() == gfx::TransferFunction::PQ;
+         (mInfo.mTransferFunction.value() == gfx::TransferFunction::PQ ||
+          mInfo.mTransferFunction.value() == gfx::TransferFunction::HLG);
 }
 #  endif
 
@@ -1498,7 +1473,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
              " duration=%" PRId64,
              aPts, mFrame->pkt_dts, aDuration);
 
-  VideoData::YCbCrBuffer b;
+  VideoData::QuantizableBuffer b;
   b.mPlanes[0].mData = mFrame->data[0];
   b.mPlanes[1].mData = mFrame->data[1];
   b.mPlanes[2].mData = mFrame->data[2];
@@ -1621,6 +1596,13 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
   }
 #endif
   if (!v) {
+    if (m8BitOutput && b.mColorDepth != gfx::ColorDepth::COLOR_8) {
+      MediaResult ret = b.To8BitPerChannel(m8BitRecycleBin);
+      if (NS_FAILED(ret.Code())) {
+        FFMPEG_LOG("%s: %s", __func__, ret.Message().get());
+        return ret;
+      }
+    }
     Result<already_AddRefed<VideoData>, MediaResult> r =
         VideoData::CreateAndCopyData(
             mInfo, mImageContainer, aOffset, TimeUnit::FromMicroseconds(aPts),
@@ -2038,13 +2020,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::InitD3D11VADecoder() {
                        RESULT_DETAIL("not supported color depth"));
   }
 
-  // Enable ffmpeg internal logging as well if we need more logging information.
-  if (!getenv("MOZ_AV_LOG_LEVEL") &&
-      MOZ_LOG_TEST(sFFmpegVideoLog, LogLevel::Verbose)) {
-    mLib->av_log_set_level(AV_LOG_DEBUG);
-  }
-
-  AVCodec* codec = FindHardwareAVCodec(mLib, mCodecID);
+  AVCodec* codec = FindVideoHardwareAVCodec(mLib, mCodecID);
   if (!codec) {
     FFMPEG_LOG("  couldn't find d3d11va decoder for %s",
                AVCodecToString(mCodecID));
@@ -2205,6 +2181,29 @@ bool FFmpegVideoDecoder<LIBAV_VER>::CanUseZeroCopyVideoFrame() const {
          mImageAllocator->UsingHardwareWebRender() && mDXVA2Manager &&
          mDXVA2Manager->SupportsZeroCopyNV12Texture() &&
          mNumOfHWTexturesInUse <= EXTRA_HW_FRAMES / 2;
+}
+#endif
+
+#if MOZ_USE_HWDECODE
+/* static */ AVCodec* FFmpegVideoDecoder<LIBAV_VER>::FindVideoHardwareAVCodec(
+    FFmpegLibWrapper* aLib, AVCodecID aCodec, AVHWDeviceType aDeviceType) {
+#  ifdef MOZ_WIDGET_GTK
+  if (aDeviceType == AV_HWDEVICE_TYPE_NONE) {
+    switch (aCodec) {
+      case AV_CODEC_ID_H264:
+        return aLib->avcodec_find_decoder_by_name("h264_v4l2m2m");
+      case AV_CODEC_ID_VP8:
+        return aLib->avcodec_find_decoder_by_name("vp8_v4l2m2m");
+      case AV_CODEC_ID_VP9:
+        return aLib->avcodec_find_decoder_by_name("vp9_v4l2m2m");
+      case AV_CODEC_ID_HEVC:
+        return aLib->avcodec_find_decoder_by_name("hevc_v4l2m2m");
+      default:
+        return nullptr;
+    }
+  }
+#  endif
+  return FindHardwareAVCodec(aLib, aCodec, aDeviceType);
 }
 #endif
 

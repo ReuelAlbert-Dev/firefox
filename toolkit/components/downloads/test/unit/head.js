@@ -265,7 +265,7 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
   }
 
   if (aOptions && aOptions.launcherPath) {
-    Assert.ok(mimeInfo != null);
+    Assert.notEqual(mimeInfo, null);
 
     let localHandlerApp = Cc[
       "@mozilla.org/uriloader/local-handler-app;1"
@@ -276,7 +276,7 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
     mimeInfo.preferredAction = Ci.nsIMIMEInfo.useHelperApp;
   }
   if (aOptions && aOptions.launcherId) {
-    Assert.ok(mimeInfo != null);
+    Assert.notEqual(mimeInfo, null);
 
     let gioHandlerApp = Cc["@mozilla.org/gio-service;1"]
       .getService(Ci.nsIGIOService)
@@ -287,7 +287,7 @@ function promiseStartLegacyDownload(aSourceUrl, aOptions) {
   }
 
   if (aOptions && aOptions.launchWhenSucceeded) {
-    Assert.ok(mimeInfo != null);
+    Assert.notEqual(mimeInfo, null);
 
     mimeInfo.preferredAction = Ci.nsIMIMEInfo.useHelperApp;
   }
@@ -617,7 +617,7 @@ async function promiseVerifyContents(aPath, aExpectedContents) {
         ) {
           // Do not print the entire content string to the test log.
           Assert.equal(contents.length, aExpectedContents.length);
-          Assert.ok(contents == aExpectedContents);
+          Assert.equal(contents, aExpectedContents);
         } else {
           // Print the string if it is short and made of printable characters.
           Assert.equal(contents, aExpectedContents);
@@ -716,7 +716,8 @@ async function promisePartFileReady(aDownload) {
  *           keepPartialData: bool,
  *           keepBlockedData: bool,
  *           useLegacySaver: bool,
- *           verdict: string indicating the detailed reason for the block,
+ *           verdict: nsIApplicationReputationService value indicating the reason for the block,
+ *           expectedError: Downloads.Error value indicating the expected error,
  *        }
  * @return {Promise}
  * @resolves The reputation blocked download.
@@ -726,7 +727,8 @@ async function promiseBlockedDownload({
   keepPartialData,
   keepBlockedData,
   useLegacySaver,
-  verdict = Downloads.Error.BLOCK_VERDICT_UNCOMMON,
+  verdict = Ci.nsIApplicationReputationService.VERDICT_UNCOMMON,
+  expectedError = Downloads.Error.BLOCK_VERDICT_UNCOMMON,
 } = {}) {
   let blockFn = () => ({
     shouldBlockForReputationCheck: () =>
@@ -766,9 +768,9 @@ async function promiseBlockedDownload({
       throw ex;
     }
     Assert.ok(ex.becauseBlockedByReputationCheck);
-    Assert.equal(ex.reputationCheckVerdict, verdict);
+    Assert.equal(ex.reputationCheckVerdict, expectedError);
     Assert.ok(download.error.becauseBlockedByReputationCheck);
-    Assert.equal(download.error.reputationCheckVerdict, verdict);
+    Assert.equal(download.error.reputationCheckVerdict, expectedError);
   }
 
   Assert.ok(download.stopped);
@@ -1138,7 +1140,7 @@ add_setup(function test_common_initialize() {
       shouldBlockForReputationCheck: () =>
         Promise.resolve({
           shouldBlock: false,
-          verdict: "",
+          verdict: Ci.nsIApplicationReputationService.VERDICT_SAFE,
         }),
       confirmLaunchExecutable: () => Promise.resolve(),
       launchFile: () => Promise.resolve(),

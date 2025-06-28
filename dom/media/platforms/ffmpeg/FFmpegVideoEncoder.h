@@ -39,6 +39,7 @@ class FFmpegVideoEncoder<LIBAV_VER> : public FFmpegDataEncoder<LIBAV_VER> {
   virtual ~FFmpegVideoEncoder() = default;
   // Methods only called on mTaskQueue.
   virtual MediaResult InitEncoder() override;
+  MediaResult InitEncoderInternal(bool aHardware);
 #if LIBAVCODEC_VERSION_MAJOR >= 58
   Result<EncodedData, MediaResult> EncodeInputWithModernAPIs(
       RefPtr<const MediaData> aSample) override;
@@ -47,7 +48,6 @@ class FFmpegVideoEncoder<LIBAV_VER> : public FFmpegDataEncoder<LIBAV_VER> {
       AVPacket* aPacket) override;
   Result<already_AddRefed<MediaByteBuffer>, MediaResult> GetExtraData(
       AVPacket* aPacket) override;
-  void ForceEnablingFFmpegDebugLogs();
   struct SVCSettings {
     nsTArray<uint8_t> mTemporalLayerIds;
     // A key-value pair for av_opt_set.

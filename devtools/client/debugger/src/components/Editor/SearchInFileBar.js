@@ -13,7 +13,6 @@ import {
   getIsCurrentThreadPaused,
   getSelectedSourceTextContent,
   getSearchOptions,
-  getSelectedFrame,
 } from "../../selectors/index";
 
 import { searchKeys } from "../../constants";
@@ -60,7 +59,6 @@ class SearchInFileBar extends Component {
       searchInFileEnabled: PropTypes.bool.isRequired,
       selectedSourceTextContent: PropTypes.object,
       selectedSource: PropTypes.object.isRequired,
-      selectedFrame: PropTypes.object.isRequired,
       setActiveSearch: PropTypes.func.isRequired,
       querySearchWorker: PropTypes.func.isRequired,
       selectLocation: PropTypes.func.isRequired,
@@ -80,17 +78,20 @@ class SearchInFileBar extends Component {
   // FIXME: https://bugzilla.mozilla.org/show_bug.cgi?id=1774507
   UNSAFE_componentWillReceiveProps(nextProps) {
     const { query } = this.state;
-
+    // Trigger a search to update the search results ...
     if (
-      query &&
-      this.props.selectedSource &&
-      this.props.searchInFileEnabled &&
-      nextProps.selectedFrame &&
-      // If a new source is selected update the file search results
-      nextProps.selectedFrame.location.source.id !== nextProps.selectedSource.id
+      // if there is a search query and ...
+      (query &&
+        // the file search bar is toggled open or ...
+        ((!this.props.searchInFileEnabled && nextProps.searchInFileEnabled) ||
+          // a new source is selected.
+          this.props.selectedSource.id !== nextProps.selectedSource.id)) ||
+      // the source content changes
+      this.props.selectedSourceTextContent !==
+        nextProps.selectedSourceTextContent
     ) {
-      // Do not scroll to the search location, if we just switched a new source
-      // and debugger is already paused on a selelcted line.
+      // Do not scroll to the search location, if we just switched to a new source
+      // and debugger is already paused on a selected line.
       this.doSearch(query, !nextProps.isPaused);
     }
   }
@@ -190,7 +191,7 @@ class SearchInFileBar extends Component {
     const results = find(ctx, query, true, modifiers, {
       shouldScroll,
     });
-    this.setSearchResults(results, matches);
+    this.setSearchResults(results, matches, shouldScroll);
   };
 
   traverseResults = (e, reverse = false) => {
@@ -215,18 +216,19 @@ class SearchInFileBar extends Component {
     if (modifiers) {
       const findArgs = [ctx, query, true, modifiers];
       const results = reverse ? findPrev(...findArgs) : findNext(...findArgs);
-      this.setSearchResults(results, matches);
+      this.setSearchResults(results, matches, true);
     }
   };
 
   /**
    * Update the state with the results and matches from the search.
-   * The cursor location is also set for CM6.
+   * This will also scroll to result's location in CodeMirror.
+   *
    * @param {Object} results
    * @param {Array} matches
    * @returns
    */
-  setSearchResults(results, matches) {
+  setSearchResults(results, matches, shouldScroll) {
     if (!results) {
       this.setState({
         results: {
@@ -248,7 +250,12 @@ class SearchInFileBar extends Component {
       return false;
     });
 
-    this.setCursorLocation(line, ch, matchContent);
+    // Only change the selected location if we should scroll to it,
+    // otherwise we are most likely updating the search results while being paused
+    // and don't want to change the selected location from the current paused location
+    if (shouldScroll) {
+      this.setCursorLocation(line, ch, matchContent);
+    }
     this.setState({
       results: {
         matches,
@@ -260,11 +267,12 @@ class SearchInFileBar extends Component {
   }
 
   /**
-   * CodeMirror event handler, called whenever the cursor moves
-   * for user-driven or programatic reasons.
+   * Ensure showing the search result in CodeMirror editor,
+   * and setting the cursor at the end of the matched string.
+   *
    * @param {Number} line
    * @param {Number} ch
-   * @param {Number} matchCount
+   * @param {String} matchContent
    */
   setCursorLocation = (line, ch, matchContent) => {
     this.props.selectLocation(
@@ -281,9 +289,10 @@ class SearchInFileBar extends Component {
         // Avoid highlighting the selected line
         highlight: false,
 
-        // This is mostly for displaying the correct location
-        // in the footer, so this should not scroll.
-        scroll: false,
+        // We should ensure showing the search result by scrolling it
+        // into the viewport.
+        // We won't be scrolling when receiving redux updates and we are paused.
+        scroll: true,
       }
     );
   };
@@ -400,7 +409,6 @@ const mapStateToProps = state => {
     selectedSource: getSelectedSource(state),
     isPaused: getIsCurrentThreadPaused(state),
     selectedSourceTextContent: getSelectedSourceTextContent(state),
-    selectedFrame: getSelectedFrame(state),
     modifiers: getSearchOptions(state, "file-search"),
   };
 };

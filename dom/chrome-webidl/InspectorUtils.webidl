@@ -14,7 +14,7 @@
 namespace InspectorUtils {
   // documentOnly tells whether user and UA sheets should get included.
   sequence<StyleSheet> getAllStyleSheets(Document document, optional boolean documentOnly = false);
-  sequence<CSSRule> getMatchingCSSRules(
+  sequence<(CSSRule or InspectorDeclaration)> getMatchingCSSRules(
     Element element,
     optional [LegacyNullToEmptyString] DOMString pseudo = "",
     optional boolean relevantLinkVisited = false,
@@ -112,6 +112,38 @@ namespace InspectorUtils {
     unsigned long line,
     unsigned long column,
     UTF8String newBodyText);
+
+  // Update the amount of vertical space that is clipped or visibly obscured in
+  // the bottom portion of the view. Tells gecko where to put bottom fixed
+  // elements so they are fully visible. aOffset must be offset from the bottom
+  // edge of the ICB and it's negative.
+  // Examples for aOffset:
+  // 0: Toolbar fully visible
+  // -dynamicToolbarMaxHeight: Toolbar fully hidden (e.g. -40 for a 40px toolbar)
+  //
+  // Note: These functions must be called from the parent process.
+  //
+  // This interface may not be the clearest, but we want to match
+  // what has been established by the GeckoView API
+  [ChromeOnly] undefined setVerticalClipping(BrowsingContext? aContext,
+                                             long aOffset);
+  [ChromeOnly] undefined setDynamicToolbarMaxHeight(BrowsingContext? aContext,
+                                             long aHeight);
+};
+
+enum DeclarationOrigin {
+  "user",
+  "user-agent",
+  "pres-hints",
+  "style-attribute",
+  "animations",
+  "transitions",
+  "smil",
+};
+
+dictionary InspectorDeclaration {
+  required CSSStyleDeclaration style;
+  required DeclarationOrigin declarationOrigin;
 };
 
 dictionary SupportsOptions {

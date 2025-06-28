@@ -125,10 +125,14 @@ async function addBreach() {
   await emitSync();
 }
 
-async function openPasswordsSidebar() {
+async function openPasswordsSidebar(aWindow = window) {
   info("Open Passwords sidebar");
-  await SidebarController.show("viewCPMSidebar");
-  const sidebar = document.getElementById("sidebar");
+
+  await aWindow.SidebarController.show("viewCPMSidebar");
+  const sidebar = aWindow.document.getElementById("sidebar");
+  await TestUtils.waitForCondition(
+    () => sidebar.contentDocument.querySelector("megalist-alpha")?.shadowRoot
+  );
   const megalist =
     sidebar.contentDocument.querySelector("megalist-alpha").shadowRoot;
   return megalist;
@@ -153,6 +157,23 @@ async function addLocalOriginLogin() {
     password: "pass4",
     origin: "about:preferences#privacy",
   });
+}
+
+async function ensureNoNotifications(megalist, notificationId) {
+  info(`Ensure no notification with id ${notificationId} is rendered.`);
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  const notifyMsgBars = Array.from(
+    megalist.querySelectorAll("notification-message-bar")
+  );
+  notifyMsgBars.forEach(notifyMsgBar => {
+    info(`Notification: ${notifyMsgBar.notification.id}`);
+  });
+
+  const notification = notifyMsgBars?.find(
+    notifyMsgBar => notifyMsgBar.notification.id === notificationId
+  );
+  ok(!notification, `Notification with id ${notificationId} should not exist.`);
 }
 
 function waitForNotification(megalist, notificationId) {

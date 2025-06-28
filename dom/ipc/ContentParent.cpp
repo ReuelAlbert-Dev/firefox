@@ -25,7 +25,6 @@
 #include "GMPServiceParent.h"
 #include "HandlerServiceParent.h"
 #include "IHistory.h"
-#include <cstdint>
 #include <map>
 #include <utility>
 
@@ -61,6 +60,7 @@
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/NullPrincipal.h"
+#include "mozilla/PageloadEvent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
@@ -424,7 +424,7 @@ namespace dom {
 
 LazyLogModule gProcessLog("Process");
 
-MOZ_RUNINIT static std::map<RemoteDecodeIn, media::MediaCodecsSupported>
+MOZ_RUNINIT static std::map<RemoteMediaIn, media::MediaCodecsSupported>
     sCodecsSupported;
 
 /* static */
@@ -951,7 +951,6 @@ UniqueContentParentKeepAlive ContentParent::GetUsedBrowserProcess(
     }
     preallocated->mRemoteTypeIsolationPrincipal =
         CreateRemoteTypeIsolationPrincipal(aRemoteType);
-    preallocated->mActivateTS = TimeStamp::Now();
     preallocated->AddToPool(aContentParents);
 
     // rare, but will happen
@@ -1126,7 +1125,6 @@ RefPtr<ContentParent::LaunchPromise> ContentParent::WaitForLaunchAsync(
                   ("WaitForLaunchAsync: async, now launched, process id=%p, "
                    "childID=%" PRIu64,
                    self.get(), (uint64_t)self->ChildID()));
-          self->mActivateTS = TimeStamp::Now();
           return LaunchPromise::CreateAndResolve(std::move(self), __func__);
         }
 
@@ -1154,7 +1152,6 @@ bool ContentParent::WaitForLaunchSync(ProcessPriority aPriority) {
   bool launchSuccess = mSubprocess->WaitForProcessHandle();
   if (launchSuccess &&
       LaunchSubprocessResolve(/* aIsSync = */ true, aPriority)) {
-    mActivateTS = TimeStamp::Now();
     return true;
   }
   // In case of failure.
@@ -1519,7 +1516,7 @@ void ContentParent::BroadcastThemeUpdate(widget::ThemeChangeKind aKind) {
 
 /*static */
 void ContentParent::BroadcastMediaCodecsSupportedUpdate(
-    RemoteDecodeIn aLocation, const media::MediaCodecsSupported& aSupported) {
+    RemoteMediaIn aLocation, const media::MediaCodecsSupported& aSupported) {
   // Update processes and print the support info from the given location.
   sCodecsSupported[aLocation] = aSupported;
   for (auto* cp : AllProcesses(eAll)) {
@@ -1528,7 +1525,7 @@ void ContentParent::BroadcastMediaCodecsSupportedUpdate(
   nsCString supportString;
   media::MCSInfo::GetMediaCodecsSupportedString(supportString, aSupported);
   LOGPDM("Broadcast support from '%s', support=%s",
-         RemoteDecodeInToStr(aLocation), supportString.get());
+         RemoteMediaInToStr(aLocation), supportString.get());
 
   // Merge incoming support with existing support list from other locations
   media::MCSInfo::AddSupport(aSupported);
@@ -1883,13 +1880,6 @@ void ContentParent::ActorDestroy(ActorDestroyReason why) {
 #ifdef FUZZING_SNAPSHOT
   MOZ_FUZZING_IPC_DROP_PEER("ContentParent::ActorDestroy");
 #endif
-
-  // Gather process lifetime telemetry.
-  if (StringBeginsWith(mRemoteType, WEB_REMOTE_TYPE) ||
-      mRemoteType == FILE_REMOTE_TYPE || mRemoteType == EXTENSION_REMOTE_TYPE) {
-    TimeDuration runtime = TimeStamp::Now() - mActivateTS;
-    glean::process::lifetime.AccumulateRawDuration(runtime);
-  }
 
   if (mSendShutdownTimer) {
     mSendShutdownTimer->Cancel();
@@ -2582,7 +2572,6 @@ ContentParent::ContentParent(const nsACString& aRemoteType)
                                             IsFileContent(aRemoteType))),
       mLaunchTS(TimeStamp::Now()),
       mLaunchYieldTS(mLaunchTS),
-      mActivateTS(mLaunchTS),
       mIsAPreallocBlocker(false),
       mRemoteType(aRemoteType),
       mChildID(mSubprocess->GetChildID()),
@@ -2923,7 +2912,7 @@ bool ContentParent::InitInternal(ProcessPriority aInitialPriority) {
   Endpoint<PCompositorManagerChild> compositor;
   Endpoint<PImageBridgeChild> imageBridge;
   Endpoint<PVRManagerChild> vrBridge;
-  Endpoint<PRemoteDecoderManagerChild> videoManager;
+  Endpoint<PRemoteMediaManagerChild> videoManager;
   AutoTArray<uint32_t, 3> namespaces;
 
   if (!gpm->CreateContentBridges(OtherEndpointProcInfo(), &compositor,
@@ -3109,7 +3098,7 @@ void ContentParent::OnCompositorUnexpectedShutdown() {
   Endpoint<PCompositorManagerChild> compositor;
   Endpoint<PImageBridgeChild> imageBridge;
   Endpoint<PVRManagerChild> vrBridge;
-  Endpoint<PRemoteDecoderManagerChild> videoManager;
+  Endpoint<PRemoteMediaManagerChild> videoManager;
   AutoTArray<uint32_t, 3> namespaces;
 
   if (!gpm->CreateContentBridges(OtherEndpointProcInfo(), &compositor,
@@ -6270,9 +6259,10 @@ static bool WebdriverRunning() {
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvRecordPageLoadEvent(
-    mozilla::glean::perf::PageLoadExtra&& aPageLoadEventExtra) {
+    mozilla::performance::pageload_event::PageloadEventData&&
+        aPageloadEventData) {
   // Check whether a webdriver is running.
-  aPageLoadEventExtra.usingWebdriver = mozilla::Some(WebdriverRunning());
+  aPageloadEventData.set_usingWebdriver(WebdriverRunning());
 
 #if defined(XP_WIN)
   // The "hasSSD" property is only set on Windows during the first
@@ -6286,19 +6276,41 @@ mozilla::ipc::IPCResult ContentParent::RecvRecordPageLoadEvent(
   bool hasSSD;
   rv = infoService->GetPropertyAsBool(u"hasSSD"_ns, &hasSSD);
   if (NS_SUCCEEDED(rv)) {
-    aPageLoadEventExtra.hasSsd = Some(hasSSD);
+    aPageloadEventData.set_hasSsd(hasSSD);
   }
 #endif
-  mozilla::glean::perf::page_load.Record(mozilla::Some(aPageLoadEventExtra));
 
-  // Send the PageLoadPing after every 30 page loads, or on startup.
-  if (++sPageLoadEventCounter >= 30) {
-    Unused << NS_WARN_IF(NS_FAILED(NS_DispatchToMainThreadQueue(
+  // If the etld information exists, then we need to send it using a special
+  // page load event ping that is sent via ohttp and stripped of any information
+  // that can be used to fingerprint the client.  Otherwise, use the regular
+  // pageload event ping.
+  if (aPageloadEventData.HasDomain()) {
+    // If the event is a page_load_domain event, then immediately send it.
+    mozilla::glean::perf::PageLoadDomainExtra extra =
+        aPageloadEventData.ToPageLoadDomainExtra();
+    mozilla::glean::perf::page_load_domain.Record(mozilla::Some(extra));
+
+    // The etld events must be sent by themselves for privacy preserving
+    // reasons.
+    NS_SUCCEEDED(NS_DispatchToMainThreadQueue(
         NS_NewRunnableFunction(
-            "PageLoadPingIdleTask",
-            [] { mozilla::glean_pings::Pageload.Submit("threshold"_ns); }),
-        EventQueuePriority::Idle)));
-    sPageLoadEventCounter = 0;
+            "PageLoadDomainPingIdleTask",
+            [] { mozilla::glean_pings::PageloadDomain.Submit("pageload"_ns); }),
+        EventQueuePriority::Idle));
+  } else {
+    mozilla::glean::perf::PageLoadExtra extra =
+        aPageloadEventData.ToPageLoadExtra();
+    mozilla::glean::perf::page_load.Record(mozilla::Some(extra));
+
+    // Send the PageLoadPing after every 10 page loads, or on startup.
+    if (++sPageLoadEventCounter >= 10) {
+      NS_SUCCEEDED(NS_DispatchToMainThreadQueue(
+          NS_NewRunnableFunction(
+              "PageLoadPingIdleTask",
+              [] { mozilla::glean_pings::Pageload.Submit("threshold"_ns); }),
+          EventQueuePriority::Idle));
+      sPageLoadEventCounter = 0;
+    }
   }
   return IPC_OK();
 }
@@ -7524,7 +7536,7 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyOnHistoryReload(
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
     const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
-    const nsID& aChangeID, const uint32_t& aLoadType, const bool& aPersist,
+    const nsID& aChangeID, const uint32_t& aLoadType,
     const bool& aCloneEntryChildren, const bool& aChannelExpired,
     const uint32_t& aCacheKey, nsIPrincipal* aPartitionedPrincipal) {
   if (!ValidatePrincipal(aPartitionedPrincipal,
@@ -7539,7 +7551,7 @@ mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
       return IPC_FAIL(
           this, "Could not get canonical. aContext.get_canonical() fails.");
     }
-    canonical->SessionHistoryCommit(aLoadID, aChangeID, aLoadType, aPersist,
+    canonical->SessionHistoryCommit(aLoadID, aChangeID, aLoadType,
                                     aCloneEntryChildren, aChannelExpired,
                                     aCacheKey, aPartitionedPrincipal);
   }
@@ -7694,13 +7706,13 @@ ContentParent::RecvGetLoadingSessionHistoryInfoFromParent(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvGetContiguousSessionHistoryInfos(
-    const MaybeDiscarded<BrowsingContext>& aContext, SessionHistoryInfo&& aInfo,
+    const MaybeDiscarded<BrowsingContext>& aContext,
     GetContiguousSessionHistoryInfosResolver&& aResolver) {
   if (aContext.IsNullOrDiscarded()) {
     return IPC_OK();
   }
 
-  aResolver(aContext.get_canonical()->GetContiguousSessionHistoryInfos(aInfo));
+  aResolver(aContext.get_canonical()->GetContiguousSessionHistoryInfos());
 
   return IPC_OK();
 }

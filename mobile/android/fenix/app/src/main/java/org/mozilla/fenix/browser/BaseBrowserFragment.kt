@@ -153,6 +153,7 @@ import org.mozilla.fenix.ReaderViewBinding
 import org.mozilla.fenix.bindings.FindInPageBinding
 import org.mozilla.fenix.biometricauthentication.AuthenticationStatus
 import org.mozilla.fenix.biometricauthentication.BiometricAuthenticationManager
+import org.mozilla.fenix.biometricauthentication.NavigationOrigin
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
 import org.mozilla.fenix.browser.readermode.DefaultReaderModeController
 import org.mozilla.fenix.browser.store.BrowserScreenMiddleware
@@ -191,8 +192,7 @@ import org.mozilla.fenix.crashes.CrashContentView
 import org.mozilla.fenix.customtabs.ExternalAppBrowserActivity
 import org.mozilla.fenix.databinding.FragmentBrowserBinding
 import org.mozilla.fenix.downloads.DownloadService
-import org.mozilla.fenix.downloads.dialog.StartDownloadDialog
-import org.mozilla.fenix.downloads.dialog.ThirdPartyDownloadDialog
+import org.mozilla.fenix.downloads.dialog.createDownloadAppDialog
 import org.mozilla.fenix.ext.accessibilityManager
 import org.mozilla.fenix.ext.breadcrumb
 import org.mozilla.fenix.ext.components
@@ -339,8 +339,7 @@ abstract class BaseBrowserFragment :
     protected lateinit var browserScreenStore: BrowserScreenStore
     private val homeViewModel: HomeScreenViewModel by activityViewModels()
 
-    private var currentStartDownloadDialog: StartDownloadDialog? = null
-    private var firstPartyDownloadDialog: AlertDialog? = null
+    private var downloadDialog: AlertDialog? = null
 
     private var lastSavedGeneratedPassword: String? = null
 
@@ -437,7 +436,9 @@ abstract class BaseBrowserFragment :
             scope = viewLifecycleOwner.lifecycleScope,
             appStore = requireComponents.appStore,
             onPrivateModeLocked = {
-                findNavController().navigate(NavGraphDirections.actionGlobalUnlockPrivateTabsFragment())
+                findNavController().navigate(
+                    NavGraphDirections.actionGlobalUnlockPrivateTabsFragment(NavigationOrigin.TAB),
+                )
             },
         )
 
@@ -481,8 +482,6 @@ abstract class BaseBrowserFragment :
         val context = requireContext()
         val store = context.components.core.store
         val activity = requireActivity() as HomeActivity
-
-        context.components.appStore.dispatch(AppAction.ModeChange(activity.browsingModeManager.mode))
 
         browserAnimator = BrowserAnimator(
             fragment = WeakReference(this),
@@ -729,21 +728,26 @@ abstract class BaseBrowserFragment :
             },
             customFirstPartyDownloadDialog = { filename, contentSize, positiveAction, negativeAction ->
                 run {
-                    if (firstPartyDownloadDialog == null && currentStartDownloadDialog == null) {
+                    if (downloadDialog == null) {
                         requireContext().components.analytics.crashReporter.recordCrashBreadcrumb(
                             Breadcrumb("FirstPartyDownloadDialog created"),
                         )
 
-                        val contentSizeInBytes =
-                            requireComponents.core.fileSizeFormatter.formatSizeInBytes(contentSize.value)
-
-                        firstPartyDownloadDialog = AlertDialog.Builder(requireContext())
-                            .setTitle(
-                                getString(
-                                    R.string.mozac_feature_downloads_dialog_title_3,
-                                    contentSizeInBytes,
-                                ),
+                        val title = if (contentSize.value > 0L) {
+                            val contentSizeInBytes =
+                                requireComponents.core.fileSizeFormatter.formatSizeInBytes(
+                                    contentSize.value,
+                                )
+                            getString(
+                                R.string.mozac_feature_downloads_dialog_title_3,
+                                contentSizeInBytes,
                             )
+                        } else {
+                            getString(R.string.mozac_feature_downloads_dialog_title_with_unknown_size)
+                        }
+
+                        downloadDialog = AlertDialog.Builder(requireContext())
+                            .setTitle(title)
                             .setMessage(filename.value)
                             .setPositiveButton(R.string.mozac_feature_downloads_dialog_download) { dialog, _ ->
                                 positiveAction.value.invoke()
@@ -753,7 +757,7 @@ abstract class BaseBrowserFragment :
                                 negativeAction.value.invoke()
                                 dialog.dismiss()
                             }.setOnDismissListener {
-                                firstPartyDownloadDialog = null
+                                downloadDialog = null
                                 context.components.analytics.crashReporter.recordCrashBreadcrumb(
                                     Breadcrumb("FirstPartyDownloadDialog onDismiss"),
                                 )
@@ -763,23 +767,22 @@ abstract class BaseBrowserFragment :
             },
             customThirdPartyDownloadDialog = { downloaderApps, onAppSelected, negativeActionCallback ->
                 run {
-                    if (firstPartyDownloadDialog == null && currentStartDownloadDialog == null) {
+                    if (downloadDialog == null) {
                         context.components.analytics.crashReporter.recordCrashBreadcrumb(
-                            Breadcrumb("ThirdPartyDownloadDialog created"),
+                            Breadcrumb("DownloaderAppDialog created"),
                         )
-                        ThirdPartyDownloadDialog(
-                            activity = requireActivity(),
+                        downloadDialog = createDownloadAppDialog(
+                            context = context,
                             downloaderApps = downloaderApps.value,
                             onAppSelected = onAppSelected.value,
-                            negativeButtonAction = negativeActionCallback.value,
-                        ).onDismiss {
-                            context.components.analytics.crashReporter.recordCrashBreadcrumb(
-                                Breadcrumb("ThirdPartyDownloadDialog onDismiss"),
-                            )
-                            currentStartDownloadDialog = null
-                        }.show(binding.startDownloadDialogContainer).also {
-                            currentStartDownloadDialog = it
-                        }
+                            onDismiss = {
+                                downloadDialog = null
+                                context.components.analytics.crashReporter.recordCrashBreadcrumb(
+                                    Breadcrumb("DownloaderAppDialog onDismiss"),
+                                )
+                            },
+                        )
+                        downloadDialog?.show()
                     }
                 }
             },
@@ -1291,13 +1294,14 @@ abstract class BaseBrowserFragment :
         }
 
         return BrowserToolbarComposable(
-            context = activity,
+            activity = activity,
             lifecycleOwner = this,
             container = binding.browserLayout,
             navController = findNavController(),
             appStore = activity.components.appStore,
             browserScreenStore = browserScreenStore,
             browserStore = store,
+            components = activity.components,
             browsingModeManager = activity.browsingModeManager,
             browserAnimator = browserAnimator,
             thumbnailsFeature = thumbnailsFeature.get(),
@@ -1349,12 +1353,6 @@ abstract class BaseBrowserFragment :
                 onCloseTabClick = { isPrivate ->
                     showUndoSnackbar(activity.tabClosedUndoMessage(isPrivate))
                     TabStripMetrics.closeTab.record()
-                },
-                onPrivateModeToggleClick = { mode ->
-                    activity.browsingModeManager.mode = mode
-                    findNavController().navigate(
-                        BrowserFragmentDirections.actionGlobalHome(),
-                    )
                 },
                 onTabCounterClick = { onTabCounterClicked(activity.browsingModeManager.mode) },
             )
@@ -1731,8 +1729,7 @@ abstract class BaseBrowserFragment :
     }
 
     private fun dismissDownloadDialogs() {
-        currentStartDownloadDialog?.dismiss()
-        firstPartyDownloadDialog?.dismiss()
+        downloadDialog?.dismiss()
     }
 
     @VisibleForTesting
@@ -1820,14 +1817,10 @@ abstract class BaseBrowserFragment :
     @CallSuper
     override fun onBackPressed(): Boolean {
         return findInPageIntegration.onBackPressed() ||
-            fullScreenFeature.onBackPressed() ||
-            promptsFeature.onBackPressed() ||
-            currentStartDownloadDialog?.let {
-                it.dismiss()
-                true
-            } ?: false ||
-            sessionFeature.onBackPressed() ||
-            lastTabFeature.onBackPressed()
+                fullScreenFeature.onBackPressed() ||
+                promptsFeature.onBackPressed() ||
+                sessionFeature.onBackPressed() ||
+                lastTabFeature.onBackPressed()
     }
 
     @CallSuper

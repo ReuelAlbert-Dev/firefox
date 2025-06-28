@@ -4980,7 +4980,8 @@ bool CacheIRCompiler::emitLoadArgumentsObjectArgExistsResult(
 }
 
 bool CacheIRCompiler::emitLoadDenseElementResult(ObjOperandId objId,
-                                                 Int32OperandId indexId) {
+                                                 Int32OperandId indexId,
+                                                 bool expectPackedElements) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register obj = allocator.useRegister(masm, objId);
@@ -5000,9 +5001,19 @@ bool CacheIRCompiler::emitLoadDenseElementResult(ObjOperandId objId,
   Address initLength(scratch1, ObjectElements::offsetOfInitializedLength());
   masm.spectreBoundsCheck32(index, initLength, scratch2, failure->label());
 
-  // Hole check.
+  if (expectPackedElements) {
+    Address flags(scratch1, ObjectElements::offsetOfFlags());
+    masm.branchTest32(Assembler::NonZero, flags,
+                      Imm32(ObjectElements::NON_PACKED), failure->label());
+  }
+
   BaseObjectElementIndex element(scratch1, index);
-  masm.branchTestMagic(Assembler::Equal, element, failure->label());
+
+  // If we did not check the packed flag, we must check for a hole value.
+  if (!expectPackedElements) {
+    masm.branchTestMagic(Assembler::Equal, element, failure->label());
+  }
+
   masm.loadTypedOrValue(element, output);
   return true;
 }
@@ -6872,7 +6883,8 @@ static void EmitStoreDenseElement(MacroAssembler& masm,
 
 bool CacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
                                             Int32OperandId indexId,
-                                            ValOperandId rhsId) {
+                                            ValOperandId rhsId,
+                                            bool expectPackedElements) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
 
   Register obj = allocator.useRegister(masm, objId);
@@ -6895,9 +6907,15 @@ bool CacheIRCompiler::emitStoreDenseElement(ObjOperandId objId,
   Address initLength(scratch, ObjectElements::offsetOfInitializedLength());
   masm.spectreBoundsCheck32(index, initLength, spectreTemp, failure->label());
 
-  // Hole check.
   BaseObjectElementIndex element(scratch, index);
-  masm.branchTestMagic(Assembler::Equal, element, failure->label());
+  if (expectPackedElements) {
+    Address flags(scratch, ObjectElements::offsetOfFlags());
+    masm.branchTest32(Assembler::NonZero, flags,
+                      Imm32(ObjectElements::NON_PACKED), failure->label());
+  } else {
+    // Hole check.
+    masm.branchTestMagic(Assembler::Equal, element, failure->label());
+  }
 
   // Perform the store.
   EmitPreBarrier(masm, element, MIRType::Value);
@@ -9312,6 +9330,36 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
   return true;
 }
 
+bool CacheIRCompiler::emitLoadGetterSetterFunction(ValOperandId getterSetterId,
+                                                   bool isGetter,
+                                                   bool needsClassGuard,
+                                                   ObjOperandId resultId) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  ValueOperand getterSetter = allocator.useValueRegister(masm, getterSetterId);
+  Register output = allocator.defineRegister(masm, resultId);
+  AutoScratchRegister scratch(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.unboxNonDouble(getterSetter, output, JSVAL_TYPE_PRIVATE_GCTHING);
+
+  size_t offset = isGetter ? GetterSetter::offsetOfGetter()
+                           : GetterSetter::offsetOfSetter();
+  masm.loadPtr(Address(output, offset), output);
+
+  masm.branchTestPtr(Assembler::Zero, output, output, failure->label());
+  if (needsClassGuard) {
+    masm.branchTestObjIsFunction(Assembler::NotEqual, output, scratch, output,
+                                 failure->label());
+  }
+
+  return true;
+}
+
 bool CacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
                                                uint32_t idOffset,
                                                uint32_t getterSetterOffset) {
@@ -11244,7 +11292,7 @@ void CacheIRCompiler::callVMInternal(MacroAssembler& masm, VMFunctionId id) {
     TrampolinePtr code = cx_->runtime()->jitRuntime()->getVMWrapper(id);
     const VMFunctionData& fun = GetVMFunction(id);
     uint32_t frameSize = fun.explicitStackSlots() * sizeof(void*);
-    masm.PushFrameDescriptor(FrameType::IonICCall);
+    masm.Push(FrameDescriptor(FrameType::IonICCall));
     masm.callJit(code);
 
     // Pop rest of the exit frame and the arguments left on the stack.

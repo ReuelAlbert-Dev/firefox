@@ -85,7 +85,7 @@ internal fun MozillaAccountMenuButton(
                     )
 
                     Text(
-                        text = stringResource(id = R.string.browser_menu_sign_in_caption),
+                        text = stringResource(id = R.string.browser_menu_sign_in_caption_3),
                         color = FirefoxTheme.colors.textSecondary,
                         maxLines = 2,
                         style = FirefoxTheme.typography.caption.merge(
@@ -154,7 +154,7 @@ private fun FallbackAvatarIcon() {
                 shape = ICON_SHAPE,
             )
             .padding(all = 4.dp),
-        tint = FirefoxTheme.colors.iconSecondary,
+        tint = FirefoxTheme.colors.iconPrimary,
     )
 }
 

@@ -2899,21 +2899,6 @@ static void SetUseCounterCallback(JSObject* obj, JSUseCounter counter) {
     case JSUseCounter::IC_STUB_OOM:
       SetUseCounter(obj, eUseCounter_custom_JS_ic_stub_oom);
       return;
-    case JSUseCounter::ERRORSTACK_GETTER:
-      SetUseCounter(obj, eUseCounter_custom_JS_errorstack_getter);
-      return;
-    case JSUseCounter::ERRORSTACK_GETTER_NO_ERRORDATA:
-      SetUseCounter(obj, eUseCounter_custom_JS_errorstack_getter_no_errordata);
-      return;
-    case JSUseCounter::ERRORSTACK_SETTER:
-      SetUseCounter(obj, eUseCounter_custom_JS_errorstack_setter);
-      return;
-    case JSUseCounter::ERRORSTACK_SETTER_NONSTRING:
-      SetUseCounter(obj, eUseCounter_custom_JS_errorstack_setter_nonstring);
-      return;
-    case JSUseCounter::ERRORSTACK_SETTER_NO_ERRORDATA:
-      SetUseCounter(obj, eUseCounter_custom_JS_errorstack_setter_no_errordata);
-      return;
     case JSUseCounter::DATEPARSE:
       SetUseCounter(obj, eUseCounter_custom_JS_dateparse);
       return;
@@ -2923,6 +2908,16 @@ static void SetUseCounterCallback(JSObject* obj, JSUseCounter counter) {
     case JSUseCounter::REGEXP_SYMBOL_PROTOCOL_ON_PRIMITIVE:
       SetUseCounter(obj,
                     eUseCounter_custom_JS_regexp_symbol_protocol_on_primitive);
+      return;
+    case JSUseCounter::ERROR_CAPTURESTACKTRACE:
+      SetUseCounter(obj, eUseCounter_custom_JS_error_capturestacktrace);
+      return;
+    case JSUseCounter::ERROR_CAPTURESTACKTRACE_CTOR:
+      SetUseCounter(obj, eUseCounter_custom_JS_error_capturestacktrace_ctor);
+      return;
+    case JSUseCounter::ERROR_CAPTURESTACKTRACE_UNCALLABLE_CTOR:
+      SetUseCounter(
+          obj, eUseCounter_custom_JS_error_capturestacktrace_uncallable_ctor);
       return;
     case JSUseCounter::COUNT:
       break;

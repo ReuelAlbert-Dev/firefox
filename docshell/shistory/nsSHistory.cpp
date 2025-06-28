@@ -621,50 +621,25 @@ void nsSHistory::WalkContiguousEntries(
 void nsSHistory::WalkContiguousEntriesInOrder(
     nsISHEntry* aEntry, const std::function<void(nsISHEntry*)>& aCallback) {
   MOZ_ASSERT(aEntry);
-
-  nsCOMPtr<nsISHistory> shistory = aEntry->GetShistory();
-  if (!shistory) {
-    return;
-  }
-
-  int32_t index = shistory->GetIndexOfEntry(aEntry);
-  int32_t count = shistory->GetCount();
+  MOZ_ASSERT(SessionHistoryInParent());
 
   nsCOMPtr<nsIURI> targetURI = aEntry->GetURI();
 
   // Walk backward to find the entries that have the same origin as the
   // input entry.
-  int32_t lowerBound = index;
-  for (int32_t i = index - 1; i >= 0; i--) {
-    RefPtr<nsISHEntry> entry;
-    shistory->GetEntryAtIndex(i, getter_AddRefs(entry));
-    if (!entry) {
-      continue;
-    }
-    nsCOMPtr<nsIURI> uri = entry->GetURI();
+  nsCOMPtr<SessionHistoryEntry> entry = do_QueryInterface(aEntry);
+  MOZ_ASSERT(entry);
+  while (nsCOMPtr previousEntry = entry->getPrevious()) {
+    nsCOMPtr<nsIURI> uri = previousEntry->GetURI();
     if (NS_FAILED(nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
             targetURI, uri, false, false))) {
       break;
     }
-    lowerBound = i;
-  }
-  for (int32_t i = lowerBound; i < index; i++) {
-    RefPtr<nsISHEntry> entry;
-    shistory->GetEntryAtIndex(i, getter_AddRefs(entry));
-    MOZ_ASSERT(entry);
-    aCallback(entry);
+    entry = previousEntry;
   }
 
-  // Then, call the callback on the input entry.
-  aCallback(aEntry);
-
-  // Then, Walk forward.
-  for (int32_t i = index + 1; i < count; i++) {
-    RefPtr<nsISHEntry> entry;
-    shistory->GetEntryAtIndex(i, getter_AddRefs(entry));
-    if (!entry) {
-      continue;
-    }
+  aCallback(entry);
+  while ((entry = entry->getNext())) {
     nsCOMPtr<nsIURI> uri = entry->GetURI();
     if (NS_FAILED(nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
             targetURI, uri, false, false))) {
@@ -675,9 +650,8 @@ void nsSHistory::WalkContiguousEntriesInOrder(
 }
 
 NS_IMETHODIMP
-nsSHistory::AddChildSHEntryHelper(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
-                                  BrowsingContext* aRootBC,
-                                  bool aCloneChildren) {
+nsSHistory::AddNestedSHEntry(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry,
+                             BrowsingContext* aRootBC, bool aCloneChildren) {
   MOZ_ASSERT(aRootBC->IsTop());
 
   /* You are currently in the rootDocShell.
@@ -698,12 +672,17 @@ nsSHistory::AddChildSHEntryHelper(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
   NS_ENSURE_TRUE(currentHE, NS_ERROR_FAILURE);
 
   nsresult rv = NS_OK;
-  uint32_t cloneID = aCloneRef->GetID();
+  uint32_t cloneID = aOldEntry->GetID();
   rv = nsSHistory::CloneAndReplace(currentHE, aRootBC, cloneID, aNewEntry,
                                    aCloneChildren, getter_AddRefs(child));
 
   if (NS_SUCCEEDED(rv)) {
-    rv = AddEntry(child, true);
+    if (aOldEntry->IsTransient()) {
+      rv = ReplaceEntry(mIndex, child);
+    } else {
+      rv = AddEntry(child);
+    }
+
     if (NS_SUCCEEDED(rv)) {
       child->SetDocshellID(aRootBC->GetHistoryID());
     }
@@ -788,7 +767,6 @@ NS_IMETHODIMP
 nsSHistory::AddToRootSessionHistory(bool aCloneChildren, nsISHEntry* aOSHE,
                                     BrowsingContext* aRootBC,
                                     nsISHEntry* aEntry, uint32_t aLoadType,
-                                    bool aShouldPersist,
                                     Maybe<int32_t>* aPreviousEntryIndex,
                                     Maybe<int32_t>* aLoadedEntryIndex) {
   MOZ_ASSERT(aRootBC->IsTop());
@@ -825,7 +803,7 @@ nsSHistory::AddToRootSessionHistory(bool aCloneChildren, nsISHEntry* aOSHE,
   if (addToSHistory) {
     // Add to session history
     *aPreviousEntryIndex = Some(mIndex);
-    rv = AddEntry(aEntry, aShouldPersist);
+    rv = AddEntry(aEntry);
     *aLoadedEntryIndex = Some(mIndex);
     MOZ_LOG(gPageCacheLog, LogLevel::Verbose,
             ("Previous index: %d, Loaded index: %d",
@@ -841,7 +819,7 @@ nsSHistory::AddToRootSessionHistory(bool aCloneChildren, nsISHEntry* aOSHE,
  * increment the index to point to the new entry
  */
 NS_IMETHODIMP
-nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
+nsSHistory::AddEntry(nsISHEntry* aSHEntry) {
   NS_ENSURE_ARG(aSHEntry);
 
   nsCOMPtr<nsISHistory> shistoryOfEntry = aSHEntry->GetShistory();
@@ -868,9 +846,8 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
       return NS_ERROR_FAILURE;
     }
 
-    if (mEntries[mIndex] && !mEntries[mIndex]->GetPersist()) {
+    if (mEntries[mIndex] && mEntries[mIndex]->IsTransient()) {
       NotifyListeners(mListeners, [](auto l) { l->OnHistoryReplaceEntry(); });
-      aSHEntry->SetPersist(aPersist);
       mEntries[mIndex] = aSHEntry;
       return NS_OK;
     }
@@ -890,7 +867,6 @@ nsSHistory::AddEntry(nsISHEntry* aSHEntry, bool aPersist) {
   // Remove all entries after the current one, add the new one, and set the
   // new one as the current one.
   MOZ_ASSERT(mIndex >= -1);
-  aSHEntry->SetPersist(aPersist);
   mEntries.TruncateLength(mIndex + 1);
   mEntries.AppendElement(aSHEntry);
   mIndex++;
@@ -1019,6 +995,9 @@ static void LogEntry(nsISHEntry* aEntry, int32_t aIndex, int32_t aTotal,
   MOZ_LOG(gSHLog, LogLevel::Debug,
           (" %s%s  Name = %s\n", prefix.get(), childCount > 0 ? "|" : " ",
            NS_LossyConvertUTF16toASCII(name).get()));
+  MOZ_LOG(gSHLog, LogLevel::Debug,
+          (" %s%s  Transient = %s\n", prefix.get(), childCount > 0 ? "|" : " ",
+           aEntry->IsTransient() ? "true" : "false"));
   MOZ_LOG(
       gSHLog, LogLevel::Debug,
       (" %s%s  Is in BFCache = %s\n", prefix.get(), childCount > 0 ? "|" : " ",
@@ -1194,7 +1173,6 @@ nsSHistory::ReplaceEntry(int32_t aIndex, nsISHEntry* aReplaceEntry) {
 
   NotifyListeners(mListeners, [](auto l) { l->OnHistoryReplaceEntry(); });
 
-  aReplaceEntry->SetPersist(true);
   mEntries[aIndex] = aReplaceEntry;
 
   return NS_OK;

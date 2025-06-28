@@ -25,6 +25,7 @@ import org.mozilla.fenix.home.recenttabs.controller.RecentTabController
 import org.mozilla.fenix.home.recentvisits.RecentlyVisitedItem.RecentHistoryGroup
 import org.mozilla.fenix.home.recentvisits.RecentlyVisitedItem.RecentHistoryHighlight
 import org.mozilla.fenix.home.recentvisits.controller.RecentVisitsController
+import org.mozilla.fenix.home.search.HomeSearchController
 import org.mozilla.fenix.home.toolbar.ToolbarController
 import org.mozilla.fenix.search.toolbar.SearchSelectorController
 import org.mozilla.fenix.search.toolbar.SearchSelectorMenu
@@ -121,13 +122,6 @@ interface CollectionInteractor {
      * User has removed the collections placeholder from home.
      */
     fun onRemoveCollectionsPlaceholder()
-}
-
-interface CustomizeHomeIteractor {
-    /**
-     * Opens the customize home settings page.
-     */
-    fun openCustomizeHomePage()
 }
 
 /**
@@ -251,6 +245,7 @@ class SessionControlInteractor(
     private val privateBrowsingController: PrivateBrowsingController,
     private val searchSelectorController: SearchSelectorController,
     private val toolbarController: ToolbarController,
+    private val homeSearchController: HomeSearchController,
 ) : HomepageInteractor {
 
     override fun onCollectionAddTabTapped(collection: TabCollection) {
@@ -353,6 +348,10 @@ class SessionControlInteractor(
         toolbarController.handleNavigateSearch()
     }
 
+    override fun onHomeContentFocusedWhileSearchIsActive() {
+        homeSearchController.handleHomeContentFocusedWhileSearchIsActive()
+    }
+
     override fun onRemoveCollectionsPlaceholder() {
         controller.handleRemoveCollectionsPlaceholder()
     }
@@ -413,10 +412,6 @@ class SessionControlInteractor(
 
     override fun onRemoveRecentHistoryHighlight(highlightUrl: String) {
         recentVisitsController.handleRemoveRecentHistoryHighlight(highlightUrl)
-    }
-
-    override fun openCustomizeHomePage() {
-        controller.handleCustomizeHomeTapped()
     }
 
     override fun onStoryShown(storyShown: PocketStory, storyPosition: Triple<Int, Int, Int>) {

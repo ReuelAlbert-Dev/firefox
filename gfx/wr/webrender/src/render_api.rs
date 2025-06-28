@@ -125,6 +125,9 @@ pub enum GenerateFrame {
         /// If false, (a subset of) the frame will be rendered, but nothing will
         /// be presented on the window.
         present: bool,
+        /// This flag is used by Firefox to differentiate between frames that
+        /// participate or not in the frame throttling mechanism.
+        tracked: bool,
     },
     /// Don't generate a frame even if something has changed.
     No,
@@ -144,6 +147,15 @@ impl GenerateFrame {
     pub fn present(&self) -> bool {
         match self {
             GenerateFrame::Yes { present, .. } => *present,
+            GenerateFrame::No => false,
+        }
+    }
+
+    /// This flag is used by Gecko to indicate whether the transaction
+    /// participates in frame throttling mechanisms.
+    pub fn tracked(&self) -> bool {
+        match self {
+            GenerateFrame::Yes { tracked, .. } => *tracked,
             GenerateFrame::No => false,
         }
     }
@@ -375,8 +387,8 @@ impl Transaction {
     /// as to when happened.
     ///
     /// [notifier]: trait.RenderNotifier.html#tymethod.new_frame_ready
-    pub fn generate_frame(&mut self, id: u64, present: bool, reasons: RenderReasons) {
-        self.generate_frame = GenerateFrame::Yes{ id, present };
+    pub fn generate_frame(&mut self, id: u64, present: bool, tracked: bool, reasons: RenderReasons) {
+        self.generate_frame = GenerateFrame::Yes{ id, present, tracked };
         self.render_reasons |= reasons;
     }
 
@@ -592,6 +604,14 @@ impl Transaction {
     /// Returns whether this transaction is marked as low priority.
     pub fn is_low_priority(&self) -> bool {
         self.low_priority
+    }
+
+    /// Render a pipeline offscreen immediately without waiting for vsync
+    /// and without affecting the state of the current scene.
+    ///
+    /// Snapshotted stacking contexts will be persisted in the texture cache.
+    pub fn render_offscreen(&mut self, pipeline_id: PipelineId) {
+        self.scene_ops.push(SceneMsg::RenderOffscreen(pipeline_id));
     }
 }
 
@@ -818,6 +838,11 @@ pub enum SceneMsg {
         ///
         pipeline_id: PipelineId,
     },
+    /// Build a scene without affecting any retained state.
+    ///
+    /// Useful to render an offscreen scene in the background without affecting
+    /// what is currently displayed.
+    RenderOffscreen(PipelineId),
     ///
     SetDocumentView {
         ///
@@ -861,6 +886,7 @@ impl fmt::Debug for SceneMsg {
             SceneMsg::SetDocumentView { .. } => "SceneMsg::SetDocumentView",
             SceneMsg::SetRootPipeline(..) => "SceneMsg::SetRootPipeline",
             SceneMsg::SetQualitySettings { .. } => "SceneMsg::SetQualitySettings",
+            SceneMsg::RenderOffscreen(..) => "SceneMsg::BuildOffscreen",
         })
     }
 }

@@ -993,8 +993,8 @@
       "memshrink-telemetry-alerts@mozilla.com",
       "pbone@mozilla.com"
     ],
-    "bug_numbers": [1829127, 1892149],
-    "expires_in_version": "142",
+    "bug_numbers": [1829127, 1892149, 1969170],
+    "expires_in_version": "152",
     "kind": "exponential",
     "low": 4096,
     "high": 8388608,
@@ -1009,8 +1009,8 @@
       "memshrink-telemetry-alerts@mozilla.com",
       "pbone@mozilla.com"
     ],
-    "bug_numbers": [1829127, 1892149],
-    "expires_in_version": "142",
+    "bug_numbers": [1829127, 1892149, 1969170],
+    "expires_in_version": "152",
     "kind": "exponential",
     "high": 16384,
     "n_buckets": 64,
@@ -1024,25 +1024,12 @@
       "memshrink-telemetry-alerts@mozilla.com",
       "pbone@mozilla.com"
     ],
-    "bug_numbers": [1829127, 1892149],
-    "expires_in_version": "142",
+    "bug_numbers": [1829127, 1892149, 1969170],
+    "expires_in_version": "152",
     "kind": "exponential",
     "high": 16384,
     "n_buckets": 64,
     "description": "Number of PHC slots allocated-then-freed",
-    "releaseChannelCollection": "opt-out"
-  },
-  "PROCESS_LIFETIME": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["pbone@mozilla.com"],
-    "bug_numbers": [1897060],
-    "expires_in_version": "142",
-    "kind": "exponential",
-    "low": 15,
-    "high": 86400,
-    "n_buckets": 24,
-    "description": "Average lifetime of a content process in seconds",
     "releaseChannelCollection": "opt-out"
   },
   "FONTLIST_INITOTHERFAMILYNAMES": {
@@ -1117,15 +1104,6 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "DirectWrite system fontlist initialization problem (1=GDI interop, 2=system font collection, 3=no fonts)"
-  },
-  "GDI_INITFONTLIST_TOTAL": {
-    "record_in_processes": ["main", "content"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "exponential",
-    "high": 30000,
-    "n_buckets": 10,
-    "description": "gfxGDIFontList::InitFontList Total (ms)"
   },
   "MAC_INITFONTLIST_TOTAL": {
     "record_in_processes": ["main", "content"],
@@ -1847,14 +1825,6 @@
     "bug_numbers": [1743965, 1796398],
     "keyed": true,
     "description": "The time between navigationStart and the first contentful paint of a foreground http or https root content document, in milliseconds. The contentful paint timestamp is taken during display list building and does not include rasterization or compositing of that paint. This is collected only on page load where the main document uses HTTP3. It is keyed based on whether a \"priority\" header has been received."
-  },
-  "HTTP_PROXY_TYPE": {
-    "record_in_processes": ["main", "socket"],
-    "products": ["firefox", "fennec"],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 8,
-    "description": "HTTP Proxy Type (none, http, socks)"
   },
   "HTTP_TRANSACTION_IS_SSL": {
     "record_in_processes": ["main", "content"],
@@ -9526,17 +9496,6 @@
     "releaseChannelCollection": "opt-out",
     "description": "If certificate verification failed in a TLS handshake, what was the error? (see MapCertErrorToProbeValue in security/manager/ssl/SSLServerCertVerification.cpp and the values in security/pkix/include/pkix/Result.h)"
   },
-  "SSL_CT_POLICY_NON_COMPLIANT_CONNECTIONS_BY_CA_2": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["seceng-telemetry@mozilla.com", "dkeeler@mozilla.com"],
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 256,
-    "bug_numbers": [1320567, 1909978],
-    "releaseChannelCollection": "opt-out",
-    "description": "Number of successfully established TLS connections NOT compliant with the Certificate Transparency Policy, by CA. See https://searchfox.org/mozilla-central/source/security/manager/ssl/RootHashes.inc for names of CAs. Bucket zero holds CAs not present in the list."
-  },
   "SSL_PERMANENT_CERT_ERROR_OVERRIDES": {
     "record_in_processes": ["main"],
     "products": ["firefox"],
@@ -9592,28 +9551,6 @@
     "kind": "enumerated",
     "n_values": 10,
     "description": "EV status of a certificate, recorded on each TLS connection. 0=invalid, 1=DV, 2=EV"
-  },
-  "CERT_VALIDATION_SUCCESS_BY_CA_2": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "expires_in_version": "never",
-    "alert_emails": ["seceng-telemetry@mozilla.com", "dkeeler@mozilla.com"],
-    "releaseChannelCollection": "opt-out",
-    "bug_numbers": [1364159, 1369747, 1441550, 1909978],
-    "kind": "enumerated",
-    "n_values": 256,
-    "description": "Successful SSL server cert validations by CA (see RootHashes.inc for names of CAs)"
-  },
-  "CERT_PINNING_FAILURES_BY_CA_2": {
-    "record_in_processes": ["main"],
-    "products": ["firefox"],
-    "alert_emails": ["pinning@mozilla.org", "dkeeler@mozilla.com"],
-    "bug_numbers": [1862062, 1909978],
-    "releaseChannelCollection": "opt-out",
-    "expires_in_version": "never",
-    "kind": "enumerated",
-    "n_values": 256,
-    "description": "Pinning failures by CA (see RootHashes.inc for names of CAs)"
   },
   "CERT_PINNING_RESULTS": {
     "record_in_processes": ["main"],
@@ -10762,111 +10699,6 @@
     "n_values": 50,
     "description": "Compression ratio of WOFF2 data (%)"
   },
-  "JS_PAGELOAD_EXECUTION_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 60000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load executing Javascript in ms."
-  },
-  "JS_PAGELOAD_DELAZIFICATION_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load delazifying Javascript in ms."
-  },
-  "JS_PAGELOAD_XDR_ENCODING_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load XDR encoding Javascript in ms."
-  },
-  "JS_PAGELOAD_BASELINE_COMPILE_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load baseline compiling Javascript in ms."
-  },
-  "JS_PAGELOAD_GC_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load in the GC in ms."
-  },
-  "JS_PAGELOAD_PROTECT_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load protecting JIT executable memory."
-  },
-  "JS_PAGELOAD_PARSE_MS": {
-    "record_in_processes": ["content"],
-    "products": ["firefox"],
-    "alert_emails": [
-      "dpalmeiro@mozilla.com",
-      "perf-telemetry-alerts@mozilla.com"
-    ],
-    "expires_in_version": "never",
-    "releaseChannelCollection": "opt-out",
-    "kind": "exponential",
-    "high": 10000,
-    "n_buckets": 100,
-    "bug_numbers": [1709139],
-    "description": "Time spent during page load syntax parsing JS scripts on the main thread in ms."
-  },
   "DOM_SCRIPT_LOADING_SOURCE": {
     "record_in_processes": ["content"],
     "products": ["firefox", "fennec"],
@@ -11973,7 +11805,7 @@
     "high": 180000,
     "n_buckets": 60,
     "releaseChannelCollection": "opt-out",
-    "alert_emails": ["ttung@mozilla.com", "storage-telemetry@mozilla.com"],
+    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
     "description": "Time (ms) for the QuotaManager to load quota information. Keyed by conditions during quota info loading, see RecordTimeDeltaHelper::Run in https://searchfox.org/mozilla-central/source/dom/quota/ActorsParent.cpp"
   },
   "QM_FIRST_INITIALIZATION_ATTEMPT": {
@@ -11984,7 +11816,7 @@
     "kind": "boolean",
     "keyed": true,
     "releaseChannelCollection": "opt-out",
-    "alert_emails": ["ttung@mozilla.com", "storage-telemetry@mozilla.com"],
+    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
     "description": "True if the first initialization attempt succeeded, keyed by the initialization type."
   },
   "QM_SHUTDOWN_TIME_V0": {
@@ -11997,7 +11829,7 @@
     "high": 60000,
     "n_buckets": 60,
     "releaseChannelCollection": "opt-out",
-    "alert_emails": ["jvarga@mozilla.com", "storage-telemetry@mozilla.com"],
+    "alert_emails": ["jan.varga@gmail.com", "storage-telemetry@mozilla.com"],
     "description": "Time (ms) for the QuotaManager to shutdown. Keyed by conditions during shutdown, see RecordTimeDeltaHelper::Run in https://searchfox.org/mozilla-central/source/dom/quota/ActorsParent.cpp"
   },
   "GV_PAGE_LOAD_PROGRESS_MS": {

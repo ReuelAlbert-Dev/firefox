@@ -259,10 +259,14 @@ class WidgetMouseEventBase : public WidgetInputEvent {
     return mMessage == ePointerMove && buttonsLoseTheButton;
   }
 
+  [[nodiscard]] static bool InputSourceSupportsHover(uint16_t aInputSource);
+
   /**
    * Returns true if the input source supports hover state like a mouse.
    */
-  [[nodiscard]] bool InputSourceSupportsHover() const;
+  [[nodiscard]] bool InputSourceSupportsHover() const {
+    return InputSourceSupportsHover(mInputSource);
+  }
 
   /**
    * Returns true if corresponding DOM event should use fractional coordinates.
@@ -856,6 +860,12 @@ class WidgetPointerEvent : public WidgetMouseEvent {
   explicit WidgetPointerEvent(const WidgetMouseEvent& aEvent)
       : WidgetMouseEvent(aEvent) {
     mClass = ePointerEventClass;
+  }
+
+  explicit WidgetPointerEvent(EventMessage aMsg,
+                              const WidgetPointerEvent& aOther)
+      : WidgetPointerEvent(aOther.IsTrusted(), aMsg, aOther.mWidget, &aOther) {
+    AssignPointerEventData(aOther, false);
   }
 
   virtual WidgetEvent* Duplicate() const override {

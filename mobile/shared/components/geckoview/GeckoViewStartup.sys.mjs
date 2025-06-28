@@ -9,7 +9,7 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ActorManagerParent: "resource://gre/modules/ActorManagerParent.sys.mjs",
-  DoHController: "resource://gre/modules/DoHController.sys.mjs",
+  DoHController: "moz-src:///toolkit/components/doh/DoHController.sys.mjs",
   EventDispatcher: "resource://gre/modules/Messaging.sys.mjs",
   PdfJs: "resource://pdf.js/PdfJs.sys.mjs",
 });
@@ -199,6 +199,7 @@ export class GeckoViewStartup {
 
           lazy.EventDispatcher.instance.registerListener(this, [
             "GeckoView:StorageDelegate:Attached",
+            "GeckoView:CrashPullController.Delegate:Attached",
           ]);
         }
 
@@ -379,6 +380,20 @@ export class GeckoViewStartup {
           ].createInstance(Ci.nsILoginDetectionService);
           loginDetection.init();
         });
+        break;
+
+      case "GeckoView:CrashPullController.Delegate:Attached":
+        if (!this.RemoteSettingsCrashPull) {
+          GeckoViewUtils.addLazyGetter(this, "RemoteSettingsCrashPull", {
+            module: "resource://gre/modules/RemoteSettingsCrashPull.sys.mjs",
+          });
+          GeckoViewUtils.addLazyGetter(this, "crashPullCallback", {
+            module: "resource://gre/modules/ChildCrashHandler.sys.mjs",
+          });
+          InitLater(() =>
+            this.RemoteSettingsCrashPull.start(this.crashPullCallback)
+          );
+        }
         break;
     }
   }

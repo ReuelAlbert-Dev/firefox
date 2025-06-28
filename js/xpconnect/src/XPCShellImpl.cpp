@@ -550,34 +550,6 @@ static bool SimulateNoScriptActivity(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool RegisterAppManifest(JSContext* cx, unsigned argc, Value* vp) {
-  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-  if (args.length() != 1) {
-    JS_ReportErrorASCII(cx, "Wrong number of arguments");
-    return false;
-  }
-  if (!args[0].isObject()) {
-    JS_ReportErrorASCII(cx,
-                        "Expected object as argument 1 to registerAppManifest");
-    return false;
-  }
-
-  Rooted<JSObject*> arg1(cx, &args[0].toObject());
-  nsCOMPtr<nsIFile> file;
-  nsresult rv = nsXPConnect::XPConnect()->WrapJS(cx, arg1, NS_GET_IID(nsIFile),
-                                                 getter_AddRefs(file));
-  if (NS_FAILED(rv)) {
-    XPCThrower::Throw(rv, cx);
-    return false;
-  }
-  rv = XRE_AddManifestLocation(NS_APP_LOCATION, file);
-  if (NS_FAILED(rv)) {
-    XPCThrower::Throw(rv, cx);
-    return false;
-  }
-  return true;
-}
-
 #ifdef ANDROID
 static bool ChangeTestShellDir(JSContext* cx, unsigned argc, Value* vp) {
   // This method should only be used by testing/xpcshell/head.js to change to
@@ -643,7 +615,6 @@ static const JSFunctionSpec glob_functions[] = {
     JS_FN("btoa",            xpc::Btoa,      1,0),
     JS_FN("setInterruptCallback", SetInterruptCallback, 1,0),
     JS_FN("simulateNoScriptActivity", SimulateNoScriptActivity, 1,0),
-    JS_FN("registerAppManifest", RegisterAppManifest, 1, 0),
 #ifdef ANDROID
     JS_FN("changeTestShellDir", ChangeTestShellDir, 1,0),
 #endif
@@ -1226,6 +1197,11 @@ int XRE_XPCShellMain(int argc, char** argv, char** envp,
       printf("NS_InitXPCOM failed!\n");
       return 1;
     }
+
+    // Now that the profiler, directory services, and prefs have been
+    // initialized we can find the download directory, where the profiler can
+    // write profiles when user stops the profiler using POSIX signal handling.
+    profiler_lookup_async_signal_dump_directory();
 
     // xpc::ErrorReport::LogToConsoleWithStack needs this to print errors
     // to stderr.

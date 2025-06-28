@@ -19,11 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.ExperimentalMaterialApi
-import androidx.compose.material.Icon
-import androidx.compose.material.Text
-import androidx.compose.material.TextFieldDefaults
-import androidx.compose.material.TextFieldDefaults.indicatorLine
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextFieldDefaults.indicatorLine
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +52,7 @@ import mozilla.components.ui.icons.R
 
 private val FocusedIndicatorLineThickness = 2.dp
 private val UnfocusedIndicatorLineThickness = 1.dp
+private val NoIndicatorLineThickness = 0.dp
 
 private val TrailingIconHeight = 24.dp
 
@@ -66,6 +67,7 @@ private val TrailingIconHeight = 24.dp
  * @param label Optional text displayed as a header above the input field.
  * @param isError Whether there is an error with the input value. When set to true, error styling
  * will be applied to the text field.
+ * @param isEnabled When set to false, the the text field cannot be edited.
  * @param singleLine When set to true, this text field becomes a single horizontally scrolling text
  * field instead of wrapping onto multiple lines. Note that maxLines parameter will be ignored as
  * the maxLines attribute will be automatically set to 1.
@@ -83,8 +85,8 @@ private val TrailingIconHeight = 24.dp
  * called. Note that this IME action may be different from what you specified in
  * [KeyboardOptions.imeAction].
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Suppress("LongMethod")
-@OptIn(ExperimentalMaterialApi::class)
 @Composable
 fun TextField(
     value: String,
@@ -94,6 +96,7 @@ fun TextField(
     modifier: Modifier = Modifier,
     label: String? = null,
     isError: Boolean = false,
+    isEnabled: Boolean = true,
     singleLine: Boolean = true,
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     minLines: Int = 1,
@@ -106,11 +109,10 @@ fun TextField(
     keyboardActions: KeyboardActions = KeyboardActions(),
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isEnabled = true
 
     // We use the Material textFieldColors for the indicator line as it keeps track of error
     // and focused states
-    val indicatorLineColors = TextFieldDefaults.textFieldColors(
+    val indicatorLineColors = TextFieldDefaults.colors(
         focusedIndicatorColor = colors.focusedIndicatorColor,
         unfocusedIndicatorColor = colors.unfocusedIndicatorColor,
         errorIndicatorColor = colors.errorIndicatorColor,
@@ -133,7 +135,11 @@ fun TextField(
                     interactionSource = interactionSource,
                     colors = indicatorLineColors,
                     focusedIndicatorLineThickness = FocusedIndicatorLineThickness,
-                    unfocusedIndicatorLineThickness = UnfocusedIndicatorLineThickness,
+                    unfocusedIndicatorLineThickness = if (isEnabled) {
+                        UnfocusedIndicatorLineThickness
+                    } else {
+                        NoIndicatorLineThickness
+                    },
                 )
                 .defaultMinSize(
                     minWidth = TextFieldDefaults.MinWidth,

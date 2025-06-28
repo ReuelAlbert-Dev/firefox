@@ -5,6 +5,7 @@
 
 #include "nsUserCharacteristics.h"
 
+#include "nsComponentManagerUtils.h"
 #include "nsICryptoHash.h"
 #include "nsID.h"
 #include "nsIGfxInfo.h"
@@ -66,6 +67,7 @@
 #elif defined(XP_MACOSX)
 #  include "nsMacUtilsImpl.h"
 #  include <CoreFoundation/CoreFoundation.h>
+#  include "CFTypeRefPtr.h"
 #endif
 
 using namespace mozilla;
@@ -614,13 +616,19 @@ void PopulateTextAntiAliasing() {
   }
 #elif defined(XP_MACOSX)
   uint32_t value = 2;  // default = medium
-  CFNumberRef prefValue = (CFNumberRef)CFPreferencesCopyAppValue(
-      CFSTR("AppleFontSmoothing"), kCFPreferencesAnyApplication);
+  auto prefValue = CFTypeRefPtr<CFPropertyListRef>::WrapUnderCreateRule(
+      CFPreferencesCopyAppValue(CFSTR("AppleFontSmoothing"),
+                                kCFPreferencesAnyApplication));
   if (prefValue) {
-    if (!CFNumberGetValue(prefValue, kCFNumberIntType, &value)) {
-      value = 2;
+    if (CFGetTypeID(prefValue.get()) == CFNumberGetTypeID()) {
+      if (!CFNumberGetValue(static_cast<CFNumberRef>(prefValue.get()),
+                            kCFNumberIntType, &value)) {
+        value = 2;  // default = medium
+      }
+    } else if (CFGetTypeID(prefValue.get()) == CFStringGetTypeID()) {
+      // For some reason, the value can be a string
+      value = CFStringGetIntValue(static_cast<CFStringRef>(prefValue.get()));
     }
-    CFRelease(prefValue);
   }
   levels.AppendElement(value);
 #elif defined(XP_LINUX)
@@ -845,12 +853,6 @@ nsresult PopulateEssentials() {
   nsAutoCString uuidString;
   nsresult rv = Preferences::GetCString(kUUIDPref, uuidString);
   if (NS_FAILED(rv) || uuidString.Length() == 0) {
-    nsCOMPtr<nsIUUIDGenerator> uuidgen =
-        do_GetService("@mozilla.org/uuid-generator;1", &rv);
-    if (NS_FAILED(rv)) {
-      return rv;
-    }
-
     nsIDToCString id(nsID::GenerateUUID());
     uuidString = id.get();
     Preferences::SetCString(kUUIDPref, uuidString);

@@ -12,8 +12,13 @@ import android.view.ViewGroup
 import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.ui.platform.ComposeView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withResumed
 import androidx.navigation.fragment.findNavController
+import androidx.navigation.fragment.navArgs
+import kotlinx.coroutines.launch
 import mozilla.components.browser.state.selector.normalTabs
+import mozilla.components.feature.customtabs.isCustomTabIntent
 import mozilla.components.support.base.feature.UserInteractionHandler
 import org.mozilla.fenix.GleanMetrics.PrivateBrowsingLocked
 import org.mozilla.fenix.HomeActivity
@@ -31,6 +36,8 @@ import org.mozilla.fenix.theme.FirefoxTheme
  */
 class UnlockPrivateTabsFragment : Fragment(), UserInteractionHandler {
     private lateinit var startForResult: ActivityResultLauncher<Intent>
+    private val args: UnlockPrivateTabsFragmentArgs by navArgs()
+    private val navigationOrigin by lazy { args.navigationOrigin }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -51,6 +58,10 @@ class UnlockPrivateTabsFragment : Fragment(), UserInteractionHandler {
         super.onViewCreated(view, savedInstanceState)
         PrivateBrowsingLocked.promptShown.record()
 
+        val homeActivity = activity as HomeActivity
+        val isCustomPrivateTab = isCustomTabIntent(homeActivity.intent) &&
+            homeActivity.browsingModeManager.mode.isPrivate
+
         (view as ComposeView).setContent {
             FirefoxTheme {
                 UnlockPrivateTabsScreen(
@@ -59,8 +70,15 @@ class UnlockPrivateTabsFragment : Fragment(), UserInteractionHandler {
                         PrivateBrowsingLocked.seeOtherTabsClicked.record()
                         closeFragment()
                     },
+                    showNegativeButton = !isCustomPrivateTab,
                 )
+            }
+        }
 
+        // Delay the prompt until this fragment is resumed to ensure that `BiometricPromptFeature`
+        // is wiring up the system `BiometricPrompt` to the right (currently active) fragment.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.withResumed {
                 requestPrompt()
             }
         }
@@ -86,13 +104,36 @@ class UnlockPrivateTabsFragment : Fragment(), UserInteractionHandler {
      * If they don't have regular opened tabs, we navigate back to homepage as a fallback.
      */
     private fun closeFragment() {
-        (activity as HomeActivity).browsingModeManager.mode = BrowsingMode.Normal
+        when (navigationOrigin) {
+            // If we locked private mode while the user had a private tab opened or was on private
+            // home page, then, when leaving without authentication, we want to navigate user back
+            // to normal mode. If they have opened regular tabs, we open the tabs tray as well.
+            NavigationOrigin.TAB, NavigationOrigin.HOME_PAGE -> {
+                (activity as HomeActivity).browsingModeManager.mode = BrowsingMode.Normal
 
-        findNavController().navigate(UnlockPrivateTabsFragmentDirections.actionGlobalHome())
+                findNavController().navigate(UnlockPrivateTabsFragmentDirections.actionGlobalHome())
 
-        val hasNormalTabs = requireComponents.core.store.state.normalTabs.isNotEmpty()
-        if (hasNormalTabs) {
-            findNavController().navigate(HomeFragmentDirections.actionGlobalTabsTrayFragment(page = Page.NormalTabs))
+                val hasNormalTabs = requireComponents.core.store.state.normalTabs.isNotEmpty()
+                if (hasNormalTabs) {
+                    findNavController().navigate(
+                        HomeFragmentDirections.actionGlobalTabsTrayFragment(
+                            page = Page.NormalTabs,
+                        ),
+                    )
+                }
+            }
+            // If we locked private mode while the user had the tabs tray private page opened, then
+            // going to the previous state means just closing the fragment and defaulting to tabs
+            // tray regular page
+            NavigationOrigin.TABS_TRAY -> {
+                findNavController().popBackStack()
+
+                findNavController().navigate(
+                    HomeFragmentDirections.actionGlobalTabsTrayFragment(
+                        page = Page.NormalTabs,
+                    ),
+                )
+            }
         }
     }
 
@@ -102,9 +143,28 @@ class UnlockPrivateTabsFragment : Fragment(), UserInteractionHandler {
         requireComponents.privateBrowsingLockFeature.onSuccessfulAuthentication()
 
         findNavController().popBackStack()
+
+        if (navigationOrigin == NavigationOrigin.TABS_TRAY) {
+            findNavController().navigate(
+                HomeFragmentDirections.actionGlobalTabsTrayFragment(
+                    page = Page.PrivateTabs,
+                ),
+            )
+        }
     }
 
     private fun onAuthFailure() {
         PrivateBrowsingLocked.authFailure.record()
     }
+}
+
+/**
+ * The navigation entry point from which the fragment was triggered.
+ *
+ * It helps determine the correct navigation behaviour when the user is leaving the fragment.
+ */
+enum class NavigationOrigin {
+    TABS_TRAY,
+    HOME_PAGE,
+    TAB,
 }

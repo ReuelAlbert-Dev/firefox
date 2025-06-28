@@ -205,6 +205,7 @@ class WebExtensionTest : BaseSessionTest() {
                 "xpinstall.signatures.required" to false,
                 "extensions.install.requireBuiltInCerts" to false,
                 "extensions.update.requireBuiltInCerts" to false,
+                "extensions.dataCollectionPermissions.enabled" to true,
             ),
         )
 
@@ -222,6 +223,7 @@ class WebExtensionTest : BaseSessionTest() {
 
         var grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         var grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        var grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 0.",
@@ -229,6 +231,11 @@ class WebExtensionTest : BaseSessionTest() {
             equalTo(0),
         )
         assertThat("grantedOptionalOrigins must be 0.", grantedOptionalOrigins.size, equalTo(0))
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // click triggers permissions.request
         mainSession.synthesizeTap(50, 50)
@@ -238,6 +245,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<AllowOrDeny> {
                 return GeckoResult.allow()
             }
@@ -270,6 +278,7 @@ class WebExtensionTest : BaseSessionTest() {
 
         grantedOptionalPermissions = updatedExtension.metaData.grantedOptionalPermissions
         grantedOptionalOrigins = updatedExtension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = updatedExtension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 1.",
@@ -282,6 +291,12 @@ class WebExtensionTest : BaseSessionTest() {
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
         )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 1.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(1),
+        )
+        assertArrayEquals(arrayOf("healthInfo"), grantedOptionalDataCollectionPermissions)
 
         // geolocation is part of the manifest but not requested/granted.
         assertFalse(grantedOptionalPermissions.contains("geolocation"))
@@ -298,6 +313,12 @@ class WebExtensionTest : BaseSessionTest() {
 
     @Test
     fun updateOptionalPermissions() {
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "extensions.dataCollectionPermissions.enabled" to true,
+            ),
+        )
+
         var extension = sessionRule.waitForResult(
             controller.ensureBuiltIn(
                 "resource://android/assets/web_extensions/optional-permission-request/",
@@ -309,6 +330,7 @@ class WebExtensionTest : BaseSessionTest() {
 
         var grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         var grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        var grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         // Without adding any optional permissions.
         assertThat(
@@ -317,6 +339,11 @@ class WebExtensionTest : BaseSessionTest() {
             equalTo(0),
         )
         assertThat("grantedOptionalOrigins must be 0.", grantedOptionalOrigins.size, equalTo(0))
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // Only adding an origin permission.
         extension = sessionRule.waitForResult(
@@ -324,11 +351,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf(),
                 arrayOf("*://example.com/*"),
+                arrayOf(),
             ),
         )
 
         grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 0.",
@@ -341,11 +370,17 @@ class WebExtensionTest : BaseSessionTest() {
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
         )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // Adding "nothing" to verify that nothing gets changed.
         extension = sessionRule.waitForResult(
             controller.addOptionalPermissions(
                 extension.id,
+                arrayOf(),
                 arrayOf(),
                 arrayOf(),
             ),
@@ -357,6 +392,11 @@ class WebExtensionTest : BaseSessionTest() {
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
         )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // Adding an optional permission.
         extension = sessionRule.waitForResult(
@@ -364,11 +404,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf("activeTab"),
                 arrayOf(),
+                arrayOf(),
             ),
         )
 
         grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         // Both optional and origin permissions must be granted.
         assertThat(
@@ -387,11 +429,17 @@ class WebExtensionTest : BaseSessionTest() {
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
         )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // Removing "nothing" to verify that nothing gets changed.
         extension = sessionRule.waitForResult(
             controller.removeOptionalPermissions(
                 extension.id,
+                arrayOf(),
                 arrayOf(),
                 arrayOf(),
             ),
@@ -402,6 +450,11 @@ class WebExtensionTest : BaseSessionTest() {
             "grantedOptionalOrigins must be *://example.com/*.",
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
+        )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
         )
 
         // Remove an activeTab optional permission.
@@ -410,11 +463,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf("activeTab"),
                 arrayOf(),
+                arrayOf(),
             ),
         )
 
         grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 0.",
@@ -427,6 +482,11 @@ class WebExtensionTest : BaseSessionTest() {
             grantedOptionalOrigins.first(),
             equalTo("*://example.com/*"),
         )
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         // Remove an `*://example.com/*` origin permission.
         extension = sessionRule.waitForResult(
@@ -434,11 +494,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf(),
                 arrayOf("*://example.com/*"),
+                arrayOf(),
             ),
         )
 
         grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 0.",
@@ -446,6 +508,33 @@ class WebExtensionTest : BaseSessionTest() {
             equalTo(0),
         )
         assertThat("grantedOptionalOrigins must be 0.", grantedOptionalOrigins.size, equalTo(0))
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
+
+        // Adding an optional data collection permission.
+        extension = sessionRule.waitForResult(
+            controller.addOptionalPermissions(
+                extension.id,
+                arrayOf(),
+                arrayOf(),
+                arrayOf("healthInfo"),
+            ),
+        )
+
+        grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
+        grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+
+        assertThat(
+            "grantedOptionalPermissions must be 0.",
+            grantedOptionalPermissions.size,
+            equalTo(0),
+        )
+        assertThat("grantedOptionalOrigins must be 0.", grantedOptionalOrigins.size, equalTo(0))
+        assertArrayEquals(arrayOf("healthInfo"), grantedOptionalDataCollectionPermissions)
 
         // Missing origins from the manifest.
         // Must throw!
@@ -455,6 +544,7 @@ class WebExtensionTest : BaseSessionTest() {
                     extension.id,
                     arrayOf(),
                     arrayOf("*://missing-origins.com/*"),
+                    arrayOf(),
                 ),
             )
             fail()
@@ -474,6 +564,7 @@ class WebExtensionTest : BaseSessionTest() {
                 controller.addOptionalPermissions(
                     extension.id,
                     arrayOf("clipboardRead"),
+                    arrayOf(),
                     arrayOf(),
                 ),
             )
@@ -495,6 +586,7 @@ class WebExtensionTest : BaseSessionTest() {
                     extension.id,
                     arrayOf(),
                     arrayOf("<all_urls>"),
+                    arrayOf(),
                 ),
             )
             fail()
@@ -517,6 +609,7 @@ class WebExtensionTest : BaseSessionTest() {
         sessionRule.setPrefsUntilTestEnd(
             mapOf(
                 "extensions.originControls.grantByDefault" to false,
+                "extensions.dataCollectionPermissions.enabled" to true,
             ),
         )
 
@@ -541,6 +634,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf(),
                 arrayOf("http://*/", "https://*/", "file://*/*"),
+                arrayOf(),
             ),
         )
 
@@ -557,6 +651,12 @@ class WebExtensionTest : BaseSessionTest() {
 
     @Test
     fun onOptionalPermissionsChanged() {
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "extensions.dataCollectionPermissions.enabled" to true,
+            ),
+        )
+
         var extension = sessionRule.waitForResult(
             controller.ensureBuiltIn(
                 "resource://android/assets/web_extensions/optional-permission-request/",
@@ -568,6 +668,7 @@ class WebExtensionTest : BaseSessionTest() {
 
         var grantedOptionalPermissions = extension.metaData.grantedOptionalPermissions
         var grantedOptionalOrigins = extension.metaData.grantedOptionalOrigins
+        var grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
 
         assertThat(
             "grantedOptionalPermissions must be 0.",
@@ -575,12 +676,20 @@ class WebExtensionTest : BaseSessionTest() {
             equalTo(0),
         )
         assertThat("grantedOptionalOrigins must be 0.", grantedOptionalOrigins.size, equalTo(0))
+        assertThat(
+            "grantedOptionalDataCollectionPermissions must be 0.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
 
         sessionRule.delegateDuringNextWait(object : WebExtensionController.AddonManagerDelegate {
             @AssertCalled(count = 1)
             override fun onOptionalPermissionsChanged(updatedExtension: WebExtension) {
                 grantedOptionalPermissions = updatedExtension.metaData.grantedOptionalPermissions
                 grantedOptionalOrigins = updatedExtension.metaData.grantedOptionalOrigins
+                grantedOptionalDataCollectionPermissions =
+                    updatedExtension.metaData.grantedOptionalDataCollectionPermissions
+
                 assertNull(updatedExtension)
                 assertArrayEquals(
                     "grantedOptionalPermissions must be [activeTab, geolocation].",
@@ -592,6 +701,7 @@ class WebExtensionTest : BaseSessionTest() {
                     arrayOf("*://example.com/*"),
                     grantedOptionalOrigins,
                 )
+                assertArrayEquals(arrayOf("healthInfo"), grantedOptionalDataCollectionPermissions)
             }
         })
 
@@ -600,8 +710,116 @@ class WebExtensionTest : BaseSessionTest() {
                 extension.id,
                 arrayOf("activeTab", "geolocation"),
                 arrayOf("*://example.com/*"),
+                arrayOf("healthInfo"),
             ),
         )
+        sessionRule.waitForResult(controller.uninstall(extension))
+    }
+
+    @Test
+    fun dataCollectionPermissions() {
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "xpinstall.signatures.required" to false,
+                "extensions.dataCollectionPermissions.enabled" to true,
+            ),
+        )
+
+        sessionRule.delegateDuringNextWait(object : WebExtensionController.PromptDelegate {
+            @AssertCalled
+            override fun onInstallPromptRequest(
+                extension: WebExtension,
+                permissions: Array<String>,
+                origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
+            ): GeckoResult<PermissionPromptResponse>? {
+                return GeckoResult.fromValue(
+                    PermissionPromptResponse(
+                        true, // isPermissionsGranted
+                        false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
+                    ),
+                )
+            }
+        })
+
+        var extension = sessionRule.waitForResult(
+            controller.install(
+                "resource://android/assets/web_extensions/data-collection-unsigned.xpi",
+                "data-collection@test.mozilla.org",
+            ),
+        )
+        assertEquals("data-collection@test.mozilla.org", extension.id)
+
+        var requiredDataCollectionPermissions = extension.metaData.requiredDataCollectionPermissions
+        assertArrayEquals(
+            "requiredDataCollectionPermissions has the expected permissions",
+            arrayOf("healthInfo"),
+            requiredDataCollectionPermissions,
+        )
+
+        var optionalDataCollectionPermissions = extension.metaData.optionalDataCollectionPermissions
+        assertArrayEquals(
+            "optionalDataCollectionPermissions has the expected permissions",
+            arrayOf("technicalAndInteraction", "locationInfo"),
+            optionalDataCollectionPermissions,
+        )
+
+        var grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+        assertThat(
+            "Expected no granted data collection permissions.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
+
+        // Now let's add a new optional data collection permission.
+        extension = sessionRule.waitForResult(
+            controller.addOptionalPermissions(
+                extension.id,
+                arrayOf(),
+                arrayOf(),
+                arrayOf("locationInfo"),
+            ),
+        )
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+        assertArrayEquals(
+            "grantedOptionalDataCollectionPermissions has the expected permissions",
+            arrayOf("locationInfo"),
+            grantedOptionalDataCollectionPermissions,
+        )
+
+        // Let's add another one.
+        extension = sessionRule.waitForResult(
+            controller.addOptionalPermissions(
+                extension.id,
+                arrayOf(),
+                arrayOf(),
+                arrayOf("technicalAndInteraction"),
+            ),
+        )
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+        assertArrayEquals(
+            "grantedOptionalDataCollectionPermissions has the expected permissions",
+            arrayOf("locationInfo", "technicalAndInteraction"),
+            grantedOptionalDataCollectionPermissions,
+        )
+
+        // And now we remove them.
+        extension = sessionRule.waitForResult(
+            controller.removeOptionalPermissions(
+                extension.id,
+                arrayOf(),
+                arrayOf(),
+                arrayOf("technicalAndInteraction", "locationInfo"),
+            ),
+        )
+        grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+        assertThat(
+            "Expected no more granted data collection permissions.",
+            grantedOptionalDataCollectionPermissions.size,
+            equalTo(0),
+        )
+
         sessionRule.waitForResult(controller.uninstall(extension))
     }
 
@@ -738,11 +956,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         true, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -832,6 +1052,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(
                     extension.metaData.description,
@@ -855,6 +1076,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -907,6 +1129,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<out String>,
                 origins: Array<out String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(
                     extension.metaData.description,
@@ -929,6 +1152,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -983,6 +1207,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<out String>,
                 origins: Array<out String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(
                     extension.metaData.description,
@@ -1006,6 +1231,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         true, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1060,11 +1286,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1148,11 +1376,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1228,11 +1458,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1288,11 +1520,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1354,11 +1588,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1457,11 +1693,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -1526,11 +1764,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         false, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -2141,11 +2381,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -2224,11 +2466,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -2243,11 +2487,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3097,7 +3343,12 @@ class WebExtensionTest : BaseSessionTest() {
 
         sessionRule.delegateUntilTestEnd(object : WebExtensionController.PromptDelegate {
             @AssertCalled(count = 2)
-            override fun onOptionalPrompt(extension: WebExtension, permissions: Array<String>, origins: Array<String>): GeckoResult<AllowOrDeny> {
+            override fun onOptionalPrompt(
+                extension: WebExtension,
+                permissions: Array<String>,
+                origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
+            ): GeckoResult<AllowOrDeny> {
                 val expected = arrayOf("geolocation")
                 assertThat("Permissions should match the requested permissions", permissions, equalTo(expected))
                 assertThat("Origins should match the requested origins", origins, equalTo(arrayOf("*://example.com/*")))
@@ -3163,6 +3414,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
 
@@ -3170,6 +3422,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3229,6 +3482,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
 
@@ -3236,6 +3490,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3275,6 +3530,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
 
@@ -3282,6 +3538,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3328,6 +3585,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
 
@@ -3335,6 +3593,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3408,11 +3667,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3468,6 +3729,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
 
@@ -3475,6 +3737,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3549,11 +3812,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3595,12 +3860,14 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.version, "1.0")
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3662,11 +3929,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3826,11 +4095,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -3910,11 +4181,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -4208,6 +4481,7 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 assertEquals(extension.metaData.name, "Borderify")
                 assertEquals(extension.metaData.version, "1.0")
@@ -4217,6 +4491,7 @@ class WebExtensionTest : BaseSessionTest() {
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -4353,11 +4628,13 @@ class WebExtensionTest : BaseSessionTest() {
                 extension: WebExtension,
                 permissions: Array<String>,
                 origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
             ): GeckoResult<PermissionPromptResponse>? {
                 return GeckoResult.fromValue(
                     PermissionPromptResponse(
                         true, // isPermissionsGranted
                         false, // isPrivateModeGranted
+                        false, // isTechnicalAndInteractionDataGranted
                     ),
                 )
             }
@@ -4386,5 +4663,80 @@ class WebExtensionTest : BaseSessionTest() {
         mainSession.loadUri("about:crashextensions")
 
         sessionRule.waitForResult(controller.uninstall(borderify))
+    }
+
+    @Test
+    fun installWebExtensionWithTechnicalAndInteractionData() {
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "xpinstall.signatures.required" to false,
+                "extensions.dataCollectionPermissions.enabled" to true,
+            ),
+        )
+
+        sessionRule.delegateDuringNextWait(object : WebExtensionController.PromptDelegate {
+            @AssertCalled
+            override fun onInstallPromptRequest(
+                extension: WebExtension,
+                permissions: Array<String>,
+                origins: Array<String>,
+                dataCollectionPermissions: Array<String>,
+            ): GeckoResult<PermissionPromptResponse>? {
+                return GeckoResult.fromValue(
+                    // We grant the `technicalAndInteraction` data collection
+                    // permission below.
+                    PermissionPromptResponse(
+                        true, // isPermissionsGranted
+                        false, // isPrivateModeGranted
+                        true, // isTechnicalAndInteractionDataGranted
+                    ),
+                )
+            }
+        })
+
+        val extension = sessionRule.waitForResult(
+            controller.install(
+                "resource://android/assets/web_extensions/data-collection-unsigned.xpi",
+                "data-collection@test.mozilla.org",
+            ),
+        )
+        assertEquals("data-collection@test.mozilla.org", extension.id)
+
+        var optionalDataCollectionPermissions = extension.metaData.optionalDataCollectionPermissions
+        assertArrayEquals(
+            "optionalDataCollectionPermissions has the expected permissions",
+            arrayOf("technicalAndInteraction", "locationInfo"),
+            optionalDataCollectionPermissions,
+        )
+
+        var grantedOptionalDataCollectionPermissions = extension.metaData.grantedOptionalDataCollectionPermissions
+        assertArrayEquals(
+            "grantedOptionalDataCollectionPermissions has the expected permissions",
+            arrayOf("technicalAndInteraction"),
+            grantedOptionalDataCollectionPermissions,
+        )
+
+        sessionRule.waitForResult(controller.uninstall(extension))
+    }
+
+    @Test
+    fun verifyDataCollectionPermissionNames() {
+        mainSession.loadUri("https://example.com")
+        sessionRule.waitForPageStop()
+        val result = mainSession.getWebExtensionsSchemaPermissionNames(
+            arrayOf(
+                "CommonDataCollectionPermission",
+                "DataCollectionPermission",
+                "OptionalDataCollectionPermission",
+            ),
+        )
+
+        // A test failure here due to a mismatch will very likely involve more
+        // work than just updating the list of permissions in the Java file.
+        assertEquals(
+            "Expect list of the data collection permissions to be in sync between Gecko and Android",
+            WebExtension.DATA_COLLECTION_PERMISSIONS.sorted(),
+            result.sorted(),
+        )
     }
 }

@@ -326,7 +326,7 @@ function assertSearchStringIsInUrlbar(
   );
   let state = win.gURLBar.getBrowserState(win.gBrowser.selectedBrowser);
   Assert.equal(
-    state.persist.searchTerms,
+    state.persist?.searchTerms,
     searchString,
     `Search terms should match.`
   );
@@ -413,4 +413,10 @@ async function focusSwitcher(win = window) {
 function clearSAPTelemetry() {
   TelemetryTestUtils.getAndClearKeyedHistogram("SEARCH_COUNTS");
   Services.fog.testResetFOG();
+}
+
+async function waitForIdle() {
+  for (let i = 0; i < 10; i++) {
+    await new Promise(resolve => Services.tm.idleDispatchToMainThread(resolve));
+  }
 }

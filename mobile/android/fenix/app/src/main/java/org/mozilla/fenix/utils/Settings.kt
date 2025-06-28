@@ -16,6 +16,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.core.content.edit
 import androidx.lifecycle.LifecycleOwner
+import androidx.preference.PreferenceManager
 import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.Engine.HttpsOnlyMode
 import mozilla.components.concept.engine.EngineSession.CookieBannerHandlingMode
@@ -332,15 +333,25 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         default = false,
     )
 
-    var privateBrowsingLockedEnabled by lazyFeatureFlagPreference(
-        appContext.getPreferenceKey(R.string.pref_key_private_browsing_locked_enabled),
-        featureFlag = FxNimbus.features.privateBrowsingLock.value().enabled,
-        default = { false },
+    var privateBrowsingLockedFeatureEnabled by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_private_browsing_locked_enabled),
+        featureFlag = true,
+        default = { FxNimbus.features.privateBrowsingLock.value().enabled },
+    )
+
+    var privateBrowsingModeLocked by booleanPreference(
+        appContext.getString(R.string.pref_key_private_browsing_locked),
+        false,
     )
 
     var shouldReturnToBrowser by booleanPreference(
         appContext.getString(R.string.pref_key_return_to_browser),
         false,
+    )
+
+    var shouldShowDefaultBrowserBanner by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_show_default_browser_banner),
+        default = true,
     )
 
     var defaultSearchEngineName by stringPreference(
@@ -410,6 +421,15 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var isExperimentationEnabled by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_experimentation_v2),
         default = isTelemetryEnabled,
+    )
+
+    /**
+     * This lets us know if the user has disabled experimentation manually so that we know
+     * if we should re-enable experimentation if the user disables and re-enables telemetry.
+     */
+    var hasUserDisabledExperimentation by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_user_disabled_experimentation),
+        default = false,
     )
 
     var isOverrideTPPopupsForPerformanceTest = false
@@ -622,6 +642,15 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var offerTranslation: Boolean by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_translations_offer),
         default = true,
+    )
+
+    /**
+     * Indicates if the user denies to ever see again the Remote Settings crash
+     * pull UI.
+     */
+    var crashPullNeverShowAgain: Boolean by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_crash_pull_never_show_again),
+        default = false,
     )
 
     @VisibleForTesting
@@ -891,15 +920,6 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         get() = mr2022Sections[Mr2022Section.TCP_FEATURE] == true
 
     /**
-     * Indicates if the total cookie protection CRF should be shown.
-     */
-    var shouldShowEraseActionCFR by lazyFeatureFlagPreference(
-        appContext.getPreferenceKey(R.string.pref_key_should_show_erase_action_popup),
-        featureFlag = true,
-        default = { feltPrivateBrowsingEnabled },
-    )
-
-    /**
      * Indicates if the cookie banners CRF should be shown.
      */
     var shouldShowCookieBannersCFR by lazyFeatureFlagPreference(
@@ -1052,6 +1072,12 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var shouldUseBottomToolbar by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_toolbar_bottom),
         default = false,
+        persistDefaultIfNotExists = true,
+    )
+
+    var shouldUseSimpleToolbar by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_toolbar_simple),
+        default = true,
         persistDefaultIfNotExists = true,
     )
 
@@ -1230,10 +1256,9 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         default = true,
     )
 
-    var shouldShowLockPbmBanner by lazyFeatureFlagPreference(
+    var shouldShowLockPbmBanner by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_should_show_lock_pbm_banner),
-        featureFlag = FxNimbus.features.privateBrowsingLock.value().enabled,
-        default = { true },
+        true,
     )
 
     var shouldShowInactiveTabsOnboardingPopup by booleanPreference(
@@ -1663,15 +1688,6 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     )
 
     /**
-     * Indicates if sync onboarding CFR should be shown.
-     */
-    var showSyncCFR by lazyFeatureFlagPreference(
-        appContext.getPreferenceKey(R.string.pref_key_should_show_sync_cfr),
-        featureFlag = true,
-        default = { mr2022Sections[Mr2022Section.SYNC_CFR] == true },
-    )
-
-    /**
      * Indicates if the recent tabs functionality should be visible.
      */
     var showRecentTabsFeature by lazyFeatureFlagPreference(
@@ -1848,18 +1864,18 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         default = true,
     )
 
-    val feltPrivateBrowsingEnabled by lazyFeatureFlagPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_should_enable_felt_privacy),
-        featureFlag = true,
-        default = {
-            FxNimbus.features.privateBrowsing.value().feltPrivacyEnabled
-        },
-    )
-
     var shouldUseComposableToolbar by lazyFeatureFlagPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_composable_toolbar),
         default = { FxNimbus.features.composableToolbar.value().enabled },
         featureFlag = true,
+    )
+
+    /**
+     * Indicates if the user has access to the toolbar redesign option in settings.
+     */
+    var toolbarRedesignEnabled by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_enable_toolbar_redesign),
+        default = { FxNimbus.features.toolbarRedesignOption.value().showOptions },
     )
 
     /**
@@ -1884,7 +1900,7 @@ class Settings(private val appContext: Context) : PreferencesHolder {
      */
     var shouldShowMenuCFR by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_menu_cfr),
-        default = true,
+        default = false,
     )
 
     /**
@@ -2306,6 +2322,15 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     )
 
     /**
+     * Do not show crash pull dialog before this date.
+     * cf browser.crashReports.dontShowBefore on desktop
+     */
+    var crashPullDontShowBefore by longPreference(
+        appContext.getPreferenceKey(R.string.pref_key_crash_pull_dont_show_before),
+        default = 0,
+    )
+
+    /**
      * Indicates whether or not we should use the new bookmarks UI.
      */
     var useNewBookmarks by lazyFeatureFlagPreference(
@@ -2452,4 +2477,21 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         },
         featureFlag = true,
     )
+
+    /**
+     * Distribution ID that represents if the app was installed via a distribution deal
+     */
+    var distributionId by stringPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_distribution_id),
+        default = "",
+    )
+
+    /**
+     * Indicates whether the app should automatically clean up downloaded files.
+     */
+    fun shouldCleanUpDownloadsAutomatically(): Boolean {
+        val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(appContext)
+        val cleanupPreferenceKey = appContext.getString(R.string.pref_key_downloads_clean_up_files_automatically)
+        return sharedPreferences.getBoolean(cleanupPreferenceKey, false)
+    }
 }

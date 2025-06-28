@@ -1001,12 +1001,17 @@ bitflags! {
         const POSITION = 1 << 8;
         /// Whether the view-transition-name property will change.
         const VIEW_TRANSITION_NAME = 1 << 9;
+        /// Whether any property which establishes a backdrop-root will change.
+        /// See https://drafts.fxtf.org/filter-effects-2/#BackdropFilterProperty
+        const BACKDROP_ROOT = 1 << 10;
     }
 }
 
 fn change_bits_for_longhand(longhand: LonghandId) -> WillChangeBits {
     match longhand {
-        LonghandId::Opacity => WillChangeBits::OPACITY,
+        LonghandId::Opacity => {
+            WillChangeBits::OPACITY | WillChangeBits::BACKDROP_ROOT
+        },
         LonghandId::Contain => WillChangeBits::CONTAIN,
         LonghandId::Perspective => WillChangeBits::PERSPECTIVE,
         LonghandId::Position => {
@@ -1019,14 +1024,22 @@ fn change_bits_for_longhand(longhand: LonghandId) -> WillChangeBits {
         LonghandId::Rotate |
         LonghandId::Scale |
         LonghandId::OffsetPath => WillChangeBits::TRANSFORM,
-        LonghandId::BackdropFilter | LonghandId::Filter => {
-            WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL | WillChangeBits::FIXPOS_CB_NON_SVG
+        LonghandId::Filter | LonghandId::BackdropFilter => {
+            WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL |
+            WillChangeBits::BACKDROP_ROOT |
+            WillChangeBits::FIXPOS_CB_NON_SVG
         },
         LonghandId::ViewTransitionName => WillChangeBits::VIEW_TRANSITION_NAME,
-        LonghandId::MixBlendMode |
+        LonghandId::MixBlendMode => {
+            WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL |
+            WillChangeBits::BACKDROP_ROOT
+        },
         LonghandId::Isolation |
-        LonghandId::MaskImage |
-        LonghandId::ClipPath => WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL,
+        LonghandId::MaskImage => WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL,
+        LonghandId::ClipPath => {
+            WillChangeBits::STACKING_CONTEXT_UNCONDITIONAL |
+            WillChangeBits::BACKDROP_ROOT
+        },
         _ => WillChangeBits::empty(),
     }
 }
@@ -1494,9 +1507,6 @@ pub enum Appearance {
     /// Menu Popup background.
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     Menupopup,
-    /// The meter bar's meter indicator.
-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
-    Meterchunk,
     /// The "arrowed" part of the dropdown button that open up a dropdown list.
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozMenulistArrowButton,
@@ -1506,14 +1516,9 @@ pub enum Appearance {
     /// For HTML's <input type=password>
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     PasswordInput,
-    /// The progress bar's progress indicator
-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
-    Progresschunk,
     /// nsRangeFrame and its subparts
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     Range,
-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
-    RangeThumb,
     /// The scrollbar slider
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     ScrollbarHorizontal,
@@ -1538,18 +1543,12 @@ pub enum Appearance {
     /// The scroll corner
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     Scrollcorner,
-    /// A separator.  Can be horizontal or vertical.
-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
-    Separator,
     /// The up button of a spin control.
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     SpinnerUpbutton,
     /// The down button of a spin control.
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     SpinnerDownbutton,
-    /// A status bar in a main application window.
-    #[parse(condition = "ParserContext::chrome_rules_enabled")]
-    Statusbar,
     /// A single toolbar button (with no associated dropdown).
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     Toolbarbutton,

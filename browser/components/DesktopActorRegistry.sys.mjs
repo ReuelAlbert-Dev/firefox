@@ -409,9 +409,12 @@ let JSWINDOWACTORS = {
     onAddActor(register, unregister) {
       let isRegistered = false;
 
-      // Register the actor if we have a provider set and not yet registered
+      // Register the actor if we have a provider or support provider-less
       const maybeRegister = () => {
-        if (Services.prefs.getCharPref("browser.ml.chat.provider", "")) {
+        if (
+          Services.prefs.getCharPref("browser.ml.chat.provider", "") ||
+          Services.prefs.getBoolPref("browser.ml.chat.page")
+        ) {
           if (!isRegistered) {
             register();
             isRegistered = true;
@@ -422,6 +425,7 @@ let JSWINDOWACTORS = {
         }
       };
 
+      Services.prefs.addObserver("browser.ml.chat.page", maybeRegister);
       Services.prefs.addObserver("browser.ml.chat.provider", maybeRegister);
       maybeRegister();
     },
@@ -445,6 +449,10 @@ let JSWINDOWACTORS = {
       "chrome://browser/content/syncedtabs/sidebar.xhtml",
       "chrome://browser/content/places/historySidebar.xhtml",
       "chrome://browser/content/places/bookmarksSidebar.xhtml",
+      "chrome://browser/content/sidebar/sidebar-history.html",
+      "chrome://browser/content/sidebar/sidebar-customize.html",
+      "chrome://browser/content/sidebar/sidebar-syncedtabs.html",
+      "chrome://browser/content/genai/chat.html",
       "about:firefoxview",
       "about:editprofile",
       "about:deleteprofile",

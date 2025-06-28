@@ -37,6 +37,7 @@
 #include "imgLoader.h"
 #include "imgRequestProxy.h"
 #include "js/Value.h"
+#include "js/TelemetryTimers.h"
 #include "jsapi.h"
 #include "mozAutoDocUpdate.h"
 #include "mozIDOMWindow.h"
@@ -267,6 +268,7 @@
 #include "mozilla/dom/XPathExpression.h"
 #include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/dom/nsCSPUtils.h"
+#include "mozilla/dom/IntegrityPolicy.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 #include "mozilla/fallible.h"
 #include "mozilla/gfx/BaseCoord.h"
@@ -276,6 +278,7 @@
 #include "mozilla/gfx/ScaleFactor.h"
 #include "mozilla/glean/DomMetrics.h"
 #include "mozilla/glean/DomUseCounterMetrics.h"
+#include "mozilla/intl/EncodingToLang.h"
 #include "mozilla/intl/LocaleService.h"
 #include "mozilla/ipc/IdleSchedulerChild.h"
 #include "mozilla/ipc/MessageChannel.h"
@@ -340,6 +343,7 @@
 #include "nsICSSLoaderObserver.h"
 #include "nsICategoryManager.h"
 #include "nsICertOverrideService.h"
+#include "nsIClassifiedChannel.h"
 #include "nsIContent.h"
 #include "nsIContentInlines.h"
 #include "nsIContentPolicy.h"
@@ -417,7 +421,6 @@
 #include "nsIXULRuntime.h"
 #include "nsImageLoadingContent.h"
 #include "nsImportModule.h"
-#include "nsLanguageAtomService.h"
 #include "nsLayoutUtils.h"
 #include "nsMimeTypes.h"
 #include "nsNetCID.h"
@@ -482,6 +485,8 @@ mozilla::LazyLogModule gUseCountersLog("UseCounters");
 namespace mozilla {
 
 using namespace net;
+
+using performance::pageload_event::PageloadEventType;
 
 namespace dom {
 
@@ -1500,10 +1505,12 @@ Document::Document(const char* aContentType)
       mInteractiveWidgetMode(
           InteractiveWidgetUtils::DefaultInteractiveWidgetMode()),
       mHeaderData(nullptr),
+      mLanguageFromCharset(nullptr),
       mServoRestyleRootDirtyBits(0),
       mThrowOnDynamicMarkupInsertionCounter(0),
       mIgnoreOpensDuringUnloadCounter(0),
       mSavedResolution(1.0f),
+      mClassificationFlags({0, 0}),
       mGeneration(0),
       mCachedTabSizeGeneration(0),
       mNextFormNumber(0),
@@ -2036,19 +2043,11 @@ void Document::ConstructUbiNode(void* storage) {
 }
 
 void Document::LoadEventFired() {
-  // Object used to collect some telemetry data so we don't need to query for it
-  // twice.
-  glean::perf::PageLoadExtra pageLoadEventData;
-
-  // Accumulate timing data located in each document's realm and report to
-  // telemetry.
-  AccumulateJSTelemetry(pageLoadEventData);
-
   // Collect page load timings
-  AccumulatePageLoadTelemetry(pageLoadEventData);
+  AccumulatePageLoadTelemetry();
 
   // Record page load event
-  RecordPageLoadEventTelemetry(pageLoadEventData);
+  RecordPageLoadEventTelemetry();
 
   // Release the JS bytecode cache from its wait on the load event, and
   // potentially dispatch the encoding of the bytecode.
@@ -2057,11 +2056,10 @@ void Document::LoadEventFired() {
   }
 }
 
-void Document::RecordPageLoadEventTelemetry(
-    glean::perf::PageLoadExtra& aEventTelemetryData) {
+void Document::RecordPageLoadEventTelemetry() {
   // If the page load time is empty, then the content wasn't something we want
   // to report (i.e. not a top level document).
-  if (!aEventTelemetryData.loadTime) {
+  if (!mPageloadEventData.HasLoadTime()) {
     return;
   }
   MOZ_ASSERT(IsTopLevelContentDocument());
@@ -2073,6 +2071,22 @@ void Document::RecordPageLoadEventTelemetry(
 
   nsIDocShell* docshell = window->GetDocShell();
   if (!docshell) {
+    return;
+  }
+
+  // Don't send any event telemetry for private browsing.
+  if (IsInPrivateBrowsing()) {
+    return;
+  }
+
+  if (!GetChannel()) {
+    return;
+  }
+
+  auto pageloadEventType = performance::pageload_event::GetPageloadEventType();
+
+  // Return if we are not sending an event for this pageload.
+  if (pageloadEventType == mozilla::PageloadEventType::kNone) {
     return;
   }
 
@@ -2113,29 +2127,57 @@ void Document::RecordPageLoadEventTelemetry(
       loadTypeStr.Append("OTHER");
       break;
   }
+  mPageloadEventData.set_loadType(loadTypeStr);
 
   nsCOMPtr<nsIEffectiveTLDService> tldService =
       mozilla::components::EffectiveTLD::Service();
-  if (tldService && mReferrerInfo &&
-      (docshell->GetLoadType() & nsIDocShell::LOAD_CMD_NORMAL)) {
-    nsAutoCString currentBaseDomain, referrerBaseDomain;
-    nsCOMPtr<nsIURI> referrerURI = mReferrerInfo->GetComputedReferrer();
-    if (referrerURI) {
-      auto result = NS_SUCCEEDED(
-          tldService->GetBaseDomain(referrerURI, 0, referrerBaseDomain));
-      if (result) {
-        bool sameOrigin = false;
-        NodePrincipal()->IsSameOrigin(referrerURI, &sameOrigin);
-        aEventTelemetryData.sameOriginNav = mozilla::Some(sameOrigin);
+
+  nsresult rv = NS_OK;
+  if (tldService) {
+    if (mReferrerInfo &&
+        (docshell->GetLoadType() & nsIDocShell::LOAD_CMD_NORMAL)) {
+      nsAutoCString currentBaseDomain, referrerBaseDomain;
+      nsCOMPtr<nsIURI> referrerURI = mReferrerInfo->GetComputedReferrer();
+      if (referrerURI) {
+        rv = tldService->GetBaseDomain(referrerURI, 0, referrerBaseDomain);
+        if (NS_SUCCEEDED(rv)) {
+          bool sameOrigin = false;
+          NodePrincipal()->IsSameOrigin(referrerURI, &sameOrigin);
+          mPageloadEventData.set_sameOriginNav(sameOrigin);
+        }
       }
     }
   }
 
-  aEventTelemetryData.loadType = mozilla::Some(loadTypeStr);
+  if (pageloadEventType == PageloadEventType::kDomain) {
+    // Do not record anything if we failed to assign the domain.
+    if (!mPageloadEventData.MaybeSetPublicRegistrableDomain(GetDocumentURI(),
+                                                            GetChannel())) {
+      return;
+    }
+  }
+
+  // Collect any JS timers that were measured during pageload.
+  if (GetScopeObject() && GetScopeObject()->GetGlobalJSObject()) {
+    AutoJSContext cx;
+    JSObject* globalObject = GetScopeObject()->GetGlobalJSObject();
+    JSAutoRealm ar(cx, globalObject);
+    JS::JSTimers timers = JS::GetJSTimers(cx);
+
+    if (!timers.executionTime.IsZero()) {
+      mPageloadEventData.set_jsExecTime(
+          static_cast<uint32_t>(timers.executionTime.ToMilliseconds()));
+    }
+
+    if (!timers.delazificationTime.IsZero()) {
+      mPageloadEventData.set_delazifyTime(
+          static_cast<uint32_t>(timers.delazificationTime.ToMilliseconds()));
+    }
+  }
 
   // Sending a glean ping must be done on the parent process.
   if (ContentChild* cc = ContentChild::GetSingleton()) {
-    cc->SendRecordPageLoadEvent(aEventTelemetryData);
+    cc->SendRecordPageLoadEvent(mPageloadEventData);
   }
 }
 
@@ -2167,8 +2209,7 @@ static void AccumulatePriorityFcpGleanPref(
 }
 #endif
 
-void Document::AccumulatePageLoadTelemetry(
-    glean::perf::PageLoadExtra& aEventTelemetryDataOut) {
+void Document::AccumulatePageLoadTelemetry() {
   // Interested only in top level documents for real websites that are in the
   // foreground.
   if (!ShouldIncludeInTelemetry() || !IsTopLevelContentDocument() ||
@@ -2199,15 +2240,14 @@ void Document::AccumulatePageLoadTelemetry(
   uint8_t redirectCount;
   timedChannel->GetRedirectCount(&redirectCount);
   if (redirectCount) {
-    aEventTelemetryDataOut.redirectCount =
-        mozilla::Some(static_cast<uint32_t>(redirectCount));
+    mPageloadEventData.set_redirectCount(static_cast<uint32_t>(redirectCount));
   }
 
   if (!redirectStart.IsNull() && !redirectEnd.IsNull()) {
     TimeDuration redirectTime = redirectEnd - redirectStart;
     if (redirectTime > zeroDuration) {
-      aEventTelemetryDataOut.redirectTime =
-          mozilla::Some(static_cast<uint32_t>(redirectTime.ToMilliseconds()));
+      mPageloadEventData.set_redirectTime(
+          static_cast<uint32_t>(redirectTime.ToMilliseconds()));
     }
   }
 
@@ -2218,8 +2258,8 @@ void Document::AccumulatePageLoadTelemetry(
   if (!dnsLookupStart.IsNull() && !dnsLookupEnd.IsNull()) {
     TimeDuration dnsLookupTime = dnsLookupEnd - dnsLookupStart;
     if (dnsLookupTime > zeroDuration) {
-      aEventTelemetryDataOut.dnsLookupTime =
-          mozilla::Some(static_cast<uint32_t>(dnsLookupTime.ToMilliseconds()));
+      mPageloadEventData.set_dnsLookupTime(
+          static_cast<uint32_t>(dnsLookupTime.ToMilliseconds()));
     }
   }
 
@@ -2247,7 +2287,7 @@ void Document::AccumulatePageLoadTelemetry(
         // Failed to get the DNS service.
         dnsKey = "(fail)"_ns;
       }
-      aEventTelemetryDataOut.trrDomain = mozilla::Some(dnsKey);
+      mPageloadEventData.set_trrDomain(dnsKey);
     }
 
     uint32_t major;
@@ -2275,7 +2315,7 @@ void Document::AccumulatePageLoadTelemetry(
         }
       }
 
-      aEventTelemetryDataOut.httpVer = mozilla::Some(major);
+      mPageloadEventData.set_httpVer(major);
     }
 
     uint32_t earlyHintType = 0;
@@ -2328,8 +2368,8 @@ void Document::AccumulatePageLoadTelemetry(
 
     TimeDuration fcpTime = firstContentfulComposite - navigationStart;
     if (fcpTime > zeroDuration) {
-      aEventTelemetryDataOut.fcpTime =
-          mozilla::Some(static_cast<uint32_t>(fcpTime.ToMilliseconds()));
+      mPageloadEventData.set_fcpTime(
+          static_cast<uint32_t>(fcpTime.ToMilliseconds()));
     }
   }
 
@@ -2337,7 +2377,7 @@ void Document::AccumulatePageLoadTelemetry(
   // this on page unload.
   if (TimeStamp lcpTime =
           GetNavigationTiming()->GetLargestContentfulRenderTimeStamp()) {
-    aEventTelemetryDataOut.lcpTime = mozilla::Some(
+    mPageloadEventData.set_lcpTime(
         static_cast<uint32_t>((lcpTime - navigationStart).ToMilliseconds()));
   }
 
@@ -2361,14 +2401,14 @@ void Document::AccumulatePageLoadTelemetry(
 
     TimeDuration responseTime = responseStart - navigationStart;
     if (responseTime > zeroDuration) {
-      aEventTelemetryDataOut.responseTime =
-          mozilla::Some(static_cast<uint32_t>(responseTime.ToMilliseconds()));
+      mPageloadEventData.set_responseTime(
+          static_cast<uint32_t>(responseTime.ToMilliseconds()));
     }
 
     TimeDuration loadTime = loadEventStart - navigationStart;
     if (loadTime > zeroDuration) {
-      aEventTelemetryDataOut.loadTime =
-          mozilla::Some(static_cast<uint32_t>(loadTime.ToMilliseconds()));
+      mPageloadEventData.set_loadTime(
+          static_cast<uint32_t>(loadTime.ToMilliseconds()));
     }
 
     TimeStamp requestStart;
@@ -2376,7 +2416,7 @@ void Document::AccumulatePageLoadTelemetry(
     if (requestStart) {
       TimeDuration timeToRequestStart = requestStart - navigationStart;
       if (timeToRequestStart > zeroDuration) {
-        aEventTelemetryDataOut.timeToRequestStart = mozilla::Some(
+        mPageloadEventData.set_timeToRequestStart(
             static_cast<uint32_t>(timeToRequestStart.ToMilliseconds()));
       }
     }
@@ -2388,7 +2428,7 @@ void Document::AccumulatePageLoadTelemetry(
     if (secureConnectStart && connectEnd) {
       TimeDuration tlsHandshakeTime = connectEnd - secureConnectStart;
       if (tlsHandshakeTime > zeroDuration) {
-        aEventTelemetryDataOut.tlsHandshakeTime = mozilla::Some(
+        mPageloadEventData.set_tlsHandshakeTime(
             static_cast<uint32_t>(tlsHandshakeTime.ToMilliseconds()));
       }
     }
@@ -2396,65 +2436,10 @@ void Document::AccumulatePageLoadTelemetry(
 
 #ifdef ACCESSIBILITY
   if (GetAccService() != nullptr) {
-    SetPageloadEventFeature(pageload_event::FeatureBits::USING_A11Y);
+    mPageloadEventData.SetUserFeature(
+        performance::pageload_event::UserFeature::USING_A11Y);
   }
 #endif
-
-  aEventTelemetryDataOut.features = mozilla::Some(mPageloadEventFeatures);
-}
-
-void Document::AccumulateJSTelemetry(
-    glean::perf::PageLoadExtra& aEventTelemetryDataOut) {
-  if (!IsTopLevelContentDocument() || !ShouldIncludeInTelemetry()) {
-    return;
-  }
-
-  if (!GetScopeObject() || !GetScopeObject()->GetGlobalJSObject()) {
-    return;
-  }
-
-  AutoJSContext cx;
-  JSObject* globalObject = GetScopeObject()->GetGlobalJSObject();
-  JSAutoRealm ar(cx, globalObject);
-  JS::JSTimers timers = JS::GetJSTimers(cx);
-
-  if (!timers.executionTime.IsZero()) {
-    glean::javascript_pageload::execution_time.AccumulateRawDuration(
-        timers.executionTime);
-    aEventTelemetryDataOut.jsExecTime = mozilla::Some(
-        static_cast<uint32_t>(timers.executionTime.ToMilliseconds()));
-  }
-
-  if (!timers.delazificationTime.IsZero()) {
-    glean::javascript_pageload::delazification_time.AccumulateRawDuration(
-        timers.delazificationTime);
-  }
-
-  if (!timers.xdrEncodingTime.IsZero()) {
-    glean::javascript_pageload::xdr_encode_time.AccumulateRawDuration(
-        timers.xdrEncodingTime);
-  }
-
-  if (!timers.baselineCompileTime.IsZero()) {
-    glean::javascript_pageload::baseline_compile_time.AccumulateRawDuration(
-        timers.baselineCompileTime);
-  }
-
-  if (!timers.gcTime.IsZero()) {
-    glean::javascript_pageload::gc_time.AccumulateRawDuration(timers.gcTime);
-  }
-
-  if (!timers.protectTime.IsZero()) {
-    glean::javascript_pageload::protect_time.AccumulateRawDuration(
-        timers.protectTime);
-    // GLAM EXPERIMENT
-    // This metric is temporary, disabled by default, and will be enabled only
-    // for the purpose of experimenting with client-side sampling of data for
-    // GLAM use. See Bug 1947604 for more information.
-    glean::glam_experiment::protect_time.AccumulateRawDuration(
-        timers.protectTime);
-    // END GLAM EXPERIMENT
-  }
 }
 
 Document::~Document() {
@@ -3043,7 +3028,7 @@ void Document::DisconnectNodeTree() {
 
     while (nsCOMPtr<nsIContent> content = GetLastChild()) {
       nsMutationGuard::DidMutate();
-      MutationObservers::NotifyContentWillBeRemoved(this, content, nullptr);
+      MutationObservers::NotifyContentWillBeRemoved(this, content, {});
       DisconnectChild(content);
       if (content == mCachedRootElement) {
         // Immediately clear mCachedRootElement, now that it's been removed
@@ -3667,6 +3652,15 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
     WarnIfSandboxIneffective(docShell, mSandboxFlags, GetChannel());
   }
 
+  nsCOMPtr<nsIClassifiedChannel> classifiedChannel =
+      do_QueryInterface(aChannel);
+
+  if (classifiedChannel) {
+    mClassificationFlags = {
+        classifiedChannel->GetFirstPartyClassificationFlags(),
+        classifiedChannel->GetThirdPartyClassificationFlags()};
+  }
+
   // Set the opener policy for the top level content document.
   nsCOMPtr<nsIHttpChannelInternal> httpChan = do_QueryInterface(mChannel);
   nsILoadInfo::CrossOriginOpenerPolicy policy =
@@ -3715,6 +3709,9 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   }
 
   rv = InitCSP(aChannel);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = InitIntegrityPolicy(aChannel);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = InitDocPolicy(aChannel);
@@ -4011,6 +4008,33 @@ nsresult Document::InitCSP(nsIChannel* aChannel) {
 
   ApplySettingsFromCSP(false);
   return NS_OK;
+}
+
+nsresult Document::InitIntegrityPolicy(nsIChannel* aChannel) {
+  MOZ_ASSERT(!mScriptGlobalObject,
+             "Integrity Policy must be initialized before mScriptGlobalObject "
+             "is set!");
+
+  MOZ_ASSERT(!mIntegrityPolicy,
+             "where did mIntegrityPolicy get set if not here?");
+
+  nsAutoCString headerValue, headerROValue;
+  nsCOMPtr<nsIHttpChannel> httpChannel;
+  nsresult rv = GetHttpChannelHelper(aChannel, getter_AddRefs(httpChannel));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  if (httpChannel) {
+    Unused << httpChannel->GetResponseHeader("integrity-policy"_ns,
+                                             headerValue);
+
+    Unused << httpChannel->GetResponseHeader("integrity-policy-report-only"_ns,
+                                             headerROValue);
+  }
+
+  return IntegrityPolicy::ParseHeaders(headerValue, headerROValue,
+                                       getter_AddRefs(mIntegrityPolicy));
 }
 
 static FeaturePolicy* GetFeaturePolicyFromElement(Element* aElement) {
@@ -4495,9 +4519,10 @@ nsresult Document::Dispatch(already_AddRefed<nsIRunnable>&& aRunnable) const {
 }
 
 void Document::NoteScriptTrackingStatus(const nsACString& aURL,
-                                        bool aIsTracking) {
-  if (aIsTracking) {
-    mTrackingScripts.Insert(aURL);
+                                        net::ClassificationFlags& aFlags) {
+  // If the script is not tracking, we don't need to do anything.
+  if (aFlags.firstPartyFlags || aFlags.thirdPartyFlags) {
+    mTrackingScripts.InsertOrUpdate(aURL, aFlags);
   }
   // Ideally, whether a given script is tracking or not should be consistent,
   // but there is a race so that it is not, when loading real sites in debug
@@ -4510,7 +4535,27 @@ bool Document::IsScriptTracking(JSContext* aCx) const {
   if (!JS::DescribeScriptedCaller(&filename, aCx)) {
     return false;
   }
-  return mTrackingScripts.Contains(nsDependentCString(filename.get()));
+
+  auto entry = mTrackingScripts.Lookup(nsDependentCString(filename.get()));
+  if (!entry) {
+    return false;
+  }
+
+  return net::UrlClassifierCommon::IsTrackingClassificationFlag(
+      entry.Data().thirdPartyFlags, IsInPrivateBrowsing());
+}
+
+net::ClassificationFlags Document::GetScriptTrackingFlags() const {
+  if (auto loc = JSCallingLocation::Get()) {
+    if (auto entry = mTrackingScripts.Lookup(loc.FileName())) {
+      return entry.Data();
+    }
+  }
+
+  // If the currently executing script is not a tracker, return the
+  // classification flags of the document.
+
+  return mClassificationFlags;
 }
 
 void Document::GetContentType(nsAString& aContentType) {
@@ -6706,7 +6751,7 @@ void Document::GetCookie(nsAString& aCookie, ErrorResult& aRv) {
   nsTArray<RefPtr<Cookie>> cookieList;
   bool stale = false;
   int64_t currentTimeInUsec = PR_Now();
-  int64_t currentTime = currentTimeInUsec / PR_USEC_PER_SEC;
+  int64_t currentTime = currentTimeInUsec / PR_USEC_PER_MSEC;
 
   // not having a cookie service isn't an error
   nsCOMPtr<nsICookieService> service =
@@ -7724,7 +7769,7 @@ void Document::RemoveChildNode(nsIContent* aKid, bool aNotify,
     // Notify early so that we can clear the cached element after notifying,
     // without having to slow down nsINode::RemoveChildNode.
     if (aNotify) {
-      MutationObservers::NotifyContentWillBeRemoved(this, aKid, aState);
+      MutationObservers::NotifyContentWillBeRemoved(this, aKid, {aState});
       aNotify = false;
     }
 
@@ -8715,7 +8760,7 @@ void Document::RemoveCustomContentContainer() {
     container->QueueDevtoolsAnonymousEvent(/* aIsRemove = */ true);
   }
   if (PresShell* ps = GetPresShell()) {
-    ps->ContentWillBeRemoved(container, nullptr);
+    ps->ContentWillBeRemoved(container, {});
   }
   container->UnbindFromTree();
 }
@@ -8762,7 +8807,7 @@ void Document::CreateCustomContentContainerIfNeeded() {
     container->QueueDevtoolsAnonymousEvent(/* aIsRemove = */ false);
   }
   if (PresShell* ps = GetPresShell()) {
-    ps->ContentAppended(container);
+    ps->ContentAppended(container, {});
   }
   for (auto& anonContent : mAnonymousContents) {
     BindAnonymousContent(*anonContent, *container);
@@ -12420,7 +12465,11 @@ void Document::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
     mAnimationController->OnPageHide();
   }
 
-  if (!inFrameLoaderSwap) {
+  if (inFrameLoaderSwap) {
+    if (RefPtr transition = mActiveViewTransition) {
+      transition->SkipTransition(SkipTransitionReason::PageSwap);
+    }
+  } else {
     if (aPersisted) {
       // We do not stop the animations (bug 1024343) when the page is refreshing
       // while being dragged out.
@@ -14735,13 +14784,15 @@ void DevToolsMutationObserver::AttributeChanged(Element* aElement,
   FireEvent(aElement, u"devtoolsattrmodified"_ns);
 }
 
-void DevToolsMutationObserver::ContentAppended(nsIContent* aFirstNewContent) {
+void DevToolsMutationObserver::ContentAppended(nsIContent* aFirstNewContent,
+                                               const ContentAppendInfo& aInfo) {
   for (nsIContent* c = aFirstNewContent; c; c = c->GetNextSibling()) {
-    ContentInserted(c);
+    ContentInserted(c, aInfo);
   }
 }
 
-void DevToolsMutationObserver::ContentInserted(nsIContent* aChild) {
+void DevToolsMutationObserver::ContentInserted(nsIContent* aChild,
+                                               const ContentInsertInfo&) {
   FireEvent(aChild, u"devtoolschildinserted"_ns);
 }
 
@@ -17021,6 +17072,12 @@ void Document::ReportShadowedHTMLDocumentProperties() {
 }
 
 void Document::ReportLCP() {
+  // Do not record LCP in any histogram if the same value is being recorded
+  // in the domain pageload event.
+  if (mPageloadEventData.HasDomain()) {
+    return;
+  }
+
   const nsDOMNavigationTiming* timing = GetNavigationTiming();
 
   if (!ShouldIncludeInTelemetry() || !IsTopLevelContentDocument() || !timing ||
@@ -17343,7 +17400,7 @@ static void UpdateEffectsOnBrowsingContext(BrowsingContext* aBc,
       //    this code very often anyways.
       return EffectsInfo::FullyHidden();
     }
-    if (MOZ_UNLIKELY(NS_WARN_IF(!subDocFrame))) {
+    if (MOZ_UNLIKELY(!subDocFrame)) {
       // <frame> not inside a <frameset> might not create a subdoc frame,
       // for example.
       return EffectsInfo::FullyHidden();
@@ -18462,6 +18519,12 @@ already_AddRefed<ViewTransition> Document::StartViewTransition(
   }
   // Step 6: Set document's active view transition to transition.
   mActiveViewTransition = transition;
+
+  // Enable :active-view-transition to allow associated styles to
+  // be applied during the view transition.
+  if (auto* root = this->GetRootElement()) {
+    root->AddStates(ElementState::ACTIVE_VIEW_TRANSITION);
+  }
 
   EnsureViewTransitionOperationsHappen();
 
@@ -19740,7 +19803,7 @@ nsAtom* Document::GetLanguageForStyle() const {
   if (nsAtom* lang = GetContentLanguageAsAtomForStyle()) {
     return lang;
   }
-  return mLanguageFromCharset.get();
+  return mLanguageFromCharset;
 }
 
 void Document::GetContentLanguageForBindings(DOMString& aString) const {
@@ -19749,7 +19812,7 @@ void Document::GetContentLanguageForBindings(DOMString& aString) const {
 
 const LangGroupFontPrefs* Document::GetFontPrefsForLang(
     nsAtom* aLanguage, bool* aNeedsToCache) const {
-  nsAtom* lang = aLanguage ? aLanguage : mLanguageFromCharset.get();
+  nsAtom* lang = aLanguage ? aLanguage : mLanguageFromCharset;
   return StaticPresData::Get()->GetFontPrefsForLang(lang, aNeedsToCache);
 }
 
@@ -19757,7 +19820,7 @@ void Document::DoCacheAllKnownLangPrefs() {
   MOZ_ASSERT(mMayNeedFontPrefsUpdate);
   RefPtr<nsAtom> lang = GetLanguageForStyle();
   StaticPresData* data = StaticPresData::Get();
-  data->GetFontPrefsForLang(lang ? lang.get() : mLanguageFromCharset.get());
+  data->GetFontPrefsForLang(lang ? lang.get() : mLanguageFromCharset);
   data->GetFontPrefsForLang(nsGkAtoms::x_math);
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1362599#c12
   data->GetFontPrefsForLang(nsGkAtoms::Unicode);
@@ -19768,29 +19831,14 @@ void Document::DoCacheAllKnownLangPrefs() {
 }
 
 void Document::RecomputeLanguageFromCharset() {
-  RefPtr<nsAtom> language;
-  // Optimize the default character sets.
-  if (mCharacterSet == WINDOWS_1252_ENCODING) {
-    language = nsGkAtoms::x_western;
-  } else {
-    nsLanguageAtomService* service = nsLanguageAtomService::GetService();
-    if (mCharacterSet == UTF_8_ENCODING) {
-      language = nsGkAtoms::Unicode;
-    } else {
-      language = service->LookupCharSet(mCharacterSet);
-    }
-
-    if (language == nsGkAtoms::Unicode) {
-      language = service->GetLocaleLanguage();
-    }
-  }
+  nsAtom* language = mozilla::intl::EncodingToLang::Lookup(mCharacterSet);
 
   if (language == mLanguageFromCharset) {
     return;
   }
 
   mMayNeedFontPrefsUpdate = true;
-  mLanguageFromCharset = std::move(language);
+  mLanguageFromCharset = language;
 }
 
 nsICookieJarSettings* Document::CookieJarSettings() {
@@ -20046,8 +20094,21 @@ void Document::SetIsInitialDocument(bool aIsInitialDocument) {
 // static
 void Document::AddToplevelLoadingDocument(Document* aDoc) {
   MOZ_ASSERT(aDoc && aDoc->IsTopLevelContentDocument());
+
+  if (!XRE_IsContentProcess()) {
+    return;
+  }
+
+  // Start the JS execution timer.
+  {
+    AutoJSContext cx;
+    if (static_cast<JSContext*>(cx)) {
+      JS::SetMeasuringExecutionTimeEnabled(cx, true);
+    }
+  }
+
   // Currently we're interested in foreground documents only, so bail out early.
-  if (aDoc->IsInBackgroundWindow() || !XRE_IsContentProcess()) {
+  if (aDoc->IsInBackgroundWindow()) {
     return;
   }
 
@@ -20078,6 +20139,14 @@ void Document::RemoveToplevelLoadingDocument(Document* aDoc) {
       if (idleScheduler) {
         idleScheduler->SendPrioritizedOperationDone();
       }
+    }
+  }
+
+  // Stop the JS execution timer once the page is loaded.
+  {
+    AutoJSContext cx;
+    if (static_cast<JSContext*>(cx)) {
+      JS::SetMeasuringExecutionTimeEnabled(cx, false);
     }
   }
 }

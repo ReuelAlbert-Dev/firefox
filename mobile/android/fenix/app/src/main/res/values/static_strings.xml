@@ -85,10 +85,12 @@
     <string name="preferences_debug_settings_menu_redesign" translatable="false">Enable Menu Redesign</string>
     <!-- Label for enabling Firefox Suggest -->
     <string name="preferences_debug_settings_fxsuggest" translatable="false">Enable Firefox Suggest</string>
-    <!-- Label for enabling the redesigned toolbar -->
+    <!-- Label for enabling the composable toolbar -->
     <string name="preferences_debug_settings_composable_toolbar" translatable="false">Enable Composable Toolbar</string>
-    <!-- Label for enabling Felt Privacy -->
-    <string name="preferences_debug_felt_privacy" translatable="false">Enable Felt Privacy</string>
+    <!-- Label for enabling the redesigned toolbar options -->
+    <string name="preferences_debug_settings_toolbar_redesign" translatable="false">Enable Redesigned Toolbar Options</string>
+    <!-- Label for toggling Remote Crash Pull -->
+    <string name="preferences_crash_pull_never_show_again" translatable="false">Never show Crash Pull</string>
     <!-- Label for enabling the Debug Drawer -->
     <string name="preferences_debug_settings_debug_drawer" translatable="false">Enable Debug Drawer</string>
     <!-- Label for enabling the microsurvey feature -->
@@ -103,9 +105,7 @@
     <string name="preferences_debug_settings_recent_searches" translatable="false">Enable Recent Searches</string>
     <!-- Label for enabling Shortcut Suggestions -->
     <string name="preferences_debug_settings_shortcuts_suggestions" translatable="false">Enable Shortcut Suggestions</string>
-    <!-- Label for enabling the Tab Strip -->
-    <string name="preferences_tab_strip_title" translatable="false" moz:removedIn="139" tools:ignore="UnusedResources">Enable Tab Strip</string>
-    <string name="preferences_tab_strip_details" translatable="false" moz:removedIn="139" tools:ignore="UnusedResources">Highly experimental, early access preview.</string>
+    
 
     <!-- Label for enabling the DNS over HTTPS settings -->
     <string name="preferences_debug_settings_enable_doh_settings" translatable="false">Enable DNS over HTTPS settings</string>
@@ -175,10 +175,6 @@
     <string name="debug_drawer_cfr_tools_homepage_searchbar_title">Homepage Searchbar</string>
     <!-- The homepage searchbar CFR description in CFR Tools -->
     <string name="debug_drawer_cfr_tools_homepage_searchbar_description">Displayed when a new user sees the homepage for the first time.</string>
-    <!-- The homepage sync CFR title in CFR Tools -->
-    <string name="debug_drawer_cfr_tools_homepage_sync_title">Homepage Sync</string>
-    <!-- The homepage sync CFR description in CFR Tools -->
-    <string name="debug_drawer_cfr_tools_homepage_sync_description">Displayed the first time visiting the homepage after signing-in and the Homepage Navigation Toolbar CFR has been shown.</string>
     <!-- The inactive tabs CFR title in CFR Tools -->
     <string name="debug_drawer_cfr_tools_inactive_tabs_title">Inactive Tabs</string>
     <!-- The inactive tabs CFR description in CFR Tools -->

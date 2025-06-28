@@ -1991,6 +1991,7 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
         ObjOperandId objId = cacheIRReader.objOperandId();
         Int32OperandId indexId = cacheIRReader.int32OperandId();
         ValOperandId rhsId = cacheIRReader.valOperandId();
+        bool expectPackedElements = cacheIRReader.readBool();
         NativeObject* nobj =
             reinterpret_cast<NativeObject*>(READ_REG(objId.id()));
         ObjectElements* elems = nobj->getElementsHeader();
@@ -1998,8 +1999,11 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
         if (index < 0 || uint32_t(index) >= nobj->getDenseInitializedLength()) {
           FAIL_IC();
         }
+        if (expectPackedElements && !elems->isPacked()) {
+          FAIL_IC();
+        }
         HeapSlot* slot = &elems->elements()[index];
-        if (slot->get().isMagic()) {
+        if (!expectPackedElements && slot->get().isMagic()) {
           FAIL_IC();
         }
         Value val = READ_VALUE_REG(rhsId.id());
@@ -2415,7 +2419,7 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
       CACHEOP_CASE_FALLTHROUGH(CallScriptedSetter) {
         bool isSetter = cacheop == CacheOp::CallScriptedSetter;
         ObjOperandId receiverId = cacheIRReader.objOperandId();
-        uint32_t getterSetterOffset = cacheIRReader.stubOffset();
+        ObjOperandId calleeId = cacheIRReader.objOperandId();
         ValOperandId rhsId =
             isSetter ? cacheIRReader.valOperandId() : ValOperandId();
         bool sameRealm = cacheIRReader.readBool();
@@ -2425,8 +2429,8 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
         Value receiver = isSetter ? ObjectValue(*reinterpret_cast<JSObject*>(
                                         READ_REG(receiverId.id())))
                                   : READ_VALUE_REG(receiverId.id());
-        JSFunction* callee = reinterpret_cast<JSFunction*>(
-            stubInfo->getStubRawWord(cstub, getterSetterOffset));
+        JSFunction* callee =
+            reinterpret_cast<JSFunction*>(READ_REG(calleeId.id()));
         Value rhs = isSetter ? READ_VALUE_REG(rhsId.id()) : UndefinedValue();
 
         if (!sameRealm) {
@@ -2635,6 +2639,7 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
       CACHEOP_CASE(LoadDenseElementResult) {
         ObjOperandId objId = cacheIRReader.objOperandId();
         Int32OperandId indexId = cacheIRReader.int32OperandId();
+        bool expectPackedElements = cacheIRReader.readBool();
         NativeObject* nobj =
             reinterpret_cast<NativeObject*>(READ_REG(objId.id()));
         ObjectElements* elems = nobj->getElementsHeader();
@@ -2642,9 +2647,12 @@ uint64_t ICInterpretOps(uint64_t arg0, uint64_t arg1, ICStub* stub,
         if (index < 0 || uint32_t(index) >= nobj->getDenseInitializedLength()) {
           FAIL_IC();
         }
+        if (expectPackedElements && !elems->isPacked()) {
+          FAIL_IC();
+        }
         HeapSlot* slot = &elems->elements()[index];
         Value val = slot->get();
-        if (val.isMagic()) {
+        if (!expectPackedElements && val.isMagic()) {
           FAIL_IC();
         }
         retValue = val.asRawBits();
@@ -6977,14 +6985,7 @@ PBIResult PortableBaselineInterpret(
         JSOp op = JSOp(*pc);
         uint16_t operand = GET_UINT16(pc);
         {
-          ReservedRooted<JS::Value> val(&state.value0, VIRTPOP().asValue());
-          bool result;
-          {
-            PUSH_EXIT_FRAME();
-            if (!js::ConstantStrictEqual(cx, val, operand, &result)) {
-              GOTO_ERROR();
-            }
-          }
+          bool result = js::ConstantStrictEqual(VIRTPOP().asValue(), operand);
           VIRTPUSH(StackVal(
               BooleanValue(op == JSOp::StrictConstantEq ? result : !result)));
         }

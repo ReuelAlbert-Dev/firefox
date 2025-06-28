@@ -77,7 +77,7 @@
 
 /* Taskbar Tab windows will hide all toolbar buttons that are not on the following list */
 
-:root[taskbartab] {
+:root[taskbartab] toolbar {
   .chromeclass-toolbar-additional {
     display: none;
   }
@@ -89,6 +89,7 @@
   #customizableui-special-spring2,
   #downloads-button,
   #unified-extensions-button,
+  .unified-extensions-item,
   #save-page-button,
   #print-button,
   #find-button,
@@ -97,6 +98,7 @@
   #characterencoding-button,
   #email-link-button,
   #screenshot-button,
+  #nav-bar-overflow-button,
   #fullscreen-button {
     display: revert;
   }
@@ -223,7 +225,8 @@ toolbar .toolbaritem-combined-buttons {
     }
   }
 
-  &:hover > separator {
+  > separator:has(+ toolbarbutton:not([disabled]):hover),
+  > toolbarbutton:not([disabled]):hover + separator {
     opacity: 0;
   }
 }
@@ -576,11 +579,11 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
 /* Separators */
 
 /* Override the toolkit styles, and make sure separators are draggable by
- * making them wider, and using a pseudo-element for the visual separator. */
+ * making them wider, and using a pseudo-element for the visual separator.
+ * TODO(bug 1971526): consider actually pushing this down to toolkit */
 #PlacesToolbarItems > toolbarseparator {
   margin: 0;
   padding-inline: 4px;
-  appearance: none;
 
   /* When adjacent to the bookmarks items, give the bookmarks items a leading separator. */
   &::before {

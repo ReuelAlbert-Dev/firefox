@@ -173,8 +173,7 @@ nsresult nsHttpTransaction::Init(
     uint32_t initialRwin, bool responseTimeoutEnabled, uint64_t channelId,
     TransactionObserverFunc&& transactionObserver,
     nsILoadInfo::IPAddressSpace aParentIpAddressSpace,
-    const dom::ContentPermissionRequestBase::PromptResult
-        aLnaPermissionStatus) {
+    const struct LNAPerms& aLnaPermissionStatus) {
   nsresult rv;
 
   LOG1(("nsHttpTransaction::Init [this=%p caps=%x]\n", this, caps));
@@ -490,6 +489,7 @@ void nsHttpTransaction::SetConnection(nsAHttpConnection* conn) {
 }
 
 void nsHttpTransaction::OnActivated() {
+  nsresult rv;
   MOZ_ASSERT(OnSocketThread());
 
   if (mActivated) {
@@ -516,7 +516,13 @@ void nsHttpTransaction::OnActivated() {
     // of the header happens in the h2 compression code. We still have to
     // add the header to the request head here, though, so that devtools can
     // show that we sent the header. FUN!
-    Unused << mRequestHead->SetHeader(nsHttp::TE, "trailers"_ns);
+    nsAutoCString teHeader;
+    rv = mRequestHead->GetHeader(nsHttp::TE, teHeader);
+    if (NS_FAILED(rv) || !teHeader.Equals("moz_no_te_trailers"_ns)) {
+      // If the request already has TE:moz_no_te_trailers then
+      // Http2Compressor::EncodeHeaderBlock won't actually add this header.
+      Unused << mRequestHead->SetHeader(nsHttp::TE, "trailers"_ns);
+    }
   }
 
   mActivated = true;
@@ -580,7 +586,14 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
     } else if (status == NS_NET_STATUS_RESOLVED_HOST) {
       SetDomainLookupEnd(TimeStamp::Now());
     } else if (status == NS_NET_STATUS_CONNECTING_TO) {
-      SetConnectStart(TimeStamp::Now());
+      TimeStamp tnow = TimeStamp::Now();
+      {
+        MutexAutoLock lock(mLock);
+        mTimings.connectStart = tnow;
+        if (mConnInfo->IsHttp3()) {
+          mTimings.secureConnectionStart = tnow;
+        }
+      }
     } else if (status == NS_NET_STATUS_CONNECTED_TO) {
       TimeStamp tnow = TimeStamp::Now();
       SetConnectEnd(tnow, true);
@@ -599,6 +612,13 @@ void nsHttpTransaction::OnTransportStatus(nsITransport* transport,
       // Set the timestamp to Now(), only if it null
       SetRequestStart(TimeStamp::Now(), true);
     }
+  }
+
+  // In the case of HTTP/3 with 0-RTT, NS_NET_STATUS_SENDING_TO is sent before
+  // NS_NET_STATUS_CONNECTED_TO. This means that SetConnectEnd wont't be called
+  // above. To ensure connectEnd is always set, we explicitly set it here.
+  if (status == NS_NET_STATUS_CONNECTED_TO) {
+    SetConnectEnd(TimeStamp::Now(), true);
   }
 
   if (!mTransportSink) return;
@@ -1389,6 +1409,7 @@ void nsHttpTransaction::Close(nsresult reason) {
   if ((reason == NS_ERROR_NET_RESET || reason == NS_OK ||
        reason ==
            psm::GetXPCOMFromNSSError(SSL_ERROR_DOWNGRADE_WITH_EARLY_DATA) ||
+       reason == NS_ERROR_HTTP2_FALLBACK_TO_HTTP1 ||
        ShouldRestartOn0RttError(reason) ||
        shouldRestartTransactionForHTTPSRR) &&
       (!(mCaps & NS_HTTP_STICKY_CONNECTION) ||
@@ -3670,10 +3691,12 @@ bool nsHttpTransaction::AllowedToConnectToIpAddressSpace(
 
   if (mozilla::net::IsLocalNetworkAccess(mParentIPAddressSpace,
                                          aTargetIpAddressSpace)) {
-    // Permission is denied when transaction is created. Currently we block any
-    // LNA from a tracker script
-    if (mLnaPermissionStatus ==
-        dom::ContentPermissionRequestBase::PromptResult::Denied) {
+    if (aTargetIpAddressSpace == nsILoadInfo::IPAddressSpace::Local &&
+        mLnaPermissionStatus.mLocalHostPermission == LNAPermission::Denied) {
+      return false;
+    }
+    if (aTargetIpAddressSpace == nsILoadInfo::IPAddressSpace::Private &&
+        mLnaPermissionStatus.mLocalNetworkPermission == LNAPermission::Denied) {
       return false;
     }
 

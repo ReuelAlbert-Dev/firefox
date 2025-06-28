@@ -115,9 +115,9 @@ void CookieValidation::ValidateInternal() {
   // This part checks if the caleers have set the expiry value to max 400 days.
   if (!mCookieData.isSession()) {
     int64_t maxageCap = StaticPrefs::network_cookie_maxageCap();
-    int64_t currentTimeInSec = PR_Now() / PR_USEC_PER_SEC;
-    int64_t expiry = mCookieData.expiry() / PR_USEC_PER_SEC;
-    if (maxageCap && expiry > currentTimeInSec + maxageCap) {
+    int64_t currentTimeInMSec = PR_Now() / PR_USEC_PER_MSEC;
+    int64_t expiry = mCookieData.expiry();
+    if (maxageCap && expiry > currentTimeInMSec + maxageCap * 1000) {
       mResult = eRejectedAttributeExpiryOversize;
       return;
     }
@@ -547,10 +547,19 @@ bool CookieValidation::CheckValue(const CookieStruct& aCookieData) {
   const auto* start = aCookieData.value().BeginReading();
   const auto* end = aCookieData.value().EndReading();
 
+  bool shouldBlockEqualInNamelessCookie =
+      aCookieData.name().IsEmpty() &&
+      StaticPrefs::network_cookie_block_nameless_with_equal_char();
+
   auto charFilter = [&](unsigned char c) {
     if (StaticPrefs::network_cookie_blockUnicode() && c >= 0x80) {
       return true;
     }
+
+    if (c == '=' && shouldBlockEqualInNamelessCookie) {
+      return true;
+    }
+
     return std::find(std::begin(illegalCharacters), std::end(illegalCharacters),
                      c) != std::end(illegalCharacters);
   };

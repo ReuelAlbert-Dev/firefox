@@ -433,10 +433,13 @@ class nsWindow final : public nsBaseWidget {
   LayoutDeviceIntMargin GtkBorderToDevicePixels(const GtkBorder&);
 
   bool WidgetTypeSupportsAcceleration() override;
-  bool WidgetTypeSupportsNativeCompositing() override { return !mIsDragPopup; }
+  bool WidgetTypeSupportsNativeCompositing() override;
 
   nsresult SetSystemFont(const nsCString& aFontName) override;
   nsresult GetSystemFont(nsCString& aFontName) override;
+
+  void MaybeCreatePipResources();
+  void ClearPipResources();
 
   typedef enum {
     GTK_DECORATION_SYSTEM,  // CSD including shadows
@@ -457,6 +460,8 @@ class nsWindow final : public nsBaseWidget {
   static nsWindow* GetFocusedWindow();
 
   mozilla::UniquePtr<mozilla::widget::WaylandSurfaceLock> LockSurface();
+
+  bool WaylandPipEnabled() const;
 
 #ifdef MOZ_WAYLAND
   // Use xdg-activation protocol to transfer focus from gFocusWindow to aWindow.
@@ -596,7 +601,7 @@ class nsWindow final : public nsBaseWidget {
   float mAspectRatio = 0.0f;
   float mAspectRatioSaved = 0.0f;
   mozilla::Maybe<GtkOrientation> mAspectResizer;
-  LayoutDeviceIntPoint mLastResizePoint;
+  GdkPoint mLastResizePoint{0, 0};
 
   // Keep in sync with WaylandSurface::sNoScale
   constexpr static const int sNoScale = -1;
@@ -849,7 +854,6 @@ class nsWindow final : public nsBaseWidget {
   GdkPoint WaylandGetParentPosition();
   bool WaylandPopupConfigure();
   bool WaylandPopupIsAnchored();
-  bool WaylandPopupIsMenu();
   bool WaylandPopupIsContextMenu();
   bool WaylandPopupIsPermanent();
   // First popup means it's attached directly to toplevel window
@@ -1046,6 +1050,13 @@ class nsWindow final : public nsBaseWidget {
   mozilla::Maybe<int> mKioskMonitor;
   LayoutDeviceIntRegion mOpaqueRegion MOZ_GUARDED_BY(mOpaqueRegionLock);
   mutable mozilla::RWLock mOpaqueRegionLock{"nsWindow::mOpaqueRegion"};
+#ifdef MOZ_WAYLAND
+  struct {
+    struct xdg_surface* mXdgSurface = nullptr;
+    struct xx_pip_v1* mPipSurface = nullptr;
+    LayoutDeviceIntSize mConfigureSize;
+  } mPipResources;
+#endif
 };
 
 #endif /* __nsWindow_h__ */

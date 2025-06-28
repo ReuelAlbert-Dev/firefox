@@ -20,12 +20,7 @@ from dataclasses import (
     field,
 )
 from pathlib import Path
-from typing import (
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import Optional, Union
 
 import requests
 from mach.util import get_state_dir
@@ -39,6 +34,8 @@ from mozversioncontrol import (
 TOKEN_FILE = (
     Path(get_state_dir(specific_to_topsrcdir=False)) / "lando_auth0_user_token.json"
 )
+
+LAUNCH_BROWSER = True
 
 # The supported variants of `Repository` for this workflow.
 SupportedVcsRepository = Union[GitRepository, HgRepository, JujutsuRepository]
@@ -73,7 +70,7 @@ def load_token_from_disk() -> Optional[dict]:
 
 def get_stack_info(
     vcs: SupportedVcsRepository, head: Optional[str]
-) -> Tuple[str, str, List[str]]:
+) -> tuple[str, str, list[str]]:
     """Retrieve information about the current stack for submission via Lando.
 
     Returns a tuple of the current public base commit as a Mercurial SHA,
@@ -197,7 +194,16 @@ class Auth0Config:
         try:
             token_verifier.verify(user_token["id_token"])
         except TokenValidationError as e:
-            print("Could not validate existing Auth0 ID token:", str(e))
+            if "Expiration Time (exp) claim error" in str(e):
+                # This is the most common error, and the default one is very technical
+                # and verbose:
+                # Could not validate existing Auth0 ID token: Expiration Time (exp)
+                # claim error in the ID token; current time (1750343040.7194722) is
+                # after expiration time (1699120554)
+                # Instead of that mess, print something clear and concise.
+                print("Your Auth0 token has expired.")
+            else:
+                print("Could not validate existing Auth0 ID token:", str(e))
             return None
 
         decoded_access_token = jwt.decode(
@@ -241,10 +247,11 @@ class Auth0Config:
         auth_msg = f"Auth0 token validation required at: {device_code_data['verification_uri_complete']}"
         build.notify(auth_msg)
 
-        try:
-            webbrowser.open(device_code_data["verification_uri_complete"])
-        except webbrowser.Error:
-            print("Could not automatically open the web browser.")
+        if LAUNCH_BROWSER:
+            try:
+                webbrowser.open(device_code_data["verification_uri_complete"])
+            except webbrowser.Error:
+                print("Could not automatically open the web browser.")
 
         device_code_lifetime_s = device_code_data["expires_in"]
 
@@ -384,7 +391,7 @@ class LandoAPI:
 
     def post_try_push_patches(
         self,
-        patches: List[str],
+        patches: list[str],
         patch_format: str,
         base_commit: str,
         base_commit_vcs: str,

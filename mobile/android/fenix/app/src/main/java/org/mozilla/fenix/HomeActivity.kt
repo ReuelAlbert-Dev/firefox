@@ -161,6 +161,8 @@ import org.mozilla.fenix.theme.StatusBarColorManager
 import org.mozilla.fenix.theme.ThemeManager
 import org.mozilla.fenix.utils.Settings
 import org.mozilla.fenix.utils.changeAppLauncherIcon
+import java.lang.Math
+import java.lang.System
 import java.lang.ref.WeakReference
 import java.util.Locale
 
@@ -216,6 +218,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
 
     private val crashReporterBinding by lazy {
         CrashReporterBinding(
+            context = this,
             store = components.appStore,
             onReporting = ::showCrashReporter,
         )
@@ -442,7 +445,10 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
             // Unless the activity is recreated, navigate to home first (without rendering it)
             // to add it to the back stack.
             if (savedInstanceState == null) {
-                navigateToHome(navHost.navController)
+                val intent = intent.toSafeIntent()
+                val focusOnAddressBar = intent.getStringExtra(OPEN_TO_SEARCH) != null
+
+                navigateToHome(navHost.navController, focusOnAddressBar)
             }
 
             if (shouldNavigateToBrowserOnColdStart(savedInstanceState)) {
@@ -515,10 +521,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
 
         startupTelemetryOnCreateCalled(intent.toSafeIntent())
         startupPathProvider.attachOnActivityOnCreate(lifecycle, intent)
-        startupTypeTelemetry = StartupTypeTelemetry(
-            startupPathProvider = startupPathProvider,
-            startupStateDetector = components.performance.startupStateDetector,
-        ).apply {
+        startupTypeTelemetry = StartupTypeTelemetry(components.startupStateProvider, startupPathProvider).apply {
             attachOnHomeActivityOnCreate(lifecycle)
         }
 
@@ -641,7 +644,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         // PWAs) so we don't include more unpredictable code paths in the results.
         components.performance.coldStartupDurationTelemetry.onHomeActivityOnCreate(
             components.performance.visualCompletenessQueue,
-            components.performance.startupStateDetector,
+            components.startupStateProvider,
             safeIntent,
             binding.rootContainer,
         )
@@ -883,7 +886,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
                 CrashReporterIntentProcessor(components.appStore),
             ) + externalSourceIntentProcessors
         val intentHandled =
-            intentProcessors.any { it.process(intent, navHost.navController, this.intent) }
+            intentProcessors.any { it.process(intent, navHost.navController, this.intent, settings()) }
         browsingModeManager.mode = getModeFromIntentOrLastKnown(intent)
 
         if (intentHandled) {
@@ -1104,7 +1107,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
     /**
      * External sources such as 3rd party links and shortcuts use this function to enter
      * private mode directly before the content view is created. Returns the mode set by the intent
-     * otherwise falls back to the last known mode.
+     * otherwise falls back to normal browsing mode.
      */
     @VisibleForTesting
     internal fun getModeFromIntentOrLastKnown(intent: Intent?): BrowsingMode {
@@ -1114,7 +1117,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
                 return BrowsingMode.fromBoolean(isPrivate = startPrivateMode)
             }
         }
-        return settings().lastKnownMode
+        return BrowsingMode.Normal
     }
 
     /**
@@ -1257,12 +1260,12 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
     }
 
     @VisibleForTesting
-    internal fun navigateToHome(navController: NavController) {
+    internal fun navigateToHome(navController: NavController, focusOnAddressBar: Boolean) {
         if (this is ExternalAppBrowserActivity) {
             return
         }
 
-        navController.navigate(NavGraphDirections.actionStartupHome())
+        navController.navigate(NavGraphDirections.actionStartupHome(focusOnAddressBar = focusOnAddressBar))
     }
 
     final override fun attachBaseContext(base: Context) {
@@ -1286,11 +1289,18 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
     }
 
     private fun createBrowsingModeManager(initialMode: BrowsingMode): BrowsingModeManager {
-        return DefaultBrowsingModeManager(initialMode, components.settings) { newMode ->
-            updateSecureWindowFlags(newMode)
-            addPrivateHomepageTabIfNecessary(newMode)
-            themeManager.currentTheme = newMode
-        }.also {
+        return DefaultBrowsingModeManager(
+            initialMode = initialMode,
+            settings = components.settings,
+            modeDidChange = { newMode ->
+                updateSecureWindowFlags(newMode)
+                addPrivateHomepageTabIfNecessary(newMode)
+                themeManager.currentTheme = newMode
+            },
+            updateAppStateMode = { newMode ->
+                components.appStore.dispatch(AppAction.BrowsingModeManagerModeChanged(mode = newMode))
+            },
+        ).also {
             updateSecureWindowFlags(initialMode)
         }
     }
@@ -1385,6 +1395,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
                 intent,
                 navHost.navController,
                 this.intent,
+                settings(),
             )
         }
     }
@@ -1428,12 +1439,24 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         messaging.onMessageDisplayed(nextMessage, currentBootUniqueIdentifier)
     }
 
-    private fun showCrashReporter() {
+    @VisibleForTesting
+    internal fun showCrashReporter(crashIDs: Array<String>?, ctxt: Context) {
         if (!settings().useNewCrashReporterDialog) {
             return
         }
+
+        var now = Math.round(System.currentTimeMillis() / DateUtils.SECOND_IN_MILLIS * 1.0)
+        if (now < settings().crashPullDontShowBefore) {
+            return
+        }
+
         UnsubmittedCrashDialog(
-            dispatcher = { action -> components.appStore.dispatch(AppAction.CrashActionWrapper(action)) },
+            dispatcher = { action ->
+                components.appStore.dispatch(AppAction.CrashActionWrapper(action))
+                settings().crashPullDontShowBefore = now + CRASH_PULL_SILENCE_FOR_DAYS_IN_S
+            },
+            crashIDs = crashIDs,
+            localContext = ctxt,
         ).show(supportFragmentManager, UnsubmittedCrashDialog.TAG)
     }
 
@@ -1449,5 +1472,7 @@ open class HomeActivity : LocaleAwareAppCompatActivity(), NavHostActivity {
         // PWA must have been used within last 30 days to be considered "recently used" for the
         // telemetry purposes.
         private const val PWA_RECENTLY_USED_THRESHOLD = DateUtils.DAY_IN_MILLIS * 30L
+
+        private const val CRASH_PULL_SILENCE_FOR_DAYS_IN_S = 7L * 86400L
     }
 }

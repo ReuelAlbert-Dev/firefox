@@ -318,22 +318,6 @@ class WindowGlobalParent final : public WindowContext,
 
   mozilla::ipc::IPCResult RecvReloadWithHttpsOnlyException();
 
-  mozilla::ipc::IPCResult RecvGetIdentityCredential(
-      IdentityCredentialRequestOptions&& aOptions,
-      const CredentialMediationRequirement& aMediationRequirement,
-      bool aHasUserActivation, const GetIdentityCredentialResolver& aResolver);
-  mozilla::ipc::IPCResult RecvStoreIdentityCredential(
-      const IPCIdentityCredential& aCredential,
-      const StoreIdentityCredentialResolver& aResolver);
-  mozilla::ipc::IPCResult RecvDisconnectIdentityCredential(
-      const IdentityCredentialDisconnectOptions& aOptions,
-      const DisconnectIdentityCredentialResolver& aResolver);
-  mozilla::ipc::IPCResult RecvSetLoginStatus(
-      LoginStatus aStatus, const SetLoginStatusResolver& aResolver);
-
-  mozilla::ipc::IPCResult RecvPreventSilentAccess(
-      const PreventSilentAccessResolver& aResolver);
-
   mozilla::ipc::IPCResult RecvGetStorageAccessPermission(
       bool aIncludeIdentityCredential,
       GetStorageAccessPermissionResolver&& aResolve);
@@ -350,6 +334,8 @@ class WindowGlobalParent final : public WindowContext,
   already_AddRefed<dom::PWebAuthnTransactionParent>
   AllocPWebAuthnTransactionParent();
 
+  already_AddRefed<dom::PWebIdentityParent> AllocPWebIdentityParent();
+
  private:
   WindowGlobalParent(CanonicalBrowsingContext* aBrowsingContext,
                      uint64_t aInnerWindowId, uint64_t aOuterWindowId,
@@ -358,7 +344,13 @@ class WindowGlobalParent final : public WindowContext,
   ~WindowGlobalParent();
 
   bool ShouldTrackSiteOriginTelemetry();
-  void FinishAccumulatingPageUseCounters();
+  enum class PageUseCounterResultBits : uint8_t {
+    WAITING,
+    DATA_RECEIVED,
+    EMPTY_DATA,
+  };
+  using PageUseCounterResult = EnumSet<PageUseCounterResultBits>;
+  PageUseCounterResult FinishAccumulatingPageUseCounters();
 
   // Returns failure if the new storage principal cannot be validated
   // against the current document principle.

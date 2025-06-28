@@ -20,6 +20,10 @@
  * JavaScript code in this page
  */
 
+/**
+ * pdfjsVersion = 5.3.77
+ * pdfjsBuild = 85b67f19b
+ */
 
 ;// ./src/shared/util.js
 const isNodeJS = false;
@@ -6406,18 +6410,20 @@ addState(InitialState, [OPS.save, OPS.transform, OPS.constructPath, OPS.restore]
   const args = argsArray[iFirstConstructPath];
   const transform = argsArray[iFirstTransform];
   const [, [buffer], minMax] = args;
-  Util.scaleMinMax(transform, minMax);
-  for (let k = 0, kk = buffer.length; k < kk;) {
-    switch (buffer[k++]) {
-      case DrawOPS.moveTo:
-      case DrawOPS.lineTo:
-        Util.applyTransform(buffer, transform, k);
-        k += 2;
-        break;
-      case DrawOPS.curveTo:
-        Util.applyTransformToBezier(buffer, transform, k);
-        k += 6;
-        break;
+  if (minMax) {
+    Util.scaleMinMax(transform, minMax);
+    for (let k = 0, kk = buffer.length; k < kk;) {
+      switch (buffer[k++]) {
+        case DrawOPS.moveTo:
+        case DrawOPS.lineTo:
+          Util.applyTransform(buffer, transform, k);
+          k += 2;
+          break;
+        case DrawOPS.curveTo:
+          Util.applyTransformToBezier(buffer, transform, k);
+          k += 6;
+          break;
+      }
     }
   }
   fnArray.splice(iFirstSave, 4, OPS.constructPath);
@@ -18186,7 +18192,7 @@ class CFFCompiler {
     const numGlyphsLessNotDef = numGlyphs - 1;
     if (isCIDFont) {
       const nLeft = numGlyphsLessNotDef - 1;
-      out = new Uint8Array([2, 0, 0, nLeft >> 8 & 0xff, nLeft & 0xff]);
+      out = new Uint8Array([2, 0, 1, nLeft >> 8 & 0xff, nLeft & 0xff]);
     } else {
       const length = 1 + numGlyphsLessNotDef * 2;
       out = new Uint8Array(length);
@@ -32692,7 +32698,8 @@ class PartialEvaluator {
     markedContentData = null,
     disableNormalization = false,
     keepWhiteSpace = false,
-    prevRefs = null
+    prevRefs = null,
+    intersector = null
   }) {
     const objId = stream.dict?.objId;
     const seenRefs = new RefSet(prevRefs);
@@ -32769,6 +32776,7 @@ class PartialEvaluator {
       transform = textContentItem.prevTransform,
       fontName = textContentItem.fontName
     }) {
+      intersector?.addExtraChar(" ");
       textContent.items.push({
         str: " ",
         dir: "ltr",
@@ -33075,9 +33083,11 @@ class PartialEvaluator {
         }
         if (!font.vertical) {
           scaledDim *= textState.textHScale;
+          intersector?.addGlyph(getCurrentTextTransform(), scaledDim, 0, glyph.unicode);
           textState.translateTextMatrix(scaledDim, 0);
           textChunk.width += scaledDim;
         } else {
+          intersector?.addGlyph(getCurrentTextTransform(), 0, scaledDim, glyph.unicode);
           textState.translateTextMatrix(0, scaledDim);
           scaledDim = Math.abs(scaledDim);
           textChunk.height += scaledDim;
@@ -33088,8 +33098,11 @@ class PartialEvaluator {
         const glyphUnicode = glyph.unicode;
         if (saveLastChar(glyphUnicode)) {
           textChunk.str.push(" ");
+          intersector?.addExtraChar(" ");
         }
-        textChunk.str.push(glyphUnicode);
+        if (!intersector) {
+          textChunk.str.push(glyphUnicode);
+        }
         if (charSpacing) {
           if (!font.vertical) {
             textState.translateTextMatrix(charSpacing * textState.textHScale, 0);
@@ -33100,6 +33113,7 @@ class PartialEvaluator {
       }
     }
     function appendEOL() {
+      intersector?.addExtraChar("\n");
       resetLastChars();
       if (textContentItem.initialized) {
         textContentItem.hasEOL = true;
@@ -33121,6 +33135,7 @@ class PartialEvaluator {
         if (textContentItem.initialized) {
           resetLastChars();
           textContentItem.str.push(" ");
+          intersector?.addExtraChar(" ");
         }
         return false;
       }
@@ -33161,7 +33176,7 @@ class PartialEvaluator {
       if (batch && length < TEXT_CHUNK_BATCH_SIZE) {
         return;
       }
-      sink.enqueue(textContent, length);
+      sink?.enqueue(textContent, length);
       textContent.items = [];
       textContent.styles = Object.create(null);
     }
@@ -33169,7 +33184,7 @@ class PartialEvaluator {
     return new Promise(function promiseBody(resolve, reject) {
       const next = function (promise) {
         enqueueChunk(true);
-        Promise.all([promise, sink.ready]).then(function () {
+        Promise.all([promise, sink?.ready]).then(function () {
           try {
             promiseBody(resolve, reject);
           } catch (ex) {
@@ -33360,7 +33375,7 @@ class PartialEvaluator {
                   sink.enqueue(chunk, size);
                 },
                 get desiredSize() {
-                  return sink.desiredSize;
+                  return sink.desiredSize ?? 0;
                 },
                 get ready() {
                   return sink.ready;
@@ -33372,7 +33387,7 @@ class PartialEvaluator {
                 resources: localResources instanceof Dict ? localResources : resources,
                 stateManager: xObjStateManager,
                 includeMarkedContent,
-                sink: sinkWrapper,
+                sink: sink && sinkWrapper,
                 seenStyles,
                 viewBox,
                 lang,
@@ -33479,7 +33494,7 @@ class PartialEvaluator {
             }
             break;
         }
-        if (textContent.items.length >= sink.desiredSize) {
+        if (textContent.items.length >= (sink?.desiredSize ?? 1)) {
           stop = true;
           break;
         }
@@ -35474,6 +35489,67 @@ class FakeUnicodeFont {
   }
 }
 
+;// ./src/shared/scripting_utils.js
+function makeColorComp(n) {
+  return Math.floor(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, "0");
+}
+function scaleAndClamp(x) {
+  return Math.max(0, Math.min(255, 255 * x));
+}
+class ColorConverters {
+  static CMYK_G([c, y, m, k]) {
+    return ["G", 1 - Math.min(1, 0.3 * c + 0.59 * m + 0.11 * y + k)];
+  }
+  static G_CMYK([g]) {
+    return ["CMYK", 0, 0, 0, 1 - g];
+  }
+  static G_RGB([g]) {
+    return ["RGB", g, g, g];
+  }
+  static G_rgb([g]) {
+    g = scaleAndClamp(g);
+    return [g, g, g];
+  }
+  static G_HTML([g]) {
+    const G = makeColorComp(g);
+    return `#${G}${G}${G}`;
+  }
+  static RGB_G([r, g, b]) {
+    return ["G", 0.3 * r + 0.59 * g + 0.11 * b];
+  }
+  static RGB_rgb(color) {
+    return color.map(scaleAndClamp);
+  }
+  static RGB_HTML(color) {
+    return `#${color.map(makeColorComp).join("")}`;
+  }
+  static T_HTML() {
+    return "#00000000";
+  }
+  static T_rgb() {
+    return [null];
+  }
+  static CMYK_RGB([c, y, m, k]) {
+    return ["RGB", 1 - Math.min(1, c + k), 1 - Math.min(1, m + k), 1 - Math.min(1, y + k)];
+  }
+  static CMYK_rgb([c, y, m, k]) {
+    return [scaleAndClamp(1 - Math.min(1, c + k)), scaleAndClamp(1 - Math.min(1, m + k)), scaleAndClamp(1 - Math.min(1, y + k))];
+  }
+  static CMYK_HTML(components) {
+    const rgb = this.CMYK_RGB(components).slice(1);
+    return this.RGB_HTML(rgb);
+  }
+  static RGB_CMYK([r, g, b]) {
+    const c = 1 - r;
+    const m = 1 - g;
+    const y = 1 - b;
+    const k = Math.min(c, m, y);
+    return ["CMYK", c, m, y, k];
+  }
+}
+const DateFormats = ["m/d", "m/d/yy", "mm/dd/yy", "mm/yy", "d-mmm", "d-mmm-yy", "dd-mmm-yy", "yy-mm-dd", "mmm-yy", "mmmm-yy", "mmm d, yyyy", "mmmm d, yyyy", "m/d/yy h:MM tt", "m/d/yy HH:MM"];
+const TimeFormats = ["HH:MM", "h:MM tt", "HH:MM:ss", "h:MM:ss tt"];
+
 ;// ./src/core/name_number_tree.js
 
 
@@ -37010,31 +37086,32 @@ function fetchRemoteDest(action) {
   return null;
 }
 class Catalog {
+  #actualNumPages = null;
+  #catDict = null;
+  builtInCMapCache = new Map();
+  fontCache = new RefSetCache();
+  globalColorSpaceCache = new GlobalColorSpaceCache();
+  globalImageCache = new GlobalImageCache();
+  nonBlendModesSet = new RefSet();
+  pageDictCache = new RefSetCache();
+  pageIndexCache = new RefSetCache();
+  pageKidsCountCache = new RefSetCache();
+  standardFontDataCache = new Map();
+  systemFontCache = new Map();
   constructor(pdfManager, xref) {
     this.pdfManager = pdfManager;
     this.xref = xref;
-    this._catDict = xref.getCatalogObj();
-    if (!(this._catDict instanceof Dict)) {
+    this.#catDict = xref.getCatalogObj();
+    if (!(this.#catDict instanceof Dict)) {
       throw new FormatError("Catalog object is not a dictionary.");
     }
     this.toplevelPagesDict;
-    this._actualNumPages = null;
-    this.fontCache = new RefSetCache();
-    this.builtInCMapCache = new Map();
-    this.standardFontDataCache = new Map();
-    this.globalColorSpaceCache = new GlobalColorSpaceCache();
-    this.globalImageCache = new GlobalImageCache();
-    this.pageKidsCountCache = new RefSetCache();
-    this.pageIndexCache = new RefSetCache();
-    this.pageDictCache = new RefSetCache();
-    this.nonBlendModesSet = new RefSet();
-    this.systemFontCache = new Map();
   }
   cloneDict() {
-    return this._catDict.clone();
+    return this.#catDict.clone();
   }
   get version() {
-    const version = this._catDict.get("Version");
+    const version = this.#catDict.get("Version");
     if (version instanceof Name) {
       if (PDF_VERSION_REGEXP.test(version.name)) {
         return shadow(this, "version", version.name);
@@ -37044,17 +37121,17 @@ class Catalog {
     return shadow(this, "version", null);
   }
   get lang() {
-    const lang = this._catDict.get("Lang");
+    const lang = this.#catDict.get("Lang");
     return shadow(this, "lang", lang && typeof lang === "string" ? stringToPDFString(lang) : null);
   }
   get needsRendering() {
-    const needsRendering = this._catDict.get("NeedsRendering");
+    const needsRendering = this.#catDict.get("NeedsRendering");
     return shadow(this, "needsRendering", typeof needsRendering === "boolean" ? needsRendering : false);
   }
   get collection() {
     let collection = null;
     try {
-      const obj = this._catDict.get("Collection");
+      const obj = this.#catDict.get("Collection");
       if (obj instanceof Dict && obj.size > 0) {
         collection = obj;
       }
@@ -37069,7 +37146,7 @@ class Catalog {
   get acroForm() {
     let acroForm = null;
     try {
-      const obj = this._catDict.get("AcroForm");
+      const obj = this.#catDict.get("AcroForm");
       if (obj instanceof Dict && obj.size > 0) {
         acroForm = obj;
       }
@@ -37082,11 +37159,11 @@ class Catalog {
     return shadow(this, "acroForm", acroForm);
   }
   get acroFormRef() {
-    const value = this._catDict.getRaw("AcroForm");
+    const value = this.#catDict.getRaw("AcroForm");
     return shadow(this, "acroFormRef", value instanceof Ref ? value : null);
   }
   get metadata() {
-    const streamRef = this._catDict.getRaw("Metadata");
+    const streamRef = this.#catDict.getRaw("Metadata");
     if (!(streamRef instanceof Ref)) {
       return shadow(this, "metadata", null);
     }
@@ -37114,7 +37191,7 @@ class Catalog {
   get markInfo() {
     let markInfo = null;
     try {
-      markInfo = this._readMarkInfo();
+      markInfo = this.#readMarkInfo();
     } catch (ex) {
       if (ex instanceof MissingDataException) {
         throw ex;
@@ -37123,8 +37200,8 @@ class Catalog {
     }
     return shadow(this, "markInfo", markInfo);
   }
-  _readMarkInfo() {
-    const obj = this._catDict.get("MarkInfo");
+  #readMarkInfo() {
+    const obj = this.#catDict.get("MarkInfo");
     if (!(obj instanceof Dict)) {
       return null;
     }
@@ -37154,7 +37231,7 @@ class Catalog {
     return shadow(this, "structTreeRoot", structTree);
   }
   #readStructTreeRoot() {
-    const rawObj = this._catDict.getRaw("StructTreeRoot");
+    const rawObj = this.#catDict.getRaw("StructTreeRoot");
     const obj = this.xref.fetchIfRef(rawObj);
     if (!(obj instanceof Dict)) {
       return null;
@@ -37164,7 +37241,7 @@ class Catalog {
     return root;
   }
   get toplevelPagesDict() {
-    const pagesObj = this._catDict.get("Pages");
+    const pagesObj = this.#catDict.get("Pages");
     if (!(pagesObj instanceof Dict)) {
       throw new FormatError("Invalid top-level pages dictionary.");
     }
@@ -37173,7 +37250,7 @@ class Catalog {
   get documentOutline() {
     let obj = null;
     try {
-      obj = this._readDocumentOutline();
+      obj = this.#readDocumentOutline();
     } catch (ex) {
       if (ex instanceof MissingDataException) {
         throw ex;
@@ -37182,8 +37259,8 @@ class Catalog {
     }
     return shadow(this, "documentOutline", obj);
   }
-  _readDocumentOutline() {
-    let obj = this._catDict.get("Outlines");
+  #readDocumentOutline() {
+    let obj = this.#catDict.get("Outlines");
     if (!(obj instanceof Dict)) {
       return null;
     }
@@ -37268,7 +37345,7 @@ class Catalog {
   get permissions() {
     let permissions = null;
     try {
-      permissions = this._readPermissions();
+      permissions = this.#readPermissions();
     } catch (ex) {
       if (ex instanceof MissingDataException) {
         throw ex;
@@ -37277,7 +37354,7 @@ class Catalog {
     }
     return shadow(this, "permissions", permissions);
   }
-  _readPermissions() {
+  #readPermissions() {
     const encrypt = this.xref.trailer.get("Encrypt");
     if (!(encrypt instanceof Dict)) {
       return null;
@@ -37299,7 +37376,7 @@ class Catalog {
   get optionalContentConfig() {
     let config = null;
     try {
-      const properties = this._catDict.get("OCProperties");
+      const properties = this.#catDict.get("OCProperties");
       if (!properties) {
         return shadow(this, "optionalContentConfig", null);
       }
@@ -37484,10 +37561,10 @@ class Catalog {
     };
   }
   setActualNumPages(num = null) {
-    this._actualNumPages = num;
+    this.#actualNumPages = num;
   }
   get hasActualNumPages() {
-    return this._actualNumPages !== null;
+    return this.#actualNumPages !== null;
   }
   get _pagesCount() {
     const obj = this.toplevelPagesDict.get("Count");
@@ -37497,7 +37574,7 @@ class Catalog {
     return shadow(this, "_pagesCount", obj);
   }
   get numPages() {
-    return this.hasActualNumPages ? this._actualNumPages : this._pagesCount;
+    return this.#actualNumPages ?? this._pagesCount;
   }
   get destinations() {
     const rawDests = this.#readDests(),
@@ -37543,20 +37620,20 @@ class Catalog {
     return null;
   }
   #readDests() {
-    const obj = this._catDict.get("Names");
+    const obj = this.#catDict.get("Names");
     const rawDests = [];
     if (obj?.has("Dests")) {
       rawDests.push(new NameTree(obj.getRaw("Dests"), this.xref));
     }
-    if (this._catDict.has("Dests")) {
-      rawDests.push(this._catDict.get("Dests"));
+    if (this.#catDict.has("Dests")) {
+      rawDests.push(this.#catDict.get("Dests"));
     }
     return rawDests;
   }
   get pageLabels() {
     let obj = null;
     try {
-      obj = this._readPageLabels();
+      obj = this.#readPageLabels();
     } catch (ex) {
       if (ex instanceof MissingDataException) {
         throw ex;
@@ -37565,8 +37642,8 @@ class Catalog {
     }
     return shadow(this, "pageLabels", obj);
   }
-  _readPageLabels() {
-    const obj = this._catDict.getRaw("PageLabels");
+  #readPageLabels() {
+    const obj = this.#catDict.getRaw("PageLabels");
     if (!obj) {
       return null;
     }
@@ -37644,7 +37721,7 @@ class Catalog {
     return pageLabels;
   }
   get pageLayout() {
-    const obj = this._catDict.get("PageLayout");
+    const obj = this.#catDict.get("PageLayout");
     let pageLayout = "";
     if (obj instanceof Name) {
       switch (obj.name) {
@@ -37660,7 +37737,7 @@ class Catalog {
     return shadow(this, "pageLayout", pageLayout);
   }
   get pageMode() {
-    const obj = this._catDict.get("PageMode");
+    const obj = this.#catDict.get("PageMode");
     let pageMode = "UseNone";
     if (obj instanceof Name) {
       switch (obj.name) {
@@ -37676,7 +37753,7 @@ class Catalog {
     return shadow(this, "pageMode", pageMode);
   }
   get viewerPreferences() {
-    const obj = this._catDict.get("ViewerPreferences");
+    const obj = this.#catDict.get("ViewerPreferences");
     if (!(obj instanceof Dict)) {
       return shadow(this, "viewerPreferences", null);
     }
@@ -37791,7 +37868,7 @@ class Catalog {
     return shadow(this, "viewerPreferences", prefs);
   }
   get openAction() {
-    const obj = this._catDict.get("OpenAction");
+    const obj = this.#catDict.get("OpenAction");
     const openAction = Object.create(null);
     if (obj instanceof Dict) {
       const destDict = new Dict(this.xref);
@@ -37816,7 +37893,7 @@ class Catalog {
     return shadow(this, "openAction", objectSize(openAction) > 0 ? openAction : null);
   }
   get attachments() {
-    const obj = this._catDict.get("Names");
+    const obj = this.#catDict.get("Names");
     let attachments = null;
     if (obj instanceof Dict && obj.has("EmbeddedFiles")) {
       const nameTree = new NameTree(obj.getRaw("EmbeddedFiles"), this.xref);
@@ -37829,7 +37906,7 @@ class Catalog {
     return shadow(this, "attachments", attachments);
   }
   get xfaImages() {
-    const obj = this._catDict.get("Names");
+    const obj = this.#catDict.get("Names");
     let xfaImages = null;
     if (obj instanceof Dict && obj.has("XFAImages")) {
       const nameTree = new NameTree(obj.getRaw("XFAImages"), this.xref);
@@ -37842,8 +37919,8 @@ class Catalog {
     }
     return shadow(this, "xfaImages", xfaImages);
   }
-  _collectJavaScript() {
-    const obj = this._catDict.get("Names");
+  #collectJavaScript() {
+    const obj = this.#catDict.get("Names");
     let javaScript = null;
     function appendIfJavaScriptDict(name, jsDict) {
       if (!(jsDict instanceof Dict)) {
@@ -37869,15 +37946,15 @@ class Catalog {
         appendIfJavaScriptDict(stringToPDFString(key, true), value);
       }
     }
-    const openAction = this._catDict.get("OpenAction");
+    const openAction = this.#catDict.get("OpenAction");
     if (openAction) {
       appendIfJavaScriptDict("OpenAction", openAction);
     }
     return javaScript;
   }
   get jsActions() {
-    const javaScript = this._collectJavaScript();
-    let actions = collectActions(this.xref, this._catDict, DocumentActionEventType);
+    const javaScript = this.#collectJavaScript();
+    let actions = collectActions(this.xref, this.#catDict, DocumentActionEventType);
     if (javaScript) {
       actions ||= Object.create(null);
       for (const [key, val] of javaScript) {
@@ -37911,7 +37988,7 @@ class Catalog {
   async getPageDict(pageIndex) {
     const nodesToVisit = [this.toplevelPagesDict];
     const visitedNodes = new RefSet();
-    const pagesRef = this._catDict.getRaw("Pages");
+    const pagesRef = this.#catDict.getRaw("Pages");
     if (pagesRef instanceof Ref) {
       visitedNodes.put(pagesRef);
     }
@@ -38011,7 +38088,7 @@ class Catalog {
       posInKids: 0
     }];
     const visitedNodes = new RefSet();
-    const pagesRef = this._catDict.getRaw("Pages");
+    const pagesRef = this.#catDict.getRaw("Pages");
     if (pagesRef instanceof Ref) {
       visitedNodes.put(pagesRef);
     }
@@ -38173,7 +38250,7 @@ class Catalog {
     return next(pageRef);
   }
   get baseUrl() {
-    const uri = this._catDict.get("URI");
+    const uri = this.#catDict.get("URI");
     if (uri instanceof Dict) {
       const base = uri.get("Base");
       if (typeof base === "string") {
@@ -49149,6 +49226,7 @@ class XFAFactory {
 
 
 
+
 class AnnotationFactory {
   static createGlobals(pdfManager) {
     return Promise.all([pdfManager.ensureCatalog("acroForm"), pdfManager.ensureDoc("xfaDatasets"), pdfManager.ensureCatalog("structTreeRoot"), pdfManager.ensureCatalog("baseUrl"), pdfManager.ensureCatalog("attachments"), pdfManager.ensureCatalog("globalColorSpaceCache")]).then(([acroForm, xfaDatasets, structTreeRoot, baseUrl, attachments, globalColorSpaceCache]) => ({
@@ -49849,6 +49927,9 @@ class Annotation {
   }
   async save(evaluator, task, annotationStorage, changes) {
     return null;
+  }
+  get overlaysTextContent() {
+    return false;
   }
   get hasTextContent() {
     return false;
@@ -50804,6 +50885,23 @@ class TextWidgetAnnotation extends WidgetAnnotation {
     this.data.multiLine = this.hasFieldFlag(AnnotationFieldFlag.MULTILINE);
     this.data.comb = this.hasFieldFlag(AnnotationFieldFlag.COMB) && !this.data.multiLine && !this.data.password && !this.hasFieldFlag(AnnotationFieldFlag.FILESELECT) && this.data.maxLen !== 0;
     this.data.doNotScroll = this.hasFieldFlag(AnnotationFieldFlag.DONOTSCROLL);
+    const {
+      data: {
+        actions
+      }
+    } = this;
+    for (const keystrokeAction of actions?.Keystroke || []) {
+      const m = keystrokeAction.trim().match(/^AF(Date|Time)_Keystroke(?:Ex)?\(['"]?([^'"]+)['"]?\);$/);
+      if (m) {
+        let format = m[2];
+        const num = parseInt(format, 10);
+        if (!isNaN(num) && Math.floor(Math.log10(num)) + 1 === m[2].length) {
+          format = (m[1] === "Date" ? DateFormats : TimeFormats)[num] ?? format;
+        }
+        this.data[m[1] === "Date" ? "dateFormat" : "timeFormat"] = format;
+        break;
+      }
+    }
   }
   get hasTextContent() {
     return !!this.appearance && !this._needAppearances;
@@ -52211,6 +52309,9 @@ class HighlightAnnotation extends MarkupAnnotation {
       this.data.popupRef = null;
     }
   }
+  get overlaysTextContent() {
+    return true;
+  }
   static createNewDict(annotation, xref, {
     apRef,
     ap
@@ -52316,6 +52417,9 @@ class UnderlineAnnotation extends MarkupAnnotation {
       this.data.popupRef = null;
     }
   }
+  get overlaysTextContent() {
+    return true;
+  }
 }
 class SquigglyAnnotation extends MarkupAnnotation {
   constructor(params) {
@@ -52356,6 +52460,9 @@ class SquigglyAnnotation extends MarkupAnnotation {
       this.data.popupRef = null;
     }
   }
+  get overlaysTextContent() {
+    return true;
+  }
 }
 class StrikeOutAnnotation extends MarkupAnnotation {
   constructor(params) {
@@ -52384,6 +52491,9 @@ class StrikeOutAnnotation extends MarkupAnnotation {
     } else {
       this.data.popupRef = null;
     }
+  }
+  get overlaysTextContent() {
+    return true;
   }
 }
 class StampAnnotation extends MarkupAnnotation {
@@ -52724,6 +52834,134 @@ class DatasetReader {
       return node.children.map(child => decodeString(child.textContent));
     }
     return decodeString(node.textContent);
+  }
+}
+
+;// ./src/core/intersector.js
+class SingleIntersector {
+  #annotation;
+  #minX = Infinity;
+  #minY = Infinity;
+  #maxX = -Infinity;
+  #maxY = -Infinity;
+  #quadPoints;
+  #text = [];
+  #extraChars = [];
+  #lastIntersectingQuadIndex = -1;
+  #canTakeExtraChars = false;
+  constructor(annotation) {
+    this.#annotation = annotation;
+    const quadPoints = this.#quadPoints = annotation.data.quadPoints;
+    for (let i = 0, ii = quadPoints.length; i < ii; i += 8) {
+      this.#minX = Math.min(this.#minX, quadPoints[i]);
+      this.#maxX = Math.max(this.#maxX, quadPoints[i + 2]);
+      this.#minY = Math.min(this.#minY, quadPoints[i + 5]);
+      this.#maxY = Math.max(this.#maxY, quadPoints[i + 1]);
+    }
+  }
+  overlaps(other) {
+    return !(this.#minX >= other.#maxX || this.#maxX <= other.#minX || this.#minY >= other.#maxY || this.#maxY <= other.#minY);
+  }
+  #intersects(x, y) {
+    if (this.#minX >= x || this.#maxX <= x || this.#minY >= y || this.#maxY <= y) {
+      return false;
+    }
+    const quadPoints = this.#quadPoints;
+    if (quadPoints.length === 8) {
+      return true;
+    }
+    if (this.#lastIntersectingQuadIndex >= 0) {
+      const i = this.#lastIntersectingQuadIndex;
+      if (!(quadPoints[i] >= x || quadPoints[i + 2] <= x || quadPoints[i + 5] >= y || quadPoints[i + 1] <= y)) {
+        return true;
+      }
+      this.#lastIntersectingQuadIndex = -1;
+    }
+    for (let i = 0, ii = quadPoints.length; i < ii; i += 8) {
+      if (!(quadPoints[i] >= x || quadPoints[i + 2] <= x || quadPoints[i + 5] >= y || quadPoints[i + 1] <= y)) {
+        this.#lastIntersectingQuadIndex = i;
+        return true;
+      }
+    }
+    return false;
+  }
+  addGlyph(x, y, glyph) {
+    if (!this.#intersects(x, y)) {
+      this.disableExtraChars();
+      return false;
+    }
+    if (this.#extraChars.length > 0) {
+      this.#text.push(this.#extraChars.join(""));
+      this.#extraChars.length = 0;
+    }
+    this.#text.push(glyph);
+    this.#canTakeExtraChars = true;
+    return true;
+  }
+  addExtraChar(char) {
+    if (this.#canTakeExtraChars) {
+      this.#extraChars.push(char);
+    }
+  }
+  disableExtraChars() {
+    if (!this.#canTakeExtraChars) {
+      return;
+    }
+    this.#canTakeExtraChars = false;
+    this.#extraChars.length = 0;
+  }
+  setText() {
+    this.#annotation.data.overlaidText = this.#text.join("");
+  }
+}
+class Intersector {
+  #intersectors = new Map();
+  constructor(annotations) {
+    for (const annotation of annotations) {
+      if (!annotation.data.quadPoints) {
+        continue;
+      }
+      const intersector = new SingleIntersector(annotation);
+      for (const [otherIntersector, overlapping] of this.#intersectors) {
+        if (otherIntersector.overlaps(intersector)) {
+          if (!overlapping) {
+            this.#intersectors.set(otherIntersector, new Set([intersector]));
+          } else {
+            overlapping.add(intersector);
+          }
+        }
+      }
+      this.#intersectors.set(intersector, null);
+    }
+  }
+  addGlyph(transform, width, height, glyph) {
+    const x = transform[4] + width / 2;
+    const y = transform[5] + height / 2;
+    let overlappingIntersectors;
+    for (const [intersector, overlapping] of this.#intersectors) {
+      if (overlappingIntersectors) {
+        if (overlappingIntersectors.has(intersector)) {
+          intersector.addGlyph(x, y, glyph);
+        } else {
+          intersector.disableExtraChars();
+        }
+        continue;
+      }
+      if (!intersector.addGlyph(x, y, glyph)) {
+        continue;
+      }
+      overlappingIntersectors = overlapping;
+    }
+  }
+  addExtraChar(char) {
+    for (const intersector of this.#intersectors.keys()) {
+      intersector.addExtraChar(char);
+    }
+  }
+  setText() {
+    for (const intersector of this.#intersectors.keys()) {
+      intersector.setText();
+    }
   }
 }
 
@@ -54674,6 +54912,7 @@ class XRef {
 
 
 
+
 const LETTER_SIZE_MEDIABOX = [0, 0, 612, 792];
 class Page {
   #resourcesPromise = null;
@@ -55053,7 +55292,8 @@ class Page {
     task,
     includeMarkedContent,
     disableNormalization,
-    sink
+    sink,
+    intersector = null
   }) {
     const contentStreamPromise = this.getContentStream();
     const resourcesPromise = this.loadResources(RESOURCES_KEYS_TEXT_CONTENT);
@@ -55069,7 +55309,8 @@ class Page {
       disableNormalization,
       sink,
       viewBox: this.view,
-      lang
+      lang,
+      intersector
     });
   }
   async getStructTree() {
@@ -55103,6 +55344,7 @@ class Page {
     const intentAny = !!(intent & RenderingIntentFlag.ANY),
       intentDisplay = !!(intent & RenderingIntentFlag.DISPLAY),
       intentPrint = !!(intent & RenderingIntentFlag.PRINT);
+    const highlightedAnnotations = [];
     for (const annotation of annotations) {
       const isVisible = intentAny || intentDisplay && annotation.viewable;
       if (isVisible || intentPrint && annotation.printable) {
@@ -55113,7 +55355,24 @@ class Page {
         textContentPromises.push(annotation.extractTextContent(partialEvaluator, task, [-Infinity, -Infinity, Infinity, Infinity]).catch(function (reason) {
           warn(`getAnnotationsData - ignoring textContent during "${task.name}" task: "${reason}".`);
         }));
+      } else if (annotation.overlaysTextContent && isVisible) {
+        highlightedAnnotations.push(annotation);
       }
+    }
+    if (highlightedAnnotations.length > 0) {
+      const intersector = new Intersector(highlightedAnnotations);
+      textContentPromises.push(this.extractTextContent({
+        handler,
+        task,
+        includeMarkedContent: false,
+        disableNormalization: false,
+        sink: null,
+        viewBox: this.view,
+        lang: null,
+        intersector
+      }).then(() => {
+        intersector.setText();
+      }));
     }
     await Promise.all(textContentPromises);
     return annotationsData;
@@ -55357,6 +55616,40 @@ class PDFDocument {
       const isInvisible = Array.isArray(rectangle) && rectangle.every(value => value === 0);
       return isSignature && isInvisible;
     });
+  }
+  #collectSignatureCertificates(fields, collectedSignatureCertificates, visited = new RefSet()) {
+    if (!Array.isArray(fields)) {
+      return;
+    }
+    for (let field of fields) {
+      if (field instanceof Ref) {
+        if (visited.has(field)) {
+          continue;
+        }
+        visited.put(field);
+      }
+      field = this.xref.fetchIfRef(field);
+      if (!(field instanceof Dict)) {
+        continue;
+      }
+      if (field.has("Kids")) {
+        this.#collectSignatureCertificates(field.get("Kids"), collectedSignatureCertificates, visited);
+        continue;
+      }
+      const isSignature = isName(field.get("FT"), "Sig");
+      if (!isSignature) {
+        continue;
+      }
+      const value = field.get("V");
+      if (!(value instanceof Dict)) {
+        continue;
+      }
+      const subFilter = value.get("SubFilter");
+      if (!(subFilter instanceof Name)) {
+        continue;
+      }
+      collectedSignatureCertificates.add(subFilter.name);
+    }
   }
   get _xfaStreams() {
     const {
@@ -55604,6 +55897,13 @@ class PDFDocument {
       formInfo.hasXfa = Array.isArray(xfa) && xfa.length > 0 || xfa instanceof BaseStream && !xfa.isEmpty;
       const sigFlags = acroForm.get("SigFlags");
       const hasSignatures = !!(sigFlags & 0x1);
+      if (hasSignatures) {
+        const collectedSignatureCertificates = new Set();
+        this.#collectSignatureCertificates(fields, collectedSignatureCertificates);
+        if (collectedSignatureCertificates.size > 0) {
+          formInfo.collectedSignatureCertificates = Array.from(collectedSignatureCertificates);
+        }
+      }
       const hasOnlyDocumentSignatures = hasSignatures && this.#hasOnlyDocumentSignatures(fields);
       formInfo.hasAcroForm = hasFields && !hasOnlyDocumentSignatures;
       formInfo.hasSignatures = hasSignatures;
@@ -55631,6 +55931,7 @@ class PDFDocument {
       IsCollectionPresent: !!catalog.collection,
       IsSignaturesPresent: formInfo.hasSignatures
     };
+    docInfo.collectedSignatureCertificates = formInfo.collectedSignatureCertificates ?? null;
     let infoDict;
     try {
       infoDict = xref.trailer.get("Info");
@@ -57139,7 +57440,7 @@ class WorkerMessageHandler {
       docId,
       apiVersion
     } = docParams;
-    const workerVersion = "5.3.13";
+    const workerVersion = "5.3.77";
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
     }
@@ -57665,8 +57966,6 @@ class WorkerMessageHandler {
 
 ;// ./src/pdf.worker.js
 
-const pdfjsVersion = "5.3.13";
-const pdfjsBuild = "875233b3c";
 globalThis.pdfjsWorker = {
   WorkerMessageHandler: WorkerMessageHandler
 };

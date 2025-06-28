@@ -53,7 +53,6 @@ class ExecutionTracer;
 #endif
 
 namespace jit {
-class ICScript;
 class JitActivation;
 class JitContext;
 class DebugModeOSRVolatileJitFrameIter;
@@ -175,7 +174,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   // Are we currently timing execution? This flag ensures that we do not
   // double-count execution time in reentrant situations.
-  js::ContextData<bool> measuringExecutionTime_;
+  js::ContextData<bool> measuringExecutionTimeEnabled_;
 
   // This variable is used by the HelperThread scheduling to update the priority
   // of task based on whether JavaScript is being executed on the main thread.
@@ -186,9 +185,11 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // currently operating on.
   void setRuntime(JSRuntime* rt);
 
-  bool isMeasuringExecutionTime() const { return measuringExecutionTime_; }
-  void setIsMeasuringExecutionTime(bool value) {
-    measuringExecutionTime_ = value;
+  bool measuringExecutionTimeEnabled() const {
+    return measuringExecutionTimeEnabled_;
+  }
+  void setMeasuringExecutionTimeEnabled(bool value) {
+    measuringExecutionTimeEnabled_ = value;
   }
 
   // While JSContexts are meant to be used on a single thread, this reference is
@@ -397,10 +398,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return offsetof(JSContext, inUnsafeCallWithABI);
   }
 #endif
-
-  static size_t offsetOfInlinedICScript() {
-    return offsetof(JSContext, inlinedICScript_);
-  }
 
  public:
   js::InterpreterStack& interpreterStack() {
@@ -871,12 +868,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
   void clearPendingInterrupt(js::InterruptReason reason);
 
-  // For JIT use. Points to the inlined ICScript for a baseline script
-  // being invoked as part of a trial inlining.  Contains nullptr at
-  // all times except for the brief moment between being set in the
-  // caller and read in the callee's prologue.
-  js::ContextData<js::jit::ICScript*> inlinedICScript_;
-
  public:
   void* addressOfInterruptBits() { return &interruptBits_; }
   void* addressOfJitStackLimit() { return &jitStackLimit; }
@@ -886,8 +877,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void* addressOfZone() { return &zone_; }
 
   const void* addressOfRealm() const { return &realm_; }
-
-  void* addressOfInlinedICScript() { return &inlinedICScript_; }
 
   const void* addressOfJitActivation() const { return &jitActivation; }
 

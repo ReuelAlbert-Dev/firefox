@@ -2890,17 +2890,18 @@ void SVGTextFrame::ScheduleReflowSVGNonDisplayText(IntrinsicDirty aReason) {
 NS_IMPL_ISUPPORTS(SVGTextFrame::MutationObserver, nsIMutationObserver)
 
 void SVGTextFrame::MutationObserver::ContentAppended(
-    nsIContent* aFirstNewContent) {
+    nsIContent* aFirstNewContent, const ContentAppendInfo&) {
   mFrame->NotifyGlyphMetricsChange(true);
 }
 
-void SVGTextFrame::MutationObserver::ContentInserted(nsIContent* aChild) {
+void SVGTextFrame::MutationObserver::ContentInserted(nsIContent* aChild,
+                                                     const ContentInsertInfo&) {
   mFrame->NotifyGlyphMetricsChange(true);
 }
 
 void SVGTextFrame::MutationObserver::ContentWillBeRemoved(
-    nsIContent* aChild, const BatchRemovalState* aState) {
-  if (aState && !aState->mIsFirst) {
+    nsIContent* aChild, const ContentRemoveInfo& aInfo) {
+  if (aInfo.mBatchRemovalState && !aInfo.mBatchRemovalState->mIsFirst) {
     return;
   }
   mFrame->NotifyGlyphMetricsChange(true);
@@ -3203,10 +3204,10 @@ void SVGTextFrame::PaintSVG(gfxContext& aContext, const gfxMatrix& aTransform,
                                                 opacity);
       }
 
-      if (ShouldRenderAsPath(frame, contextPaint, paintSVGGlyphs)) {
-        SVGTextDrawPathCallbacks callbacks(this, contextPaint, aContext, frame,
-                                           matrixForPaintServers, aImgParams,
-                                           paintSVGGlyphs);
+      if (ShouldRenderAsPath(frame, outerContextPaint, paintSVGGlyphs)) {
+        SVGTextDrawPathCallbacks callbacks(this, outerContextPaint, aContext,
+                                           frame, matrixForPaintServers,
+                                           aImgParams, paintSVGGlyphs);
         params.callbacks = &callbacks;
         frame->PaintText(params, startEdge, endEdge, nsPoint(), isSelected);
       } else {

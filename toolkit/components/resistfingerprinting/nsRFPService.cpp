@@ -43,6 +43,7 @@
 #include "mozilla/StaticPrefs_javascript.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/SSE.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/CanvasRenderingContextHelper.h"
@@ -54,6 +55,7 @@
 #include "mozilla/dom/MediaDeviceInfoBinding.h"
 #include "mozilla/fallible.h"
 #include "mozilla/XorShift128PlusRNG.h"
+#include "mozilla/dom/CanvasUtils.h"
 
 #include "nsAboutProtocolUtils.h"
 #include "nsBaseHashtable.h"
@@ -1671,7 +1673,8 @@ nsresult nsRFPService::GenerateCanvasKeyFromImageData(
     return NS_ERROR_FAILURE;
   }
 
-  if (StaticPrefs::
+  if ((aSize < 2500 || !mozilla::supports_sha()) ||
+      StaticPrefs::
           privacy_resistFingerprinting_randomization_canvas_use_siphash()) {
     // Hash the canvas data to generate the image data hash.
     mozilla::HashNumber imageHashData = mozilla::HashString(aImageData, aSize);
@@ -1721,8 +1724,9 @@ nsresult nsRFPService::GenerateCanvasKeyFromImageData(
 
 // static
 nsresult nsRFPService::RandomizePixels(nsICookieJarSettings* aCookieJarSettings,
-                                       uint8_t* aData, uint32_t aWidth,
-                                       uint32_t aHeight, uint32_t aSize,
+                                       nsIPrincipal* aPrincipal, uint8_t* aData,
+                                       uint32_t aWidth, uint32_t aHeight,
+                                       uint32_t aSize,
                                        gfx::SurfaceFormat aSurfaceFormat) {
   NS_ENSURE_ARG_POINTER(aData);
 
@@ -1731,6 +1735,11 @@ nsresult nsRFPService::RandomizePixels(nsICookieJarSettings* aCookieJarSettings,
   }
 
   if (aSize <= 4) {
+    return NS_OK;
+  }
+
+  if (aPrincipal && CanvasUtils::GetCanvasExtractDataPermission(*aPrincipal) ==
+                        nsIPermissionManager::ALLOW_ACTION) {
     return NS_OK;
   }
 
@@ -2227,10 +2236,7 @@ nsRFPService::SetFingerprintingOverrides(
                                      ? sEnabledFingerprintingProtectionsBase
                                      : sEnabledFingerprintingProtections;
     RFPTargetSet targets = nsRFPService::CreateOverridesFromText(
-        NS_ConvertUTF8toUTF16(overridesText),
-        mFingerprintingOverrides.Contains(domainKey)
-            ? mFingerprintingOverrides.Get(domainKey)
-            : baseOverrides);
+        NS_ConvertUTF8toUTF16(overridesText), baseOverrides);
 
     // The newly added one will replace the existing one for the given domain
     // key.
@@ -2571,13 +2577,11 @@ void nsRFPService::GetMediaDeviceGroup(nsString& aGroup,
                                        dom::MediaDeviceKind aKind) {
   switch (aKind) {
     case dom::MediaDeviceKind::Audioinput:
+    case dom::MediaDeviceKind::Audiooutput:
       aGroup.Assign(u"Audio Device Group"_ns);
       break;
     case dom::MediaDeviceKind::Videoinput:
       aGroup = u"Video Device Group"_ns;
-      break;
-    case dom::MediaDeviceKind::Audiooutput:
-      aGroup = u"Speaker Device Group"_ns;
       break;
   }
 }

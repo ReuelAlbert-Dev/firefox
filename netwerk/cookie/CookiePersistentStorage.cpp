@@ -7,6 +7,8 @@
 #include "CookieCommons.h"
 #include "CookieLogging.h"
 #include "CookiePersistentStorage.h"
+#include "CookieService.h"
+#include "CookieValidation.h"
 
 #include "mozilla/FileUtils.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -19,7 +21,6 @@
 #include "mozStorageHelper.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsICookieNotification.h"
-#include "nsICookieService.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsILineInputStream.h"
 #include "nsIURIMutator.h"
@@ -31,7 +32,7 @@
 // This is a hack to hide HttpOnly cookies from older browsers
 #define HTTP_ONLY_PREFIX "#HttpOnly_"
 
-constexpr auto COOKIES_SCHEMA_VERSION = 15;
+constexpr auto COOKIES_SCHEMA_VERSION = 16;
 
 // parameter indexes; see |Read|
 constexpr auto IDX_NAME = 0;
@@ -448,6 +449,46 @@ class CloseCookieDBListener final : public mozIStorageCompletionCallback {
 };
 
 NS_IMPL_ISUPPORTS(CloseCookieDBListener, mozIStorageCompletionCallback)
+
+static nsLiteralCString ValidationErrorToLabel(
+    nsICookieValidation::ValidationError aError) {
+  switch (aError) {
+    case nsICookieValidation::eOK:
+      return "eOK"_ns;
+    case nsICookieValidation::eRejectedEmptyNameAndValue:
+      return "eRejectedEmptyNameAndValue"_ns;
+    case nsICookieValidation::eRejectedNameValueOversize:
+      return "eRejectedNameValueOversize"_ns;
+    case nsICookieValidation::eRejectedInvalidCharName:
+      return "eRejectedInvalidCharName"_ns;
+    case nsICookieValidation::eRejectedInvalidCharValue:
+      return "eRejectedInvalidCharValue"_ns;
+    case nsICookieValidation::eRejectedInvalidPath:
+      return "eRejectedInvalidPath"_ns;
+    case nsICookieValidation::eRejectedInvalidDomain:
+      return "eRejectedInvalidDomain"_ns;
+    case nsICookieValidation::eRejectedInvalidPrefix:
+      return "eRejectedInvalidPrefix"_ns;
+    case nsICookieValidation::eRejectedNoneRequiresSecure:
+      return "eRejectedNoneRequiresSecure"_ns;
+    case nsICookieValidation::eRejectedPartitionedRequiresSecure:
+      return "eRejectedPartitionedRequiresSecure"_ns;
+    case nsICookieValidation::eRejectedHttpOnlyButFromScript:
+      return "eRejectedHttpOnlyButFromScript"_ns;
+    case nsICookieValidation::eRejectedSecureButNonHttps:
+      return "eRejectedSecureButNonHttps"_ns;
+    case nsICookieValidation::eRejectedForNonSameSiteness:
+      return "eRejectedForNonSameSiteness"_ns;
+    case nsICookieValidation::eRejectedAttributePathOversize:
+      return "eRejectedAttributePathOversize"_ns;
+    case nsICookieValidation::eRejectedAttributeDomainOversize:
+      return "eRejectedAttributeDomainOversize"_ns;
+    case nsICookieValidation::eRejectedAttributeExpiryOversize:
+      return "eRejectedAttributeExpiryOversize"_ns;
+    default:
+      return "eOK"_ns;
+  }
+}
 
 }  // namespace
 
@@ -1533,6 +1574,14 @@ CookiePersistentStorage::OpenDBResult CookiePersistentStorage::TryInitDB(
             "ALTER TABLE moz_cookies DROP COLUMN rawSameSite;"));
         NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
 
+        [[fallthrough]];
+      }
+
+      case 15: {
+        rv = mSyncConn->ExecuteSimpleSQL(
+            nsLiteralCString("UPDATE moz_cookies SET expiry = expiry * 1000;"));
+        NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
+
         // No more upgrades. Update the schema version.
         rv = mSyncConn->SetSchemaVersion(COOKIES_SCHEMA_VERSION);
         NS_ENSURE_SUCCESS(rv, RESULT_RETRY);
@@ -2039,7 +2088,7 @@ void CookiePersistentStorage::InitDBConn() {
   }
 
   // We will have migrated CHIPS cookies if the pref is set, and .unset it
-  // to prevent dupliacted work. This has to happen in the main thread though,
+  // to prevent duplicated work. This has to happen in the main thread though,
   // so we waited to this point.
   if (StaticPrefs::network_cookie_CHIPS_enabled()) {
     Preferences::SetUint(
@@ -2052,6 +2101,13 @@ void CookiePersistentStorage::InitDBConn() {
     os->NotifyObservers(nullptr, "cookie-db-read", nullptr);
     mReadArray.Clear();
   }
+
+  // Let's count the valid/invalid cookies when in idle.
+  nsCOMPtr<nsIRunnable> idleRunnable = NS_NewRunnableFunction(
+      "CookiePersistentStorage::RecordValidationTelemetry",
+      [self = RefPtr{this}]() { self->RecordValidationTelemetry(); });
+  Unused << NS_DispatchToMainThreadQueue(do_AddRef(idleRunnable),
+                                         EventQueuePriority::Idle);
 }
 
 nsresult CookiePersistentStorage::InitDBConnInternal() {
@@ -2324,6 +2380,70 @@ void CookiePersistentStorage::CollectCookieJarSizeData() {
       sumPartitioned);
   mozilla::glean::networking::cookie_count_unpartitioned.AccumulateSingleSample(
       sumUnpartitioned);
+}
+
+void CookiePersistentStorage::RecordValidationTelemetry() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  RefPtr<CookieService> cs = CookieService::GetSingleton();
+  if (!cs) {
+    // We are shutting down, or something bad is happening.
+    return;
+  }
+
+  struct CookieToAdd {
+    nsCString mBaseDomain;
+    OriginAttributes mOriginAttributes;
+    RefPtr<Cookie> mCookie;
+  };
+
+  nsTArray<CookieToAdd> list;
+
+  for (const auto& entry : mHostTable) {
+    const CookieEntry::ArrayType& cookies = entry.GetCookies();
+    for (CookieEntry::IndexType i = 0; i < cookies.Length(); ++i) {
+      Cookie* cookie = cookies[i];
+
+      RefPtr<CookieValidation> validation =
+          CookieValidation::Validate(cookie->ToIPC());
+      mozilla::glean::networking::cookie_db_validation
+          .Get(ValidationErrorToLabel(validation->Result()))
+          .Add(1);
+
+      // We are unable to recover from all the possible errors. Let's fix the
+      // most common ones.
+      switch (validation->Result()) {
+        case nsICookieValidation::eRejectedNoneRequiresSecure: {
+          RefPtr<Cookie> newCookie =
+              Cookie::Create(cookie->ToIPC(), entry.mOriginAttributes);
+          MOZ_ASSERT(newCookie);
+
+          newCookie->SetSameSite(nsICookie::SAMESITE_UNSET);
+          newCookie->SetCreationTime(cookie->CreationTime());
+
+          list.AppendElement(CookieToAdd{entry.mBaseDomain,
+                                         entry.mOriginAttributes, newCookie});
+          break;
+        }
+
+        default:
+          // Nothing to do here.
+          break;
+      }
+    }
+  }
+
+  for (CookieToAdd& data : list) {
+    AddCookie(nullptr, data.mBaseDomain, data.mOriginAttributes, data.mCookie,
+              data.mCookie->CreationTime(), nullptr, VoidCString(), true,
+              !data.mOriginAttributes.mPartitionKey.IsEmpty(), nullptr,
+              nullptr);
+  }
+
+  nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+  if (os) {
+    os->NotifyObservers(nullptr, "cookies-validated", nullptr);
+  }
 }
 
 }  // namespace net

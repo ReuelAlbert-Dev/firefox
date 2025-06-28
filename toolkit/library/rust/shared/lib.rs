@@ -122,6 +122,8 @@ extern crate midir_impl;
 
 #[cfg(target_os = "windows")]
 extern crate detect_win32k_conflicts;
+#[cfg(target_os = "windows")]
+extern crate widget_windows;
 
 extern crate origin_trials_ffi;
 
@@ -134,6 +136,9 @@ extern crate mls_gk;
 extern crate oblivious_http;
 
 extern crate mime_guess_ffi;
+
+extern crate urlpattern;
+extern crate urlpattern_glue;
 
 #[cfg(feature = "libz-rs-sys")]
 extern crate libz_rs_sys;

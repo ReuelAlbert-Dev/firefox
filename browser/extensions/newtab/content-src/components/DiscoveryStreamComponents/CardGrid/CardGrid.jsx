@@ -33,6 +33,8 @@ const PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
 const PREF_BILLBOARD_POSITION = "newtabAdSize.billboard.position";
 const PREF_TRENDING_SEARCH = "trendingSearch.enabled";
+const PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
+const PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
 const PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
 const INTERSECTION_RATIO = 0.5;
 const VISIBLE = "visible";
@@ -364,7 +366,10 @@ export class _CardGrid extends React.PureComponent {
     const listFeedSelectedFeed = prefs[PREF_LIST_FEED_SELECTED_FEED];
     const billboardEnabled = prefs[PREF_BILLBOARD_ENABLED];
     const leaderboardEnabled = prefs[PREF_LEADERBOARD_ENABLED];
-    const trendingEnabled = prefs[PREF_TRENDING_SEARCH];
+    const trendingEnabled =
+      prefs[PREF_TRENDING_SEARCH] &&
+      prefs[PREF_TRENDING_SEARCH_SYSTEM] &&
+      prefs[PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
     const trendingVariant = prefs[PREF_TRENDING_SEARCH_VARIANT];
 
     // filter out recs that should be in ListFeed
@@ -487,9 +492,13 @@ export class _CardGrid extends React.PureComponent {
         );
       }
     }
-
     if (trendingEnabled && trendingVariant === "b") {
-      cards.splice(1, 1, <TrendingSearches />);
+      const firstSpocPosition = this.props.spocPositions[0]?.index;
+      // double check that a spoc/mrec is actually in the index it should be in
+      const format = cards[firstSpocPosition]?.props?.format;
+      const isSpoc = format === "spoc" || format === "rectangle";
+      // if the spoc is not in its position, place TrendingSearches in the 3rd position
+      cards.splice(isSpoc ? firstSpocPosition + 1 : 2, 1, <TrendingSearches />);
     }
 
     // if a banner ad is enabled and we have any available, place them in the grid

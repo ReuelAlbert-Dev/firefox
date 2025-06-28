@@ -138,14 +138,13 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
   MOZ_ASSERT(typedArray->is<FixedLengthTypedArrayObject>(),
              "Resizable and immutable TypedArrays always use an ArrayBuffer");
 
-  Rooted<FixedLengthTypedArrayObject*> tarray(
-      cx, &typedArray->as<FixedLengthTypedArrayObject>());
+  auto tarray = HandleObject(typedArray).as<FixedLengthTypedArrayObject>();
 
   size_t byteLength = tarray->byteLength();
 
   AutoRealm ar(cx, tarray);
-  Rooted<ArrayBufferObject*> buffer(
-      cx, ArrayBufferObject::createZeroed(cx, tarray->byteLength()));
+  ArrayBufferObject* buffer =
+      ArrayBufferObject::createZeroed(cx, tarray->byteLength());
   if (!buffer) {
     return false;
   }
@@ -3881,12 +3880,12 @@ static bool GetAlphabetOption(JSContext* cx, Handle<JSObject*> options,
     return false;
   }
 
-  if (StringEqualsAscii(linear, "base64")) {
+  if (StringEqualsLiteral(linear, "base64")) {
     *result = Alphabet::Base64;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "base64url")) {
+  if (StringEqualsLiteral(linear, "base64url")) {
     *result = Alphabet::Base64Url;
     return true;
   }
@@ -3925,17 +3924,17 @@ static bool GetLastChunkHandlingOption(JSContext* cx, Handle<JSObject*> options,
     return false;
   }
 
-  if (StringEqualsAscii(linear, "loose")) {
+  if (StringEqualsLiteral(linear, "loose")) {
     *result = LastChunkHandling::Loose;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "strict")) {
+  if (StringEqualsLiteral(linear, "strict")) {
     *result = LastChunkHandling::Strict;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "stop-before-partial")) {
+  if (StringEqualsLiteral(linear, "stop-before-partial")) {
     *result = LastChunkHandling::StopBeforePartial;
     return true;
   }

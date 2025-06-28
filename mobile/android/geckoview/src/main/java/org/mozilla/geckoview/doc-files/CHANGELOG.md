@@ -13,6 +13,17 @@ exclude: true
 
 ⚠️  breaking change and deprecation notices
 
+## v142
+- Added support for data collection permissions to [`WebExtensionController.onOptionalPrompt`][142.1] ([bug 1964999]({{bugzilla}}1964999))
+- ⚠️ Removed deprecated functions that were scheduled for removal in GeckoView 142. ([bug 1963053]({{bugzilla}}1963053))
+- Added `setBounceTrackingProtectionMode`, `getBounceTrackingProtectionMode` to [`ContentBlocking.Settings`][142.2].
+  ([bug 1963445]({{bugzilla}}1963445))
+- Added the list of data collection permission names to [`WebExtension`][142.3] ([bug 1972228]({{bugzilla}}1972228))
+
+[142.1]: {{javadoc_uri}}/WebExtensionController.html#onOptionalPrompt
+[142.2]: {{javadoc_uri}}/ContentBlocking.html
+[142.3]: {{javadoc_uri}}/WebExtension.html
+
 ## v141
 - Changed the methods in [`ProfilerController`][141.1] to static.
   ([bug 1955403]({{bugzilla}}1955403))
@@ -21,17 +32,32 @@ exclude: true
 - Added options on [`GeckoPreferenceController`][140.1] to [`register multiple prefs`][141.3] and [`deregister multiple prefs`][141.4]
 - Added [`GeckoRuntime.notifyTelemetryPrefChanged`][141.5] to notify Gecko about telemetry preference changes.
 - Added [`GeckoRuntimeSettings.getBaselineFingerprintingProtection`][141.6], [`GeckoRuntimeSettings.getBaselineFingerprintingProtectionOverrides`][141.7], [`GeckoRuntimeSettings.setBaselineFingerprintingProtection`][141.8], and [`GeckoRuntimeSettings.setBaselineFingerprintingProtectionOverrides`][141.9] to control the baseline fingerprinting protection settings via Nimbus.
+- Added data collection permissions to [`WebExtension.MetaData`][141.10] ([bug 1960551]({{bugzilla}}1960551))
+- Added option on [`GeckoPreferenceController`][140.1] to [`get multiple preference`][141.12] values at once.
+- Added [`WebNotificationAction`][141.13] that represents action buttons of notifications.
+- Added [`WebNotification.actions`][141.14] and a new function signature with `action` to [`WebNotification.click()`][141.15] to indicate action click.
+- Added support for special "technical and interaction" data collection permission ([bug 1964992]({{bugilla}}1964992))
+- Added support for data collection permissions in [`WebExtensionController.addOptionalPermissions`][141.16] and [`WebExtensionController.removeOptionalPermissions`][141.17] ([bug 1964992]({{bugzilla}}1964992))
+- Added [`CrashPullController.Delegate`][141.18] interface, which allows Gecko's `RemoteSettingsCrashPull` module to request that the application uploads a specified subset of user crash dumps.
+
 
 [141.1]: {{javadoc_uri}}/ProfilerController.html
 [141.2]: {{javadoc_uri}}/GeckoRuntime.html#getProfilerController()
-
-[141.3]: {{javadoc_URI}}/GeckoPreferenceController.Observer.html#registerPreferences(java.util.List)
-[141.4]: {{javadoc_URI}}/GeckoPreferenceController.Observer.html#unregisterPreferences(java.util.List)
-[141.5]: {{javadoc_URI}}/GeckoRuntime.html#notifyTelemetryPrefChanged(boolean)
+[141.3]: {{javadoc_uri}}/GeckoPreferenceController.Observer.html#registerPreferences(java.util.List)
+[141.4]: {{javadoc_uri}}/GeckoPreferenceController.Observer.html#unregisterPreferences(java.util.List)
+[141.5]: {{javadoc_uri}}/GeckoRuntime.html#notifyTelemetryPrefChanged(boolean)
 [141.6]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getBaselineFingerprintingProtection
 [141.7]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getBaselineFingerprintingProtectionOverrides
 [141.8]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setBaselineFingerprintingProtection
 [141.9]: {{javadoc_uri}}/GeckoRuntimeSettings.html#setBaselineFingerprintingProtectionOverrides
+[141.10]: {{javadoc_uri}}/WebExtension.MetaData.html
+[141.12]: {{javadoc_uri}}/GeckoPreferenceController.html#getGeckoPrefs(java.util.List)
+[141.13]: {{javadoc_uri}}/WebNotificationAction.html
+[141.14]: {{javadoc_uri}}/WebNotification.html#actions
+[141.15]: {{javadoc_uri}}/WebNotification.html#click(java.lang.String)
+[141.16]: {{javadoc_uri}}/WebExtensionController.html#addOptionalPermissions
+[141.17]: {{javadoc_uri}}/WebExtensionController.html#removeOptionalPermissions
+[141.18]: {{javadoc_uri}}/CrashPullController.html#CrashPullController.Delegate
 
 ## v140
 - Added a [`GeckoPreferenceController`][140.1] class to manage Gecko preferences.
@@ -47,9 +73,9 @@ exclude: true
 [140.1]: {{javadoc_uri}}/GeckoPreferenceController.html
 [140.2]: {{javadoc_uri}}/GeckoPreferenceController.Observer.Delegate.html
 [140.3]: {{javadoc_uri}}/GeckoPreferenceController.Observer.html
-[140.4]: {{javadoc_URI}}/GeckoPreferenceController.html#getGeckoPref(java.lang.String,int)
-[140.5]: {{javadoc_URI}}/GeckoPreferenceController.html#setGeckoPref(java.lang.String,java.lang.String,int)
-[140.6]: {{javadoc_URI}}/GeckoPreferenceController.html#clearGeckoUserPref(java.lang.String)
+[140.4]: {{javadoc_uri}}/GeckoPreferenceController.html#getGeckoPref(java.lang.String,int)
+[140.5]: {{javadoc_uri}}/GeckoPreferenceController.html#setGeckoPref(java.lang.String,java.lang.String,int)
+[140.6]: {{javadoc_uri}}/GeckoPreferenceController.html#clearGeckoUserPref(java.lang.String)
 [140.7]: {{javadoc_uri}}/GeckoRuntimeSettings.Builder.html#setSameDocumentNavigationOverridesLoadType(boolean)
 [140.8]: {{javadoc_uri}}/GeckoRuntimeSettings.Builder.html#setSameDocumentNavigationOverridesLoadTypeForceDisable(java.lang.String)
 [140.9]: {{javadoc_uri}}/GeckoRuntimeSettings.html#getSameDocumentNavigationOverridesLoadType()
@@ -1764,4 +1790,4 @@ to allow adding gecko profiler markers.
 [65.24]: {{javadoc_uri}}/CrashReporter.html#sendCrashReport(android.content.Context,android.os.Bundle,java.lang.String)
 [65.25]: {{javadoc_uri}}/GeckoResult.html
 
-[api-version]: 4e54a9f6716139292642eb12928dc85187b79c31
+[api-version]: b282e190de186cecdff8160ce6e5e4c2ddd230bb

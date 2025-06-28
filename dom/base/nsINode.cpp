@@ -42,6 +42,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/Link.h"
+#include "mozilla/dom/HTMLButtonElement.h"
 #include "mozilla/dom/HTMLDialogElement.h"
 #include "mozilla/dom/HTMLDetailsElement.h"
 #include "mozilla/dom/HTMLImageElement.h"
@@ -1761,9 +1762,9 @@ void nsINode::InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
     // Note that we always want to call ContentInserted when things are added
     // as kids to documents
     if (parent && !aBeforeThis) {
-      MutationObservers::NotifyContentAppended(parent, aKid);
+      MutationObservers::NotifyContentAppended(parent, aKid, {});
     } else {
-      MutationObservers::NotifyContentInserted(this, aKid);
+      MutationObservers::NotifyContentInserted(this, aKid, {});
     }
 
     if (nsContentUtils::WantMutationEvents(
@@ -2366,7 +2367,7 @@ void nsINode::RemoveChildNode(nsIContent* aKid, bool aNotify,
   mozAutoDocUpdate updateBatch(GetComposedDoc(), aNotify);
 
   if (aNotify) {
-    MutationObservers::NotifyContentWillBeRemoved(this, aKid, aState);
+    MutationObservers::NotifyContentWillBeRemoved(this, aKid, {aState});
   }
 
   // Since aKid is use also after DisconnectChild, ensure it stays alive.
@@ -2957,7 +2958,7 @@ nsINode* nsINode::ReplaceOrInsertBefore(bool aReplace, nsINode* aNewChild,
         // Make sure to notify on any children that we did succeed to insert
         if (appending && i != 0) {
           MutationObservers::NotifyContentAppended(
-              static_cast<nsIContent*>(this), firstInsertedContent);
+              static_cast<nsIContent*>(this), firstInsertedContent, {});
         }
         return nullptr;
       }
@@ -2970,7 +2971,7 @@ nsINode* nsINode::ReplaceOrInsertBefore(bool aReplace, nsINode* aNewChild,
     // Notify and fire mutation events when appending
     if (appending) {
       MutationObservers::NotifyContentAppended(static_cast<nsIContent*>(this),
-                                               firstInsertedContent);
+                                               firstInsertedContent, {});
       if (mutationBatch) {
         mutationBatch->NodesAdded();
       }
@@ -3422,7 +3423,7 @@ Element* nsINode::GetNearestInclusiveTargetPopoverForInvoker() const {
 }
 
 nsGenericHTMLElement* nsINode::GetEffectiveInvokeTargetElement() const {
-  if (!StaticPrefs::dom_element_invokers_enabled()) {
+  if (!StaticPrefs::dom_element_commandfor_enabled()) {
     return nullptr;
   }
 
@@ -3432,10 +3433,13 @@ nsGenericHTMLElement* nsINode::GetEffectiveInvokeTargetElement() const {
       !formControl->IsButtonControl()) {
     return nullptr;
   }
-  if (auto* popover = nsGenericHTMLElement::FromNodeOrNull(
-          formControl->GetInvokeTargetElement())) {
-    if (popover->GetPopoverAttributeState() != PopoverAttributeState::None) {
-      return popover;
+
+  if (const auto* buttonControl = HTMLButtonElement::FromNodeOrNull(this)) {
+    if (auto* popover = nsGenericHTMLElement::FromNodeOrNull(
+            buttonControl->GetCommandForElement())) {
+      if (popover->GetPopoverAttributeState() != PopoverAttributeState::None) {
+        return popover;
+      }
     }
   }
   return nullptr;

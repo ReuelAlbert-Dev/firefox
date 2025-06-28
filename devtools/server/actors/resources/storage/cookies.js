@@ -224,8 +224,8 @@ class CookiesStorageActor extends BaseStorageActor {
       host: cookie.host || "",
       path: cookie.path || "",
 
-      // because expires is in seconds
-      expires: (cookie.expires || 0) * 1000,
+      // because expires is in mseconds
+      expires: cookie.expires || 0,
 
       // because creationTime is in micro seconds
       creationTime: cookie.creationTime / 1000,
@@ -377,15 +377,25 @@ class CookiesStorageActor extends BaseStorageActor {
    *
    * @param {Object} data
    *        See editCookie() for format details.
+   * @returns {Object} An object with an "errorString" property.
    */
   async editItem(data) {
-    this.editCookie(data);
+    const potentialErrorMessage = this.editCookie(data);
+    return { errorString: potentialErrorMessage };
   }
 
+  /**
+   * Add a cookie on given host
+   *
+   * @param {String} guid
+   * @param {String} host
+   * @returns {Object} An object with an "errorString" property.
+   */
   async addItem(guid, host) {
     const window = this.storageActor.getWindowFromHost(host);
     const principal = window.document.effectiveStoragePrincipal;
-    this.addCookie(guid, principal);
+    const potentialErrorMessage = this.addCookie(guid, principal);
+    return { errorString: potentialErrorMessage };
   }
 
   async removeItem(host, uniqueKey) {
@@ -403,12 +413,20 @@ class CookiesStorageActor extends BaseStorageActor {
     this._removeCookies(host, { domain, session: true });
   }
 
+  /**
+   * Add a cookie on given principal
+   *
+   * @param {String} guid
+   * @param {Principal} principal
+   * @returns {String|null} If the cookie couldn't be added (e.g. it's invalid),
+   *          an error string will be returned.
+   */
   addCookie(guid, principal) {
     // Set expiry time for cookie 1 day into the future
-    // NOTE: Services.cookies.add expects the time in seconds.
-    const ONE_DAY_IN_SECONDS = 60 * 60 * 24;
-    const time = Math.floor(Date.now() / 1000);
-    const expiry = time + ONE_DAY_IN_SECONDS;
+    // NOTE: Services.cookies.add expects the time in mseconds.
+    const ONE_DAY_IN_MSECONDS = 60 * 60 * 24 * 1000;
+    const time = Date.now();
+    const expiry = time + ONE_DAY_IN_MSECONDS;
 
     // principal throws an error when we try to access principal.host if it
     // does not exist (which happens at about: pages).
@@ -433,9 +451,10 @@ class CookiesStorageActor extends BaseStorageActor {
     );
 
     if (cv.result != Ci.nsICookieValidation.eOK) {
-      // XXX - (Bug 1967707) Expose error messaging when submitting invalid cookies
-      console.error(`Failed to add a cookie: ${cv.errorString}`);
+      return cv.errorString;
     }
+
+    return null;
   }
 
   /**
@@ -462,6 +481,8 @@ class CookiesStorageActor extends BaseStorageActor {
    *            isHttpOnly: "false"
    *          }
    *        }
+   * @returns {(String|null)} If cookie couldn't be updated (e.g. it's invalid), an error string
+   *          will be returned.
    */
   // eslint-disable-next-line complexity
   editCookie(data) {
@@ -505,16 +526,18 @@ class CookiesStorageActor extends BaseStorageActor {
     }
 
     if (!cookie) {
-      return;
+      return null;
     }
 
     // If the date is expired set it for 10 seconds in the future.
     const now = new Date();
-    if (!cookie.isSession && cookie.expires * 1000 <= now) {
-      const tenSecondsFromNow = (now.getTime() + 10 * 1000) / 1000;
+    if (!cookie.isSession && cookie.expires <= now) {
+      const tenMsFromNow = now.getTime() + 10 * 1000;
 
-      cookie.expires = tenSecondsFromNow;
+      cookie.expires = tenMsFromNow;
     }
+
+    let origCookieRemoved = false;
 
     switch (field) {
       case "isSecure":
@@ -524,10 +547,12 @@ class CookiesStorageActor extends BaseStorageActor {
         break;
 
       case "expires":
-        newValue = Date.parse(newValue) / 1000;
+        newValue = Date.parse(newValue);
 
         if (isNaN(newValue)) {
           newValue = MAX_COOKIE_EXPIRY;
+        } else {
+          newValue = Services.cookies.maybeCapExpiry(newValue);
         }
         break;
 
@@ -541,6 +566,7 @@ class CookiesStorageActor extends BaseStorageActor {
           origPath,
           cookie.originAttributes
         );
+        origCookieRemoved = true;
         break;
     }
 
@@ -568,9 +594,28 @@ class CookiesStorageActor extends BaseStorageActor {
     );
 
     if (cv.result != Ci.nsICookieValidation.eOK) {
-      // XXX - (Bug 1967707) Expose error messaging when submitting invalid cookies
-      console.error(`Failed to add a cookie: ${cv.errorString}`);
+      if (origCookieRemoved) {
+        // Re-add the cookie with the original values if it was removed.
+        Services.cookies.add(
+          origHost,
+          origPath,
+          origName,
+          cookie.value,
+          cookie.isSecure,
+          cookie.isHttpOnly,
+          cookie.isSession,
+          cookie.isSession ? MAX_COOKIE_EXPIRY : cookie.expires,
+          cookie.originAttributes,
+          cookie.sameSite,
+          cookie.schemeMap,
+          cookie.isPartitioned
+        );
+      }
+
+      return cv.errorString;
     }
+
+    return null;
   }
 
   _removeCookies(host, opts = {}) {

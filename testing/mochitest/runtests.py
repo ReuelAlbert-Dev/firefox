@@ -3517,7 +3517,9 @@ toolbar#nav-bar {
                 # overridden with --setpref).
                 "sessionHistoryInParent": not options.disable_fission
                 or not self.extraPrefs.get(
-                    "fission.disableSessionHistoryInParent", False
+                    "fission.disableSessionHistoryInParent",
+                    mozinfo.info["os"] == "android"
+                    and mozinfo.info.get("release_or_beta", False),
                 ),
                 "socketprocess_e10s": self.extraPrefs.get(
                     "network.process.enabled", False
@@ -3546,6 +3548,7 @@ toolbar#nav-bar {
                 "android": mozinfo.info.get("android", False),
                 "is_emulator": mozinfo.info.get("is_emulator", False),
                 "coverage": mozinfo.info.get("coverage", False),
+                "nogpu": mozinfo.info.get("nogpu", False),
             }
         )
 

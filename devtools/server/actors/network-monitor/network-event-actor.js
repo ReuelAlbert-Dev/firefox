@@ -29,6 +29,13 @@ ChromeUtils.defineESModuleGetters(
 
 const CONTENT_TYPE_REGEXP = /^content-type/i;
 
+const REDIRECT_STATES = [
+  301, // HTTP Moved Permanently
+  302, // HTTP Found
+  303, // HTTP See Other
+  307, // HTTP Temporary Redirect
+];
+
 function isDataChannel(channel) {
   return channel instanceof Ci.nsIDataChannel;
 }
@@ -468,7 +475,10 @@ class NetworkEventActor extends Actor {
   addCacheDetails({ fromCache, fromServiceWorker }) {
     this._resource.fromCache = fromCache;
     this._resource.fromServiceWorker = fromServiceWorker;
-    this._onEventUpdate("cacheDetails", { fromCache, fromServiceWorker });
+    this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.CACHE_DETAILS, {
+      fromCache,
+      fromServiceWorker,
+    });
   }
 
   addRawHeaders({ channel, rawHeaders }) {
@@ -494,7 +504,10 @@ class NetworkEventActor extends Actor {
     }
 
     this._request.postData = postData;
-    this._onEventUpdate("requestPostData", {});
+    this._onEventUpdate(
+      lazy.NetworkUtils.NETWORK_EVENT_TYPES.REQUEST_POSTDATA,
+      {}
+    );
   }
 
   /**
@@ -518,6 +531,14 @@ class NetworkEventActor extends Actor {
     if (this.isDestroyed()) {
       return;
     }
+
+    // Avoid reading responseStatus and responseStatusText dynamically from
+    // the channel as much as possible. In some cases, eg 304 Not Modified, the
+    // channel is dynamically replaced with the original channel and we lose the
+    // original information about the channel status as the request progresses.
+    // Reading this synchronously in this method is fine, but we extract them as
+    // separate variables here to bring some attention to this issue.
+    const { responseStatus, responseStatusText } = channel;
 
     fromCache = fromCache || lazy.NetworkUtils.isFromCache(channel);
     const isDataOrFile = isDataChannel(channel) || isFileChannel(channel);
@@ -549,8 +570,8 @@ class NetworkEventActor extends Actor {
       this._earlyHintsResponse.rawHeaders = earlyHintsResponseRawHeaders;
     }
 
-    // Discard the response body for known response statuses.
-    if (lazy.NetworkUtils.isRedirectedChannel(channel)) {
+    // Discard the response body for known redirect response statuses.
+    if (REDIRECT_STATES.includes(responseStatus)) {
       this._discardResponseBody = true;
     }
 
@@ -579,15 +600,15 @@ class NetworkEventActor extends Actor {
       proxyInfo = proxyResponseRawHeaders.split("\r\n")[0].split(" ");
     }
 
-    this._onEventUpdate("responseStart", {
+    this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.RESPONSE_START, {
       httpVersion: isDataOrFile
         ? null
         : lazy.NetworkUtils.getHttpVersion(channel),
       mimeType,
       remoteAddress: fromCache ? "" : channel.remoteAddress,
       remotePort: fromCache ? "" : channel.remotePort,
-      status: isDataOrFile ? "200" : channel.responseStatus + "",
-      statusText: isDataOrFile ? "0K" : channel.responseStatusText,
+      status: isDataOrFile ? "200" : responseStatus + "",
+      statusText: isDataOrFile ? "0K" : responseStatusText,
       earlyHintsStatus: earlyHintsResponseRawHeaders ? "103" : "",
       waitingTime,
       isResolvedByTRR: channel.isResolvedByTRR,
@@ -611,7 +632,7 @@ class NetworkEventActor extends Actor {
 
     this._securityInfo = info;
 
-    this._onEventUpdate("securityInfo", {
+    this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.SECURITY_INFO, {
       state: info.state,
       isRacing,
     });
@@ -637,13 +658,16 @@ class NetworkEventActor extends Actor {
     this.manage(content.text);
     content.text = content.text.form();
 
-    this._onEventUpdate("responseContent", {
-      mimeType: content.mimeType,
-      contentSize: content.size,
-      transferredSize: content.transferredSize,
-      blockedReason,
-      blockingExtension,
-    });
+    this._onEventUpdate(
+      lazy.NetworkUtils.NETWORK_EVENT_TYPES.RESPONSE_CONTENT,
+      {
+        mimeType: content.mimeType,
+        contentSize: content.size,
+        transferredSize: content.transferredSize,
+        blockedReason,
+        blockingExtension,
+      }
+    );
   }
 
   addResponseCache(content) {
@@ -652,7 +676,10 @@ class NetworkEventActor extends Actor {
       return;
     }
     this._response.responseCache = content.responseCache;
-    this._onEventUpdate("responseCache", {});
+    this._onEventUpdate(
+      lazy.NetworkUtils.NETWORK_EVENT_TYPES.RESPONSE_CACHE,
+      {}
+    );
   }
 
   /**
@@ -674,7 +701,9 @@ class NetworkEventActor extends Actor {
     this._timings = timings;
     this._offsets = offsets;
 
-    this._onEventUpdate("eventTimings", { totalTime: total });
+    this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.EVENT_TIMINGS, {
+      totalTime: total,
+    });
   }
 
   /**

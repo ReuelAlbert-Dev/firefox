@@ -46,13 +46,6 @@ sealed class MenuAction : Action {
     data class UpdateBookmarkState(val bookmarkState: BookmarkState) : MenuAction()
 
     /**
-     * [MenuAction] dispatched when a url is loaded .
-     *
-     * @property isLoading The new [isLoading] state to be updated.
-     */
-    data class SetLoading(val isLoading: Boolean) : MenuAction()
-
-    /**
      * [MenuAction] dispatched when a site is to be added to shortcuts.
      */
     data object AddShortcut : MenuAction()
@@ -206,16 +199,6 @@ sealed class MenuAction : Action {
      * [MenuAction] dispatched when requesting to switch to the mobile version of the current page.
      */
     data object RequestMobileSite : MenuAction()
-
-    /**
-     * [MenuAction] dispatched when the save menu item is clicked.
-     */
-    data object SaveMenuClicked : MenuAction()
-
-    /**
-     * [MenuAction] dispatched when the tools menu item is clicked.
-     */
-    data object ToolsMenuClicked : MenuAction()
 
     /**
      * [MenuAction] dispatched to show the menu CFR.

@@ -132,7 +132,7 @@ class TransactionBuilder final {
 
   void ClearDisplayList(Epoch aEpoch, wr::WrPipelineId aPipeline);
 
-  void GenerateFrame(const VsyncId& aVsyncId, bool aPresent,
+  void GenerateFrame(const VsyncId& aVsyncId, bool aPresent, bool aTracked,
                      wr::RenderReasons aReasons);
 
   void InvalidateRenderedFrame(wr::RenderReasons aReasons);
@@ -207,6 +207,8 @@ class TransactionBuilder final {
   void DeleteFontInstance(wr::FontInstanceKey aKey);
 
   void UpdateQualitySettings(bool aForceSubpixelAAWherePossible);
+
+  void RenderOffscreen(wr::WrPipelineId aPipelineId);
 
   void Notify(wr::Checkpoint aWhen, UniquePtr<NotificationHandler> aHandler);
 

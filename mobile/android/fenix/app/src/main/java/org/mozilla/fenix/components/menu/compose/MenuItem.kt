@@ -165,7 +165,11 @@ internal fun MenuTextItem(
         } else {
             MENU_ITEM_HEIGHT_WITHOUT_DESC
         },
-        modifier = modifier,
+        modifier = modifier
+            .clip(shape = ROUNDED_CORNER_SHAPE)
+            .background(
+                color = FirefoxTheme.colors.layer3,
+            ),
         iconPainter = iconPainter,
         onClick = onClick,
     )
@@ -210,7 +214,7 @@ internal fun WebExtensionMenuItem(
             .background(
                 color = FirefoxTheme.colors.layer3,
             ),
-        afterListAction = {
+        afterListItemAction = {
             Row(
                 modifier = Modifier.padding(start = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -321,7 +325,7 @@ private fun getIconTint(state: MenuItemState): Color {
     return when (state) {
         MenuItemState.ACTIVE -> FirefoxTheme.colors.iconAccentViolet
         MenuItemState.WARNING -> FirefoxTheme.colors.iconCritical
-        else -> FirefoxTheme.colors.iconSecondary
+        else -> FirefoxTheme.colors.iconPrimary
     }
 }
 

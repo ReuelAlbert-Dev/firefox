@@ -4,6 +4,8 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserSearchTelemetry:
+    "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
   PersistentCache: "resource://newtab/lib/PersistentCache.sys.mjs",
   SearchSuggestionController:
     "moz-src:///toolkit/components/search/SearchSuggestionController.sys.mjs",
@@ -16,7 +18,9 @@ import {
 } from "resource://newtab/common/Actions.mjs";
 
 const PREF_SHOW_TRENDING_SEARCH = "trendingSearch.enabled";
-const TRENDING_SEARCH_UPDATE_TIME = 60 * 60 * 1000; // 60 minutes
+const PREF_SHOW_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
+const PREF_TRENDING_SEARCH_DEFAULT = "trendingSearch.defaultSearchEngine";
+const TRENDING_SEARCH_UPDATE_TIME = 15 * 60 * 1000; // 15 minutes
 const CACHE_KEY = "trending_search";
 
 /**
@@ -33,7 +37,13 @@ export class TrendingSearchFeed {
   }
 
   get enabled() {
-    return this.store.getState().Prefs.values[PREF_SHOW_TRENDING_SEARCH];
+    const prefs = this.store.getState()?.Prefs.values;
+    const trendingSearchEnabled =
+      prefs[PREF_SHOW_TRENDING_SEARCH] &&
+      prefs[PREF_SHOW_TRENDING_SEARCH_SYSTEM];
+    const isGoogle =
+      prefs[PREF_TRENDING_SEARCH_DEFAULT]?.toLowerCase() === "google";
+    return trendingSearchEnabled && isGoogle;
   }
 
   async init() {
@@ -131,6 +141,14 @@ export class TrendingSearchFeed {
     return results;
   }
 
+  handleSearchTelemetry(browser) {
+    lazy.BrowserSearchTelemetry.recordSearch(
+      browser,
+      this.defaultEngine,
+      "newtab"
+    );
+  }
+
   async onAction(action) {
     switch (action.type) {
       case at.INIT:
@@ -144,13 +162,22 @@ export class TrendingSearchFeed {
           await this.loadTrendingSearch();
         }
         break;
+      case at.TRENDING_SEARCH_SUGGESTION_OPEN:
+        this.handleSearchTelemetry(action._target.browser);
+        break;
       case at.PREF_CHANGED:
-        if (
-          this.enabled &&
-          action.data.name === PREF_SHOW_TRENDING_SEARCH &&
-          action.data.value
-        ) {
-          await this.loadTrendingSearch();
+        {
+          const { name, value } = action.data;
+
+          const isTrendingShowPref =
+            name === PREF_SHOW_TRENDING_SEARCH && value;
+          const isTrendingDefaultPref = name === PREF_TRENDING_SEARCH_DEFAULT;
+
+          if (isTrendingShowPref || isTrendingDefaultPref) {
+            if (this.enabled) {
+              await this.loadTrendingSearch();
+            }
+          }
         }
         break;
     }

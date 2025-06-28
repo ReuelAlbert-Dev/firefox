@@ -91,7 +91,9 @@ tags = "overflowable-toolbar"
 
 ["browser_914138_widget_API_overflowable_toolbar.js"]
 tags = "overflowable-toolbar"
-skip-if = ["os == 'linux'"]
+skip-if = [
+  "os == 'linux'",
+  "devedition"]
 
 ["browser_918049_skipintoolbarset_dnd.js"]
 
@@ -148,7 +150,10 @@ support-files = ["dummy_history_item.html"]
 ["browser_947914_button_zoomOut.js"]
 
 ["browser_947914_button_zoomReset.js"]
-skip-if = ["os == 'linux' && os_version == '18.04' && processor == 'x86_64' && debug && socketprocess_networking"]
+skip-if = [
+  "os == 'linux' && os_version == '18.04' && processor == 'x86_64' && debug && socketprocess_networking",
+  "os == 'linux' && os_version == '24.04' && processor == 'x86_64' && display == 'x11' && opt",
+]
 
 ["browser_947987_removable_default.js"]
 

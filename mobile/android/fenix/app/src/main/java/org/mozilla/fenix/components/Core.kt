@@ -63,7 +63,6 @@ import mozilla.components.feature.recentlyclosed.RecentlyClosedMiddleware
 import mozilla.components.feature.recentlyclosed.RecentlyClosedTabsStorage
 import mozilla.components.feature.search.SearchApplicationName
 import mozilla.components.feature.search.SearchDeviceType
-import mozilla.components.feature.search.SearchEngineSelector
 import mozilla.components.feature.search.SearchUpdateChannel
 import mozilla.components.feature.search.middleware.AdsTelemetryMiddleware
 import mozilla.components.feature.search.middleware.SearchExtraParams
@@ -312,7 +311,13 @@ class Core(
             listOf(
                 LastAccessMiddleware(),
                 RecentlyClosedMiddleware(recentlyClosedTabsStorage, RECENTLY_CLOSED_MAX),
-                DownloadMiddleware(context, DownloadService::class.java),
+                DownloadMiddleware(
+                    applicationContext = context,
+                    downloadServiceClass = DownloadService::class.java,
+                    deleteFileFromStorage = {
+                       context.settings().shouldCleanUpDownloadsAutomatically()
+                    },
+                ),
                 ReaderViewMiddleware(),
                 TelemetryMiddleware(context, context.settings(), metrics, crashReporter),
                 ThumbnailsMiddleware(thumbnailStorage),
@@ -714,7 +719,6 @@ class Core(
             deviceType = deviceType,
             experiment = "",
             updateChannel = updateChannel,
-            selector = SearchEngineSelector(),
             service = context.components.remoteSettingsService.value,
         )
     }

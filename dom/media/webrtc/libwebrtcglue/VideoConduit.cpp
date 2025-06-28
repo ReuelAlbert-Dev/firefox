@@ -671,6 +671,7 @@ void WebrtcVideoConduit::OnControlConfigChange() {
         // This tends to happen if the codec is changed mid call.
         // We need to delete the stream now, if we continue to setup the new
         // codec before deleting the send stream libwebrtc will throw erros.
+        MemoSendStreamStats();
         DeleteSendStream();
       }
       mControl.mConfiguredSendCodec = codecConfig;
@@ -922,6 +923,7 @@ void WebrtcVideoConduit::OnControlConfigChange() {
     }
     if (sendStreamRecreationNeeded) {
       encoderReconfigureNeeded = false;
+      MemoSendStreamStats();
       DeleteSendStream();
     }
     if (mControl.mTransmitting) {
@@ -991,13 +993,25 @@ void WebrtcVideoConduit::DeleteSendStream() {
   if (!mSendStream) {
     return;
   }
-
   mCall->Call()->DestroyVideoSendStream(mSendStream);
   mEngineTransmitting = false;
   mSendStream = nullptr;
 
   // Reset base_seqs in case ssrcs get re-used.
   mRtpSendBaseSeqs.clear();
+}
+
+void WebrtcVideoConduit::MemoSendStreamStats() {
+  MOZ_ASSERT(mCallThread->IsOnCurrentThread());
+  // If we are going to be recreating the send stream, we hold onto stats until
+  // libwebrtc stats collection catches up.
+  if (mControl.mTransmitting && mSendStream) {
+    const auto stats = mSendStream->GetStats();
+    // If we have no streams we don't need to hold onto anything
+    if (stats.substreams.size()) {
+      mTransitionalSendStreamStats = Some(stats);
+    }
+  }
 }
 
 void WebrtcVideoConduit::CreateSendStream() {
@@ -1239,6 +1253,15 @@ Maybe<webrtc::VideoSendStream::Stats> WebrtcVideoConduit::GetSenderStats()
   if (!mSendStream) {
     return Nothing();
   }
+  auto stats = mSendStream->GetStats();
+  if (stats.substreams.empty()) {
+    if (!mTransitionalSendStreamStats) {
+      CSFLogError(LOGTAG, "%s: No SSRC in send stream stats", __FUNCTION__);
+    }
+    return mTransitionalSendStreamStats;
+  }
+  // Successfully got stats, so clear the transitional stats.
+  mTransitionalSendStreamStats = Nothing();
   return Some(mSendStream->GetStats());
 }
 
@@ -1299,6 +1322,9 @@ RefPtr<GenericPromise> WebrtcVideoConduit::Shutdown() {
   mSendPluginReleased.DisconnectIfExists();
   mRecvPluginCreated.DisconnectIfExists();
   mRecvPluginReleased.DisconnectIfExists();
+  mReceiverRtpEventListener.DisconnectIfExists();
+  mReceiverRtcpEventListener.DisconnectIfExists();
+  mSenderRtcpEventListener.DisconnectIfExists();
 
   return InvokeAsync(
       mCallThread, __func__, [this, self = RefPtr<WebrtcVideoConduit>(this)] {
@@ -1373,9 +1399,23 @@ RefPtr<GenericPromise> WebrtcVideoConduit::Shutdown() {
           DeleteSendStream();
           DeleteRecvStream();
         }
+        // Clear the stats send stream stats cache
+        mTransitionalSendStreamStats = Nothing();
+
+        SetIsShutdown();
 
         return GenericPromise::CreateAndResolve(true, __func__);
       });
+}
+
+bool WebrtcVideoConduit::IsShutdown() const {
+  MOZ_ASSERT(mCallThread->IsOnCurrentThread());
+  return mIsShutdown;
+}
+
+void WebrtcVideoConduit::SetIsShutdown() {
+  MOZ_ASSERT(mCallThread->IsOnCurrentThread());
+  mIsShutdown = true;
 }
 
 webrtc::VideoCodecMode WebrtcVideoConduit::CodecMode() const {
@@ -1529,11 +1569,13 @@ void WebrtcVideoConduit::OnRtpReceived(webrtc::RtpPacketReceived&& aPacket,
                                        webrtc::RTPHeader&& aHeader) {
   MOZ_ASSERT(mCallThread->IsOnCurrentThread());
 
-  // We should only be handling packets on this conduit if we are set to receive them.
+  // We should only be handling packets on this conduit if we are set to receive
+  // them.
   if (!mControl.mReceiving) {
-    // TODO: Create profiler marker for this and/or less noisy logging.
-    // CSFLogInfo(LOGTAG, "VideoConduit %p: Discarding packet SEQ# %u SSRC %u as not configured to receive.",
-    //   this, aPacket.SequenceNumber(), aHeader.ssrc);
+    CSFLogVerbose(LOGTAG,
+                  "VideoConduit %p: Discarding packet SEQ# %u SSRC %u as not "
+                  "configured to receive.",
+                  this, aPacket.SequenceNumber(), aHeader.ssrc);
     return;
   }
 
@@ -1604,6 +1646,15 @@ void WebrtcVideoConduit::OnRtpReceived(webrtc::RtpPacketReceived&& aPacket,
               self.get(), packet.Ssrc(), packet.SequenceNumber());
           return false;
         });
+  }
+}
+
+void WebrtcVideoConduit::OnRtcpReceived(rtc::CopyOnWriteBuffer&& aPacket) {
+  MOZ_ASSERT(mCallThread->IsOnCurrentThread());
+
+  if (mCall->Call()) {
+    mCall->Call()->Receiver()->DeliverRtcpPacket(
+        std::forward<rtc::CopyOnWriteBuffer>(aPacket));
   }
 }
 
@@ -1944,23 +1995,6 @@ void WebrtcVideoConduit::SetTransportActive(bool aActive) {
 
   // If false, This stops us from sending
   mTransportActive = aActive;
-
-  // We queue this because there might be notifications to these listeners
-  // pending, and we don't want to drop them by letting this jump ahead of
-  // those notifications. We move the listeners into the lambda in case the
-  // transport comes back up before we disconnect them. (The Connect calls
-  // happen in MediaPipeline)
-  // We retain a strong reference to ourself, because the listeners are holding
-  // a non-refcounted reference to us, and moving them into the lambda could
-  // conceivably allow them to outlive us.
-  if (!aActive) {
-    MOZ_ALWAYS_SUCCEEDS(mCallThread->Dispatch(NS_NewRunnableFunction(
-        __func__,
-        [self = RefPtr<WebrtcVideoConduit>(this),
-         recvRtpListener = std::move(mReceiverRtpEventListener)]() mutable {
-          recvRtpListener.DisconnectIfExists();
-        })));
-  }
 }
 
 std::vector<webrtc::RtpSource> WebrtcVideoConduit::GetUpstreamRtpSources()
@@ -1973,13 +2007,11 @@ void WebrtcVideoConduit::RequestKeyFrame(FrameTransformerProxy* aProxy) {
   mCallThread->Dispatch(NS_NewRunnableFunction(
       __func__, [this, self = RefPtr<WebrtcVideoConduit>(this),
                  proxy = RefPtr<FrameTransformerProxy>(aProxy)] {
-        bool success = false;
         if (mRecvStream && mEngineReceiving) {
           // This is a misnomer. This requests a keyframe from the other side.
           mRecvStream->GenerateKeyFrame();
-          success = true;
         }
-        proxy->KeyFrameRequestDone(success);
+        proxy->KeyFrameRequestDone();
       }));
 }
 

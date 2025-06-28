@@ -3,7 +3,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import errno
-import json
 import os
 import platform
 import stat
@@ -12,10 +11,11 @@ import sys
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Set, Union
+from typing import Optional, Union
 
 import requests
 from mach.util import get_state_dir
+from mozfile import json
 from tqdm import tqdm
 
 from mozboot.bootstrap import MOZCONFIG_SUGGESTION_TEMPLATE
@@ -339,7 +339,7 @@ def get_os_tag_for_android(os_name: str):
 def ensure_android(
     os_name: str,
     os_arch: str,
-    packages: Optional[Set[str]] = None,
+    packages: Optional[set[str]] = None,
     artifact_mode=False,
     avd_manifest_path: Optional[Path] = None,
     prewarm_avd=False,
@@ -447,6 +447,13 @@ def ensure_android_sdk(os_name: str, os_tag: str):
 
 
 def ensure_bundletool():
+    bundletool_path = os.environ.get("ANDROID_BUNDLETOOL_PATH")
+    if bundletool_path:
+        print(
+            f"ANDROID_BUNDLETOOL_PATH specified. Using {bundletool_path}. Bundletool will not be bootstrapped."
+        )
+        return
+
     download(BUNDLETOOL_URL, MOZBUILD_PATH / "bundletool.jar")
 
 
@@ -461,6 +468,13 @@ def ensure_android_avd(
     Use the given sdkmanager tool (like 'sdkmanager') to install required
     Android packages.
     """
+    avd_path = os.environ.get("ANDROID_AVD_PATH")
+    if avd_path:
+        print(
+            f"ANDROID_AVD_PATH specified. Using {avd_path}. Android AVD will not be bootstrapped."
+        )
+        return
+
     if avd_manifest is None:
         return
 
@@ -597,7 +611,7 @@ class AndroidPackageList(Enum):
 
 def get_android_packages(
     package_list_type: AndroidPackageList = AndroidPackageList.ALL,
-) -> Set[str]:
+) -> set[str]:
     packages_file_path = (Path(__file__).parent / package_list_type.value).resolve()
 
     content = packages_file_path.read_text()
@@ -609,7 +623,7 @@ def get_android_packages(
 def ensure_android_packages(
     os_name: str,
     os_arch: str,
-    packages: Optional[Set[str]],
+    packages: Optional[set[str]],
     avd_manifest=None,
     no_interactive=False,
     list_packages=False,

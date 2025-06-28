@@ -18,10 +18,12 @@
     <attr name="scrim" format="reference" />
 
     <!-- Action -->
-    <!-- Primary button, Snackbar, Floating action button, Chip selected -->
+    <!-- Primary button, Snackbar, Floating action button -->
     <attr name="actionPrimary" format="reference" />
     <!-- Primary button in a disabled state -->
     <attr name="actionPrimaryDisabled" format="reference" />
+    <!-- Chip selected -->
+    <attr name="actionChipSelected" format="reference" />
 
     <!-- Text -->
     <!-- Primary text -->
@@ -120,6 +122,14 @@
     <declare-styleable name="RadioButtonPreference">
         <attr format="string|boolean|integer|reference|float" name="defaultValue"/>
         <attr name="android:defaultValue"/>
+    </declare-styleable>
+
+    <declare-styleable name="TwoOptionTogglePreference">
+        <attr name="sharedPreferenceKey" format="string" />
+        <attr name="trueOptionTitle" format="string" />
+        <attr name="falseOptionTitle" format="string" />
+        <attr name="trueOptionIconRes" format="reference" />
+        <attr name="falseOptionIconRes" format="reference" />
     </declare-styleable>
 
     <declare-styleable name="PreferenceBackedRadioButton">

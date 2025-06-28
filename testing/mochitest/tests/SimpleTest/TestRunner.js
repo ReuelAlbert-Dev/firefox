@@ -420,7 +420,7 @@ TestRunner._makeIframe = function (url, retry) {
     if (retry < 3) {
       window.setTimeout(function () {
         TestRunner._makeIframe(url, retry + 1);
-      }, 1000);
+      });
       return;
     }
 
@@ -987,7 +987,10 @@ TestRunner.testUnloaded = function (result, runtime) {
     { runtime }
   );
 
-  // Always do this, so we can "reset" preferences between tests
+  // Always do this, so we can "reset" preferences between tests.
+  // Note: this is for mochitest-plain only; browser tests do not
+  // unconditionally reset between tests, see
+  // checkPreferencesAfterTest in testing/mochitest/browser-test.js
   SpecialPowers.comparePrefsToBaseline(
     TestRunner.ignorePrefs,
     TestRunner.verifyPrefsNextTest

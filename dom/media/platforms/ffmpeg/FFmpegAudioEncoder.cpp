@@ -54,12 +54,10 @@ void FFmpegAudioEncoder<LIBAV_VER>::ResamplerDestroy::operator()(
 MediaResult FFmpegAudioEncoder<LIBAV_VER>::InitEncoder() {
   MOZ_ASSERT(mTaskQueue->IsOnCurrentThread());
 
-  ForceEnablingFFmpegDebugLogs();
-
   FFMPEG_LOG("FFmpegAudioEncoder::InitEncoder");
 
   // Initialize the common members of the encoder instance
-  auto r = AllocateCodecContext(mLib, mCodecID);
+  auto r = AllocateCodecContext(/* aHardware */ false);
   if (r.isErr()) {
     return r.unwrapErr();
   }
@@ -148,9 +146,8 @@ MediaResult FFmpegAudioEncoder<LIBAV_VER>::InitEncoder() {
     if (mConfig.mBitrateMode == BitrateMode::Constant) {
       mLib->av_opt_set(mCodecContext->priv_data, "vbr", "off", 0);
     }
-    if (mConfig.mCodecSpecific.isSome()) {
-      MOZ_ASSERT(mConfig.mCodecSpecific->is<OpusSpecific>());
-      const OpusSpecific& specific = mConfig.mCodecSpecific->as<OpusSpecific>();
+    if (mConfig.mCodecSpecific.is<OpusSpecific>()) {
+      const OpusSpecific& specific = mConfig.mCodecSpecific.as<OpusSpecific>();
       // This attribute maps directly to complexity
       mCodecContext->compression_level = specific.mComplexity;
       FFMPEG_LOG("Opus complexity set to %d", specific.mComplexity);
@@ -199,6 +196,8 @@ MediaResult FFmpegAudioEncoder<LIBAV_VER>::InitEncoder() {
       }
       // TODO: format
       // https://bugzilla.mozilla.org/show_bug.cgi?id=1876066
+    } else {
+      MOZ_ASSERT(mConfig.mCodecSpecific.is<void_t>());
     }
   }
   // Override the time base: always the sample-rate the encoder is running at

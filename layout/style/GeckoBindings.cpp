@@ -798,6 +798,22 @@ bool Gecko_MatchLang(const Element* aElement, nsAtom* aOverrideLang,
   return false;
 }
 
+bool Gecko_MatchViewTransitionClass(
+    const mozilla::dom::Element* aElement,
+    const nsTArray<StyleAtom>* aPtNameAndClassSelector) {
+  MOZ_ASSERT(aElement && aPtNameAndClassSelector);
+
+  const Document* doc = aElement->OwnerDoc();
+  MOZ_ASSERT(doc);
+  const ViewTransition* vt = doc->GetActiveViewTransition();
+  MOZ_ASSERT(
+      vt, "We should have an active view transition for this pseudo-element");
+
+  nsAtom* name = Gecko_GetImplementedPseudoIdentifier(aElement);
+  MOZ_ASSERT(name);
+  return vt->MatchClassList(name, *aPtNameAndClassSelector);
+}
+
 nsAtom* Gecko_GetXMLLangValue(const Element* aElement) {
   const nsAttrValue* attr =
       aElement->GetParsedAttr(nsGkAtoms::lang, kNameSpaceID_XML);
@@ -1895,10 +1911,10 @@ static Maybe<AnchorPosInfo> GetAnchorPosRect(const nsIFrame* aPositioned,
   const auto* containingBlock = aPositioned->GetParent();
   auto rect = [&]() -> Maybe<nsRect> {
     if (aCBRectIsvalid) {
-      nsRect result = anchor->GetRectRelativeToSelf();
-      nsLayoutUtils::TransformRect(anchor, containingBlock, result);
+      const nsRect result = anchor->GetRectRelativeToSelf();
+      const auto offset = anchor->GetOffsetTo(containingBlock);
       // Easy, just use the existing function.
-      return Some(result);
+      return Some(result + offset);
     }
 
     // Ok, containing block doesn't have its rect fully resolved. Figure out
@@ -1918,10 +1934,9 @@ static Maybe<AnchorPosInfo> GetAnchorPosRect(const nsIFrame* aPositioned,
 
     // TODO(dshin): Already traversed up to find `containerChild`, and we're
     // going to do it again here, which feels a little wasteful.
-    nsRect rectToContainerChild = anchor->GetRectRelativeToSelf();
-    nsLayoutUtils::TransformRect(anchor, containerChild, rectToContainerChild);
-
-    return Some(rectToContainerChild + containerChild->GetPosition());
+    const nsRect rectToContainerChild = anchor->GetRectRelativeToSelf();
+    const auto offset = anchor->GetOffsetTo(containerChild);
+    return Some(rectToContainerChild + offset + containerChild->GetPosition());
   }();
   return rect.map([&](const nsRect& aRect) {
     // We need to position the border box of the anchor within the abspos
@@ -1938,15 +1953,15 @@ static Maybe<AnchorPosInfo> GetAnchorPosRect(const nsIFrame* aPositioned,
 }
 
 bool Gecko_GetAnchorPosOffset(
-    const AnchorPosResolutionParams* aParams, const nsAtom* aAnchorName,
+    const AnchorPosOffsetResolutionParams* aParams, const nsAtom* aAnchorName,
     StylePhysicalSide aPropSide,
     mozilla::StyleAnchorSideKeyword aAnchorSideKeyword, float aPercentage,
     mozilla::Length* aOut) {
-  if (!aParams || !aParams->mFrame) {
+  if (!aParams || !aParams->mBaseParams.mFrame) {
     return false;
   }
-  const auto info =
-      GetAnchorPosRect(aParams->mFrame, aAnchorName, !aParams->mCBSize);
+  const auto info = GetAnchorPosRect(aParams->mBaseParams.mFrame, aAnchorName,
+                                     !aParams->mCBSize);
   if (info.isNothing()) {
     return false;
   }
@@ -1956,7 +1971,8 @@ bool Gecko_GetAnchorPosOffset(
   const auto* containingBlock = info.ref().mContainingBlock;
   const auto usesCBWM = AnchorSideUsesCBWM(aAnchorSideKeyword);
   const auto cbwm = containingBlock->GetWritingMode();
-  const auto wm = usesCBWM ? aParams->mFrame->GetWritingMode() : cbwm;
+  const auto wm =
+      usesCBWM ? aParams->mBaseParams.mFrame->GetWritingMode() : cbwm;
   const auto logicalCBSize = aParams->mCBSize
                                  ? aParams->mCBSize->ConvertTo(wm, cbwm)
                                  : containingBlock->PaddingSize(wm);

@@ -99,6 +99,11 @@ perf:
           "Time spent executing JS during page load, in ms."
         type: quantity
         unit: ms
+      delazify_time:
+        description:
+          "Time spent delazifying JS during page load, in ms."
+        type: quantity
+        unit: ms
       redirect_time:
         type: quantity
         description:
@@ -135,11 +140,16 @@ perf:
         description:
           "TRR domain used."
         type: string
-      features:
-        description:
-          "Bitfield of features in use within this document:
+      document_features:
+        description: >
+          Bitfield of web features in use within this document:
             1 - fetchpriority applied to images
-            2 - assistive technology in use"
+        type: quantity
+        unit: integer
+      user_features:
+        description: >
+          Bitfield of features the user is enabling:
+            1 - assistive technology in use
         type: quantity
         unit: integer
       has_ssd:
@@ -148,6 +158,50 @@ perf:
         type: boolean
     send_in_pings:
       - pageload
+  page_load_domain:
+    type: event
+    description: >
+        Recorded when a top level content document has been loaded.
+        Includes ETLD+1 information and sent with ohttp.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1967780
+    data_reviews:
+      - https://phabricator.services.mozilla.com/D250521
+    notification_emails:
+      - perf-telemetry-alerts@mozilla.com
+      - dpalmeiro@mozilla.com
+    expires: never
+    extra_keys:
+      lcp_time:
+        description:
+          "Time between largestContentfulPaint and navigationStart, at the point of onLoad firing, in ms. This may differ from the final LCP value as reported through the LCP histogram."
+        type: quantity
+        unit: ms
+      load_type:
+        description:
+          "One of normal,reload,stop,link,history,error or other."
+        type: string
+      same_origin_nav:
+        description:
+          "If true, a normal navigation was performed on the same origin."
+        type: boolean
+      http_ver:
+        description:
+          "Version of HTTP protocol used."
+        type: quantity
+        unit: integer
+      document_features:
+        description: >
+          Bitfield of web features in use within this document:
+            1 - fetchpriority applied to images
+        type: quantity
+        unit: integer
+      domain:
+        description:
+          "ETLD+1 domain of website visited."
+        type: string
+    send_in_pings:
+      - pageload-domain
 
   http3_page_load_time:
     type: labeled_timing_distribution
@@ -598,128 +652,6 @@ performance.page:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1580077#c10
     notification_emails:
       - vchin@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-
-javascript.pageload:
-  execution_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_EXECUTION_MS
-    description: >
-      Time spent during page load executing Javascript in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  delazification_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_DELAZIFICATION_MS
-    description: >
-      Time spent during page load delazifying Javascript in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  xdr_encode_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_XDR_ENCODING_MS
-    description: >
-      Time spent during page load XDR encoding Javascript in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  baseline_compile_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_BASELINE_COMPILE_MS
-    description: >
-      Time spent during page load baseline compiling Javascript in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  gc_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_GC_MS
-    description: >
-      Time spent during page load in the GC in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  parse_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_PARSE_MS
-    description: >
-      Time spent during page load syntax parsing JS scripts on
-      the main thread in ms.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
-      - perf-telemetry-alerts@mozilla.com
-    expires: never
-
-  protect_time:
-    type: timing_distribution
-    time_unit: millisecond
-    telemetry_mirror: JS_PAGELOAD_PROTECT_MS
-    description: >
-      Time spent during page load protecting JIT executable memory.
-      (Migrated from the geckoview metric of the same name.)
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1877843
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1709139#c4
-    notification_emails:
-      - dpalmeiro@mozilla.com
       - perf-telemetry-alerts@mozilla.com
     expires: never
 

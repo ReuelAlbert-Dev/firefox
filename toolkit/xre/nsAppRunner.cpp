@@ -773,20 +773,6 @@ nsIXULRuntime::ContentWin32kLockdownState GetLiveWin32kLockdownState() {
         OperatingSystemNotSupported;
   }
 
-  {
-    ConflictingMitigationStatus conflictingMitigationStatus = {};
-    if (!detect_win32k_conflicting_mitigations(&conflictingMitigationStatus)) {
-      return nsIXULRuntime::ContentWin32kLockdownState::
-          IncompatibleMitigationPolicy;
-    }
-    if (conflictingMitigationStatus.caller_check ||
-        conflictingMitigationStatus.sim_exec ||
-        conflictingMitigationStatus.stack_pivot) {
-      return nsIXULRuntime::ContentWin32kLockdownState::
-          IncompatibleMitigationPolicy;
-    }
-  }
-
   // Win32k Lockdown requires Remote WebGL, but it may be disabled on
   // certain hardware or virtual machines.
   if (!gfx::gfxVars::AllowWebglOop() || !StaticPrefs::webgl_out_of_process()) {
@@ -5621,6 +5607,18 @@ nsresult XREMain::XRE_mainRun() {
     // AutoConfig files require JS execution. Note that this means AutoConfig
     // files can't override JS engine start-up prefs.
     mDirProvider.FinishInitializingUserPrefs();
+
+    // Now that the profiler, directory services, and prefs have been
+    // initialized we can find the download directory, where the profiler can
+    // write profiles when user stops the profiler using POSIX signal handling.
+    //
+    // It's possible to start and stop the profiler by sending POSIX signals to
+    // the profiler binary when Firefox is frozen. At the time when stop signal
+    // is handled, Firefox stops the profiler and dumps the profile to disk. But
+    // getting the download directory is not really possible at that time
+    // because main thread will be unresponsive. That's why we are getting this
+    // information right now.
+    profiler_lookup_async_signal_dump_directory();
 
     // Do a canary load of a JS based module here. This will help us detect
     // missing resources during startup and make us react appropriate, that

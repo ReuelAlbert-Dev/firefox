@@ -26,7 +26,6 @@ export class LoginForm extends MozLitElement {
     usernameValue: { type: String },
     passwordValue: { type: String },
     passwordVisible: { type: Boolean },
-    onPasswordRevealClick: { type: Function },
     _showDeleteCard: { type: Boolean, state: true },
   };
 
@@ -45,9 +44,6 @@ export class LoginForm extends MozLitElement {
     this.usernameValue = "";
     this.passwordValue = "";
     this._showDeleteCard = false;
-    this.onPasswordRevealClick = () => {
-      this.passwordVisible = !this.passwordVisible;
-    };
   }
 
   #removeWarning(warning) {
@@ -84,6 +80,17 @@ export class LoginForm extends MozLitElement {
       this.#removeWarning(warning);
       field.removeAttribute("aria-describedby");
     }
+  }
+
+  onCancel(e) {
+    e.preventDefault();
+
+    const loginForm = {
+      origin: this.originValue || this.originField.input.value,
+      username: this.usernameField.input.value.trim(),
+      password: this.passwordField.value,
+    };
+    this.onClose(loginForm);
   }
 
   onSubmit(e) {
@@ -131,6 +138,14 @@ export class LoginForm extends MozLitElement {
   }
 
   #renderDeleteCard() {
+    const getIconSrc = () => {
+      return document.dir === "rtl"
+        ? // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+          "chrome://browser/skin/forward.svg"
+        : // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
+          "chrome://browser/skin/back.svg";
+    };
+
     return html` <link
         rel="stylesheet"
         href="chrome://global/content/megalist/components/login-form/login-form.css"
@@ -139,7 +154,7 @@ export class LoginForm extends MozLitElement {
         <div class="remove-card-back">
           <moz-button
             type="icon ghost"
-            iconSrc="chrome://browser/skin/back.svg"
+            iconSrc=${getIconSrc()}
             data-l10n-id="contextual-manager-passwords-remove-login-card-back-message"
             @click=${this.#toggleDeleteCard}
           >
@@ -229,10 +244,8 @@ export class LoginForm extends MozLitElement {
               <login-password-field
                 name="password"
                 required
-                ?visible=${this.passwordVisible}
                 ?newPassword=${this.type !== "edit"}
                 .value=${this.passwordValue}
-                .onRevealClick=${this.onPasswordRevealClick}
                 @input=${e => this.onInput(e)}
               ></login-password-field>
               <password-warning
@@ -245,7 +258,7 @@ export class LoginForm extends MozLitElement {
             <moz-button-group>
               <moz-button
                 data-l10n-id="login-item-cancel-button"
-                @click=${this.onClose}
+                @click=${this.onCancel}
               ></moz-button>
               <moz-button
                 data-l10n-id="login-item-save-new-button"

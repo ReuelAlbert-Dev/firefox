@@ -123,6 +123,11 @@ inline bool PrefersColor(FontPresentation aPresentation) {
   return aPresentation >= FontPresentation::EmojiDefault;
 }
 
+inline bool IsExplicitPresentation(FontPresentation aPresentation) {
+  return aPresentation == FontPresentation::TextExplicit ||
+         aPresentation == FontPresentation::EmojiExplicit;
+}
+
 // when searching through pref langs, max number of pref langs
 const uint32_t kMaxLenPrefLangList = 32;
 
@@ -499,8 +504,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   static bool InSafeMode();
 
   static bool OffMainThreadCompositingEnabled();
-
-  void UpdateCanUseHardwareVideoDecoding();
 
   inline static void EnsureCMSInitialized() {
     if (MOZ_UNLIKELY(!gCMSInitialized)) {
@@ -918,8 +921,6 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
    */
   static mozilla::gfx::BackendType BackendTypeForName(const nsCString& aName);
 
-  virtual bool CanUseHardwareVideoDecoding();
-
   int8_t mAllowDownloadableFonts;
 
   // Whether the platform supports rendering OpenType font variations
@@ -963,6 +964,7 @@ class gfxPlatform : public mozilla::layers::MemoryPressureListener {
   void InitCompositorAccelerationPrefs();
   void InitGPUProcessPrefs();
   virtual void InitPlatformGPUProcessPrefs() {}
+  virtual void InitPlatformHardwareVideoConfig() {}
 
   // Gather telemetry data about the Gfx Platform and send it
   static void ReportTelemetry();

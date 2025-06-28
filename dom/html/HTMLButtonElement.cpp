@@ -7,6 +7,7 @@
 #include "mozilla/dom/HTMLButtonElement.h"
 
 #include "HTMLFormSubmissionConstants.h"
+#include "mozilla/dom/CommandEvent.h"
 #include "mozilla/dom/FormData.h"
 #include "mozilla/dom/HTMLButtonElementBinding.h"
 #include "nsAttrValueInlines.h"
@@ -140,6 +141,17 @@ bool HTMLButtonElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     if (aAttribute == nsGkAtoms::formenctype) {
       return aResult.ParseEnumValue(aValue, kFormEnctypeTable, false);
     }
+
+    if (StaticPrefs::dom_element_commandfor_enabled()) {
+      if (aAttribute == nsGkAtoms::command) {
+        aResult.ParseAtom(aValue);
+        return true;
+      }
+      if (aAttribute == nsGkAtoms::commandfor) {
+        aResult.ParseAtom(aValue);
+        return true;
+      }
+    }
   }
 
   return nsGenericHTMLFormControlElementWithState::ParseAttribute(
@@ -255,34 +267,108 @@ void EndSubmitClick(EventChainVisitor& aVisitor) {
   }
 }
 
+// https://html.spec.whatwg.org/multipage/form-elements.html#the-button-element:activation-behaviour
 void HTMLButtonElement::ActivationBehavior(EventChainPostVisitor& aVisitor) {
   if (!aVisitor.mPresContext) {
     // Should check whether EndSubmitClick is needed here.
     return;
   }
 
-  if (!IsDisabled()) {
-    if (mForm) {
-      // Hold a strong ref while dispatching
-      RefPtr<mozilla::dom::HTMLFormElement> form(mForm);
-      if (mType == FormControlType::ButtonReset) {
-        form->MaybeReset(this);
-        aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-      } else if (mType == FormControlType::ButtonSubmit) {
-        form->MaybeSubmit(this);
-        aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
-      }
-      // https://html.spec.whatwg.org/multipage/form-elements.html#attr-button-type-button-state
-      // NS_FORM_BUTTON_BUTTON do nothing.
+  auto endSubmit = MakeScopeExit([&] { EndSubmitClick(aVisitor); });
+
+  // 1. If element is disabled, then return.
+  if (IsDisabled()) {
+    return;
+  }
+
+  // 2. If element's node document is not fully active, then return.
+
+  // 3. If element has a form owner:
+  if (mForm) {
+    // Hold a strong ref while dispatching
+    RefPtr<mozilla::dom::HTMLFormElement> form(mForm);
+    // 3.1. If element is a submit button, then submit element's form owner from
+    // element with userInvolvement set to event's user navigation involvement,
+    // and return.
+    if (mType == FormControlType::ButtonSubmit) {
+      form->MaybeSubmit(this);
+      aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
+      return;
     }
-    if (!GetInvokeTargetElement()) {
-      HandlePopoverTargetAction();
-    } else {
-      HandleInvokeTargetAction();
+    // 3.2. If element's type attribute is in the Reset Button state, then reset
+    // element's form owner, and return.
+    if (mType == FormControlType::ButtonReset) {
+      form->MaybeReset(this);
+      aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
+      return;
+    }
+    // 3.3. If element's type attribute is in the Auto state, then return.
+    //
+    // (Auto state is only possible if the content attribute is not present)
+    if (!HasAttr(nsGkAtoms::type)) {
+      return;
     }
   }
 
-  EndSubmitClick(aVisitor);
+  // 4. Let target be the result of running element's get the
+  // commandfor-associated element.
+  RefPtr<Element> target = GetCommandForElement();
+
+  // 5. If target is not null:
+  if (target) {
+    // 5.1. Let command be element's command attribute.
+    const nsAttrValue* attr = GetParsedAttr(nsGkAtoms::command);
+    nsAtom* commandRaw = attr ? attr->GetAtomValue() : nsGkAtoms::_empty;
+    Command command = GetCommand(commandRaw);
+
+    // 5.2. If command is in the Unknown state, then return.
+    if (command == Command::Invalid) {
+      return;
+    }
+
+    // 5.3. Let isPopover be true if target's popover attribute is not in the No
+    // Popover state; otherwise false.
+    // 5.4. If isPopover is false and command is not in the Custom state:
+    // (Checking isPopover is handled as part of IsValidCommandAction)
+    // 5.4.1. Assert: target's namespace is the HTML namespace.
+    // 5.4.2. If this standard does not define is valid invoker command steps
+    // for target's local name, then return.
+    // 5.4.3. Otherwise, if the result of running target's corresponding is
+    // valid invoker command steps given command is false, then return.
+    if (command != Command::Custom && !target->IsValidCommandAction(command)) {
+      return;
+    }
+
+    // 5.5. Let continue be the result of firing an event named command at
+    // target, using CommandEvent, with its command attribute initialized to
+    // command, its source attribute initialized to element, and its cancelable
+    // and composed attributes initialized to true.
+    CommandEventInit init;
+    commandRaw->ToString(init.mCommand);
+    init.mSource = this;
+    init.mCancelable = true;
+    init.mComposed = true;
+    RefPtr<Event> event = CommandEvent::Constructor(this, u"command"_ns, init);
+    event->SetTrusted(true);
+    event->SetTarget(target);
+    EventDispatcher::DispatchDOMEvent(target, nullptr, event, nullptr, nullptr);
+
+    // 5.6. If continue is false, then return.
+    // 5.7. If target is not connected, then return.
+    // 5.8. If command is in the Custom state, then return.
+    if (event->DefaultPrevented() || !target->IsInComposedDoc() ||
+        command == Command::Custom) {
+      return;
+    }
+
+    // Steps 5.9...5.12. handled with HandleCommandInternal:
+    target->HandleCommandInternal(this, command, IgnoreErrors());
+
+  } else {
+    // 6. Otherwise, run the popover target attribute activation behavior given
+    // element and event's target.
+    HandlePopoverTargetAction();
+  }
 }
 
 void HTMLButtonElement::LegacyCanceledActivationBehavior(
@@ -425,6 +511,52 @@ void HTMLButtonElement::UpdateValidityElementStates(bool aNotify) {
   } else {
     AddStatesSilently(ElementState::INVALID | ElementState::USER_INVALID);
   }
+}
+
+void HTMLButtonElement::GetCommand(nsAString& aValue) const {
+  const nsAttrValue* attr = GetParsedAttr(nsGkAtoms::command);
+  if (attr) {
+    attr->GetAtomValue()->ToString(aValue);
+  }
+}
+
+Element::Command HTMLButtonElement::GetCommand(nsAtom* aAtom) const {
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::show_popover)) {
+    return Command::ShowPopover;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::hide_popover)) {
+    return Command::HidePopover;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::toggle_popover)) {
+    return Command::TogglePopover;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::show_modal)) {
+    return Command::ShowModal;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::toggle)) {
+    return Command::Toggle;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::close)) {
+    return Command::Close;
+  }
+  if (nsContentUtils::EqualsIgnoreASCIICase(aAtom, nsGkAtoms::open)) {
+    return Command::Open;
+  }
+  if (StringBeginsWith(nsDependentAtomString(aAtom), u"--"_ns)) {
+    return Command::Custom;
+  }
+  return Command::Invalid;
+}
+
+Element* HTMLButtonElement::GetCommandForElement() const {
+  if (StaticPrefs::dom_element_commandfor_enabled()) {
+    return GetAttrAssociatedElement(nsGkAtoms::commandfor);
+  }
+  return nullptr;
+}
+
+void HTMLButtonElement::SetCommandForElement(Element* aElement) {
+  ExplicitlySetAttrElement(nsGkAtoms::commandfor, aElement);
 }
 
 JSObject* HTMLButtonElement::WrapNode(JSContext* aCx,

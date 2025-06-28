@@ -297,6 +297,10 @@ def process_l10n_bump_info(info):
                 {
                     Required("early-to-late-beta"): {
                         Required("to-branch"): str,
+                        # technically not used, but passing it keeps landoscript
+                        # code cleaner, so we may as well require a real value
+                        # for it.
+                        Required("fetch-version-from"): str,
                         Optional("replacements"): [[str]],
                     },
                 },
@@ -478,7 +482,7 @@ def dash_to_underscore(obj):
             {
                 Required("data"): str,
                 Required("content-type"): str,
-                Required("destinations"): [str],
+                Required("destinations"): [taskref_or_string],
             },
         ],
         Optional("dry-run"): bool,

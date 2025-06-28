@@ -9,6 +9,7 @@
 #include "mozilla/BasicEvents.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/EventDispatcher.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/MutationEventBinding.h"
@@ -84,7 +85,8 @@ ScriptElement::ScriptEvaluated(nsresult aResult, nsIScriptElement* aElement,
 }
 
 void ScriptElement::CharacterDataChanged(nsIContent* aContent,
-                                         const CharacterDataChangeInfo&) {
+                                         const CharacterDataChangeInfo& aInfo) {
+  UpdateTrustWorthiness(aInfo.mMutationEffectOnScript);
   MaybeProcessScript();
 }
 
@@ -115,12 +117,21 @@ void ScriptElement::AttributeChanged(Element* aElement, int32_t aNameSpaceID,
   }
 }
 
-void ScriptElement::ContentAppended(nsIContent* aFirstNewContent) {
+void ScriptElement::ContentAppended(nsIContent* aFirstNewContent,
+                                    const ContentAppendInfo& aInfo) {
+  UpdateTrustWorthiness(aInfo.mMutationEffectOnScript);
   MaybeProcessScript();
 }
 
-void ScriptElement::ContentInserted(nsIContent* aChild) {
+void ScriptElement::ContentInserted(nsIContent* aChild,
+                                    const ContentInsertInfo& aInfo) {
+  UpdateTrustWorthiness(aInfo.mMutationEffectOnScript);
   MaybeProcessScript();
+}
+
+void ScriptElement::ContentWillBeRemoved(nsIContent* aChild,
+                                         const ContentRemoveInfo& aInfo) {
+  UpdateTrustWorthiness(aInfo.mMutationEffectOnScript);
 }
 
 bool ScriptElement::MaybeProcessScript() {
@@ -141,7 +152,9 @@ bool ScriptElement::MaybeProcessScript() {
     return false;
   }
 
-  if (!HasScriptContent()) {
+  bool hasScriptContent = HasExternalScriptContent() ||
+                          nsContentUtils::HasNonEmptyTextContent(cont);
+  if (!hasScriptContent) {
     // In the case of an empty, non-external classic script, there is nothing
     // to process. However, we must perform a microtask checkpoint afterwards,
     // as per https://html.spec.whatwg.org/#clean-up-after-running-script
@@ -234,4 +247,12 @@ bool ScriptElement::GetScriptType(nsAString& aType) {
 
   aType.Assign(type);
   return true;
+}
+
+void ScriptElement::UpdateTrustWorthiness(
+    MutationEffectOnScript aMutationEffectOnScript) {
+  if (aMutationEffectOnScript == MutationEffectOnScript::DropTrustWorthiness &&
+      StaticPrefs::dom_security_trusted_types_enabled()) {
+    mIsTrusted = false;
+  }
 }

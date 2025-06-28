@@ -63,7 +63,7 @@ internal object AppStoreReducer {
             state.copy(expandedCollections = newExpandedCollection)
         }
         is AppAction.CollectionsChange -> state.copy(collections = action.collections)
-        is AppAction.ModeChange -> state.copy(mode = action.mode)
+        is AppAction.BrowsingModeManagerModeChanged -> state.copy(mode = action.mode)
         is AppAction.OrientationChange -> state.copy(orientation = action.orientation)
         is AppAction.TopSitesChange -> state.copy(topSites = action.topSites)
         is AppAction.RemoveCollectionsPlaceholder -> {
@@ -150,7 +150,15 @@ internal object AppStoreReducer {
             wasLastTabClosedPrivate = action.private,
         )
 
-        is AppAction.UpdateSearchDialogVisibility -> state.copy(isSearchDialogVisible = action.isVisible)
+        is AppAction.UpdateSearchBeingActiveState -> state.copy(
+            isSearchActive = action.isSearchActive,
+            shortcutSearchEngine = when (action.isSearchActive) {
+                true -> state.shortcutSearchEngine
+                false -> null
+            },
+        )
+
+        is AppAction.SearchEngineSelected -> state.copy(shortcutSearchEngine = action.searchEngine)
 
         is AppAction.TranslationsAction.TranslationStarted -> state.copy(
             snackbarState = SnackbarState.TranslationInProgress(sessionId = action.sessionId),

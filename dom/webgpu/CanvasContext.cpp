@@ -21,6 +21,7 @@
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/SVGObserverUtils.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "ipc/WebGPUChild.h"
 #include "Utility.h"
 
@@ -196,10 +197,11 @@ void CanvasContext::Configure(const dom::GPUCanvasConfiguration& aConfig,
 
 void CanvasContext::Unconfigure() {
   if (mBridge && mBridge->CanSend() && mRemoteTextureOwnerId) {
-    mBridge->SendSwapChainDrop(
-        *mRemoteTextureOwnerId,
-        layers::ToRemoteTextureTxnType(mFwdTransactionTracker),
-        layers::ToRemoteTextureTxnId(mFwdTransactionTracker));
+    auto txn_type = layers::ToRemoteTextureTxnType(mFwdTransactionTracker);
+    auto txn_id = layers::ToRemoteTextureTxnId(mFwdTransactionTracker);
+    ffi::wgpu_client_swap_chain_drop(
+        mBridge->GetClient(), mRemoteTextureOwnerId->mId, txn_type, txn_id);
+
     for (auto& id : mBufferIds) {
       ffi::wgpu_client_free_buffer_id(mBridge->GetClient(), id);
     }
@@ -293,6 +295,10 @@ Maybe<layers::SurfaceDescriptor> CanvasContext::SwapChainPresent() {
     mCurrentTexture->Destroy();
     mNewTextureRequested = true;
   }
+
+  PROFILER_MARKER_UNTYPED("WebGPU: SwapChainPresent", GRAPHICS_WebGPU);
+  mBridge->FlushQueuedMessages();
+
   return Some(layers::SurfaceDescriptorRemoteTexture(*mLastRemoteTextureId,
                                                      *mRemoteTextureOwnerId));
 }
@@ -353,9 +359,10 @@ mozilla::UniquePtr<uint8_t[]> CanvasContext::GetImageBuffer(
   *out_imageSize = dataSurface->GetSize();
 
   if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
-    gfxUtils::GetImageBufferWithRandomNoise(
-        dataSurface,
-        /* aIsAlphaPremultiplied */ true, GetCookieJarSettings(), &*out_format);
+    gfxUtils::GetImageBufferWithRandomNoise(dataSurface,
+                                            /* aIsAlphaPremultiplied */ true,
+                                            GetCookieJarSettings(),
+                                            PrincipalOrNull(), &*out_format);
   }
 
   return gfxUtils::GetImageBuffer(dataSurface, /* aIsAlphaPremultiplied */ true,
@@ -374,9 +381,9 @@ NS_IMETHODIMP CanvasContext::GetInputStream(const char* aMimeType,
   RefPtr<gfx::DataSourceSurface> dataSurface = snapshot->GetDataSurface();
 
   if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
-    gfxUtils::GetInputStreamWithRandomNoise(
+    return gfxUtils::GetInputStreamWithRandomNoise(
         dataSurface, /* aIsAlphaPremultiplied */ true, aMimeType,
-        aEncoderOptions, GetCookieJarSettings(), aStream);
+        aEncoderOptions, GetCookieJarSettings(), PrincipalOrNull(), aStream);
   }
 
   return gfxUtils::GetInputStream(dataSurface, /* aIsAlphaPremultiplied */ true,

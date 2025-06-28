@@ -12,6 +12,7 @@
 #include "FFmpegLog.h"
 #include "libavutil/error.h"
 #include "mozilla/StaticMutex.h"
+#include "mozilla/StaticPrefs_media.h"
 
 #include "FFmpegUtils.h"
 
@@ -20,38 +21,84 @@ namespace mozilla {
 template <>
 AVCodecID GetFFmpegEncoderCodecId<LIBAV_VER>(CodecType aCodec) {
 #if LIBAVCODEC_VERSION_MAJOR >= 58
-  if (aCodec == CodecType::VP8) {
-    return AV_CODEC_ID_VP8;
+  if (XRE_IsParentProcess() || XRE_IsContentProcess() ||
+      StaticPrefs::media_use_remote_encoder_video()) {
+    if (aCodec == CodecType::VP8) {
+      return AV_CODEC_ID_VP8;
+    }
+
+    if (aCodec == CodecType::VP9) {
+      return AV_CODEC_ID_VP9;
+    }
+
+    if (aCodec == CodecType::H264) {
+      return AV_CODEC_ID_H264;
+    }
+
+    if (aCodec == CodecType::AV1) {
+      return AV_CODEC_ID_AV1;
+    }
   }
 
-  if (aCodec == CodecType::VP9) {
-    return AV_CODEC_ID_VP9;
-  }
+  if (XRE_IsParentProcess() || XRE_IsContentProcess() ||
+      StaticPrefs::media_use_remote_encoder_audio()) {
+    if (aCodec == CodecType::Opus) {
+      return AV_CODEC_ID_OPUS;
+    }
 
-  if (aCodec == CodecType::H264) {
-    return AV_CODEC_ID_H264;
-  }
-
-  if (aCodec == CodecType::AV1) {
-    return AV_CODEC_ID_AV1;
-  }
-
-  if (aCodec == CodecType::Opus) {
-    return AV_CODEC_ID_OPUS;
-  }
-
-  if (aCodec == CodecType::Vorbis) {
-    return AV_CODEC_ID_VORBIS;
+    if (aCodec == CodecType::Vorbis) {
+      return AV_CODEC_ID_VORBIS;
+    }
   }
 #endif
   return AV_CODEC_ID_NONE;
 }
 
 /* static */
-AVCodec* FFmpegDataEncoder<LIBAV_VER>::FindEncoderWithPreference(
+AVCodec* FFmpegDataEncoder<LIBAV_VER>::FindSoftwareEncoder(
     const FFmpegLibWrapper* aLib, AVCodecID aCodecId) {
   MOZ_ASSERT(aLib);
 
+  // We use this instead of MOZ_USE_HWDECODE because it is possible to disable
+  // support for hardware encoding in Firefox, while the system ffmpeg library
+  // still exposes the hardware codecs.
+#if LIBAVCODEC_VERSION_MAJOR >= 58
+  AVCodec* fallbackCodec = nullptr;
+  void* opaque = nullptr;
+  while (AVCodec* codec = aLib->av_codec_iterate(&opaque)) {
+    if (codec->id != aCodecId || !aLib->av_codec_is_encoder(codec)) {
+      continue;
+    }
+
+    // Prioritize libx264 for now since it's the only h264 codec we tested.
+    // Once libopenh264 is supported, we can simply use the first one we find.
+    if (aCodecId == AV_CODEC_ID_H264 && strcmp(codec->name, "libx264") != 0) {
+      if (!fallbackCodec) {
+        fallbackCodec = codec;
+      }
+      continue;
+    }
+
+    if (codec->capabilities & AV_CODEC_CAP_HARDWARE) {
+      continue;
+    }
+
+    if (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL) {
+      if (!fallbackCodec) {
+        fallbackCodec = codec;
+      }
+      continue;
+    }
+
+    FFMPEGV_LOG("Using preferred software codec %s", codec->name);
+    return codec;
+  }
+
+  if (fallbackCodec) {
+    FFMPEGV_LOG("Using fallback software codec %s", fallbackCodec->name);
+  }
+  return fallbackCodec;
+#else
   // Prioritize libx264 for now since it's the only h264 codec we tested. Once
   // libopenh264 is supported, we can simply use `avcodec_find_encoder` and
   // rename this function.
@@ -65,32 +112,55 @@ AVCodec* FFmpegDataEncoder<LIBAV_VER>::FindEncoderWithPreference(
   }
 
   return aLib->avcodec_find_encoder(aCodecId);
+#endif
 }
 
+#ifdef MOZ_USE_HWDECODE
 /* static */
-Result<AVCodecContext*, MediaResult>
-FFmpegDataEncoder<LIBAV_VER>::AllocateCodecContext(const FFmpegLibWrapper* aLib,
-                                                   AVCodecID aCodecId) {
-  AVCodec* codec = FindEncoderWithPreference(aLib, aCodecId);
-  if (!codec) {
-    return Err(MediaResult(
-        NS_ERROR_DOM_MEDIA_FATAL_ERR,
-        RESULT_DETAIL("failed to find ffmpeg encoder for codec id %d",
-                      aCodecId)));
+AVCodec* FFmpegDataEncoder<LIBAV_VER>::FindHardwareEncoder(
+    const FFmpegLibWrapper* aLib, AVCodecID aCodecId) {
+  MOZ_ASSERT(aLib);
+
+  AVCodec* fallbackCodec = nullptr;
+  void* opaque = nullptr;
+  while (AVCodec* codec = aLib->av_codec_iterate(&opaque)) {
+    if (codec->id != aCodecId || !aLib->av_codec_is_encoder(codec)) {
+      continue;
+    }
+
+    bool hasHwConfig = codec->capabilities & AV_CODEC_CAP_HARDWARE;
+    if (!hasHwConfig) {
+      for (int i = 0; const AVCodecHWConfig* config =
+                          aLib->avcodec_get_hw_config(codec, i);
+           ++i) {
+        if (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) {
+          hasHwConfig = true;
+          break;
+        }
+      }
+    }
+
+    if (!hasHwConfig) {
+      continue;
+    }
+
+    if (codec->capabilities & AV_CODEC_CAP_EXPERIMENTAL) {
+      if (!fallbackCodec) {
+        fallbackCodec = codec;
+      }
+      continue;
+    }
+
+    FFMPEGV_LOG("Using preferred hardware codec %s", codec->name);
+    return codec;
   }
 
-  AVCodecContext* ctx = aLib->avcodec_alloc_context3(codec);
-  if (!ctx) {
-    return Err(MediaResult(
-        NS_ERROR_OUT_OF_MEMORY,
-        RESULT_DETAIL("failed to allocate ffmpeg context for codec %s",
-                      codec->name)));
+  if (fallbackCodec) {
+    FFMPEGV_LOG("Using fallback hardware codec %s", fallbackCodec->name);
   }
-
-  MOZ_ASSERT(ctx->codec == codec);
-
-  return ctx;
+  return fallbackCodec;
 }
+#endif
 
 /* static */
 Result<RefPtr<MediaRawData>, MediaResult>
@@ -290,6 +360,36 @@ void FFmpegDataEncoder<LIBAV_VER>::ShutdownInternal() {
     mLib->av_freep(&mCodecContext);
     mCodecContext = nullptr;
   }
+}
+
+Result<AVCodecContext*, MediaResult>
+FFmpegDataEncoder<LIBAV_VER>::AllocateCodecContext(bool aHardware) {
+  AVCodec* codec = nullptr;
+  if (aHardware) {
+#ifdef MOZ_USE_HWDECODE
+    codec = FindHardwareEncoder(mLib, mCodecID);
+#endif
+  } else {
+    codec = FindSoftwareEncoder(mLib, mCodecID);
+  }
+  if (!codec) {
+    return Err(MediaResult(
+        NS_ERROR_DOM_MEDIA_FATAL_ERR,
+        RESULT_DETAIL("failed to find ffmpeg encoder for codec id %d",
+                      mCodecID)));
+  }
+
+  AVCodecContext* ctx = mLib->avcodec_alloc_context3(codec);
+  if (!ctx) {
+    return Err(MediaResult(
+        NS_ERROR_OUT_OF_MEMORY,
+        RESULT_DETAIL("failed to allocate ffmpeg context for codec %s",
+                      codec->name)));
+  }
+
+  MOZ_ASSERT(ctx->codec == codec);
+
+  return ctx;
 }
 
 int FFmpegDataEncoder<LIBAV_VER>::OpenCodecContext(const AVCodec* aCodec,
@@ -492,14 +592,5 @@ FFmpegDataEncoder<LIBAV_VER>::DrainWithModernAPIs() {
   return std::move(output);
 }
 #endif  // LIBAVCODEC_VERSION_MAJOR >= 58
-
-void FFmpegDataEncoder<LIBAV_VER>::ForceEnablingFFmpegDebugLogs() {
-#if DEBUG
-  if (!getenv("MOZ_AV_LOG_LEVEL") &&
-      MOZ_LOG_TEST(sFFmpegVideoLog, LogLevel::Debug)) {
-    mLib->av_log_set_level(AV_LOG_DEBUG);
-  }
-#endif  // DEBUG
-}
 
 }  // namespace mozilla

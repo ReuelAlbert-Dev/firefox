@@ -50,6 +50,11 @@ function FxaInternalMock(recentDeviceList) {
   };
 }
 
+add_setup(function () {
+  do_get_profile(); // FOG requires a profile dir.
+  Services.fog.initializeFOG();
+});
+
 add_task(async function test_closetab_isDeviceCompatible() {
   const closeTab = new CloseRemoteTab(null, null);
   let device = { name: "My device" };
@@ -430,7 +435,7 @@ add_task(async function test_timer_reset_on_new_tab() {
   Assert.equal(unsentCmds.length, 2);
 
   // _ensureTimer should've been called at least twice
-  Assert.ok(ensureTimerSpy.callCount > 1);
+  Assert.greater(ensureTimerSpy.callCount, 1);
   commandMock.verify();
   queueMock.verify();
   commandQueue.shutdown();
@@ -473,6 +478,9 @@ add_task(async function test_idle_flush() {
 });
 
 add_task(async function test_telemetry_on_sendCloseTabsCommand() {
+  // Clear events from other test cases
+  Services.fog.testResetFOG();
+
   const targetDevice = {
     id: "dev1",
     name: "Device 1",
@@ -521,6 +529,13 @@ add_task(async function test_telemetry_on_sendCloseTabsCommand() {
       extra: { flowID: "1", streamID: "2" },
     },
   ]);
+  const sendEvents = Glean.fxa.closetabSent.testGetValue();
+  Assert.equal(sendEvents.length, 1);
+  Assert.deepEqual(sendEvents[0].extra, {
+    flow_id: "1",
+    hashed_device_id: "dev1-san",
+    stream_id: "2",
+  });
 
   commandQueue.shutdown();
 });
@@ -595,8 +610,9 @@ add_task(async function test_closetab_chunking() {
       }
 
       const chunkSize = encoder.encode(JSON.stringify(urls)).length;
-      Assert.ok(
-        chunkSize <= COMMAND_MAX_PAYLOAD_SIZE,
+      Assert.lessOrEqual(
+        chunkSize,
+        COMMAND_MAX_PAYLOAD_SIZE,
         `Chunk size (${chunkSize}) should not exceed max payload size (${COMMAND_MAX_PAYLOAD_SIZE})`
       );
 

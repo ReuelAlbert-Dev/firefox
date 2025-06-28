@@ -116,6 +116,12 @@ bool nsContentSecurityUtils::IsConsideredSameOriginForUIR(
   return compareTriggeringPrincipal->Equals(compareResultPrincipal);
 }
 
+/* static */
+bool nsContentSecurityUtils::IsTrustedScheme(nsIURI* aURI) {
+  return aURI->SchemeIs("resource") || aURI->SchemeIs("chrome") ||
+         aURI->SchemeIs("moz-src");
+}
+
 /*
  * Performs a Regular Expression match, optionally returning the results.
  * This function is not safe to use OMT.
@@ -357,7 +363,8 @@ FilenameTypeAndDetails nsContentSecurityUtils::FilenameToFilenameType(
   if (StringBeginsWith(fileName, "resource://"_ns)) {
     if (StringBeginsWith(fileName, "resource://usl-ucjs/"_ns) ||
         StringBeginsWith(fileName, "resource://sfm-ucjs/"_ns) ||
-        StringBeginsWith(fileName, "resource://cpmanager-legacy/"_ns)) {
+        StringBeginsWith(fileName, "resource://cpmanager-legacy/"_ns) ||
+        StringBeginsWith(fileName, "resource://pwa/utils/"_ns)) {
       return FilenameTypeAndDetails(kSuspectedUserChromeJS,
                                     Some(StripQueryRef(fileName)));
     }
@@ -623,6 +630,9 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
       // See bug 1777479
       "resource://devtools/shared/performance-new/symbolication.sys.mjs"_ns,
 
+      // The devtools use a WASM module to optimize source-map mapping.
+      "resource://devtools/client/shared/vendor/source-map/lib/wasm.js"_ns,
+
       // The Browser Toolbox/Console
       "debugger"_ns,
   };
@@ -668,16 +678,6 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
     MOZ_LOG(sCSMLog, LogLevel::Debug,
             ("Allowing eval() in parent process because allowing pref is "
              "enabled"));
-    return true;
-  }
-
-  DetectJsHacks();
-  if (MOZ_UNLIKELY(sJSHacksPresent)) {
-    MOZ_LOG(
-        sCSMLog, LogLevel::Debug,
-        ("Allowing eval() %s because some "
-         "JS hacks may be present.",
-         (aIsSystemPrincipal ? "with System Principal" : "in parent process")));
     return true;
   }
 
@@ -748,7 +748,12 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
   MOZ_CRASH_UNSAFE_PRINTF("%s", crashString.get());
 #endif
 
+#ifdef MOZ_WIDGET_ANDROID
+  // TODO(bug 1895823)
+  return true;
+#else
   return false;
+#endif
 }
 
 /* static */
@@ -1317,15 +1322,19 @@ static nsLiteralCString sStyleSrcUnsafeInlineAllowList[] = {
 static nsLiteralCString sImgSrcDataBlobAllowList[] = {
     "about:addons"_ns,
     "about:debugging"_ns,
+    "about:deleteprofile"_ns,
     "about:devtools-toolbox"_ns,
+    "about:editprofile"_ns,
     "about:firefoxview"_ns,
     "about:home"_ns,
     "about:inference"_ns,
     "about:logins"_ns,
+    "about:newprofile"_ns,
     "about:newtab"_ns,
     "about:preferences"_ns,
     "about:privatebrowsing"_ns,
     "about:processes"_ns,
+    "about:profilemanager"_ns,
     "about:protections"_ns,
     "about:reader"_ns,
     "about:sessionrestore"_ns,
@@ -1356,6 +1365,7 @@ static nsLiteralCString sImgSrcDataBlobAllowList[] = {
     "chrome://devtools/content/responsive/toolbar.xhtml"_ns,
     "chrome://devtools/content/shared/sourceeditor/codemirror/cmiframe.html"_ns,
     "chrome://devtools/content/webconsole/index.html"_ns,
+    "chrome://global/content/alerts/alert.xhtml"_ns,
     "chrome://global/content/print.html"_ns,
 };
 // img-src https:
@@ -1382,6 +1392,7 @@ static nsLiteralCString sImgSrcHttpAllowList[] = {
     "chrome://devtools/content/framework/browser-toolbox/window.html"_ns,
     "chrome://devtools/content/framework/toolbox-window.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/applicationManager.xhtml"_ns,
+    "chrome://global/content/alerts/alert.xhtml"_ns,
     "chrome://mozapps/content/handling/appChooser.xhtml"_ns,
     // STOP! Do not add anything to this list.
 };
@@ -2206,6 +2217,13 @@ long nsContentSecurityUtils::ClassifyDownload(nsIChannel* aChannel) {
   MOZ_ASSERT(aChannel, "IsDownloadAllowed without channel?");
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+  if ((loadInfo->GetTriggeringSandboxFlags() & SANDBOXED_DOWNLOADS) ||
+      (loadInfo->GetSandboxFlags() & SANDBOXED_DOWNLOADS)) {
+    if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
+      LogMessageToConsole(httpChannel, "IframeSandboxBlockedDownload");
+    }
+    return nsITransfer::DOWNLOAD_FORBIDDEN;
+  }
 
   nsCOMPtr<nsIURI> contentLocation;
   aChannel->GetURI(getter_AddRefs(contentLocation));
@@ -2238,27 +2256,11 @@ long nsContentSecurityUtils::ClassifyDownload(nsIChannel* aChannel) {
 
   if (StaticPrefs::dom_block_download_insecure() &&
       decission != nsIContentPolicy::ACCEPT) {
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
-    if (httpChannel) {
+    if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
       LogMessageToConsole(httpChannel, "MixedContentBlockedDownload");
     }
     return nsITransfer::DOWNLOAD_POTENTIALLY_UNSAFE;
   }
 
-  if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal()) {
-    return nsITransfer::DOWNLOAD_ACCEPTABLE;
-  }
-
-  uint32_t triggeringFlags = loadInfo->GetTriggeringSandboxFlags();
-  uint32_t currentflags = loadInfo->GetSandboxFlags();
-
-  if ((triggeringFlags & SANDBOXED_ALLOW_DOWNLOADS) ||
-      (currentflags & SANDBOXED_ALLOW_DOWNLOADS)) {
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel);
-    if (httpChannel) {
-      LogMessageToConsole(httpChannel, "IframeSandboxBlockedDownload");
-    }
-    return nsITransfer::DOWNLOAD_FORBIDDEN;
-  }
   return nsITransfer::DOWNLOAD_ACCEPTABLE;
 }

@@ -6,6 +6,7 @@
 
 #include "WebRenderLayerManager.h"
 
+#include "DisplayItemCache.h"
 #include "GeckoProfiler.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layers.h"
@@ -29,6 +30,10 @@
 #endif
 
 namespace mozilla {
+
+namespace gfx {
+wr::PipelineId GetTemporaryWebRenderPipelineId(wr::PipelineId aMainPipeline);
+}
 
 using namespace gfx;
 
@@ -342,7 +347,19 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
 
   LayoutDeviceIntSize size = mWidget->GetClientSize();
 
-  mDLBuilder->Begin(&mDisplayItemCache);
+  UniquePtr<wr::DisplayListBuilder> offscreenBuilder;
+  wr::DisplayListBuilder* diplayListBuilder = mDLBuilder.get();
+  DisplayItemCache* itemCache = &mDisplayItemCache;
+  if (aRenderOffscreen) {
+    wr::PipelineId mainId = WrBridge()->GetPipeline();
+    wr::PipelineId tmpPipeline = gfx::GetTemporaryWebRenderPipelineId(mainId);
+    offscreenBuilder = MakeUnique<wr::DisplayListBuilder>(
+        tmpPipeline, WrBridge()->GetWebRenderBackend());
+    diplayListBuilder = offscreenBuilder.get();
+    itemCache = nullptr;
+  }
+
+  diplayListBuilder->Begin(itemCache);
 
   wr::IpcResourceUpdateQueue resourceUpdates(WrBridge());
   wr::usize builderDumpIndex = 0;
@@ -351,21 +368,23 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
       mWebRenderCommandBuilder.ShouldDumpDisplayList(aDisplayListBuilder);
   Maybe<AutoDisplayItemCacheSuppressor> cacheSuppressor;
   if (dumpEnabled) {
-    cacheSuppressor.emplace(&mDisplayItemCache);
+    cacheSuppressor.emplace(itemCache);
     printf_stderr("-- WebRender display list build --\n");
   }
 
   if (XRE_IsContentProcess() &&
       StaticPrefs::gfx_webrender_debug_dl_dump_content_serialized()) {
-    mDLBuilder->DumpSerializedDisplayList();
+    diplayListBuilder->DumpSerializedDisplayList();
   }
 
   if (aDisplayList) {
     MOZ_ASSERT(aDisplayListBuilder && !aBackground);
-    mDisplayItemCache.SetDisplayList(aDisplayListBuilder, aDisplayList);
+    if (itemCache) {
+      itemCache->SetDisplayList(aDisplayListBuilder, aDisplayList);
+    }
 
     mWebRenderCommandBuilder.BuildWebRenderCommands(
-        *mDLBuilder, resourceUpdates, aDisplayList, aDisplayListBuilder,
+        *diplayListBuilder, resourceUpdates, aDisplayList, aDisplayListBuilder,
         mScrollData, std::move(aFilters));
 
     aDisplayListBuilder->NotifyAndClearScrollContainerFrames();
@@ -375,11 +394,11 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
   } else {
     // ViewToPaint does not have frame yet, then render only background clolor.
     MOZ_ASSERT(!aDisplayListBuilder && aBackground);
-    aBackground->AddWebRenderCommands(*mDLBuilder);
+    aBackground->AddWebRenderCommands(*diplayListBuilder);
     if (dumpEnabled) {
       printf_stderr("(no display list; background only)\n");
-      builderDumpIndex =
-          mDLBuilder->Dump(/*indent*/ 1, Some(builderDumpIndex), Nothing());
+      builderDumpIndex = diplayListBuilder->Dump(
+          /*indent*/ 1, Some(builderDumpIndex), Nothing());
     }
   }
 
@@ -405,7 +424,7 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
   }
 
   // Don't block on hidden windows on Linux as it may block all rendering.
-  const bool throttle = mWidget->IsMapped();
+  const bool throttle = mWidget->IsMapped() && !aRenderOffscreen;
   mLatestTransactionId = mTransactionIdAllocator->GetTransactionId(throttle);
 
   // Get the time of when the refresh driver start its tick (if available),
@@ -424,9 +443,21 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
     }
     mStateManager.mAsyncResourceUpdates.reset();
   }
-  mStateManager.DiscardImagesInTransaction(resourceUpdates);
 
-  WrBridge()->RemoveExpiredFontKeys(resourceUpdates);
+  if (aRenderOffscreen) {
+    // Unused images are safe to discard since we know that no display list
+    // references them. We Want to do this because in some contrived cases
+    // we can end up generating a lot of offscreen transactions that produce
+    // a lot of unused images without sending a non-offscreen transaction
+    // to clean them up.
+    mStateManager.DiscardUnusedImagesInTransaction(resourceUpdates);
+  } else {
+    // Don't discard images and fonts in an offscreen transaction. It won't
+    // replace the display list in the active scene so the images may still
+    // be used by the previous (which remains current) display list.
+    mStateManager.DiscardImagesInTransaction(resourceUpdates);
+    WrBridge()->RemoveExpiredFontKeys(resourceUpdates);
+  }
 
   // Skip the synchronization for buffer since we also skip the painting during
   // device-reset status.
@@ -442,7 +473,7 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
   {
     AUTO_PROFILER_TRACING_MARKER("Paint", "ForwardDPTransaction", GRAPHICS);
     DisplayListData dlData;
-    mDLBuilder->End(dlData);
+    diplayListBuilder->End(dlData);
     resourceUpdates.Flush(dlData.mResourceUpdates, dlData.mSmallShmems,
                           dlData.mLargeShmems);
     dlData.mRect =
@@ -465,9 +496,9 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
         mTransactionIdAllocator->GetVsyncId(), aRenderOffscreen,
         mTransactionIdAllocator->GetVsyncStart(), refreshStart,
         mTransactionStart, mURL);
-    if (!ret) {
+    if (!ret && itemCache) {
       // Failed to send display list, reset display item cache state.
-      mDisplayItemCache.Clear();
+      itemCache->Clear();
     }
 
     WrBridge()->SendSetFocusTarget(mFocusTarget);

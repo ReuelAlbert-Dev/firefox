@@ -42,7 +42,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -54,6 +53,8 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewLightDark
+import androidx.compose.ui.tooling.preview.PreviewParameter
+import androidx.compose.ui.tooling.preview.PreviewParameterProvider
 import androidx.compose.ui.unit.dp
 import mozilla.components.feature.addons.Addon
 import mozilla.components.feature.addons.ui.displayName
@@ -66,13 +67,12 @@ import mozilla.components.service.fxa.manager.AccountState.NotAuthenticated
 import mozilla.components.service.fxa.store.Account
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.menu.MenuAccessPoint
-import org.mozilla.fenix.components.menu.MenuDialogTestTag
 import org.mozilla.fenix.components.menu.MenuDialogTestTag.EXTENSIONS
 import org.mozilla.fenix.components.menu.compose.header.MenuNavHeader
 import org.mozilla.fenix.components.menu.store.WebExtensionMenuItem
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.theme.Theme
-import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU
+import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU_ITEM
 
 /**
  * Wrapper column containing the main menu items.
@@ -89,12 +89,12 @@ import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU
  * @param isDesktopMode Whether or not the desktop mode is enabled.
  * @param isPdf Whether or not the current tab is a PDF.
  * @param isReaderViewActive Whether or not Reader View is active or not.
- * @param isTranslationSupported Whether or not translation is supported.
- * @param isWebCompatReporterSupported Whether or not the report broken site feature is supported.
  * @param isExtensionsProcessDisabled Whether or not the extensions process is disabled due to extension errors.
  * @param allWebExtensionsDisabled Whether or not all web extensions are disabled.
- * @param extensionsMenuItemDescription The label of extensions menu item description.
+ * @param canGoBack Whether or not the back button is enabled.
+ * @param canGoForward Whether or not the forward button is enabled.
  * @param scrollState The [ScrollState] used for vertical scrolling.
+ * @param showBanner Whether or not the default browser banner should be shown.
  * @param webExtensionMenuCount The number of web extensions.
  * @param onMoreMenuClick Invoked when the user clicks on the more menu item.
  * @param onCustomizeReaderViewMenuClick Invoked when the user clicks on the Customize Reader View button.
@@ -105,8 +105,8 @@ import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU
  * @param onSwitchToDesktopSiteMenuClick Invoked when the user clicks on the switch to desktop site
  * menu toggle.
  * @param onFindInPageMenuClick Invoked when the user clicks on the find in page menu item.
- * @param onToolsMenuClick Invoked when the user clicks on the tools menu item.
- * @param onSaveMenuClick Invoked when the user clicks on the save menu item.
+ * @param onBannerClick Invoked when the user clicks on the banner.
+ * @param onBannerDismiss Invoked when the user clicks on the dismiss button.
  * @param onExtensionsMenuClick Invoked when the user clicks on the extensions menu item.
  * @param onBookmarksMenuClick Invoked when the user clicks on the bookmarks menu item.
  * @param onHistoryMenuClick Invoked when the user clicks on the history menu item.
@@ -114,7 +114,6 @@ import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU
  * @param onPasswordsMenuClick Invoked when the user clicks on the passwords menu item.
  * @param onCustomizeHomepageMenuClick Invoked when the user clicks on the customize
  * homepage menu item.
- * @param onNewInFirefoxMenuClick Invoked when the user clicks on the release note menu item.
  * @param onQuitMenuClick Invoked when the user clicks on the quit menu item.
  * @param onBackButtonClick Invoked when the user clicks on the back button.
  * @param onForwardButtonClick Invoked when the user clicks on the forward button.
@@ -123,6 +122,7 @@ import org.mozilla.fenix.utils.DURATION_MS_MAIN_MENU
  * @param onShareButtonClick Invoked when the user clicks on the share button.
  * @param moreSettingsSubmenu The content of more menu item.
  * @param extensionSubmenu The content of extensions menu item to avoid configuration during animation.
+ * @param extensionsMenuItemDescription The label of extensions menu item description.
  */
 @Suppress("LongParameterList", "LongMethod")
 @Composable
@@ -138,12 +138,12 @@ fun MainMenu(
     isDesktopMode: Boolean,
     isPdf: Boolean,
     isReaderViewActive: Boolean,
-    isTranslationSupported: Boolean,
-    isWebCompatReporterSupported: Boolean,
     isExtensionsProcessDisabled: Boolean,
     allWebExtensionsDisabled: Boolean,
-    extensionsMenuItemDescription: String,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
     scrollState: ScrollState,
+    showBanner: Boolean,
     webExtensionMenuCount: Int,
     onMoreMenuClick: () -> Unit,
     onCustomizeReaderViewMenuClick: () -> Unit,
@@ -153,15 +153,14 @@ fun MainMenu(
     onEditBookmarkButtonClick: () -> Unit,
     onSwitchToDesktopSiteMenuClick: () -> Unit,
     onFindInPageMenuClick: () -> Unit,
-    onToolsMenuClick: () -> Unit,
-    onSaveMenuClick: () -> Unit,
+    onBannerClick: () -> Unit,
+    onBannerDismiss: () -> Unit,
     onExtensionsMenuClick: () -> Unit,
     onBookmarksMenuClick: () -> Unit,
     onHistoryMenuClick: () -> Unit,
     onDownloadsMenuClick: () -> Unit,
     onPasswordsMenuClick: () -> Unit,
     onCustomizeHomepageMenuClick: () -> Unit,
-    onNewInFirefoxMenuClick: () -> Unit,
     onQuitMenuClick: () -> Unit,
     onBackButtonClick: (longPress: Boolean) -> Unit,
     onForwardButtonClick: (longPress: Boolean) -> Unit,
@@ -170,8 +169,9 @@ fun MainMenu(
     onShareButtonClick: () -> Unit,
     moreSettingsSubmenu: @Composable ColumnScope.() -> Unit,
     extensionSubmenu: @Composable ColumnScope.() -> Unit,
+    extensionsMenuItemDescription: String?,
 ) {
-    MenuScaffold(
+    MenuFrame(
         header = {
             MenuNavHeader(
                 state = if (accessPoint == MenuAccessPoint.Home) {
@@ -179,22 +179,30 @@ fun MainMenu(
                 } else {
                     MenuItemState.ENABLED
                 },
-                isSiteLoading = if (accessPoint == MenuAccessPoint.Home) {
-                    false
+                goBackState = if (canGoBack && accessPoint != MenuAccessPoint.Home) {
+                    MenuItemState.ENABLED
                 } else {
-                    isSiteLoading
+                    MenuItemState.DISABLED
                 },
+                goForwardState = if (canGoForward && accessPoint != MenuAccessPoint.Home) {
+                    MenuItemState.ENABLED
+                } else {
+                    MenuItemState.DISABLED
+                },
+                isSiteLoading = accessPoint != MenuAccessPoint.Home && isSiteLoading,
                 onBackButtonClick = onBackButtonClick,
                 onForwardButtonClick = onForwardButtonClick,
                 onRefreshButtonClick = onRefreshButtonClick,
                 onStopButtonClick = onStopButtonClick,
                 onShareButtonClick = onShareButtonClick,
+                isExtensionsExpanded = isExtensionsExpanded,
+                isMoreMenuExpanded = isMoreMenuExpanded,
             )
         },
         scrollState = scrollState,
     ) {
-        MenuGroup {
-            if (isReaderViewActive) {
+        if (isReaderViewActive) {
+            MenuGroup {
                 MenuItem(
                     label = stringResource(id = R.string.browser_menu_customize_reader_view_2),
                     beforeIconPainter = painterResource(id = R.drawable.mozac_ic_tool_24),
@@ -203,17 +211,27 @@ fun MainMenu(
             }
         }
 
+        if (accessPoint == MenuAccessPoint.Home && showBanner) {
+            DefaultBrowserBanner(
+                onDismiss = {
+                    onBannerDismiss()
+                },
+                onClick = {
+                    onBannerClick()
+                },
+            )
+        }
+
         if (accessPoint == MenuAccessPoint.Home) {
             HomepageMenuGroup(
                 onCustomizeHomepageMenuClick = onCustomizeHomepageMenuClick,
-                onNewInFirefoxMenuClick = onNewInFirefoxMenuClick,
                 onExtensionsMenuClick = onExtensionsMenuClick,
-                extensionsMenuItemDescription = extensionsMenuItemDescription,
                 isExtensionsProcessDisabled = isExtensionsProcessDisabled,
                 isExtensionsExpanded = isExtensionsExpanded,
                 webExtensionMenuCount = webExtensionMenuCount,
                 allWebExtensionsDisabled = allWebExtensionsDisabled,
                 extensionSubmenu = extensionSubmenu,
+                extensionsMenuItemDescription = extensionsMenuItemDescription,
             )
         }
 
@@ -222,9 +240,6 @@ fun MainMenu(
                 isBookmarked = isBookmarked,
                 isDesktopMode = isDesktopMode,
                 isPdf = isPdf,
-                isTranslationSupported = isTranslationSupported,
-                isWebCompatReporterSupported = isWebCompatReporterSupported,
-                extensionsMenuItemDescription = extensionsMenuItemDescription,
                 isExtensionsProcessDisabled = isExtensionsProcessDisabled,
                 isExtensionsExpanded = isExtensionsExpanded,
                 moreMenuExpanded = isMoreMenuExpanded,
@@ -235,11 +250,10 @@ fun MainMenu(
                 onEditBookmarkButtonClick = onEditBookmarkButtonClick,
                 onSwitchToDesktopSiteMenuClick = onSwitchToDesktopSiteMenuClick,
                 onFindInPageMenuClick = onFindInPageMenuClick,
-                onToolsMenuClick = onToolsMenuClick,
-                onSaveMenuClick = onSaveMenuClick,
                 onMoreMenuClick = onMoreMenuClick,
                 moreSettingsSubmenu = moreSettingsSubmenu,
                 extensionSubmenu = extensionSubmenu,
+                extensionsMenuItemDescription = extensionsMenuItemDescription,
                 )
         }
 
@@ -275,13 +289,13 @@ fun MainMenu(
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun ExtensionsMenuItem(
-    extensionsMenuItemDescription: String,
     isExtensionsProcessDisabled: Boolean,
     isExtensionsExpanded: Boolean,
     webExtensionMenuCount: Int,
     allWebExtensionsDisabled: Boolean,
     onExtensionsMenuClick: () -> Unit,
     extensionSubmenu: @Composable ColumnScope.() -> Unit,
+    extensionsMenuItemDescription: String?,
 ) {
     Column {
         val leftPadding = if (webExtensionMenuCount > 0) 8.dp else 2.dp
@@ -304,6 +318,10 @@ private fun ExtensionsMenuItem(
                 testTagsAsResourceId = true
             },
         ) {
+            if (extensionsMenuItemDescription == null) {
+                return@MenuItem
+            }
+
             if (isExtensionsProcessDisabled || allWebExtensionsDisabled) {
                 Icon(
                     painter = painterResource(id = R.drawable.mozac_ic_settings_24),
@@ -362,24 +380,24 @@ private fun MenuItemAnimation(
         enter = expandVertically(
             expandFrom = Alignment.Top,
             animationSpec = tween(
-                durationMillis = DURATION_MS_MAIN_MENU,
+                durationMillis = DURATION_MS_MAIN_MENU_ITEM,
                 easing = LinearEasing,
             ),
         ) + fadeIn(
             animationSpec = tween(
-                durationMillis = DURATION_MS_MAIN_MENU,
+                durationMillis = DURATION_MS_MAIN_MENU_ITEM,
                 easing = LinearEasing,
             ),
         ),
         exit = shrinkVertically(
             shrinkTowards = Alignment.Top,
             animationSpec = tween(
-                durationMillis = DURATION_MS_MAIN_MENU,
+                durationMillis = DURATION_MS_MAIN_MENU_ITEM,
                 easing = LinearEasing,
             ),
         ) + fadeOut(
             animationSpec = tween(
-                durationMillis = DURATION_MS_MAIN_MENU,
+                durationMillis = DURATION_MS_MAIN_MENU_ITEM,
                 easing = LinearEasing,
             ),
         ),
@@ -413,10 +431,7 @@ private fun ToolsAndActionsMenuGroup(
     isBookmarked: Boolean,
     isDesktopMode: Boolean,
     isPdf: Boolean,
-    isTranslationSupported: Boolean,
-    isWebCompatReporterSupported: Boolean,
     isExtensionsProcessDisabled: Boolean,
-    extensionsMenuItemDescription: String,
     isExtensionsExpanded: Boolean,
     moreMenuExpanded: Boolean,
     webExtensionMenuCount: Int,
@@ -426,28 +441,24 @@ private fun ToolsAndActionsMenuGroup(
     onEditBookmarkButtonClick: () -> Unit,
     onSwitchToDesktopSiteMenuClick: () -> Unit,
     onFindInPageMenuClick: () -> Unit,
-    onToolsMenuClick: () -> Unit,
-    onSaveMenuClick: () -> Unit,
     onMoreMenuClick: () -> Unit,
     moreSettingsSubmenu: @Composable ColumnScope.() -> Unit,
     extensionSubmenu: @Composable ColumnScope.() -> Unit,
+    extensionsMenuItemDescription: String?,
     ) {
     MenuGroup {
         val labelId = R.string.browser_menu_desktop_site
         val badgeText: String
-        val iconId: Int
         val menuItemState: MenuItemState
         val badgeBackgroundColor: Color
 
         if (isDesktopMode) {
             badgeText = stringResource(id = R.string.browser_feature_desktop_site_on)
             badgeBackgroundColor = FirefoxTheme.colors.badgeActive
-            iconId = R.drawable.mozac_ic_device_mobile_24
-            menuItemState = MenuItemState.ACTIVE
+            menuItemState = if (isPdf) MenuItemState.DISABLED else MenuItemState.ACTIVE
         } else {
             badgeText = stringResource(id = R.string.browser_feature_desktop_site_off)
             badgeBackgroundColor = FirefoxTheme.colors.layerSearch
-            iconId = R.drawable.mozac_ic_device_desktop_24
             menuItemState = if (isPdf) MenuItemState.DISABLED else MenuItemState.ENABLED
         }
 
@@ -466,9 +477,15 @@ private fun ToolsAndActionsMenuGroup(
                 )
             }
 
+        MenuItem(
+            label = stringResource(id = R.string.browser_menu_find_in_page),
+            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_search_24),
+            onClick = onFindInPageMenuClick,
+        )
+
             MenuItem(
                 label = stringResource(id = labelId),
-                beforeIconPainter = painterResource(id = iconId),
+                beforeIconPainter = painterResource(id = R.drawable.mozac_ic_device_mobile_24),
                 state = menuItemState,
                 onClick = onSwitchToDesktopSiteMenuClick,
             ) {
@@ -483,51 +500,14 @@ private fun ToolsAndActionsMenuGroup(
             )
         }
 
-        MenuItem(
-            label = stringResource(id = R.string.browser_menu_find_in_page_2),
-            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_search_24),
-            onClick = onFindInPageMenuClick,
-        )
-
-        MenuItem(
-            label = stringResource(id = R.string.browser_menu_tools),
-            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_tool_24),
-            description = when {
-                isTranslationSupported && isWebCompatReporterSupported -> stringResource(
-                    R.string.browser_menu_tools_description_with_translate_with_report_site_2,
-                )
-                isTranslationSupported -> stringResource(
-                    R.string.browser_menu_tools_description_with_translate_without_report_site,
-                )
-                isWebCompatReporterSupported -> stringResource(
-                    R.string.browser_menu_tools_description_with_report_site_2,
-                )
-                else -> stringResource(
-                    R.string.browser_menu_tools_description_without_report_site,
-                )
-            },
-            onClick = onToolsMenuClick,
-            modifier = Modifier.testTag(MenuDialogTestTag.TOOLS),
-            afterIconPainter = painterResource(id = R.drawable.mozac_ic_chevron_right_24),
-        )
-
-        MenuItem(
-            label = stringResource(id = R.string.browser_menu_save),
-            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_save_24),
-            description = stringResource(id = R.string.browser_menu_save_description),
-            onClick = onSaveMenuClick,
-            modifier = Modifier.testTag(MenuDialogTestTag.SAVE),
-            afterIconPainter = painterResource(id = R.drawable.mozac_ic_chevron_right_24),
-        )
-
         ExtensionsMenuItem(
-            extensionsMenuItemDescription = extensionsMenuItemDescription,
             isExtensionsProcessDisabled = isExtensionsProcessDisabled,
             isExtensionsExpanded = isExtensionsExpanded,
             webExtensionMenuCount = webExtensionMenuCount,
             allWebExtensionsDisabled = allWebExtensionsDisabled,
             onExtensionsMenuClick = onExtensionsMenuClick,
             extensionSubmenu = extensionSubmenu,
+            extensionsMenuItemDescription = extensionsMenuItemDescription,
         )
 
         MoreMenuButtonGroup(
@@ -658,40 +638,30 @@ private fun LibraryMenuGroup(
 @Suppress("LongParameterList")
 @Composable
 private fun HomepageMenuGroup(
-    extensionsMenuItemDescription: String,
     isExtensionsProcessDisabled: Boolean,
     isExtensionsExpanded: Boolean,
     webExtensionMenuCount: Int,
     allWebExtensionsDisabled: Boolean,
     onExtensionsMenuClick: () -> Unit,
     onCustomizeHomepageMenuClick: () -> Unit,
-    onNewInFirefoxMenuClick: () -> Unit,
     extensionSubmenu: @Composable ColumnScope.() -> Unit,
+    extensionsMenuItemDescription: String?,
 ) {
     MenuGroup {
         MenuItem(
-            label = stringResource(
-                id = R.string.browser_menu_new_in_firefox,
-                stringResource(id = R.string.app_name),
-            ),
-            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_whats_new_24),
-            onClick = onNewInFirefoxMenuClick,
-        )
-
-        MenuItem(
             label = stringResource(id = R.string.browser_menu_customize_home_1),
-            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_grid_add_24),
+            beforeIconPainter = painterResource(id = R.drawable.mozac_ic_tool_24),
             onClick = onCustomizeHomepageMenuClick,
         )
 
         ExtensionsMenuItem(
-            extensionsMenuItemDescription = extensionsMenuItemDescription,
             isExtensionsProcessDisabled = isExtensionsProcessDisabled,
             isExtensionsExpanded = isExtensionsExpanded,
             webExtensionMenuCount = webExtensionMenuCount,
             allWebExtensionsDisabled = allWebExtensionsDisabled,
             onExtensionsMenuClick = onExtensionsMenuClick,
             extensionSubmenu = extensionSubmenu,
+            extensionsMenuItemDescription = extensionsMenuItemDescription,
         )
     }
 }
@@ -708,7 +678,7 @@ internal fun MozillaAccountMenuItem(
     when (accountState) {
         NotAuthenticated -> {
             label = stringResource(id = R.string.browser_menu_sign_in)
-            description = stringResource(id = R.string.browser_menu_sign_in_caption)
+            description = stringResource(id = R.string.browser_menu_sign_in_caption_3)
         }
 
         AuthenticationProblem -> {
@@ -922,12 +892,13 @@ private fun MenuDialogPreview() {
                 isDesktopMode = false,
                 isPdf = false,
                 isReaderViewActive = false,
-                isTranslationSupported = true,
-                isWebCompatReporterSupported = true,
                 isExtensionsProcessDisabled = true,
                 allWebExtensionsDisabled = false,
+                canGoBack = true,
+                canGoForward = true,
                 extensionsMenuItemDescription = "No extensions enabled",
                 scrollState = ScrollState(0),
+                showBanner = true,
                 webExtensionMenuCount = 1,
                 onMoreMenuClick = {},
                 onCustomizeReaderViewMenuClick = {},
@@ -937,15 +908,14 @@ private fun MenuDialogPreview() {
                 onEditBookmarkButtonClick = {},
                 onSwitchToDesktopSiteMenuClick = {},
                 onFindInPageMenuClick = {},
-                onToolsMenuClick = {},
-                onSaveMenuClick = {},
+                onBannerClick = {},
+                onBannerDismiss = {},
                 onExtensionsMenuClick = {},
                 onBookmarksMenuClick = {},
                 onHistoryMenuClick = {},
                 onDownloadsMenuClick = {},
                 onPasswordsMenuClick = {},
                 onCustomizeHomepageMenuClick = {},
-                onNewInFirefoxMenuClick = {},
                 onQuitMenuClick = {},
                 onBackButtonClick = {},
                 onForwardButtonClick = {},
@@ -962,7 +932,9 @@ private fun MenuDialogPreview() {
 @Suppress("LongMethod")
 @Preview
 @Composable
-private fun MenuDialogPrivatePreview() {
+private fun MenuDialogPrivatePreview(
+    @PreviewParameter(SiteLoadingPreviewParameterProvider::class) isSiteLoading: Boolean,
+) {
     FirefoxTheme(theme = Theme.Private) {
         Column(
             modifier = Modifier
@@ -973,19 +945,20 @@ private fun MenuDialogPrivatePreview() {
                 account = null,
                 accountState = NotAuthenticated,
                 showQuitMenu = true,
-                isSiteLoading = false,
+                isSiteLoading = isSiteLoading,
                 isExtensionsExpanded = true,
                 isMoreMenuExpanded = true,
                 isBookmarked = false,
                 isDesktopMode = false,
                 isPdf = false,
                 isReaderViewActive = false,
-                isTranslationSupported = true,
-                isWebCompatReporterSupported = true,
                 isExtensionsProcessDisabled = false,
+                canGoBack = true,
+                canGoForward = true,
                 allWebExtensionsDisabled = false,
                 extensionsMenuItemDescription = "No extensions enabled",
                 scrollState = ScrollState(0),
+                showBanner = true,
                 webExtensionMenuCount = 0,
                 onMoreMenuClick = {},
                 onCustomizeReaderViewMenuClick = {},
@@ -995,15 +968,14 @@ private fun MenuDialogPrivatePreview() {
                 onEditBookmarkButtonClick = {},
                 onSwitchToDesktopSiteMenuClick = {},
                 onFindInPageMenuClick = {},
-                onToolsMenuClick = {},
-                onSaveMenuClick = {},
+                onBannerClick = {},
+                onBannerDismiss = {},
                 onExtensionsMenuClick = {},
                 onBookmarksMenuClick = {},
                 onHistoryMenuClick = {},
                 onDownloadsMenuClick = {},
                 onPasswordsMenuClick = {},
                 onCustomizeHomepageMenuClick = {},
-                onNewInFirefoxMenuClick = {},
                 onQuitMenuClick = {},
                 onBackButtonClick = {},
                 onForwardButtonClick = {},
@@ -1040,4 +1012,12 @@ private fun MenuDialogPrivatePreview() {
             )
         }
     }
+}
+
+/**
+ * A [PreviewParameterProvider] implementation that provides boolean values
+ * representing the loading state of a site.
+ */
+class SiteLoadingPreviewParameterProvider : PreviewParameterProvider<Boolean> {
+    override val values = sequenceOf(true, false)
 }

@@ -55,6 +55,8 @@ loader.lazyRequireGetter(
 const RELOAD_CONDITION_PREF_PREFIX = "devtools.responsive.reloadConditions.";
 const RELOAD_NOTIFICATION_PREF =
   "devtools.responsive.reloadNotification.enabled";
+const USE_DYNAMIC_TOOLBAR_PREF = "devtools.responsive.dynamicToolbar.enabled";
+const DYNAMIC_TOOLBAR_MAX_HEIGHT = 40; // px
 
 function debug(_msg) {
   // console.log(`RDM manager: ${_msg}`);
@@ -95,6 +97,7 @@ class ResponsiveUI {
     this.onResizeStop = this.onResizeStop.bind(this);
 
     this.onTargetAvailable = this.onTargetAvailable.bind(this);
+    this.onContentScrolled = this.onContentScrolled.bind(this);
 
     this.networkFront = null;
     // Promise resolved when the UI init has completed.
@@ -103,7 +106,6 @@ class ResponsiveUI {
     this.resolveInited = resolve;
 
     this.dynamicToolbar = null;
-    this.dynamicToolbarMaxHeight = 0;
     EventEmitter.decorate(this);
   }
 
@@ -180,8 +182,19 @@ class ResponsiveUI {
     this.dynamicToolbar = doc.createElement("div");
     this.dynamicToolbar.classList.add("rdm-dynamic-toolbar", "dynamic-toolbar");
     this.dynamicToolbar.style.visibility = "hidden";
-    this.dynamicToolbar.style.height = "40px";
-    this.dynamicToolbarMaxHeight = this.dynamicToolbar.style.height;
+
+    if (Services.prefs.getBoolPref(USE_DYNAMIC_TOOLBAR_PREF)) {
+      this.dynamicToolbar.style.visibility = "visible";
+      this.dynamicToolbar.style.height = DYNAMIC_TOOLBAR_MAX_HEIGHT + "px";
+      InspectorUtils.setDynamicToolbarMaxHeight(
+        this.tab.linkedBrowser.browsingContext,
+        DYNAMIC_TOOLBAR_MAX_HEIGHT
+      );
+      InspectorUtils.setVerticalClipping(
+        this.tab.linkedBrowser.browsingContext,
+        -DYNAMIC_TOOLBAR_MAX_HEIGHT
+      );
+    }
 
     // Create resizer handlers
     const resizeHandle = doc.createElement("div");
@@ -1073,6 +1086,24 @@ class ResponsiveUI {
     return this.browserWindow;
   }
 
+  clamp(min, max, value) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  onContentScrolled(deltaY) {
+    const currentHeight = parseInt(this.dynamicToolbar.style.height, 10);
+    const newHeight = this.clamp(
+      0,
+      DYNAMIC_TOOLBAR_MAX_HEIGHT,
+      currentHeight + deltaY
+    );
+    this.dynamicToolbar.style.height = newHeight + "px";
+    InspectorUtils.setVerticalClipping(
+      this.tab.linkedBrowser.browsingContext,
+      -newHeight
+    );
+  }
+
   async onTargetAvailable({ targetFront, isTargetSwitching }) {
     if (this.destroying) {
       return;
@@ -1087,6 +1118,10 @@ class ResponsiveUI {
 
       await this.restoreActorState(isTargetSwitching);
       this.emitForTests("responsive-ui-target-switch-done");
+    }
+
+    if (Services.prefs.getBoolPref(USE_DYNAMIC_TOOLBAR_PREF)) {
+      targetFront.on("contentScrolled", this.onContentScrolled);
     }
   }
   // This just needed to setup watching for network resources,

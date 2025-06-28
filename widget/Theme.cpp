@@ -74,7 +74,6 @@ static constexpr gfx::sRGBColor sColorMeterRed10(
 static constexpr gfx::sRGBColor sColorMeterRed20(
     gfx::sRGBColor::UnusualFromARGB(0xff810220));
 
-static const CSSCoord kMinimumRangeThumbSize = 20.0f;
 static const CSSCoord kMinimumDropdownArrowButtonWidth = 18.0f;
 static const CSSCoord kMinimumSpinnerButtonWidth = 18.0f;
 static const CSSCoord kMinimumSpinnerButtonHeight = 9.0f;
@@ -799,8 +798,9 @@ void Theme::PaintRange(nsIFrame* aFrame, PaintBackendData& aPaintData,
   auto tickMarks = rangeFrame->TickMarks();
   double progress = rangeFrame->GetValueAsFractionOfRange();
   auto rect = aRect;
-  LayoutDeviceRect thumbRect(0, 0, kMinimumRangeThumbSize * aDpiRatio,
-                             kMinimumRangeThumbSize * aDpiRatio);
+  const CSSCoord minThumbSize = GetMinimumRangeThumbSize();
+  LayoutDeviceRect thumbRect(0, 0, minThumbSize * aDpiRatio,
+                             minThumbSize * aDpiRatio);
   LayoutDeviceRect progressClipRect(aRect);
   LayoutDeviceRect trackClipRect(aRect);
   const LayoutDeviceCoord verticalSize = kRangeHeight * aDpiRatio;
@@ -1108,7 +1108,6 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
   const nscoord twipsPerPixel = pc->AppUnitsPerDevPixel();
   const auto devPxRect = ToSnappedRect(aRect, twipsPerPixel, aPaintData);
 
-  const DocumentState docState = pc->Document()->State();
   ElementState elementState = GetContentState(aFrame, aAppearance);
   // Paint the outline iff we're asked to draw overflow and we have
   // outline-style: auto.
@@ -1193,24 +1192,15 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
       PaintRange(aFrame, aPaintData, devPxRect, elementState, colors, dpiRatio,
                  IsRangeHorizontal(aFrame));
       break;
-    case StyleAppearance::RangeThumb:
-      // Painted as part of StyleAppearance::Range.
-      break;
     case StyleAppearance::ProgressBar:
       PaintProgress(aFrame, aPaintData, devPxRect, elementState, colors,
                     dpiRatio,
                     /* aIsMeter = */ false);
       break;
-    case StyleAppearance::Progresschunk:
-      /* Painted as part of the progress bar */
-      break;
     case StyleAppearance::Meter:
       PaintProgress(aFrame, aPaintData, devPxRect, elementState, colors,
                     dpiRatio,
                     /* aIsMeter = */ true);
-      break;
-    case StyleAppearance::Meterchunk:
-      /* Painted as part of the meter bar */
       break;
     case StyleAppearance::ScrollbarthumbHorizontal:
     case StyleAppearance::ScrollbarthumbVertical: {
@@ -1219,8 +1209,8 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
       auto kind = ComputeScrollbarKind(aFrame, isHorizontal);
       return GetScrollbarDrawing().PaintScrollbarThumb(
           aPaintData, devPxRect, kind, aFrame,
-          *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, docState,
-          colors, dpiRatio);
+          *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, colors,
+          dpiRatio);
     }
     case StyleAppearance::ScrollbarHorizontal:
     case StyleAppearance::ScrollbarVertical: {
@@ -1228,15 +1218,14 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
       auto kind = ComputeScrollbarKind(aFrame, isHorizontal);
       return GetScrollbarDrawing().PaintScrollbar(
           aPaintData, devPxRect, kind, aFrame,
-          *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, docState,
-          colors, dpiRatio);
+          *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, colors,
+          dpiRatio);
     }
     case StyleAppearance::Scrollcorner: {
       auto kind = ComputeScrollbarKindForScrollCorner(aFrame);
       return GetScrollbarDrawing().PaintScrollCorner(
           aPaintData, devPxRect, kind, aFrame,
-          *nsLayoutUtils::StyleForScrollbar(aFrame), docState, colors,
-          dpiRatio);
+          *nsLayoutUtils::StyleForScrollbar(aFrame), colors, dpiRatio);
     }
     case StyleAppearance::ScrollbarbuttonUp:
     case StyleAppearance::ScrollbarbuttonDown:
@@ -1254,8 +1243,8 @@ bool Theme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
           auto kind = ComputeScrollbarKind(aFrame, isHorizontal);
           GetScrollbarDrawing().PaintScrollbarButton(
               aPaintData, aAppearance, devPxRect, kind, aFrame,
-              *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, docState,
-              colors, dpiRatio);
+              *nsLayoutUtils::StyleForScrollbar(aFrame), elementState, colors,
+              dpiRatio);
         }
       }
       break;
@@ -1527,10 +1516,6 @@ LayoutDeviceIntSize Theme::GetMinimumWidgetSize(nsPresContext* aPresContext,
 
   LayoutDeviceIntSize result;
   switch (aAppearance) {
-    case StyleAppearance::RangeThumb:
-      result.SizeTo((kMinimumRangeThumbSize * dpiRatio).Rounded(),
-                    (kMinimumRangeThumbSize * dpiRatio).Rounded());
-      break;
     case StyleAppearance::MozMenulistArrowButton:
       result.width = (kMinimumDropdownArrowButtonWidth * dpiRatio).Rounded();
       break;
@@ -1592,11 +1577,8 @@ bool Theme::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* aFrame,
     case StyleAppearance::Textarea:
     case StyleAppearance::Textfield:
     case StyleAppearance::Range:
-    case StyleAppearance::RangeThumb:
     case StyleAppearance::ProgressBar:
-    case StyleAppearance::Progresschunk:
     case StyleAppearance::Meter:
-    case StyleAppearance::Meterchunk:
     case StyleAppearance::ScrollbarbuttonUp:
     case StyleAppearance::ScrollbarbuttonDown:
     case StyleAppearance::ScrollbarbuttonLeft:

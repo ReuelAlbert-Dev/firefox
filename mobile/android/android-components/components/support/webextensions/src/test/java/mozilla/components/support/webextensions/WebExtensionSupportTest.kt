@@ -119,11 +119,11 @@ class WebExtensionSupportTest {
         val actionCaptor = argumentCaptor<WebExtensionAction.InstallWebExtensionAction>()
         verify(store, times(2)).dispatch(actionCaptor.capture())
         assertEquals(
-            WebExtensionState(ext1.id, ext1.url, "ext1", true, true),
+            WebExtensionState(ext1.id, ext1.url, "ext1", enabled = true, allowedInPrivateBrowsing = true),
             actionCaptor.allValues[0].extension,
         )
         assertEquals(
-            WebExtensionState(ext2.id, ext2.url, null, false, false),
+            WebExtensionState(ext2.id, ext2.url, null, enabled = false, allowedInPrivateBrowsing = false),
             actionCaptor.allValues[1].extension,
         )
     }
@@ -447,17 +447,30 @@ class WebExtensionSupportTest {
         val onPermissionsGranted: ((PermissionPromptResponse) -> Unit) = mock()
         val permissions = listOf("permissions")
         val origins = listOf("https://www.mozilla.org")
+        val dataCollectionPermissions = listOf("locationInfo")
 
         val delegateCaptor = argumentCaptor<WebExtensionDelegate>()
         WebExtensionSupport.initialize(engine, store)
         verify(engine).registerWebExtensionDelegate(delegateCaptor.capture())
 
         // Verify they we confirm the permission request
-        delegateCaptor.value.onInstallPermissionRequest(ext, permissions, origins, onPermissionsGranted)
+        delegateCaptor.value.onInstallPermissionRequest(
+            ext,
+            permissions,
+            origins,
+            dataCollectionPermissions,
+            onPermissionsGranted,
+        )
 
         verify(store).dispatch(
             WebExtensionAction.UpdatePromptRequestWebExtensionAction(
-                WebExtensionPromptRequest.AfterInstallation.Permissions.Required(ext, permissions, origins, onPermissionsGranted),
+                WebExtensionPromptRequest.AfterInstallation.Permissions.Required(
+                    ext,
+                    permissions,
+                    origins,
+                    dataCollectionPermissions,
+                    onPermissionsGranted,
+                ),
             ),
         )
     }
@@ -725,9 +738,9 @@ class WebExtensionSupportTest {
 
         // Toggling should open tab
         delegateCaptor.value.onToggleActionPopup(ext, engineSession, browserAction)
-        var actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
+        val actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
         verify(store, times(3)).dispatch(actionCaptor.capture())
-        var values = actionCaptor.allValues
+        val values = actionCaptor.allValues
         assertEquals("", (values[0] as TabListAction.AddTabAction).tab.content.url)
         assertEquals(engineSession, (values[1] as EngineAction.LinkEngineSessionAction).engineSession)
         assertEquals("test", (values[2] as WebExtensionAction.UpdatePopupSessionAction).extensionId)
@@ -758,7 +771,7 @@ class WebExtensionSupportTest {
         verify(engine).registerWebExtensionDelegate(delegateCaptor.capture())
 
         // Toggling again should select popup tab
-        var actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
+        val actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
         delegateCaptor.value.onToggleActionPopup(ext, engineSession, browserAction)
 
         store.waitUntilIdle()
@@ -790,7 +803,7 @@ class WebExtensionSupportTest {
         verify(engine).registerWebExtensionDelegate(delegateCaptor.capture())
 
         // Toggling again should close tab
-        var actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
+        val actionCaptor = argumentCaptor<mozilla.components.browser.state.action.BrowserAction>()
         delegateCaptor.value.onToggleActionPopup(ext, engineSession, browserAction)
         store.waitUntilIdle()
 
@@ -1085,15 +1098,28 @@ class WebExtensionSupportTest {
         val ext: WebExtension = mock()
         val permissions = listOf("perm1", "perm2")
         val origins = listOf("http://example.com/*", "https://example.org/*")
+        val dataCollectionPermissions = listOf("locationInfo")
         val onPermissionsGranted: ((Boolean) -> Unit) = mock()
         val delegateCaptor = argumentCaptor<WebExtensionDelegate>()
         WebExtensionSupport.initialize(engine, store)
         verify(engine).registerWebExtensionDelegate(delegateCaptor.capture())
 
-        delegateCaptor.value.onOptionalPermissionsRequest(ext, permissions, origins, onPermissionsGranted)
+        delegateCaptor.value.onOptionalPermissionsRequest(
+            ext,
+            permissions,
+            origins,
+            dataCollectionPermissions,
+            onPermissionsGranted,
+        )
         verify(store).dispatch(
             WebExtensionAction.UpdatePromptRequestWebExtensionAction(
-                WebExtensionPromptRequest.AfterInstallation.Permissions.Optional(ext, permissions, origins, onPermissionsGranted),
+                WebExtensionPromptRequest.AfterInstallation.Permissions.Optional(
+                    ext,
+                    permissions,
+                    origins,
+                    dataCollectionPermissions,
+                    onPermissionsGranted,
+                ),
             ),
         )
     }

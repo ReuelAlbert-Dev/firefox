@@ -462,6 +462,18 @@ nsContentPolicyType ScriptLoadRequestToContentPolicyType(
   return nsIContentPolicy::TYPE_INTERNAL_SCRIPT;
 }
 
+RequestMode ComputeRequestModeForContentPolicy(
+    const ScriptLoadRequest* aRequest) {
+  auto corsMapping =
+      aRequest->IsModuleRequest()
+          ? nsContentSecurityManager::REQUIRE_CORS_CHECKS
+          : nsContentSecurityManager::CORS_NONE_MAPS_TO_DISABLED_CORS_CHECKS;
+  return nsContentSecurityManager::SecurityModeToRequestMode(
+      nsContentSecurityManager::ComputeSecurityMode(
+          nsContentSecurityManager::ComputeSecurityFlags(aRequest->CORSMode(),
+                                                         corsMapping)));
+}
+
 nsresult ScriptLoader::CheckContentPolicy(nsIScriptElement* aElement,
                                           const nsAString& aNonce,
                                           ScriptLoadRequest* aRequest) {
@@ -482,6 +494,9 @@ nsresult ScriptLoader::CheckContentPolicy(nsIScriptElement* aElement,
   secCheckLoadInfo->SetParserCreatedScript(aElement &&
                                            aElement->GetParserCreated() !=
                                                mozilla::dom::NOT_FROM_PARSER);
+  Maybe<RequestMode> requestMode =
+      Some(ComputeRequestModeForContentPolicy(aRequest));
+  secCheckLoadInfo->SetRequestMode(requestMode);
   // Use nonce of the current element, instead of the preload, because those
   // are allowed to differ.
   secCheckLoadInfo->SetCspNonce(aNonce);
@@ -986,7 +1001,11 @@ nsresult ScriptLoader::StartLoadInternal(
 
   LOG(("ScriptLoadRequest (%p): mode=%u tracking=%d", aRequest,
        unsigned(aRequest->GetScriptLoadContext()->mScriptMode),
-       aRequest->GetScriptLoadContext()->IsTracking()));
+       net::UrlClassifierCommon::IsTrackingClassificationFlag(
+           aRequest->GetScriptLoadContext()
+               ->GetClassificationFlags()
+               .thirdPartyFlags,
+           NS_UsePrivateBrowsing(channel))));
 
   PrepareRequestPriorityAndRequestDependencies(channel, aRequest);
 
@@ -1048,7 +1067,7 @@ static bool CSPAllowsInlineScript(nsIScriptElement* aElement,
   nsresult rv = csp->GetAllowsInline(
       nsIContentSecurityPolicy::SCRIPT_SRC_ELEM_DIRECTIVE,
       false /* aHasUnsafeHash */, aNonce, parserCreated, element,
-      nullptr /* nsICSPEventListener */, u""_ns,
+      nullptr /* nsICSPEventListener */, VoidString(),
       aElement->GetScriptLineNumber(),
       aElement->GetScriptColumnNumber().oneOriginValue(), &allowInlineScript);
   return NS_SUCCEEDED(rv) && allowInlineScript;
@@ -2578,7 +2597,8 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
 
   if (mDocument) {
     mDocument->NoteScriptTrackingStatus(
-        aRequest->mURL, aRequest->GetScriptLoadContext()->IsTracking());
+        aRequest->mURL,
+        aRequest->GetScriptLoadContext()->GetClassificationFlags());
   }
 
   const char* introductionType;
@@ -2630,19 +2650,24 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
   return NS_OK;
 }
 
-/* static */
 void ScriptLoader::CalculateBytecodeCacheFlag(ScriptLoadRequest* aRequest) {
   using mozilla::TimeDuration;
   using mozilla::TimeStamp;
 
-  if (aRequest->IsStencil()) {
-    aRequest->MarkPassedConditionForBytecodeEncoding();
-    return;
-  }
-
   if (aRequest->IsModuleRequest() &&
       aRequest->AsModuleRequest()->mModuleType != JS::ModuleType::JavaScript) {
     aRequest->MarkSkippedBytecodeEncoding();
+    return;
+  }
+
+  if (aRequest->IsStencil()) {
+    aRequest->MarkPassedConditionForBytecodeEncoding();
+
+    if (aRequest->IsModuleRequest() &&
+        !aRequest->AsModuleRequest()->IsTopLevel()) {
+      MOZ_ASSERT(!aRequest->isInList());
+      mBytecodeEncodableDependencyModules.AppendElement(aRequest);
+    }
     return;
   }
 
@@ -2732,6 +2757,12 @@ void ScriptLoader::CalculateBytecodeCacheFlag(ScriptLoadRequest* aRequest) {
 
   LOG(("ScriptLoadRequest (%p): Bytecode-cache: Trigger encoding.", aRequest));
   aRequest->MarkPassedConditionForBytecodeEncoding();
+
+  if (aRequest->IsModuleRequest() &&
+      !aRequest->AsModuleRequest()->IsTopLevel()) {
+    MOZ_ASSERT(!aRequest->isInList());
+    mBytecodeEncodableDependencyModules.AppendElement(aRequest);
+  }
 }
 
 class MOZ_RAII AutoSetProcessingScriptTag {
@@ -3007,7 +3038,6 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
       };
 
       MOZ_ASSERT(!maybeSource.empty());
-      TimeStamp startTime = TimeStamp::Now();
       maybeSource.mapNonEmpty(compile);
       aStencilOut = stencil.get();
 
@@ -3018,7 +3048,6 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
                            erv, encodeBytecode);
       }
 
-      mMainThreadParseTime += TimeStamp::Now() - startTime;
       aRv = std::move(erv);
     }
   }
@@ -3186,27 +3215,33 @@ nsresult ScriptLoader::MaybePrepareForBytecodeEncodingAfterExecute(
 
 bool ScriptLoader::IsAlreadyHandledForBytecodeEncodingPreparation(
     ScriptLoadRequest* aRequest) {
+  MOZ_ASSERT_IF(aRequest->isInList(),
+                mBytecodeEncodingQueue.Contains(aRequest));
   return aRequest->isInList() || !aRequest->mCacheInfo;
 }
 
 void ScriptLoader::MaybePrepareModuleForBytecodeEncodingBeforeExecute(
     JSContext* aCx, ModuleLoadRequest* aRequest) {
-  {
-    ModuleScript* moduleScript = aRequest->mModuleScript;
-    JS::Rooted<JSObject*> module(aCx, moduleScript->ModuleRecord());
-
-    if (aRequest->IsMarkedForBytecodeEncoding()) {
-      // This module is imported multiple times, and already marked.
-      return;
-    }
-
-    if (aRequest->PassedConditionForBytecodeEncoding()) {
-      aRequest->MarkModuleForBytecodeEncoding();
-    }
+  if (aRequest->IsMarkedForBytecodeEncoding()) {
+    // This module is imported multiple times, and already marked.
+    return;
   }
 
-  for (ModuleLoadRequest* childRequest : aRequest->mImports) {
-    MaybePrepareModuleForBytecodeEncodingBeforeExecute(aCx, childRequest);
+  if (aRequest->PassedConditionForBytecodeEncoding()) {
+    aRequest->MarkModuleForBytecodeEncoding();
+  }
+
+  for (auto* r = mBytecodeEncodableDependencyModules.getFirst(); r;
+       r = r->getNext()) {
+    auto* dep = r->AsModuleRequest();
+    MOZ_ASSERT(dep->PassedConditionForBytecodeEncoding());
+
+    if (dep->GetRootModule() != aRequest) {
+      continue;
+    }
+    MOZ_ASSERT(!dep->IsMarkedForBytecodeEncoding());
+
+    dep->MarkModuleForBytecodeEncoding();
   }
 }
 
@@ -3219,8 +3254,21 @@ nsresult ScriptLoader::MaybePrepareModuleForBytecodeEncodingAfterExecute(
 
   aRv = MaybePrepareForBytecodeEncodingAfterExecute(aRequest, aRv);
 
-  for (ModuleLoadRequest* childRequest : aRequest->mImports) {
-    aRv = MaybePrepareModuleForBytecodeEncodingAfterExecute(childRequest, aRv);
+  for (auto* r = mBytecodeEncodableDependencyModules.getFirst(); r;) {
+    auto* dep = r->AsModuleRequest();
+    MOZ_ASSERT(dep->PassedConditionForBytecodeEncoding());
+
+    r = r->getNext();
+
+    if (dep->GetRootModule() != aRequest) {
+      continue;
+    }
+
+    mBytecodeEncodableDependencyModules.Remove(dep);
+
+    if (!IsAlreadyHandledForBytecodeEncodingPreparation(dep)) {
+      aRv = MaybePrepareForBytecodeEncodingAfterExecute(dep, aRv);
+    }
   }
 
   return aRv;
@@ -3358,11 +3406,6 @@ void ScriptLoader::RegisterForBytecodeEncoding(ScriptLoadRequest* aRequest) {
 void ScriptLoader::LoadEventFired() {
   mLoadEventFired = true;
   MaybeTriggerBytecodeEncoding();
-
-  if (!mMainThreadParseTime.IsZero()) {
-    glean::javascript_pageload::parse_time.AccumulateRawDuration(
-        mMainThreadParseTime);
-  }
 }
 
 void ScriptLoader::Destroy() {
@@ -3593,6 +3636,10 @@ void ScriptLoader::GiveUpBytecodeEncoding() {
 
     request->DropBytecode();
     request->DropBytecodeCacheReferences();
+  }
+
+  while (!mBytecodeEncodableDependencyModules.isEmpty()) {
+    (void)mBytecodeEncodableDependencyModules.StealFirst();
   }
 }
 
@@ -4034,29 +4081,20 @@ void ScriptLoader::ReportErrorToConsole(ScriptLoadRequest* aRequest,
   AutoTArray<nsString, 1> params;
   CopyUTF8toUTF16(aRequest->mURI->GetSpecOrDefault(), *params.AppendElement());
 
-  uint32_t lineNo = aRequest->GetScriptLoadContext()->GetScriptLineNumber();
-  JS::ColumnNumberOneOrigin columnNo =
-      aRequest->GetScriptLoadContext()->GetScriptColumnNumber();
-
-  SourceLocation loc{mDocument->GetDocumentURI(), lineNo,
-                     columnNo.oneOriginValue()};
-
-  // If this is a failed module load, and we know the parent module, then
-  // attribute the failure to the parent module, not the overall document.
-  if (aRequest->IsModuleRequest()) {
-    ModuleLoadRequest* modRequest = aRequest->AsModuleRequest();
-    if (!modRequest->IsTopLevel()) {
-      ModuleLoadRequest* parent = modRequest->mWaitingParentRequest;
-      if (parent) {
-        nsCString parentURL = parent->mURL;
-        loc = SourceLocation(std::move(parentURL));
-      }
-    }
+  Maybe<SourceLocation> loc;
+  if (!isScript && !aRequest->IsTopLevel()) {
+    MOZ_ASSERT(aRequest->mReferrer);
+    loc.emplace(aRequest->mReferrer.get());
+  } else {
+    uint32_t lineNo = aRequest->GetScriptLoadContext()->GetScriptLineNumber();
+    JS::ColumnNumberOneOrigin columnNo =
+        aRequest->GetScriptLoadContext()->GetScriptColumnNumber();
+    loc.emplace(mDocument->GetDocumentURI(), lineNo, columnNo.oneOriginValue());
   }
 
   nsContentUtils::ReportToConsole(
       nsIScriptError::warningFlag, "Script Loader"_ns, mDocument,
-      nsContentUtils::eDOM_PROPERTIES, message, params, loc);
+      nsContentUtils::eDOM_PROPERTIES, message, params, loc.ref());
 }
 
 void ScriptLoader::ReportWarningToConsole(
@@ -4077,13 +4115,13 @@ void ScriptLoader::ReportPreloadErrorsToConsole(ScriptLoadRequest* aRequest) {
     ReportErrorToConsole(
         aRequest, aRequest->GetScriptLoadContext()->mUnreportedPreloadError);
     aRequest->GetScriptLoadContext()->mUnreportedPreloadError = NS_OK;
+    MOZ_ASSERT_IF(aRequest->IsModuleRequest(),
+                  aRequest->AsModuleRequest()->mImports.IsEmpty());
   }
 
-  if (aRequest->IsModuleRequest()) {
-    for (const auto& childRequest : aRequest->AsModuleRequest()->mImports) {
-      ReportPreloadErrorsToConsole(childRequest);
-    }
-  }
+  // TODO:
+  // Bug 1973466, check the child request's error that happened during
+  // preload is reported.
 }
 
 void ScriptLoader::HandleLoadError(ScriptLoadRequest* aRequest,
@@ -4384,7 +4422,10 @@ nsresult ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,
     MOZ_ASSERT(classifiedChannel);
     if (classifiedChannel &&
         classifiedChannel->IsThirdPartyTrackingResource()) {
-      aRequest->GetScriptLoadContext()->SetIsTracking();
+      net::ClassificationFlags flags{
+          classifiedChannel->GetFirstPartyClassificationFlags(),
+          classifiedChannel->GetThirdPartyClassificationFlags()};
+      aRequest->GetScriptLoadContext()->SetClassificationFlags(flags);
     }
   }
 

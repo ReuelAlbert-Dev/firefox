@@ -7,6 +7,7 @@ package org.mozilla.fenix.components.menu
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.test.runTest
+import mozilla.components.browser.state.selector.selectedTab
 import mozilla.components.browser.state.state.ContentState
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.feature.addons.Addon
@@ -212,29 +213,6 @@ class MenuStoreTest {
         store.dispatch(MenuAction.UpdateBookmarkState(bookmarkState = newBookmarkState)).join()
 
         assertEquals(newBookmarkState, store.state.browserMenuState!!.bookmarkState)
-    }
-
-    @Test
-    fun `WHEN setting loading state action is dispatched THEN loading state is updated`() = runTest {
-        val initialState = MenuState(
-            browserMenuState = BrowserMenuState(
-                selectedTab = TabSessionState(
-                    id = "tabId",
-                    content = ContentState(
-                        url = "www.google.com",
-                    ),
-                ),
-                bookmarkState = BookmarkState(),
-                isLoading = false,
-            ),
-        )
-        val store = MenuStore(initialState = initialState)
-
-        assertFalse(store.state.browserMenuState?.isLoading ?: false)
-
-        store.dispatch(MenuAction.SetLoading(true)).join()
-
-        assertTrue(store.state.browserMenuState?.isLoading ?: false)
     }
 
     @Test

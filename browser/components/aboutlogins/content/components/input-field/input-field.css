@@ -44,7 +44,10 @@ input.input-field {
 }
 
 .origin-input {
+  text-overflow: ellipsis;
+  overflow: hidden;
   grid-area: input;
+  text-align: match-parent;
 }
 
 .explainer {

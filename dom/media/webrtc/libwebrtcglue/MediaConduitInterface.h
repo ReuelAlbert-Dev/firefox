@@ -135,6 +135,12 @@ class MediaSessionConduit {
       MediaEventSourceExc<webrtc::RtpPacketReceived, webrtc::RTPHeader>&
           aEvent) = 0;
 
+  virtual void ConnectReceiverRtcpEvent(
+      MediaEventSourceExc<rtc::CopyOnWriteBuffer>& aEvent) = 0;
+
+  virtual void ConnectSenderRtcpEvent(
+      MediaEventSourceExc<rtc::CopyOnWriteBuffer>& aEvent) = 0;
+
   // Sts thread only.
   virtual Maybe<uint16_t> RtpSendBaseSeqFor(uint32_t aSsrc) const = 0;
 
@@ -164,6 +170,8 @@ class MediaSessionConduit {
                              PacketType type) = 0;
 
   virtual RefPtr<GenericPromise> Shutdown() = 0;
+  // Call thread only. Is set at the end of Shutdown()
+  virtual bool IsShutdown() const = 0;
 
   virtual Maybe<RefPtr<AudioSessionConduit>> AsAudioSessionConduit() = 0;
   virtual Maybe<RefPtr<VideoSessionConduit>> AsVideoSessionConduit() = 0;

@@ -19,6 +19,8 @@
 #include "nsIBrowserDOMWindow.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeOwner.h"
+#include "nsIMutableArray.h"
+#include "nsISupportsPrimitives.h"
 #include "nsIURI.h"
 #include "nsIBrowser.h"
 #include "nsIWebProgress.h"
@@ -207,7 +209,68 @@ struct ClientOpenWindowArgsParsed {
 };
 
 #ifndef MOZ_GECKOVIEW
-void OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
+
+static Result<Ok, nsresult> OpenNewWindow(
+    const ClientOpenWindowArgsParsed& aArgsValidated,
+    nsOpenWindowInfo* aOpenWindowInfo) {
+  nsresult rv;
+
+  // XXX(krosylight): In an ideal world we should be able to pass the nsIURI
+  // directly. See bug 1485961.
+  nsAutoCString uriToLoad;
+  MOZ_TRY(aArgsValidated.uri->GetSpec(uriToLoad));
+
+  nsCOMPtr<nsISupportsCString> nsUriToLoad =
+      do_CreateInstance(NS_SUPPORTS_CSTRING_CONTRACTID, &rv);
+  MOZ_TRY(rv);
+  MOZ_TRY(nsUriToLoad->SetData(uriToLoad));
+
+  nsCOMPtr<nsISupportsPRBool> nsFalse =
+      do_CreateInstance(NS_SUPPORTS_PRBOOL_CONTRACTID, &rv);
+  MOZ_TRY(rv);
+  MOZ_TRY(nsFalse->SetData(false));
+
+  nsCOMPtr<nsISupportsPRUint32> userContextId =
+      do_CreateInstance(NS_SUPPORTS_PRUINT32_CONTRACTID, &rv);
+  MOZ_TRY(rv);
+  MOZ_TRY(userContextId->SetData(aArgsValidated.principal->GetUserContextId()));
+
+  nsCOMPtr<nsIMutableArray> args = do_CreateInstance(NS_ARRAY_CONTRACTID);
+  // https://searchfox.org/mozilla-central/rev/02d33f4bf984f65bd394bfd2d19d66569ae2cfe1/browser/base/content/browser-init.js#725-735
+  args->AppendElement(nsUriToLoad);               // 0: uriToLoad
+  args->AppendElement(nullptr);                   // 1: extraOptions
+  args->AppendElement(nullptr);                   // 2: referrerInfo
+  args->AppendElement(nullptr);                   // 3: postData
+  args->AppendElement(nsFalse);                   // 4: allowThirdPartyFixup
+  args->AppendElement(userContextId);             // 5: userContextId
+  args->AppendElement(nullptr);                   // 6: originPrincipal
+  args->AppendElement(nullptr);                   // 7: originStoragePrincipal
+  args->AppendElement(aArgsValidated.principal);  // 8: triggeringPrincipal
+  args->AppendElement(nsFalse);                   // 9: allowInheritPrincipal
+  args->AppendElement(aArgsValidated.csp);        // 10: csp
+  args->AppendElement(aOpenWindowInfo);           // 11: nsOpenWindowInfo
+
+  nsCOMPtr<nsIWindowWatcher> ww = do_GetService(NS_WINDOWWATCHER_CONTRACTID);
+  nsCString features = "chrome,all,dialog=no"_ns;
+
+  if (aArgsValidated.principal->GetIsInPrivateBrowsing()) {
+    // Private browsing would generally have a window, but with
+    // browser.privatebrowsing.autostart=true it's still possible to get into
+    // this path. See also bug 1972335.
+    features += ",private";
+  }
+
+  nsCOMPtr<mozIDOMWindowProxy> win;
+  MOZ_TRY(ww->OpenWindow(nullptr, nsDependentCString(BROWSER_CHROME_URL_QUOTED),
+                         "_blank"_ns, features, args, getter_AddRefs(win)));
+  return Ok();
+}
+
+/**
+ * @return true when the caller need to load URI on the resulting browsing
+ *         context, otherwise false
+ */
+bool OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
                 nsOpenWindowInfo* aOpenInfo, BrowsingContext** aBC,
                 ErrorResult& aRv) {
   MOZ_DIAGNOSTIC_ASSERT(aBC);
@@ -224,17 +287,21 @@ void OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
   nsCOMPtr<nsPIDOMWindowOuter> browserWindow =
       nsContentUtils::GetMostRecentWindowBy(filter);
   if (!browserWindow) {
-    // It is possible to be running without a browser window on Mac OS, so
-    // we need to open a new chrome window.
-    // TODO(catalinb): open new chrome window. Bug 1218080
-    aRv.ThrowTypeError("Unable to open window");
-    return;
+    // It is possible to be running without a browser window (either because
+    // macOS hidden window or non-browser windows like Library), so we need to
+    // open a new chrome window.
+    auto result = OpenNewWindow(aArgsValidated, aOpenInfo);
+    if (NS_WARN_IF(result.isErr())) {
+      aRv.ThrowTypeError("Unable to open window");
+      return false;
+    }
+    return false;
   }
 
   if (NS_WARN_IF(!nsGlobalWindowOuter::Cast(browserWindow)->IsChromeWindow())) {
     // XXXbz Can this actually happen?  Seems unlikely.
     aRv.ThrowTypeError("Unable to open window");
-    return;
+    return false;
   }
 
   nsCOMPtr<nsIBrowserDOMWindow> bwin =
@@ -242,7 +309,7 @@ void OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
 
   if (NS_WARN_IF(!bwin)) {
     aRv.ThrowTypeError("Unable to open window");
-    return;
+    return false;
   }
   nsresult rv = bwin->CreateContentWindow(
       nullptr, aOpenInfo, nsIBrowserDOMWindow::OPEN_DEFAULTWINDOW,
@@ -250,14 +317,15 @@ void OpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
       aArgsValidated.csp, aBC);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     aRv.ThrowTypeError("Unable to open window");
-    return;
+    return false;
   }
+  return true;
 }
 #endif
 
 void WaitForLoad(const ClientOpenWindowArgsParsed& aArgsValidated,
                  BrowsingContext* aBrowsingContext,
-                 ClientOpPromise::Private* aPromise) {
+                 ClientOpPromise::Private* aPromise, bool aShouldLoadURI) {
   MOZ_DIAGNOSTIC_ASSERT(aBrowsingContext);
 
   RefPtr<ClientOpPromise::Private> promise = aPromise;
@@ -275,7 +343,7 @@ void WaitForLoad(const ClientOpenWindowArgsParsed& aArgsValidated,
     return;
   }
 
-  // Add a progress listener before we start the load of the service worker URI
+  // Add a progress listener before we start the load of the requested URI
   RefPtr<WebProgressListener> listener = new WebProgressListener(
       aBrowsingContext, aArgsValidated.baseURI, do_AddRef(promise));
 
@@ -289,24 +357,27 @@ void WaitForLoad(const ClientOpenWindowArgsParsed& aArgsValidated,
     return;
   }
 
-  // Load the service worker URI
-  RefPtr<nsDocShellLoadState> loadState =
-      new nsDocShellLoadState(aArgsValidated.uri);
-  loadState->SetTriggeringPrincipal(aArgsValidated.principal);
-  loadState->SetFirstParty(true);
-  loadState->SetLoadFlags(
-      nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL);
-  loadState->SetTriggeringRemoteType(
-      aArgsValidated.originContent
-          ? aArgsValidated.originContent->GetRemoteType()
-          : NOT_REMOTE_TYPE);
+  if (aShouldLoadURI) {
+    // Load the requested URI
+    RefPtr<nsDocShellLoadState> loadState =
+        new nsDocShellLoadState(aArgsValidated.uri);
+    loadState->SetTriggeringPrincipal(aArgsValidated.principal);
+    loadState->SetFirstParty(true);
+    loadState->SetLoadFlags(
+        nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL);
+    loadState->SetTriggeringRemoteType(
+        aArgsValidated.originContent
+            ? aArgsValidated.originContent->GetRemoteType()
+            : NOT_REMOTE_TYPE);
 
-  rv = aBrowsingContext->LoadURI(loadState, true);
-  if (NS_FAILED(rv)) {
-    CopyableErrorResult result;
-    result.ThrowInvalidStateError("Unable to start the load of the actual URI");
-    promise->Reject(result, __func__);
-    return;
+    rv = aBrowsingContext->LoadURI(loadState, true);
+    if (NS_FAILED(rv)) {
+      CopyableErrorResult result;
+      result.ThrowInvalidStateError(
+          "Unable to start the load of the actual URI");
+      promise->Reject(result, __func__);
+      return;
+    }
   }
 
   // Hold the listener alive until the promise settles.
@@ -318,8 +389,7 @@ void WaitForLoad(const ClientOpenWindowArgsParsed& aArgsValidated,
 
 #ifdef MOZ_GECKOVIEW
 void GeckoViewOpenWindow(const ClientOpenWindowArgsParsed& aArgsValidated,
-                         nsOpenWindowInfo* aOpenInfo, BrowsingContext** aBC,
-                         ErrorResult& aRv) {
+                         nsOpenWindowInfo* aOpenInfo, ErrorResult& aRv) {
   MOZ_ASSERT(aOpenInfo);
 
   // passes the request to open a new window to GeckoView. Allowing the
@@ -434,11 +504,13 @@ RefPtr<ClientOpPromise> ClientOpenWindow(
 
   RefPtr<BrowsingContext> bc;
   IgnoredErrorResult errResult;
+  bool shouldLoadURI = true;
 #ifdef MOZ_GECKOVIEW
   // GeckoView has a delegation for service worker window.
-  GeckoViewOpenWindow(argsValidated, openInfo, getter_AddRefs(bc), errResult);
+  GeckoViewOpenWindow(argsValidated, openInfo, errResult);
 #else
-  OpenWindow(argsValidated, openInfo, getter_AddRefs(bc), errResult);
+  shouldLoadURI =
+      OpenWindow(argsValidated, openInfo, getter_AddRefs(bc), errResult);
 #endif
   if (NS_WARN_IF(errResult.Failed())) {
     promise->Reject(errResult, __func__);
@@ -447,8 +519,9 @@ RefPtr<ClientOpPromise> ClientOpenWindow(
 
   browsingContextReadyPromise->Then(
       GetCurrentSerialEventTarget(), __func__,
-      [argsValidated, promise](const RefPtr<BrowsingContext>& aBC) {
-        WaitForLoad(argsValidated, aBC, promise);
+      [argsValidated, promise,
+       shouldLoadURI](const RefPtr<BrowsingContext>& aBC) {
+        WaitForLoad(argsValidated, aBC, promise, shouldLoadURI);
       },
       [promise]() {
         // in case of failure, reject the original promise

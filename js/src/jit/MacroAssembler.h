@@ -213,8 +213,6 @@
 #define PER_SHARED_ARCH DEFINED_ON(ALL_SHARED_ARCH)
 #define OOL_IN_HEADER
 
-class JSLinearString;
-
 namespace JS {
 struct ExpandoAndGeneration;
 }
@@ -241,6 +239,7 @@ enum class Trap;
 namespace jit {
 
 // Defined in JitFrames.h
+class FrameDescriptor;
 enum class ExitFrameType : uint8_t;
 
 class AutoSaveLiveRegisters;
@@ -558,6 +557,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void PushEmptyRooted(VMFunctionData::RootType rootType);
   inline CodeOffset PushWithPatch(ImmWord word);
   inline CodeOffset PushWithPatch(ImmPtr imm);
+
+  using MacroAssemblerSpecific::push;
 
   void Pop(const Operand op) DEFINED_ON(x86_shared);
   void Pop(Register reg) PER_SHARED_ARCH;
@@ -894,17 +895,17 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   // The frame descriptor is the second field of all Jit frames, pushed before
   // calling the Jit function. See CommonFrameLayout::descriptor_.
-  inline void pushFrameDescriptor(FrameType type);
-  inline void PushFrameDescriptor(FrameType type);
+  inline void push(FrameDescriptor descriptor);
+  inline void Push(FrameDescriptor descriptor);
 
   // For JitFrameLayout, the descriptor also stores the number of arguments
   // passed by the caller. See MakeFrameDescriptorForJitCall.
-  inline void pushFrameDescriptorForJitCall(FrameType type, uint32_t argc);
   inline void pushFrameDescriptorForJitCall(FrameType type, Register argc,
-                                            Register scratch);
-  inline void PushFrameDescriptorForJitCall(FrameType type, uint32_t argc);
+                                            Register scratch,
+                                            bool hasInlineICScript = false);
   inline void PushFrameDescriptorForJitCall(FrameType type, Register argc,
-                                            Register scratch);
+                                            Register scratch,
+                                            bool hasInlineICScript = false);
 
   // Load the number of actual arguments from the frame's JitFrameLayout.
   inline void loadNumActualArgs(Register framePtr, Register dest);
@@ -3888,9 +3889,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   CodeOffset wasmMarkedSlowCall(const wasm::CallSiteDesc& desc,
                                 const Register reg) PER_SHARED_ARCH;
 
-#ifdef ENABLE_WASM_MEMORY64
   void wasmClampTable64Address(Register64 address, Register out);
-#endif
 
   // WasmTableCallIndexReg must contain the index of the indirect call.  This is
   // for wasm calls only.
@@ -5068,7 +5067,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void loadJitActivation(Register dest);
 
-  void guardSpecificAtom(Register str, JSAtom* atom, Register scratch,
+  void guardSpecificAtom(Register str, JSOffThreadAtom* atom, Register scratch,
                          const LiveRegisterSet& volatileRegs, Label* fail);
 
   void guardStringToInt32(Register str, Register output, Register scratch,
@@ -5624,21 +5623,21 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
  private:
   void branchIfNotStringCharsEquals(Register stringChars,
-                                    const JSLinearString* linear, Label* label);
+                                    const JSOffThreadAtom* str, Label* label);
 
  public:
-  // Returns true if |linear| is a (non-empty) string which can be compared
+  // Returns true if |str| is a (non-empty) string which can be compared
   // using |compareStringChars|.
-  static bool canCompareStringCharsInline(const JSLinearString* linear);
+  static bool canCompareStringCharsInline(const JSOffThreadAtom* str);
 
   // Load the string characters in preparation for |compareStringChars|.
-  void loadStringCharsForCompare(Register input, const JSLinearString* linear,
+  void loadStringCharsForCompare(Register input, const JSOffThreadAtom* str,
                                  Register stringChars, Label* fail);
 
   // Compare string characters based on the equality operator. The string
-  // characters must be at least as long as the length of |linear|.
+  // characters must be at least as long as the length of |str|.
   void compareStringChars(JSOp op, Register stringChars,
-                          const JSLinearString* linear, Register result);
+                          const JSOffThreadAtom* str, Register result);
 
   // Compares two strings for equality based on the JSOP.
   // This checks for identical pointers, atoms and length and fails for
@@ -5892,9 +5891,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
  public:
   void loadJitCodeRaw(Register func, Register dest);
-  void loadBaselineJitCodeRaw(Register func, Register dest,
-                              Label* failure = nullptr);
-  void storeICScriptInJSContext(Register icScript);
+  void loadJitCodeRawNoIon(Register func, Register dest, Register scratch);
 
   void loadBaselineFramePtr(Register framePtr, Register dest);
 

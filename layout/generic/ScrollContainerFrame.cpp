@@ -3752,10 +3752,9 @@ void ScrollContainerFrame::MaybeCreateTopLayerAndWrapRootItems(
       // container in the async zoom container. Otherwise the blend container
       // ends up outside the zoom container which results in blend failure for
       // WebRender.
-      nsDisplayItem* blendContainer =
-          nsDisplayBlendContainer::CreateForMixBlendMode(
-              aBuilder, this, &rootResultList,
-              aBuilder->CurrentActiveScrolledRoot());
+      nsDisplayItem* blendContainer = nsDisplayBlendContainer::Create(
+          aBuilder, this, &rootResultList,
+          aBuilder->CurrentActiveScrolledRoot());
       rootResultList.AppendToTop(blendContainer);
 
       // Blend containers can be created or omitted during partial updates
@@ -6697,7 +6696,9 @@ static bool ShellIsAlive(nsWeakPtr& aWeakPtr) {
 
 void ScrollContainerFrame::SetScrollbarEnabled(Element* aElement,
                                                nscoord aMaxPos) {
-  DebugOnly<nsWeakPtr> weakShell(do_GetWeakReference(PresShell()));
+#ifdef DEBUG
+  nsWeakPtr weakShell(do_GetWeakReference(PresShell()));
+#endif
   if (aMaxPos) {
     aElement->UnsetAttr(kNameSpaceID_None, nsGkAtoms::disabled, true);
   } else {
@@ -6708,7 +6709,9 @@ void ScrollContainerFrame::SetScrollbarEnabled(Element* aElement,
 
 void ScrollContainerFrame::SetCoordAttribute(Element* aElement, nsAtom* aAtom,
                                              nscoord aSize) {
-  DebugOnly<nsWeakPtr> weakShell(do_GetWeakReference(PresShell()));
+#ifdef DEBUG
+  nsWeakPtr weakShell(do_GetWeakReference(PresShell()));
+#endif
   // convert to pixels
   int32_t pixelSize = nsPresContext::AppUnitsToIntCSSPixels(aSize);
 

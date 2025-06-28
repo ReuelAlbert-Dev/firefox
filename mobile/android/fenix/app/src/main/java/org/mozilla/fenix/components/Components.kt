@@ -45,7 +45,9 @@ import org.mozilla.fenix.crashes.SettingsCrashReportCache
 import org.mozilla.fenix.datastore.pocketStoriesSelectedCategoriesDataStore
 import org.mozilla.fenix.distributions.DefaultDistributionBrowserStoreProvider
 import org.mozilla.fenix.distributions.DefaultDistributionProviderChecker
+import org.mozilla.fenix.distributions.DefaultDistributionSettings
 import org.mozilla.fenix.distributions.DistributionIdManager
+import org.mozilla.fenix.distributions.LegacyDistributionProviderChecker
 import org.mozilla.fenix.ext.asRecentTabs
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.filterState
@@ -65,6 +67,7 @@ import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.onboarding.FenixOnboarding
 import org.mozilla.fenix.perf.AppStartReasonProvider
 import org.mozilla.fenix.perf.StartupActivityLog
+import org.mozilla.fenix.perf.StartupStateProvider
 import org.mozilla.fenix.perf.StrictModeManager
 import org.mozilla.fenix.perf.lazyMonitored
 import org.mozilla.fenix.utils.Settings
@@ -201,7 +204,7 @@ class Components(private val context: Context) {
             browserStore = core.store,
             storage = DefaultPrivateBrowsingLockStorage(
                 preferences = settings.preferences,
-                privateBrowsingLockPrefKey = context.getString(R.string.pref_key_private_browsing_locked_enabled),
+                privateBrowsingLockPrefKey = context.getString(R.string.pref_key_private_browsing_locked),
             ),
         )
     }
@@ -238,6 +241,7 @@ class Components(private val context: Context) {
 
     val appStartReasonProvider by lazyMonitored { AppStartReasonProvider() }
     val startupActivityLog by lazyMonitored { StartupActivityLog() }
+    val startupStateProvider by lazyMonitored { StartupStateProvider(startupActivityLog, appStartReasonProvider) }
 
     val appStore by lazyMonitored {
         val blocklistHandler = BlocklistHandler(settings)
@@ -322,6 +326,8 @@ class Components(private val context: Context) {
             context = context,
             browserStoreProvider = DefaultDistributionBrowserStoreProvider(core.store),
             distributionProviderChecker = DefaultDistributionProviderChecker(context),
+            legacyDistributionProviderChecker = LegacyDistributionProviderChecker(context),
+            distributionSettings = DefaultDistributionSettings(settings),
         )
     }
 }

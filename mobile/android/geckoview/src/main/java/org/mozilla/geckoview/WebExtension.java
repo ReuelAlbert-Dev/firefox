@@ -103,6 +103,30 @@ public class WebExtension {
 
   private static final String LOGTAG = "WebExtension";
 
+  /**
+   * The list of data collection permission names.
+   *
+   * <p>This list should be kept in sync with the WebExtensions JSON schema defined at the gecko
+   * toolkit level. It is made public so that upper Android layers can have access to a list of data
+   * collection permissions that is guaranteed to match the gecko one, which can be useful in tests
+   * for instance.
+   */
+  public static final List<String> DATA_COLLECTION_PERMISSIONS =
+      List.of(
+          "authenticationInfo",
+          "bookmarksInfo",
+          "browsingActivity",
+          "financialAndPaymentInfo",
+          "healthInfo",
+          "locationInfo",
+          "none",
+          "personalCommunications",
+          "personallyIdentifyingInfo",
+          "searchTerms",
+          "technicalAndInteraction",
+          "websiteActivity",
+          "websiteContent");
+
   // Keep in sync with GeckoViewWebExtension.sys.mjs
   public static class Flags {
     /*
@@ -1876,6 +1900,9 @@ public class WebExtension {
      */
     public final @NonNull String[] requiredOrigins;
 
+    /** Required data collection permissions for this extension. */
+    public final @NonNull String[] requiredDataCollectionPermissions;
+
     /**
      * Optional permissions for this extension.
      *
@@ -1911,6 +1938,12 @@ public class WebExtension {
      * Host permissions </a>.
      */
     public final @NonNull String[] grantedOptionalOrigins;
+
+    /** Optional data collection permissions for this extension. */
+    public final @NonNull String[] optionalDataCollectionPermissions;
+
+    /** Granted optional data collection permissions for this extension. */
+    public final @NonNull String[] grantedOptionalDataCollectionPermissions;
 
     /**
      * Branding name for this extension.
@@ -2084,10 +2117,13 @@ public class WebExtension {
       icon = null;
       requiredPermissions = null;
       requiredOrigins = null;
+      requiredDataCollectionPermissions = null;
       optionalPermissions = null;
       optionalOrigins = null;
+      optionalDataCollectionPermissions = null;
       grantedOptionalPermissions = null;
       grantedOptionalOrigins = null;
+      grantedOptionalDataCollectionPermissions = null;
       name = null;
       description = null;
       version = null;
@@ -2117,10 +2153,16 @@ public class WebExtension {
     /* package */ MetaData(final GeckoBundle bundle) {
       requiredPermissions = bundle.getStringArray("requiredPermissions");
       requiredOrigins = bundle.getStringArray("requiredOrigins");
+      requiredDataCollectionPermissions =
+          bundle.getStringArray("requiredDataCollectionPermissions");
       optionalPermissions = bundle.getStringArray("optionalPermissions");
       optionalOrigins = bundle.getStringArray("optionalOrigins");
+      optionalDataCollectionPermissions =
+          bundle.getStringArray("optionalDataCollectionPermissions");
       grantedOptionalPermissions = bundle.getStringArray("grantedOptionalPermissions");
       grantedOptionalOrigins = bundle.getStringArray("grantedOptionalOrigins");
+      grantedOptionalDataCollectionPermissions =
+          bundle.getStringArray("grantedOptionalDataCollectionPermissions");
       description = bundle.getString("description");
       version = bundle.getString("version");
       creatorName = bundle.getString("creatorName");
@@ -2996,17 +3038,38 @@ public class WebExtension {
     /** Whether the user granted access in private mode or not. */
     @Nullable public final Boolean isPrivateModeGranted;
 
+    /** Whether the user granted access to technical and interaction data collection. */
+    @Nullable public final Boolean isTechnicalAndInteractionDataGranted;
+
     /**
      * Creates a new PermissionPromptResponse with the given fields.
      *
      * @param isPermissionsGranted Whether the user granted permissions or not.
      * @param isPrivateModeGranted Whether the user granted access in private mode or not.
      */
+    @Deprecated
+    @DeprecationSchedule(id = "web-extension-permission-prompt-response", version = 143)
     public PermissionPromptResponse(
         final @Nullable Boolean isPermissionsGranted,
         final @Nullable Boolean isPrivateModeGranted) {
+      this(isPermissionsGranted, isPrivateModeGranted, false);
+    }
+
+    /**
+     * Creates a new PermissionPromptResponse with the given fields.
+     *
+     * @param isPermissionsGranted Whether the user granted permissions or not.
+     * @param isPrivateModeGranted Whether the user granted access in private mode or not.
+     * @param isTechnicalAndInteractionDataGranted Whether the user granted access to technical and
+     *     interaction data collection.
+     */
+    public PermissionPromptResponse(
+        final Boolean isPermissionsGranted,
+        final Boolean isPrivateModeGranted,
+        final Boolean isTechnicalAndInteractionDataGranted) {
       this.isPermissionsGranted = isPermissionsGranted;
       this.isPrivateModeGranted = isPrivateModeGranted;
+      this.isTechnicalAndInteractionDataGranted = isTechnicalAndInteractionDataGranted;
     }
   }
 }

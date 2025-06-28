@@ -107,6 +107,7 @@
 #include "nsICaptivePortalService.h"
 #include "nsIChannel.h"
 #include "nsIChannelEventSink.h"
+#include "nsIClassifiedChannel.h"
 #include "nsIClassOfService.h"
 #include "nsIConsoleReportCollector.h"
 #include "nsIContent.h"
@@ -2888,7 +2889,7 @@ nsresult nsDocShell::AddChildSHEntry(nsISHEntry* aCloneRef,
   } else {
     RefPtr<ChildSHistory> shistory = GetRootSessionHistory();
     if (shistory) {
-      rv = shistory->LegacySHistory()->AddChildSHEntryHelper(
+      rv = shistory->LegacySHistory()->AddNestedSHEntry(
           aCloneRef, aNewEntry, mBrowsingContext->Top(), aCloneChildren);
     }
   }
@@ -3242,11 +3243,13 @@ nsresult nsDocShell::FixupAndLoadURIString(
       triggeringPrincipal = nsContentUtils::GetSystemPrincipal();
     }
     if (mozilla::SessionHistoryInParent()) {
+      UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
       mActiveEntry = MakeUnique<SessionHistoryInfo>(
           uri, triggeringPrincipal, nullptr, nullptr, nullptr,
           nsLiteralCString("text/html"));
       mBrowsingContext->SetActiveSessionHistoryEntry(
-          Nothing(), mActiveEntry.get(), MAKE_LOAD_TYPE(LOAD_NORMAL, loadFlags),
+          Nothing(), mActiveEntry.get(), previousActiveEntry.get(),
+          MAKE_LOAD_TYPE(LOAD_NORMAL, loadFlags),
           /* aUpdatedCacheKey = */ 0);
     }
     if (DisplayLoadError(rv, nullptr, PromiseFlatString(aURIString).get(),
@@ -3900,14 +3903,37 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aErrorURI, nsIURI* aFailedURI,
   return InternalLoad(loadState);
 }
 
+MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP
+nsDocShell::Reload(uint32_t aReloadFlags) {
+  return ReloadNavigable(Nothing(), aReloadFlags, nullptr,
+                         UserNavigationInvolvement::BrowserUI);
+}
+
 // https://html.spec.whatwg.org/#reload
 // To reload a navigable navigable given an optional serialized state-or-null
 // navigationAPIState (default null) and an optional user navigation
 // involvement userInvolvement (default "none"):
 nsresult nsDocShell::ReloadNavigable(
-    JSContext* aCx, uint32_t aReloadFlags,
+    mozilla::Maybe<NotNull<JSContext*>> aCx, uint32_t aReloadFlags,
     nsIStructuredCloneContainer* aNavigationAPIState,
     UserNavigationInvolvement aUserInvolvement) {
+  if (!IsNavigationAllowed()) {
+    return NS_OK;  // JS may not handle returning of an error code
+  }
+
+  NS_ASSERTION(((aReloadFlags & INTERNAL_LOAD_FLAGS_LOADURI_SETUP_FLAGS) == 0),
+               "Reload command not updated to use load flags!");
+  NS_ASSERTION((aReloadFlags & EXTRA_LOAD_FLAGS) == 0,
+               "Don't pass these flags to Reload");
+
+  uint32_t loadType = MAKE_LOAD_TYPE(LOAD_RELOAD_NORMAL, aReloadFlags);
+  NS_ENSURE_TRUE(IsValidLoadType(loadType), NS_ERROR_INVALID_ARG);
+  NS_ENSURE_TRUE(
+      aUserInvolvement == UserNavigationInvolvement::BrowserUI || aCx,
+      NS_ERROR_INVALID_ARG);
+
+  RefPtr<nsDocShell> docShell(this);
+
   // 1. If userInvolvement is not "browser UI", then:
   if (aUserInvolvement != UserNavigationInvolvement::BrowserUI) {
     // 1.1 Let navigation be navigable's active window's navigation API.
@@ -3937,37 +3963,17 @@ nsresult nsDocShell::ReloadNavigable(
     RefPtr destinationURL = mActiveEntry ? mActiveEntry->GetURI() : nullptr;
     if (navigation &&
         !navigation->FirePushReplaceReloadNavigateEvent(
-            aCx, NavigationType::Reload, destinationURL,
-            /* aIsSameDocument */ false, Some(aUserInvolvement),
+            *aCx, NavigationType::Reload, destinationURL,
+            /* aIsSameDocument */ false, /* aIsSync */ false,
+            Some(aUserInvolvement),
             /* aSourceElement*/ nullptr, /* aFormDataEntryList */ nullptr,
             destinationNavigationAPIState,
             /* aClassiCHistoryAPIState */ nullptr)) {
       return NS_OK;
     }
   }
-  // 2. Set navigable's active session history entry's document state's reload
-  //    pending to true.
-  // 3. Let traversable be navigable's traversable navigable.
-  // 4. Append the following session history traversal steps to traversable:
-  // 4.1 Apply the reload history step to traversable given userInvolvement.
-  // XXX this is not complete yet. userInvolvement is not yet propagated,
-  //     and the navigate event is not yet fired (https://bugzil.la/1962710)
-  return Reload(aReloadFlags);
-}
 
-NS_IMETHODIMP
-nsDocShell::Reload(uint32_t aReloadFlags) {
-  if (!IsNavigationAllowed()) {
-    return NS_OK;  // JS may not handle returning of an error code
-  }
-
-  NS_ASSERTION(((aReloadFlags & INTERNAL_LOAD_FLAGS_LOADURI_SETUP_FLAGS) == 0),
-               "Reload command not updated to use load flags!");
-  NS_ASSERTION((aReloadFlags & EXTRA_LOAD_FLAGS) == 0,
-               "Don't pass these flags to Reload");
-
-  uint32_t loadType = MAKE_LOAD_TYPE(LOAD_RELOAD_NORMAL, aReloadFlags);
-  NS_ENSURE_TRUE(IsValidLoadType(loadType), NS_ERROR_INVALID_ARG);
+  // The following steps are implemented by the remainder of ReloadNavigable.
 
   // Send notifications to the HistoryListener if any, about the impending
   // reload
@@ -3977,7 +3983,6 @@ nsDocShell::Reload(uint32_t aReloadFlags) {
     bool forceReload = IsForceReloadType(loadType);
     if (!XRE_IsParentProcess()) {
       ++mPendingReloadCount;
-      RefPtr<nsDocShell> docShell(this);
       nsCOMPtr<nsIDocumentViewer> viewer(mDocumentViewer);
       NS_ENSURE_STATE(viewer);
 
@@ -4130,6 +4135,8 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
   uint32_t triggeringSandboxFlags = aDocument->GetSandboxFlags();
   uint64_t triggeringWindowId = aDocument->InnerWindowID();
   bool triggeringStorageAccess = aDocument->UsingStorageAccess();
+  net::ClassificationFlags triggeringClassificationFlags =
+      aDocument->GetScriptTrackingFlags();
 
   nsAutoString contentTypeHint;
   aDocument->GetContentType(contentTypeHint);
@@ -4178,6 +4185,7 @@ nsresult nsDocShell::ReloadDocument(nsDocShell* aDocShell, Document* aDocument,
   loadState->SetTriggeringSandboxFlags(triggeringSandboxFlags);
   loadState->SetTriggeringWindowId(triggeringWindowId);
   loadState->SetTriggeringStorageAccess(triggeringStorageAccess);
+  loadState->SetTriggeringClassificationFlags(triggeringClassificationFlags);
   loadState->SetPrincipalToInherit(triggeringPrincipal);
   loadState->SetCsp(csp);
   loadState->SetInternalLoadFlags(flags);
@@ -5160,6 +5168,7 @@ nsDocShell::ForceRefreshURI(nsIURI* aURI, nsIPrincipal* aPrincipal,
   loadState->SetTriggeringSandboxFlags(doc->GetSandboxFlags());
   loadState->SetTriggeringWindowId(doc->InnerWindowID());
   loadState->SetTriggeringStorageAccess(doc->UsingStorageAccess());
+  loadState->SetTriggeringClassificationFlags(doc->GetScriptTrackingFlags());
 
   loadState->SetPrincipalIsExplicit(true);
 
@@ -5563,8 +5572,8 @@ static bool IsFollowupPartOfMultipart(nsIRequest* aRequest) {
 
 nsresult nsDocShell::Embed(nsIDocumentViewer* aDocumentViewer,
                            WindowGlobalChild* aWindowActor,
-                           bool aIsTransientAboutBlank, bool aPersist,
-                           nsIRequest* aRequest, nsIURI* aPreviousURI) {
+                           bool aIsTransientAboutBlank, nsIRequest* aRequest,
+                           nsIURI* aPreviousURI) {
   // Save the LayoutHistoryState of the previous document, before
   // setting up new document
   PersistLayoutHistoryState();
@@ -5621,7 +5630,8 @@ nsresult nsDocShell::Embed(nsIDocumentViewer* aDocumentViewer,
     }
 
     MOZ_LOG(gSHLog, LogLevel::Debug, ("document %p Embed", this));
-    MoveLoadingToActiveEntry(aPersist, expired, cacheKey, aPreviousURI,
+
+    MoveLoadingToActiveEntry(expired, cacheKey, aPreviousURI,
                              partitionedPrincipal);
   }
 
@@ -5682,13 +5692,20 @@ nsDocShell::OnProgressChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
 NS_IMETHODIMP
 nsDocShell::OnStateChange(nsIWebProgress* aProgress, nsIRequest* aRequest,
                           uint32_t aStateFlags, nsresult aStatus) {
-  // If we're receiving a notification on ourselves, also notify WebProgress on
-  // BrowsingContextWebProgress, potentially over IPC.
+  // If we're receiving a notification on ourselves which has at least one of
+  // the state change flags in kStateChangeFlagFilter, also notify WebProgress
+  // on BrowsingContextWebProgress, potentially over IPC.
   //
   // NOTE: We don't notify for bubbled notifications (aProgress != this), as
   // BrowsingContextWebProgress independently handles event bubbling in the
   // parent process.
-  if (aProgress == this) {
+  //
+  // NOTE: We don't filter notifications when registering our listener, as
+  // `STATE_IS_REDIRECTED_DOCUMENT` cannot be filtered for at registration time.
+  static constexpr uint32_t kStateChangeFlagFilter =
+      STATE_IS_NETWORK | STATE_IS_DOCUMENT | STATE_IS_WINDOW |
+      STATE_IS_REDIRECTED_DOCUMENT;
+  if (aProgress == this && (aStateFlags & kStateChangeFlagFilter) != 0) {
     if (nsCOMPtr<nsIWebProgressListener> listener = BCWebProgressListener()) {
       listener->OnStateChange(aProgress, aRequest, aStateFlags, aStatus);
     }
@@ -6759,6 +6776,19 @@ nsresult nsDocShell::CreateAboutBlankDocumentViewer(
       // after being set here.
       blankDoc->SetSandboxFlags(sandboxFlags);
 
+      // We inherit the classification flags from the parent document if the
+      // principal matches.
+      nsCOMPtr<nsIDocShellTreeItem> parentItem;
+      GetInProcessSameTypeParent(getter_AddRefs(parentItem));
+      if (parentItem) {
+        RefPtr<Document> parentDocument = parentItem->GetDocument();
+        if (parentDocument && principal &&
+            principal->Equals(parentDocument->NodePrincipal())) {
+          blankDoc->SetClassificationFlags(
+              parentDocument->GetClassificationFlags());
+        }
+      }
+
       // create a content viewer for us and the new document
       docFactory->CreateInstanceForDocument(
           NS_ISUPPORTS_CAST(nsIDocShell*, this), blankDoc, "view",
@@ -6767,7 +6797,10 @@ nsresult nsDocShell::CreateAboutBlankDocumentViewer(
       // hook 'em up
       if (viewer) {
         viewer->SetContainer(this);
-        rv = Embed(viewer, aActor, true, false, nullptr, mCurrentURI);
+        if (mLoadingEntry && mBrowsingContext->IsTop()) {
+          mLoadingEntry->mInfo.SetTransient();
+        }
+        rv = Embed(viewer, aActor, true, nullptr, mCurrentURI);
         NS_ENSURE_SUCCESS(rv, rv);
 
         SetCurrentURI(blankDoc->GetDocumentURI(), nullptr,
@@ -7957,6 +7990,19 @@ nsresult nsDocShell::CreateDocumentViewer(const nsACString& aContentType,
                                       nullptr, nullptr, nullptr, true, false);
   }
 
+  // We inherit the classification flags from the parent document if the
+  // document is about:blank and the principal matches.
+  nsCOMPtr<nsIDocShellTreeItem> parentItem;
+  GetInProcessSameTypeParent(getter_AddRefs(parentItem));
+  if (parentItem && finalURI && NS_IsAboutBlank(finalURI)) {
+    RefPtr<Document> doc = viewer->GetDocument();
+    RefPtr<Document> parentDocument = parentItem->GetDocument();
+    if (parentDocument && doc &&
+        doc->NodePrincipal()->Equals(parentDocument->NodePrincipal())) {
+      doc->SetClassificationFlags(parentDocument->GetClassificationFlags());
+    }
+  }
+
   // let's try resetting the load group if we need to...
   nsCOMPtr<nsILoadGroup> currentLoadGroup;
   NS_ENSURE_SUCCESS(
@@ -7999,9 +8045,11 @@ nsresult nsDocShell::CreateDocumentViewer(const nsACString& aContentType,
     aOpenedChannel->SetNotificationCallbacks(this);
   }
 
-  NS_ENSURE_SUCCESS(Embed(viewer, nullptr, false,
-                          ShouldAddToSessionHistory(finalURI, aOpenedChannel),
-                          aOpenedChannel, previousURI),
+  if (mLoadingEntry && mBrowsingContext->IsTop() &&
+      !ShouldAddToSessionHistory(finalURI, aOpenedChannel)) {
+    mLoadingEntry->mInfo.SetTransient();
+  }
+  NS_ENSURE_SUCCESS(Embed(viewer, nullptr, false, aOpenedChannel, previousURI),
                     NS_ERROR_FAILURE);
 
   if (!mBrowsingContext->GetHasLoadedNonInitialDocument()) {
@@ -8557,6 +8605,8 @@ nsresult nsDocShell::PerformRetargeting(nsDocShellLoadState* aLoadState) {
       loadState->SetTriggeringWindowId(aLoadState->TriggeringWindowId());
       loadState->SetTriggeringStorageAccess(
           aLoadState->TriggeringStorageAccess());
+      loadState->SetTriggeringClassificationFlags(
+          aLoadState->TriggeringClassificationFlags());
       loadState->SetCsp(aLoadState->Csp());
       loadState->SetInheritPrincipal(aLoadState->HasInternalLoadFlags(
           INTERNAL_LOAD_FLAGS_INHERIT_PRINCIPAL));
@@ -8891,7 +8941,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
         // Step 4
         bool shouldContinue = navigation->FirePushReplaceReloadNavigateEvent(
             jsapi.cx(), aLoadState->GetNavigationType(), newURI,
-            /* aIsSameDocument */ true,
+            /* aIsSameDocument */ true, /* aIsSync */ true,
             Some(aLoadState->UserNavigationInvolvement()), sourceElement,
             /* aFormDataEntryList */ nullptr,
             /* aNavigationAPIState */ destinationNavigationAPIState,
@@ -9165,7 +9215,7 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       // URI, but in that case mCurrentURI won't be null here.
       mBrowsingContext->SessionHistoryCommit(
           *mLoadingEntry, mLoadType, mCurrentURI, previousActiveEntry.get(),
-          true, true,
+          true,
           /* No expiration update on the same document loads*/
           false, cacheKey, doc->PartitionedPrincipal());
       // FIXME Need to set postdata.
@@ -9196,8 +9246,10 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
       MOZ_LOG(gSHLog, LogLevel::Debug,
               ("Creating an active entry on nsDocShell %p to %s", this,
                newURI->GetSpecOrDefault().get()));
-      if (mActiveEntry) {
-        mActiveEntry = MakeUnique<SessionHistoryInfo>(*mActiveEntry, newURI);
+      UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
+      if (previousActiveEntry) {
+        mActiveEntry =
+            MakeUnique<SessionHistoryInfo>(*previousActiveEntry, newURI);
       } else {
         mActiveEntry = MakeUnique<SessionHistoryInfo>(
             newURI, newURITriggeringPrincipal, newURIPrincipalToInherit,
@@ -9242,7 +9294,8 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
         // FIXME We should probably just compute mChildOffset in the parent
         //       instead of passing it over IPC here.
         mBrowsingContext->SetActiveSessionHistoryEntry(
-            Some(scrollPos), mActiveEntry.get(), mLoadType, cacheKey);
+            Some(scrollPos), mActiveEntry.get(), previousActiveEntry.get(),
+            mLoadType, cacheKey);
         // FIXME Do we need to update mPreviousEntryIndex and mLoadedEntryIndex?
       }
     }
@@ -9652,7 +9705,7 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
           // Step 21.4
           bool shouldContinue = navigation->FirePushReplaceReloadNavigateEvent(
               jsapi.cx(), aLoadState->GetNavigationType(), destinationURL,
-              /* aIsSameDocument */ false,
+              /* aIsSameDocument */ false, /* aIsSync */ false,
               Some(aLoadState->UserNavigationInvolvement()), sourceElement,
               formData.forget(), navigationAPIStateForFiring,
               /* aClassicHistoryAPIState */ nullptr);
@@ -10756,6 +10809,9 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   loadInfo->SetTriggeringWindowId(aLoadState->TriggeringWindowId());
   loadInfo->SetTriggeringStorageAccess(aLoadState->TriggeringStorageAccess());
   loadInfo->SetTriggeringSandboxFlags(aLoadState->TriggeringSandboxFlags());
+  net::ClassificationFlags flags = aLoadState->TriggeringClassificationFlags();
+  loadInfo->SetTriggeringFirstPartyClassificationFlags(flags.firstPartyFlags);
+  loadInfo->SetTriggeringThirdPartyClassificationFlags(flags.thirdPartyFlags);
   loadInfo->SetIsMetaRefresh(aLoadState->IsMetaRefresh());
 
   uint32_t cacheKey = 0;
@@ -10927,11 +10983,14 @@ static nsresult AppendSegmentToString(nsIInputStream* aIn, void* aClosure,
     openFlags |= nsIURILoader::DONT_RETARGET;
   }
 
-  // Unless the pref is set, object/embed loads always specify DONT_RETARGET.
-  // See bug 1868001 for details.
-  if (!aIsDocumentLoad &&
-      !StaticPrefs::dom_navigation_object_embed_allow_retargeting()) {
-    openFlags |= nsIURILoader::DONT_RETARGET;
+  if (!aIsDocumentLoad) {
+    openFlags |= nsIURILoader::IS_OBJECT_EMBED;
+
+    // Unless the pref is set, object/embed loads always specify DONT_RETARGET.
+    // See bug 1868001 for details.
+    if (!StaticPrefs::dom_navigation_object_embed_allow_retargeting()) {
+      openFlags |= nsIURILoader::DONT_RETARGET;
+    }
   }
 
   return openFlags;
@@ -11022,8 +11081,14 @@ nsresult nsDocShell::OpenRedirectedChannel(nsDocShellLoadState* aLoadState) {
   // ClientInfo, so we just need to allocate a corresponding ClientSource.
   CreateReservedSourceIfNeeded(channel, GetMainThreadSerialEventTarget());
 
+  uint32_t documentOpenInfoFlags = nsIURILoader::DONT_RETARGET;
+  if (loadInfo->GetExternalContentPolicyType() ==
+      ExtContentPolicy::TYPE_OBJECT) {
+    documentOpenInfoFlags |= nsIURILoader::IS_OBJECT_EMBED;
+  }
+
   RefPtr<nsDocumentOpenInfo> loader =
-      new nsDocumentOpenInfo(this, nsIURILoader::DONT_RETARGET, nullptr);
+      new nsDocumentOpenInfo(this, documentOpenInfoFlags, nullptr);
   channel->SetLoadGroup(mLoadGroup);
 
   MOZ_ALWAYS_SUCCEEDS(loader->Prepare());
@@ -11632,7 +11697,8 @@ nsDocShell::AddState(JS::Handle<JS::Value> aData, const nsAString& aTitle,
       bool shouldContinue = navigation->FirePushReplaceReloadNavigateEvent(
           aCx, aReplace ? NavigationType::Replace : NavigationType::Push,
           newURI,
-          /* aIsSameDocument */ true, /* aUserInvolvement */ Nothing(),
+          /* aIsSameDocument */ true, /* aIsSync */ true,
+          /* aUserInvolvement */ Nothing(),
           /* aSourceElement */ nullptr, /* aFormDataEntryList */ nullptr,
           /* aNavigationAPIState */ nullptr, scContainer);
 
@@ -12191,12 +12257,16 @@ nsresult nsDocShell::AddToSessionHistory(
                 userActivation);
 
   if (mBrowsingContext->IsTop() && GetSessionHistory()) {
-    bool shouldPersist = ShouldAddToSessionHistory(aURI, aChannel);
     Maybe<int32_t> previousEntryIndex;
     Maybe<int32_t> loadedEntryIndex;
+
+    if (mBrowsingContext->IsTop() &&
+        !ShouldAddToSessionHistory(aURI, aChannel)) {
+      entry->SetTransient();
+    }
     rv = GetSessionHistory()->LegacySHistory()->AddToRootSessionHistory(
         aCloneChildren, mOSHE, mBrowsingContext, entry, mLoadType,
-        shouldPersist, &previousEntryIndex, &loadedEntryIndex);
+        &previousEntryIndex, &loadedEntryIndex);
 
     MOZ_ASSERT(NS_SUCCEEDED(rv), "Could not add entry to root session history");
     if (previousEntryIndex.isSome()) {
@@ -12266,9 +12336,10 @@ void nsDocShell::UpdateActiveEntry(
     CollectWireframe();
   }
 
-  if (mActiveEntry) {
+  UniquePtr<SessionHistoryInfo> previousActiveEntry(mActiveEntry.release());
+  if (previousActiveEntry) {
     // Link this entry to the previous active entry.
-    mActiveEntry = MakeUnique<SessionHistoryInfo>(*mActiveEntry, aURI);
+    mActiveEntry = MakeUnique<SessionHistoryInfo>(*previousActiveEntry, aURI);
   } else {
     mActiveEntry = MakeUnique<SessionHistoryInfo>(
         aURI, aTriggeringPrincipal, nullptr, nullptr, aCsp, mContentTypeHint);
@@ -12289,7 +12360,8 @@ void nsDocShell::UpdateActiveEntry(
     // FIXME We should probably just compute mChildOffset in the parent
     //       instead of passing it over IPC here.
     mBrowsingContext->SetActiveSessionHistoryEntry(
-        aPreviousScrollPos, mActiveEntry.get(), mLoadType,
+        aPreviousScrollPos, mActiveEntry.get(), previousActiveEntry.get(),
+        mLoadType,
         /* aCacheKey = */ 0);
     // FIXME Do we need to update mPreviousEntryIndex and mLoadedEntryIndex?
   }
@@ -13205,6 +13277,8 @@ nsresult nsDocShell::OnLinkClick(
       ownerDoc->ConsumeTextDirectiveUserActivation() ||
       hasValidUserGestureActivation);
   loadState->SetUserNavigationInvolvement(aUserInvolvement);
+  loadState->SetTriggeringClassificationFlags(
+      ownerDoc->GetScriptTrackingFlags());
 
   nsCOMPtr<nsIRunnable> ev = new OnLinkClickEvent(
       this, aContent, loadState, noOpenerImplied, aTriggeringPrincipal);
@@ -13986,8 +14060,7 @@ void nsDocShell::SetLoadingSessionHistoryInfo(
       aNeedToReportActiveAfterLoadingBecomesActive;
 }
 
-void nsDocShell::MoveLoadingToActiveEntry(bool aPersist, bool aExpired,
-                                          uint32_t aCacheKey,
+void nsDocShell::MoveLoadingToActiveEntry(bool aExpired, uint32_t aCacheKey,
                                           nsIURI* aPreviousURI,
                                           nsIPrincipal* aPartitionedPrincipal) {
   MOZ_ASSERT(mozilla::SessionHistoryInParent());
@@ -14012,10 +14085,13 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aPersist, bool aExpired,
       if (mNeedToReportActiveAfterLoadingBecomesActive) {
         // Needed to pass various history length WPTs.
         mBrowsingContext->SetActiveSessionHistoryEntry(
-            mozilla::Nothing(), mActiveEntry.get(), mLoadType,
+            mozilla::Nothing(), mActiveEntry.get(), previousActiveEntry.get(),
+            mLoadType,
             /* aUpdatedCacheKey = */ 0, false);
       }
-      mBrowsingContext->IncrementHistoryEntryCountForBrowsingContext();
+      if (!(previousActiveEntry && previousActiveEntry->IsTransient())) {
+        mBrowsingContext->IncrementHistoryEntryCountForBrowsingContext();
+      }
     }
   }
   mNeedToReportActiveAfterLoadingBecomesActive = false;
@@ -14036,12 +14112,13 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aPersist, bool aExpired,
       // URI, but in that case mCurrentURI won't be null here.
       mBrowsingContext->SessionHistoryCommit(
           *loadingEntry, loadType, aPreviousURI, previousActiveEntry.get(),
-          aPersist, false, aExpired, aCacheKey, aPartitionedPrincipal);
+          false, aExpired, aCacheKey, aPartitionedPrincipal);
     }
 
     // Only update navigation if the new entry will be persisted (i.e., is not
     // an about: page).
-    if (aPersist && GetWindow() && GetWindow()->GetCurrentInnerWindow()) {
+    if (!loadingEntry->mInfo.IsTransient() && GetWindow() &&
+        GetWindow()->GetCurrentInnerWindow()) {
       if (RefPtr navigation =
               GetWindow()->GetCurrentInnerWindow()->Navigation()) {
         mBrowsingContext->GetContiguousHistoryEntries(*mActiveEntry,

@@ -15,6 +15,7 @@ contextual-manager-more-options-popup =
 
 ## Passwords
 
+contextual-manager-passwords-title = Passwords
 contextual-manager-passwords-command-create = Add password
 contextual-manager-passwords-command-import-from-browser = Import from another browser…
 contextual-manager-passwords-command-import = Import from a file…
@@ -180,6 +181,9 @@ contextual-manager-passwords-update-password-success-heading =
   .heading = Password saved
 contextual-manager-passwords-update-password-success-button = Done
 
+contextual-manager-passwords-update-username-success-heading =
+  .heading = Username saved
+
 # Message to confirm successful removal of a password/passwords.
 #   $total (number) - Total number of passwords
 contextual-manager-passwords-delete-password-success-heading =
@@ -295,6 +299,22 @@ contextual-manager-view-alert-heading =
   .heading = View alert
 contextual-manager-view-alert-button =
   .tooltiptext = Review alert
+# Variables
+#   $count (number) - The number of active alerts associated with the login
+contextual-manager-view-alert-heading-2 =
+  .heading =
+    { $count ->
+      [1] View alert
+     *[other] View alerts
+    }
+# Variables
+#   $count (number) - The number of active alerts associated with the login
+contextual-manager-view-alert-button-2 =
+  .tooltiptext =
+    { $count ->
+      [1] Review alert
+     *[other] Review alerts
+    }
 
 contextual-manager-show-password-button =
   .aria-label = Show password

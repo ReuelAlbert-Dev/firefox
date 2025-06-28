@@ -32,8 +32,7 @@ def is_release_promotion_available(parameters):
             },
             "push": {
                 "type": "boolean",
-                "description": "Push changes using to_repo and to_branch",
-                "default": False,
+                "description": "Push changes using to_repo and to_branch (mercurial only)",
             },
             "behavior": {
                 "type": "string",

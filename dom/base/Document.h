@@ -35,6 +35,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/NotNull.h"
+#include "mozilla/PageloadEvent.h"
 #include "mozilla/PointerLockManager.h"
 #include "mozilla/PreloadService.h"
 #include "mozilla/RefPtr.h"
@@ -71,6 +72,7 @@
 #include "nsHashKeys.h"
 #include "nsIChannel.h"
 #include "nsIChannelEventSink.h"
+#include "nsIClassifiedChannel.h"
 #include "nsID.h"
 #include "nsIDocumentViewer.h"
 #include "nsIInterfaceRequestor.h"
@@ -258,6 +260,7 @@ class HTMLSharedElement;
 class HTMLVideoElement;
 class HTMLImageElement;
 class ImageTracker;
+class IntegrityPolicy;
 enum class InteractiveWidget : uint8_t;
 struct LifecycleCallbackArgs;
 class Link;
@@ -329,9 +332,6 @@ enum BFCacheStatus {
 };
 
 }  // namespace dom
-namespace glean::perf {
-struct PageLoadExtra;
-}
 }  // namespace mozilla
 
 namespace mozilla::net {
@@ -342,6 +342,8 @@ class EarlyHintConnectArgs;
 // Must be kept in sync with xpcom/rust/xpcom/src/interfaces/nonidl.rs
 #define NS_IDOCUMENT_IID \
   {0xce1f7627, 0x7109, 0x4977, {0xba, 0x77, 0x49, 0x0f, 0xfd, 0xe0, 0x7a, 0xaa}}
+
+using mozilla::performance::pageload_event::PageloadEventData;
 
 namespace mozilla::dom {
 
@@ -789,6 +791,8 @@ class Document : public nsINode,
    * Set referrer policy and upgrade-insecure-requests flags
    */
   void ApplySettingsFromCSP(bool aSpeculative);
+
+  IntegrityPolicy* GetIntegrityPolicy() const { return mIntegrityPolicy; }
 
   already_AddRefed<nsIParser> CreatorParserOrNull() {
     nsCOMPtr<nsIParser> parser = mParser;
@@ -1527,6 +1531,7 @@ class Document : public nsINode,
   friend class nsUnblockOnloadEvent;
 
   nsresult InitCSP(nsIChannel* aChannel);
+  nsresult InitIntegrityPolicy(nsIChannel* aChannel);
   nsresult InitCOEP(nsIChannel* aChannel);
   nsresult InitDocPolicy(nsIChannel* aChannel);
 
@@ -3226,8 +3231,9 @@ class Document : public nsINode,
 
   void SetNavigationTiming(nsDOMNavigationTiming* aTiming);
 
-  inline void SetPageloadEventFeature(uint32_t aFeature) {
-    mPageloadEventFeatures |= aFeature;
+  inline void SetPageloadEventFeature(
+      performance::pageload_event::DocumentFeature aFeature) {
+    mPageloadEventData.SetDocumentFeature(aFeature);
   }
 
   nsContentList* ImageMapList();
@@ -3884,10 +3890,23 @@ class Document : public nsINode,
   // The URLs passed to this function should match what
   // JS::DescribeScriptedCaller() returns, since this API is used to
   // determine whether some code is being called from a tracking script.
-  void NoteScriptTrackingStatus(const nsACString& aURL, bool isTracking);
+  void NoteScriptTrackingStatus(const nsACString& aURL,
+                                net::ClassificationFlags& aFlags);
   // The JSContext passed to this method represents the context that we want to
   // determine if it belongs to a tracker.
   bool IsScriptTracking(JSContext* aCx) const;
+
+  // Acquires the script tracking flags for the currently executing script. If
+  // the currently executing script is not a tracker, it will return the
+  // classification flags of the document.
+  net::ClassificationFlags GetScriptTrackingFlags() const;
+
+  net::ClassificationFlags GetClassificationFlags() {
+    return mClassificationFlags;
+  }
+  void SetClassificationFlags(net::ClassificationFlags aFlags) {
+    mClassificationFlags = aFlags;
+  }
 
   // ResizeObserver usage.
   void AddResizeObserver(ResizeObserver& aObserver) {
@@ -5157,6 +5176,7 @@ class Document : public nsINode,
   // CSP so we do not have to deserialize the CSP from the Client all the time.
   nsCOMPtr<nsIContentSecurityPolicy> mCSP;
   nsCOMPtr<nsIContentSecurityPolicy> mPreloadCSP;
+  RefPtr<IntegrityPolicy> mIntegrityPolicy;
 
  private:
   nsCString mContentType;
@@ -5294,10 +5314,10 @@ class Document : public nsINode,
 
   RefPtr<nsCommandManager> mMidasCommandManager;
 
-  // The set of all the tracking script URLs.  URLs are added to this set by
+  // The hashmap of all the tracking script URLs.  URLs are added to this map by
   // calling NoteScriptTrackingStatus().  Currently we assume that a URL not
-  // existing in the set means the corresponding script isn't a tracking script.
-  nsTHashSet<nsCString> mTrackingScripts;
+  // existing in the map means the corresponding script isn't a tracking script.
+  nsTHashMap<nsCStringHashKey, net::ClassificationFlags> mTrackingScripts;
 
   // Pointer to our parser if we're currently in the process of being
   // parsed into.
@@ -5479,7 +5499,9 @@ class Document : public nsINode,
   nsTHashSet<RefPtr<nsAtom>> mLanguagesUsed;
 
   // TODO(emilio): Is this hot enough to warrant to be cached?
-  RefPtr<nsAtom> mLanguageFromCharset;
+  // EncodingToLang.cpp keeps the atom alive until shutdown, so
+  // no need for a RefPtr.
+  nsAtom* mLanguageFromCharset;
 
   // Restyle root for servo's style system.
   //
@@ -5525,6 +5547,8 @@ class Document : public nsINode,
 
   bool mHasStoragePermission;
 
+  net::ClassificationFlags mClassificationFlags;
+
   // Document generation. Gets incremented everytime it changes.
   int32_t mGeneration;
 
@@ -5568,21 +5592,17 @@ class Document : public nsINode,
   // collected shadowed HTMLDocument properties. (Limited to 10 entries)
   nsTArray<nsString> mShadowedHTMLDocumentProperties;
 
-  // Bitfield to be collected in the pageload event, recording relevant features
-  // used in the document
-  uint32_t mPageloadEventFeatures = 0;
+  // Collection of data used by the pageload event.
+  PageloadEventData mPageloadEventData;
 
   // Record page load telemetry
-  void RecordPageLoadEventTelemetry(
-      glean::perf::PageLoadExtra& aEventTelemetryData);
+  void RecordPageLoadEventTelemetry();
 
   // Accumulate JS telemetry collected
-  void AccumulateJSTelemetry(
-      glean::perf::PageLoadExtra& aEventTelemetryDataOut);
+  void AccumulateJSTelemetry();
 
   // Accumulate page load metrics
-  void AccumulatePageLoadTelemetry(
-      glean::perf::PageLoadExtra& aEventTelemetryDataOut);
+  void AccumulatePageLoadTelemetry();
 
   // The OOP counterpart to nsDocLoader::mChildrenInOnload.
   // Not holding strong refs here since we don't actually use the BBCs.

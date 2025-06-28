@@ -9,7 +9,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Card
 import androidx.compose.material.Surface
@@ -196,7 +196,9 @@ fun TopSites(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        if (items != topSitesWindows.last()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
                     }
 
                     if (needsInvisibleRow && page > 0) {
@@ -207,8 +209,6 @@ fun TopSites(
         }
 
         if (pagerState.pageCount > 1) {
-            Spacer(modifier = Modifier.height(8.dp))
-
             PagerIndicator(
                 pagerState = pagerState,
                 modifier = Modifier.padding(horizontal = 16.dp),
@@ -275,20 +275,10 @@ data class TopSiteColors(
                 Color(textColor) to Color(textColor)
             }
 
-            var faviconCardBackgroundColor = FirefoxTheme.colors.layer2
-
-            wallpaperState.ComposeRunIfWallpaperCardColorsAreAvailable { cardColorLight, cardColorDark ->
-                faviconCardBackgroundColor = if (isSystemInDarkTheme()) {
-                    cardColorDark
-                } else {
-                    cardColorLight
-                }
-            }
-
             return TopSiteColors(
                 titleTextColor = titleTextColor,
                 sponsoredTextColor = sponsoredTextColor,
-                faviconCardBackgroundColor = faviconCardBackgroundColor,
+                faviconCardBackgroundColor = FirefoxTheme.colors.layer2,
             )
         }
     }
@@ -436,9 +426,9 @@ private fun TopSiteFaviconCard(
                 testTag = TOP_SITE_CARD_FAVICON
             }
             .size(TOP_SITES_FAVICON_CARD_SIZE.dp),
-        shape = RoundedCornerShape(8.dp),
+        shape = CircleShape,
         backgroundColor = backgroundColor,
-        elevation = 6.dp,
+        elevation = 0.dp,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Surface(
@@ -536,7 +526,7 @@ private fun getMenuItems(
 @PreviewLightDark
 private fun TopSitesPreview() {
     FirefoxTheme {
-        Box(modifier = Modifier.background(color = FirefoxTheme.colors.layer1)) {
+        Box(modifier = Modifier.background(color = FirefoxTheme.colors.layer1).padding(16.dp)) {
             TopSites(
                 topSites = FakeHomepagePreview.topSites(),
                 onTopSiteClick = {},

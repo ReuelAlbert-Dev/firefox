@@ -33,6 +33,7 @@ class gfxVarReceiver;
     mozilla::gfx::SurfaceFormat::X8R8G8B8_UINT32)                  \
   _(RequiresAcceleratedGLContextForCompositorOGL, bool, false)     \
   _(CanUseHardwareVideoDecoding, bool, false)                      \
+  _(CanUseHardwareVideoEncoding, bool, false)                      \
   _(DXInterop2Blocked, bool, false)                                \
   _(DXNV12Blocked, bool, false)                                    \
   _(DXP010Blocked, bool, false)                                    \
@@ -90,11 +91,17 @@ class gfxVarReceiver;
   _(SupportsThreadsafeGL, bool, false)                             \
   _(AllowWebGPU, bool, false)                                      \
   _(UseVP8HwDecode, bool, false)                                   \
+  _(UseVP8HwEncode, bool, false)                                   \
   _(UseVP9HwDecode, bool, false)                                   \
+  _(UseVP9HwEncode, bool, false)                                   \
   _(UseAV1HwDecode, bool, false)                                   \
+  _(UseAV1HwEncode, bool, false)                                   \
   _(UseH264HwDecode, bool, false)                                  \
+  _(UseH264HwEncode, bool, false)                                  \
   _(UseHEVCHwDecode, bool, false)                                  \
+  _(UseHEVCHwEncode, bool, false)                                  \
   _(HwDecodedVideoZeroCopy, bool, false)                           \
+  _(UseWMFHWDWM, bool, false)                                      \
   _(UseDMABufSurfaceExport, bool, true)                            \
   _(ReuseDecoderDevice, bool, false)                               \
   _(UseCanvasRenderThread, bool, false)                            \
@@ -108,7 +115,8 @@ class gfxVarReceiver;
   _(AllowWebGPUPresentWithoutReadback, bool, false)                \
   _(GPUProcessEnabled, bool, false)                                \
   _(DMABufModifiersP010, ArrayOfuint64_t, nsTArray<uint64_t>())    \
-  _(DMABufModifiersNV12, ArrayOfuint64_t, nsTArray<uint64_t>())
+  _(DMABufModifiersNV12, ArrayOfuint64_t, nsTArray<uint64_t>())    \
+  _(AllowGLNorm16Textures, bool, false)
 
 /* Add new entries above this line. */
 

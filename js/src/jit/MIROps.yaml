@@ -2511,7 +2511,7 @@
   operands:
     str: String
   arguments:
-    atom: JSAtom*
+    atom: JSOffThreadAtom*
   result_type: String
   guard: true
   movable: true
@@ -2861,7 +2861,7 @@
 
 - name: NewPrivateName
   arguments:
-    name: JSAtom*
+    name: JSOffThreadAtom*
   result_type: Symbol
   possibly_calls: true
   generate_lir: true
@@ -3194,6 +3194,16 @@
   congruent_to: if_operands_equal
   alias_set: custom
 
+- name: GuardElementsArePacked
+  operands:
+    elements: Elements
+  type_policy: none
+  guard: true
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: custom
+  generate_lir: true
+
 - name: GetPrototypeOf
   operands:
     target: Object
@@ -3284,6 +3294,17 @@
   # TODO: Investigate using a narrower or a custom alias set.
   alias_set: custom
   generate_lir: true
+
+- name: LoadGetterSetterFunction
+  operands:
+    getterSetter: Value
+  arguments:
+    isGetter: bool
+    needsClassGuard: bool
+  result_type: Object
+  generate_lir: true
+  lir_temps: 1
+  alias_set: none
 
 # Guard the accessor shape is present on the object or its prototype chain.
 - name: GuardHasGetterSetter

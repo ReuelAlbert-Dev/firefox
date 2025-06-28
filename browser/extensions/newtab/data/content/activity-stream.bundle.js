@@ -107,7 +107,6 @@ for (const type of [
   "ADS_RESET",
   "ADS_UPDATE_SPOCS",
   "ADS_UPDATE_TILES",
-  "ARCHIVE_FROM_POCKET",
   "BLOCK_SECTION",
   "BLOCK_URL",
   "BOOKMARK_URL",
@@ -115,7 +114,6 @@ for (const type of [
   "CLEAR_PREF",
   "COPY_DOWNLOAD_LINK",
   "DELETE_BOOKMARK_BY_ID",
-  "DELETE_FROM_POCKET",
   "DELETE_HISTORY_URL",
   "DIALOG_CANCEL",
   "DIALOG_CLOSE",
@@ -206,9 +204,7 @@ for (const type of [
   "PLACES_LINKS_CHANGED",
   "PLACES_LINKS_DELETED",
   "PLACES_LINK_BLOCKED",
-  "PLACES_SAVED_TO_POCKET",
   "POCKET_CTA",
-  "POCKET_LINK_DELETED_OR_ARCHIVED",
   "POCKET_LOGGED_IN",
   "POCKET_THUMBS_DOWN",
   "POCKET_THUMBS_UP",
@@ -226,7 +222,6 @@ for (const type of [
   "REPORT_CONTENT_SUBMIT",
   "RICH_ICON_MISSING",
   "SAVE_SESSION_PERF_DATA",
-  "SAVE_TO_POCKET",
   "SCREENSHOT_UPDATED",
   "SECTION_DEREGISTER",
   "SECTION_DISABLE",
@@ -260,6 +255,7 @@ for (const type of [
   "TOPIC_SELECTION_USER_DISMISS",
   "TOPIC_SELECTION_USER_OPEN",
   "TOPIC_SELECTION_USER_SAVE",
+  "TOP_SITES_ADD",
   "TOP_SITES_CANCEL_EDIT",
   "TOP_SITES_CLOSE_SEARCH_SHORTCUTS_MODAL",
   "TOP_SITES_EDIT",
@@ -273,6 +269,8 @@ for (const type of [
   "TOP_SITES_UPDATED",
   "TOTAL_BOOKMARKS_REQUEST",
   "TOTAL_BOOKMARKS_RESPONSE",
+  "TRENDING_SEARCH_IMPRESSION",
+  "TRENDING_SEARCH_SUGGESTION_OPEN",
   "TRENDING_SEARCH_TOGGLE_COLLAPSE",
   "TRENDING_SEARCH_UPDATE",
   "UNBLOCK_SECTION",
@@ -2031,46 +2029,6 @@ const LinkMenuOptions = {
     }),
     userEvent: "UNPIN",
   }),
-  SaveToPocket: (site, index, eventSource = "CARDGRID") => ({
-    id: "newtab-menu-save-to-pocket",
-    icon: "pocket-save",
-    action: actionCreators.AlsoToMain({
-      type: actionTypes.SAVE_TO_POCKET,
-      data: {
-        site: { url: site.url, title: site.title },
-      },
-    }),
-    impression: actionCreators.ImpressionStats({
-      source: eventSource,
-      pocket: 0,
-      tiles: [
-        {
-          id: site.guid,
-          pos: index,
-          ...(site.shim && site.shim.save ? { shim: site.shim.save } : {}),
-        },
-      ],
-    }),
-    userEvent: "SAVE_TO_POCKET",
-  }),
-  DeleteFromPocket: site => ({
-    id: "newtab-menu-delete-pocket",
-    icon: "pocket-delete",
-    action: actionCreators.AlsoToMain({
-      type: actionTypes.DELETE_FROM_POCKET,
-      data: { pocket_id: site.pocket_id },
-    }),
-    userEvent: "DELETE_FROM_POCKET",
-  }),
-  ArchiveFromPocket: site => ({
-    id: "newtab-menu-archive-pocket",
-    icon: "pocket-archive",
-    action: actionCreators.AlsoToMain({
-      type: actionTypes.ARCHIVE_FROM_POCKET,
-      data: { pocket_id: site.pocket_id },
-    }),
-    userEvent: "ARCHIVE_FROM_POCKET",
-  }),
   EditTopSite: (site, index) => ({
     id: "newtab-menu-edit-topsites",
     icon: "edit",
@@ -2087,22 +2045,6 @@ const LinkMenuOptions = {
     site.isPinned
       ? LinkMenuOptions.UnpinTopSite(site)
       : LinkMenuOptions.PinTopSite(site, index),
-  CheckSavedToPocket: (site, index, source) =>
-    site.pocket_id
-      ? LinkMenuOptions.DeleteFromPocket(site)
-      : LinkMenuOptions.SaveToPocket(site, index, source),
-  CheckBookmarkOrArchive: site =>
-    site.pocket_id
-      ? LinkMenuOptions.ArchiveFromPocket(site)
-      : LinkMenuOptions.CheckBookmark(site),
-  CheckArchiveFromPocket: site =>
-    site.pocket_id
-      ? LinkMenuOptions.ArchiveFromPocket(site)
-      : LinkMenuOptions.EmptyItem(),
-  CheckDeleteFromPocket: site =>
-    site.pocket_id
-      ? LinkMenuOptions.DeleteFromPocket(site)
-      : LinkMenuOptions.EmptyItem(),
   OpenInPrivateWindow: (site, index, eventSource, isEnabled) =>
     isEnabled ? _OpenInPrivateWindow(site) : LinkMenuOptions.EmptyItem(),
   ChangeWeatherLocation: () => ({
@@ -2323,14 +2265,26 @@ const LinkMenuOptions = {
       type: actionTypes.OPEN_LINK,
       data: { url: site.url },
     }),
+    impression: actionCreators.OnlyToMain({
+      type: actionTypes.TRENDING_SEARCH_LEARN_MORE,
+      data: {
+        variant: site.variant,
+      },
+    }),
   }),
-  TrendingSearchDismiss: () => ({
+  TrendingSearchDismiss: site => ({
     id: "newtab-trending-searches-dismiss",
     action: actionCreators.OnlyToMain({
       type: actionTypes.SET_PREF,
       data: {
         name: "trendingSearch.enabled",
         value: false,
+      },
+    }),
+    impression: actionCreators.OnlyToMain({
+      type: actionTypes.TRENDING_SEARCH_DISMISS,
+      data: {
+        variant: site.variant,
       },
     }),
   }),
@@ -2576,8 +2530,7 @@ class _DSLinkMenu extends (external_React_default()).PureComponent {
     if (isSpoc) {
       TOP_STORIES_CONTEXT_MENU_OPTIONS = ["BlockUrl", ...(showAdsReporting ? ["ReportAd"] : []), "ManageSponsoredContent", "OurSponsorsAndYourPrivacy"];
     } else {
-      const saveToPocketOptions = this.props.pocket_button_enabled ? ["CheckArchiveFromPocket", "CheckSavedToPocket"] : [];
-      TOP_STORIES_CONTEXT_MENU_OPTIONS = ["CheckBookmark", ...saveToPocketOptions, "Separator", "OpenInNewWindow", "OpenInPrivateWindow", "Separator", "BlockUrl", ...(this.props.section ? ["ReportContent"] : [])];
+      TOP_STORIES_CONTEXT_MENU_OPTIONS = ["CheckBookmark", "Separator", "OpenInNewWindow", "OpenInPrivateWindow", "Separator", "BlockUrl", ...(this.props.section ? ["ReportContent"] : [])];
     }
     const type = this.props.type || "DISCOVERY_STREAM";
     const title = this.props.title || this.props.source;
@@ -3036,6 +2989,7 @@ ImpressionStats_ImpressionStats.defaultProps = {
   source: ""
 };
 ;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/SafeAnchor/SafeAnchor.jsx
+function SafeAnchor_extends() { return SafeAnchor_extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, SafeAnchor_extends.apply(null, arguments); }
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -3100,12 +3054,16 @@ class SafeAnchor extends (external_React_default()).PureComponent {
       className,
       title
     } = this.props;
-    return /*#__PURE__*/external_React_default().createElement("a", {
+    let anchor = /*#__PURE__*/external_React_default().createElement("a", SafeAnchor_extends({
       href: this.safeURI(url),
       title: title,
       className: className,
       onClick: this.onClick
-    }, this.props.children);
+    }, this.props.tabIndex === 0 || this.props.tabIndex ? {
+      ref: this.props.setRef,
+      tabIndex: this.props.tabIndex
+    } : {}), this.props.children);
+    return anchor;
   }
 }
 ;// CONCATENATED MODULE: ./content-src/components/Card/types.mjs
@@ -3151,7 +3109,9 @@ function FeatureHighlight({
   message,
   icon,
   toggle,
+  arrowPosition = "",
   position = "top-left",
+  verticalPosition = "",
   title,
   ariaLabel,
   feature = "FEATURE_HIGHLIGHT_DEFAULT",
@@ -3203,7 +3163,7 @@ function FeatureHighlight({
   const openedClassname = opened ? `opened` : `closed`;
   return /*#__PURE__*/external_React_default().createElement("div", {
     ref: ref,
-    className: "feature-highlight"
+    className: `feature-highlight ${verticalPosition}`
   }, /*#__PURE__*/external_React_default().createElement("button", {
     title: title,
     "aria-haspopup": "true",
@@ -3211,7 +3171,7 @@ function FeatureHighlight({
     className: `toggle-button ${hideButtonClass}`,
     onClick: onToggleClick
   }, toggle), /*#__PURE__*/external_React_default().createElement("div", {
-    className: `feature-highlight-modal ${position} ${openedClassname}`
+    className: `feature-highlight-modal ${position} ${arrowPosition} ${openedClassname}`
   }, /*#__PURE__*/external_React_default().createElement("div", {
     className: "message-icon"
   }, icon), /*#__PURE__*/external_React_default().createElement("p", {
@@ -3733,11 +3693,11 @@ class _DSCard extends (external_React_default()).PureComponent {
     this.sectionsCardImagesSizes = {
       small: {
         width: 110,
-        height: 110
+        height: 117
       },
       medium: {
         width: 300,
-        height: refinedCardsLayout ? 162 : 150
+        height: refinedCardsLayout ? 160 : 150
       },
       large: {
         width: 190,
@@ -4085,7 +4045,6 @@ class _DSCard extends (external_React_default()).PureComponent {
       } catch (e) {}
     }
     const {
-      pocketButtonEnabled,
       hideDescriptions,
       compactImages,
       imageGradient,
@@ -4094,13 +4053,12 @@ class _DSCard extends (external_React_default()).PureComponent {
       descLines = 3,
       readTime: displayReadTime
     } = DiscoveryStream;
-    const layoutsVariantAEnabled = Prefs.values["newtabLayouts.variant-a"];
-    const layoutsVariantBEnabled = Prefs.values["newtabLayouts.variant-b"];
     const sectionsEnabled = Prefs.values["discoverystream.sections.enabled"];
-    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
     const smartCrop = Prefs.values["images.smart"];
     const faviconEnabled = Prefs.values["discoverystream.publisherFavicon.enabled"];
-    const excerpt = !hideDescriptions ? this.props.excerpt : "";
+    // Refined cards have their own excerpt hiding logic.
+    // We can ignore hideDescriptions if we are in sections and refined cards.
+    const excerpt = !hideDescriptions || sectionsEnabled && refinedCardsLayout ? this.props.excerpt : "";
     let timeToRead;
     if (displayReadTime) {
       timeToRead = this.props.time_to_read || readTimeFromWordCount(this.props.word_count);
@@ -4127,7 +4085,7 @@ class _DSCard extends (external_React_default()).PureComponent {
       sizes = this.dsImageSizes;
       if (sectionsEnabled) {
         sizes = [this.getSectionImageSize("4", sectionsCardsImageSizes["4"]), this.getSectionImageSize("3", sectionsCardsImageSizes["3"]), this.getSectionImageSize("2", sectionsCardsImageSizes["2"]), this.getSectionImageSize("1", sectionsCardsImageSizes["1"])];
-      } else if (layoutsVariantAorB) {
+      } else {
         sizes = this.standardCardImageSizes;
       }
       if (isListCard) {
@@ -4253,8 +4211,6 @@ class _DSCard extends (external_React_default()).PureComponent {
       showPrivacyInfo: !!this.props.flightId,
       onMenuUpdate: this.onMenuUpdate,
       onMenuShow: this.onMenuShow,
-      saveToPocketCard: saveToPocketCard,
-      pocket_button_enabled: pocketButtonEnabled,
       isRecentSave: isRecentSave,
       recommendation_id: this.props.recommendation_id,
       tile_id: this.props.id,
@@ -4973,11 +4929,23 @@ function TrendingSearches() {
     collapsed
   } = TrendingSearch;
   const variant = prefs[PREF_TRENDING_VARIANT];
+  let resultRef = (0,external_React_namespaceObject.useRef)([]);
   const TRENDING_SEARCH_CONTEXT_MENU_OPTIONS = ["TrendingSearchLearnMore", "TrendingSearchDismiss"];
   function onArrowClick() {
     dispatch(actionCreators.AlsoToMain({
       type: actionTypes.TRENDING_SEARCH_TOGGLE_COLLAPSE,
-      data: !collapsed
+      data: {
+        collapsed: !collapsed,
+        variant
+      }
+    }));
+  }
+  function handleLinkOpen() {
+    dispatch(actionCreators.AlsoToMain({
+      type: actionTypes.TRENDING_SEARCH_SUGGESTION_OPEN,
+      data: {
+        variant
+      }
     }));
   }
   const toggleContextMenu = isKeyBoard => {
@@ -4997,18 +4965,55 @@ function TrendingSearches() {
   function onUpdate() {
     setShowContextMenu(!showContextMenu);
   }
+  function handleResultKeyDown(event, index) {
+    const maxResults = suggestions.length;
+    let nextIndex = index;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (index < maxResults - 1) {
+        nextIndex = index + 1;
+      } else {
+        return;
+      }
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (index > 0) {
+        nextIndex = index - 1;
+      } else {
+        return;
+      }
+    }
+    resultRef.current[index].tabIndex = -1;
+    resultRef.current[nextIndex].tabIndex = 0;
+    resultRef.current[nextIndex].focus();
+  }
+  const handleIntersection = (0,external_React_namespaceObject.useCallback)(() => {
+    dispatch(actionCreators.AlsoToMain({
+      type: actionTypes.TRENDING_SEARCH_IMPRESSION,
+      data: {
+        variant
+      }
+    }));
+  }, [dispatch, variant]);
+  const ref = useIntersectionObserver(handleIntersection);
   if (!suggestions?.length) {
     return null;
-  } else if (variant === "a") {
+  } else if (variant === "a" || variant === "c") {
     return /*#__PURE__*/external_React_default().createElement("section", {
-      className: "trending-searches-pill-wrapper"
+      ref: el => {
+        ref.current = [el];
+      }
+      // Variant C matches the design of variant A but should only
+      // appear on hover
+      ,
+      className: `trending-searches-pill-wrapper ${variant === "c" ? "hover-only" : ""}`
     }, /*#__PURE__*/external_React_default().createElement("div", {
       className: "trending-searches-title-wrapper"
     }, /*#__PURE__*/external_React_default().createElement("span", {
       className: "trending-searches-icon icon icon-arrow-trending"
     }), /*#__PURE__*/external_React_default().createElement("h2", {
       className: "trending-searches-title",
-      "data-l10n-id": "newtab-trending-searches-trending-on-google"
+      "data-l10n-id": "newtab-trending-searches-title"
     }), /*#__PURE__*/external_React_default().createElement("div", {
       className: "close-open-trending-searches"
     }, /*#__PURE__*/external_React_default().createElement("moz-button", {
@@ -5021,19 +5026,27 @@ function TrendingSearches() {
       className: "trending-searches-list"
     }, suggestions.map((result, index) => {
       return /*#__PURE__*/external_React_default().createElement("li", {
-        key: index,
-        className: "trending-search-item"
+        key: result.suggestion,
+        className: "trending-search-item",
+        onKeyDown: e => handleResultKeyDown(e, index)
       }, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-        url: ""
+        url: result.searchUrl,
+        onLinkClick: handleLinkOpen,
+        title: result.suggestion,
+        setRef: item => resultRef.current[index] = item,
+        tabIndex: index === 0 ? 0 : -1
       }, result.lowerCaseSuggestion));
     })));
   } else if (variant === "b") {
     return /*#__PURE__*/external_React_default().createElement("div", {
+      ref: el => {
+        ref.current = [el];
+      },
       className: "trending-searches-list-view"
     }, /*#__PURE__*/external_React_default().createElement("div", {
       className: "trending-searches-list-view-header"
     }, /*#__PURE__*/external_React_default().createElement("h3", {
-      "data-l10n-id": "newtab-trending-searches-trending-on-google"
+      "data-l10n-id": "newtab-trending-searches-title"
     }), /*#__PURE__*/external_React_default().createElement("div", {
       className: "trending-searches-context-menu-wrapper"
     }, /*#__PURE__*/external_React_default().createElement("div", {
@@ -5050,20 +5063,36 @@ function TrendingSearches() {
       dispatch: dispatch,
       keyboardAccess: isKeyboardAccess,
       options: TRENDING_SEARCH_CONTEXT_MENU_OPTIONS,
+      shouldSendImpressionStats: true,
       site: {
-        url: "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/trending-searches-new-tab"
+        url: "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/trending-searches-new-tab",
+        variant
       }
     })))), /*#__PURE__*/external_React_default().createElement("ul", {
       className: "trending-searches-list-items"
-    }, suggestions.slice(0, 6).map(result => /*#__PURE__*/external_React_default().createElement("li", {
-      key: result.suggestion,
-      className: "trending-searches-list-item"
-    }, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
-      url: "",
-      title: result.suggestion
-    }, /*#__PURE__*/external_React_default().createElement("span", {
-      className: "trending-searches-icon icon icon-arrow-trending"
-    }), result.lowerCaseSuggestion)))));
+    }, suggestions.slice(0, 6).map((result, index) => {
+      return /*#__PURE__*/external_React_default().createElement("li", {
+        key: result.suggestion,
+        className: "trending-searches-list-item",
+        onKeyDown: e => handleResultKeyDown(e, index)
+      }, /*#__PURE__*/external_React_default().createElement(SafeAnchor, {
+        url: result.searchUrl,
+        onLinkClick: handleLinkOpen,
+        title: result.suggestion,
+        setRef: item => resultRef.current[index] = item,
+        tabIndex: index === 0 ? 0 : -1
+      }, result.icon ? /*#__PURE__*/external_React_default().createElement("div", {
+        className: "trending-icon-wrapper"
+      }, /*#__PURE__*/external_React_default().createElement("img", {
+        src: result.icon,
+        alt: "",
+        className: "trending-icon"
+      }), /*#__PURE__*/external_React_default().createElement("div", {
+        className: "trending-info-wrapper"
+      }, result.lowerCaseSuggestion, /*#__PURE__*/external_React_default().createElement("small", null, result.description))) : /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("span", {
+        className: "trending-searches-icon icon icon-arrow-trending"
+      }), result.lowerCaseSuggestion)));
+    })));
   }
 }
 
@@ -5099,6 +5128,8 @@ const PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
 const PREF_BILLBOARD_POSITION = "newtabAdSize.billboard.position";
 const PREF_TRENDING_SEARCH = "trendingSearch.enabled";
+const PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
+const PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
 const PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
 const CardGrid_INTERSECTION_RATIO = 0.5;
 const CardGrid_VISIBLE = "visible";
@@ -5383,7 +5414,7 @@ class _CardGrid extends (external_React_default()).PureComponent {
     const listFeedSelectedFeed = prefs[PREF_LIST_FEED_SELECTED_FEED];
     const billboardEnabled = prefs[PREF_BILLBOARD_ENABLED];
     const leaderboardEnabled = prefs[PREF_LEADERBOARD_ENABLED];
-    const trendingEnabled = prefs[PREF_TRENDING_SEARCH];
+    const trendingEnabled = prefs[PREF_TRENDING_SEARCH] && prefs[PREF_TRENDING_SEARCH_SYSTEM] && prefs[PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
     const trendingVariant = prefs[PREF_TRENDING_SEARCH_VARIANT];
 
     // filter out recs that should be in ListFeed
@@ -5481,7 +5512,12 @@ class _CardGrid extends (external_React_default()).PureComponent {
       }
     }
     if (trendingEnabled && trendingVariant === "b") {
-      cards.splice(1, 1, /*#__PURE__*/external_React_default().createElement(TrendingSearches, null));
+      const firstSpocPosition = this.props.spocPositions[0]?.index;
+      // double check that a spoc/mrec is actually in the index it should be in
+      const format = cards[firstSpocPosition]?.props?.format;
+      const isSpoc = format === "spoc" || format === "rectangle";
+      // if the spoc is not in its position, place TrendingSearches in the 3rd position
+      cards.splice(isSpoc ? firstSpocPosition + 1 : 2, 1, /*#__PURE__*/external_React_default().createElement(TrendingSearches, null));
     }
 
     // if a banner ad is enabled and we have any available, place them in the grid
@@ -8065,25 +8101,6 @@ function Sections(prevState = INITIAL_STATE.Sections, action) {
           }),
         })
       );
-    case actionTypes.PLACES_SAVED_TO_POCKET:
-      if (!action.data) {
-        return prevState;
-      }
-      return prevState.map(section =>
-        Object.assign({}, section, {
-          rows: section.rows.map(item => {
-            if (item.url === action.data.url) {
-              return Object.assign({}, item, {
-                open_url: action.data.open_url,
-                pocket_id: action.data.pocket_id,
-                title: action.data.title,
-                type: "pocket",
-              });
-            }
-            return item;
-          }),
-        })
-      );
     case actionTypes.PLACES_BOOKMARKS_REMOVED:
       if (!action.data) {
         return prevState;
@@ -8124,15 +8141,6 @@ function Sections(prevState = INITIAL_STATE.Sections, action) {
       return prevState.map(section =>
         Object.assign({}, section, {
           rows: section.rows.filter(site => site.url !== action.data.url),
-        })
-      );
-    case actionTypes.DELETE_FROM_POCKET:
-    case actionTypes.ARCHIVE_FROM_POCKET:
-      return prevState.map(section =>
-        Object.assign({}, section, {
-          rows: section.rows.filter(
-            site => site.pocket_id !== action.data.pocket_id
-          ),
         })
       );
     default:
@@ -8429,29 +8437,6 @@ function DiscoveryStream(prevState = INITIAL_STATE.DiscoveryStream, action) {
             items.filter(item => item.url !== action.data.url)
           );
 
-    case actionTypes.PLACES_SAVED_TO_POCKET: {
-      const addPocketInfo = item => {
-        if (item.url === action.data.url) {
-          return Object.assign({}, item, {
-            open_url: action.data.open_url,
-            pocket_id: action.data.pocket_id,
-            context_type: "pocket",
-          });
-        }
-        return item;
-      };
-      return isNotReady()
-        ? prevState
-        : nextState(items => items.map(addPocketInfo));
-    }
-    case actionTypes.DELETE_FROM_POCKET:
-    case actionTypes.ARCHIVE_FROM_POCKET:
-      return isNotReady()
-        ? prevState
-        : nextState(items =>
-            items.filter(item => item.pocket_id !== action.data.pocket_id)
-          );
-
     case actionTypes.PLACES_BOOKMARK_ADDED: {
       const updateBookmarkInfo = item => {
         if (item.url === action.data.url) {
@@ -8675,7 +8660,7 @@ function TrendingSearch(prevState = INITIAL_STATE.TrendingSearch, action) {
     case actionTypes.TRENDING_SEARCH_UPDATE:
       return { ...prevState, suggestions: action.data };
     case actionTypes.TRENDING_SEARCH_TOGGLE_COLLAPSE:
-      return { ...prevState, collapsed: action.data };
+      return { ...prevState, collapsed: action.data.collapsed };
     default:
       return prevState;
   }
@@ -9245,7 +9230,9 @@ class TopSiteLink extends (external_React_default()).PureComponent {
       "data-is-sponsored-link": !!link.sponsored_tile_id,
       title: title,
       onFocus: this.props.onFocus
-    }, /*#__PURE__*/external_React_default().createElement("div", {
+    }, shortcutsRefresh && link.isPinned && /*#__PURE__*/external_React_default().createElement("div", {
+      className: "icon icon-pin-small"
+    }), /*#__PURE__*/external_React_default().createElement("div", {
       className: "tile",
       "aria-hidden": true
     }, /*#__PURE__*/external_React_default().createElement("div", {
@@ -9261,9 +9248,7 @@ class TopSiteLink extends (external_React_default()).PureComponent {
       className: "top-site-icon default-icon",
       "data-fallback": smallFaviconStyle ? "" : letterFallback,
       style: smallFaviconStyle
-    })), shortcutsRefresh && link.isPinned && /*#__PURE__*/external_React_default().createElement("div", {
-      className: "icon icon-pin-small"
-    }), !shortcutsRefresh && link.searchTopSite && /*#__PURE__*/external_React_default().createElement("div", {
+    })), !shortcutsRefresh && link.searchTopSite && /*#__PURE__*/external_React_default().createElement("div", {
       className: "top-site-icon search-topsite"
     })), /*#__PURE__*/external_React_default().createElement("div", {
       className: `title${link.isPinned ? " has-icon pinned" : ""}${link.type === SPOC_TYPE || link.show_sponsored_label ? " sponsored" : ""}`
@@ -9819,7 +9804,9 @@ class TopSiteForm extends (external_React_default()).PureComponent {
       url: site ? site.url : "",
       validationError: false,
       customScreenshotUrl: site ? site.customScreenshotURL : "",
-      showCustomScreenshotForm: site ? site.customScreenshotURL : false
+      showCustomScreenshotForm: site ? site.customScreenshotURL : false,
+      hasURLChanged: false,
+      hasTitleChanged: false
     };
     this.onClearScreenshotInput = this.onClearScreenshotInput.bind(this);
     this.onLabelChange = this.onLabelChange.bind(this);
@@ -9834,13 +9821,15 @@ class TopSiteForm extends (external_React_default()).PureComponent {
   }
   onLabelChange(event) {
     this.setState({
-      label: event.target.value
+      label: event.target.value,
+      hasTitleChanged: true
     });
   }
   onUrlChange(event) {
     this.setState({
       url: event.target.value,
-      validationError: false
+      validationError: false,
+      hasURLChanged: true
     });
   }
   onClearUrlClick() {
@@ -9882,6 +9871,7 @@ class TopSiteForm extends (external_React_default()).PureComponent {
       const {
         index
       } = this.props;
+      const isEdit = !!this.props.site;
       if (this.state.label !== "") {
         site.label = this.state.label;
       }
@@ -9898,11 +9888,21 @@ class TopSiteForm extends (external_React_default()).PureComponent {
           index
         }
       }));
-      this.props.dispatch(actionCreators.UserEvent({
-        source: TOP_SITES_SOURCE,
-        event: "TOP_SITES_EDIT",
-        action_position: index
-      }));
+      if (isEdit) {
+        this.props.dispatch(actionCreators.UserEvent({
+          source: TOP_SITES_SOURCE,
+          event: "TOP_SITES_EDIT",
+          action_position: index,
+          hasTitleChanged: this.state.hasTitleChanged,
+          hasURLChanged: this.state.hasURLChanged
+        }));
+      } else if (!isEdit) {
+        this.props.dispatch(actionCreators.UserEvent({
+          source: TOP_SITES_SOURCE,
+          event: "TOP_SITES_ADD",
+          action_position: index
+        }));
+      }
       this.props.onClose();
     }
   }
@@ -11318,7 +11318,9 @@ const PersonalizedCard = ({
   }, /*#__PURE__*/external_React_default().createElement("img", {
     src: wavingFox,
     alt: ""
-  }), /*#__PURE__*/external_React_default().createElement("h2", null, messageData.content.cardTitle), /*#__PURE__*/external_React_default().createElement("p", null, messageData.content.cardMessage), /*#__PURE__*/external_React_default().createElement("moz-button", {
+  }), /*#__PURE__*/external_React_default().createElement("h2", null, messageData.content.cardTitle), /*#__PURE__*/external_React_default().createElement("p", null, messageData.content.cardMessage), /*#__PURE__*/external_React_default().createElement("div", {
+    className: "personalized-card-cta-wrapper"
+  }, /*#__PURE__*/external_React_default().createElement("moz-button", {
     type: "primary",
     class: "personalized-card-cta",
     onClick: () => onToggleClick("open-personalization-panel")
@@ -11329,8 +11331,79 @@ const PersonalizedCard = ({
     onLinkClick: () => {
       handleClick("link-click");
     }
-  }, messageData.content.linkText)));
+  }, messageData.content.linkText))));
 };
+;// CONCATENATED MODULE: ./content-src/components/DiscoveryStreamComponents/FeatureHighlight/FollowSectionButtonHighlight.jsx
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+
+
+
+const FEATURE_ID = "FEATURE_FOLLOW_SECTION_BUTTON";
+function FollowSectionButtonHighlight({
+  arrowPosition,
+  position,
+  verticalPosition,
+  dispatch,
+  handleDismiss,
+  handleBlock,
+  isIntersecting
+}) {
+  const onDismiss = (0,external_React_namespaceObject.useCallback)(() => {
+    // This event is emitted manually because the feature may be triggered outside the OMC flow,
+    // and may not be captured by the messaging-system’s automatic reporting.
+    dispatch(actionCreators.DiscoveryStreamUserEvent({
+      event: "FEATURE_HIGHLIGHT_DISMISS",
+      source: "FEATURE_HIGHLIGHT",
+      value: FEATURE_ID
+    }));
+    handleDismiss();
+    handleBlock();
+  }, [dispatch, handleDismiss, handleBlock]);
+  (0,external_React_namespaceObject.useEffect)(() => {
+    if (isIntersecting) {
+      // This event is emitted manually because the feature may be triggered outside the OMC flow,
+      // and may not be captured by the messaging-system’s automatic reporting.
+      dispatch(actionCreators.DiscoveryStreamUserEvent({
+        event: "FEATURE_HIGHLIGHT_IMPRESSION",
+        source: "FEATURE_HIGHLIGHT",
+        value: FEATURE_ID
+      }));
+    }
+  }, [dispatch, isIntersecting]);
+  return /*#__PURE__*/external_React_default().createElement("div", {
+    className: "follow-section-button-highlight"
+  }, /*#__PURE__*/external_React_default().createElement(FeatureHighlight, {
+    position: position,
+    arrowPosition: arrowPosition,
+    verticalPosition: verticalPosition,
+    feature: FEATURE_ID,
+    dispatch: dispatch,
+    message: /*#__PURE__*/external_React_default().createElement("div", {
+      className: "follow-section-button-highlight-content"
+    }, /*#__PURE__*/external_React_default().createElement("img", {
+      src: "chrome://browser/content/asrouter/assets/smiling-fox-icon.svg",
+      "data-l10n-id": "newtab-download-mobile-highlight-image",
+      width: "24",
+      height: "24",
+      alt: ""
+    }), /*#__PURE__*/external_React_default().createElement("div", {
+      className: "follow-section-button-highlight-copy"
+    }, /*#__PURE__*/external_React_default().createElement("p", {
+      className: "title",
+      "data-l10n-id": "newtab-section-follow-highlight-title"
+    }), /*#__PURE__*/external_React_default().createElement("p", {
+      className: "subtitle",
+      "data-l10n-id": "newtab-section-follow-highlight-subtitle"
+    }))),
+    openedOverride: true,
+    showButtonIcon: false,
+    dismissCallback: onDismiss,
+    outsideClickCallback: handleDismiss
+  }));
+}
 ;// CONCATENATED MODULE: ./content-src/components/MessageWrapper/MessageWrapper.jsx
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -11465,6 +11538,8 @@ function MessageWrapper({
 
 
 
+
+
 // Prefs
 const CardSections_PREF_SECTIONS_CARDS_ENABLED = "discoverystream.sections.cards.enabled";
 const PREF_SECTIONS_CARDS_THUMBS_UP_DOWN_ENABLED = "discoverystream.sections.cards.thumbsUpDown.enabled";
@@ -11480,7 +11555,12 @@ const CardSections_PREF_LEADERBOARD_ENABLED = "newtabAdSize.leaderboard";
 const CardSections_PREF_LEADERBOARD_POSITION = "newtabAdSize.leaderboard.position";
 const CardSections_PREF_BILLBOARD_POSITION = "newtabAdSize.billboard.position";
 const PREF_REFINED_CARDS_ENABLED = "discoverystream.refinedCardsLayout.enabled";
-function getLayoutData(responsiveLayouts, index, refinedCardsLayout) {
+const PREF_INFERRED_PERSONALIZATION_USER = "discoverystream.sections.personalization.inferred.user.enabled";
+const CardSections_PREF_TRENDING_SEARCH = "trendingSearch.enabled";
+const CardSections_PREF_TRENDING_SEARCH_SYSTEM = "system.trendingSearch.enabled";
+const CardSections_PREF_SEARCH_ENGINE = "trendingSearch.defaultSearchEngine";
+const CardSections_PREF_TRENDING_SEARCH_VARIANT = "trendingSearch.variant";
+function getLayoutData(responsiveLayouts, index, refinedCardsLayout, sectionKey) {
   let layoutData = {
     classNames: [],
     imageSizes: {}
@@ -11488,9 +11568,19 @@ function getLayoutData(responsiveLayouts, index, refinedCardsLayout) {
   responsiveLayouts.forEach(layout => {
     layout.tiles.forEach((tile, tileIndex) => {
       if (tile.position === index) {
-        layoutData.classNames.push(`col-${layout.columnCount}-${tile.size}`);
-        layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
-        layoutData.imageSizes[layout.columnCount] = tile.size;
+        // When trending searches should be placed in the `top_stories_section`,
+        // we update the layout so that the first item is always a medium card to make
+        // room for the trending search widget
+        if (sectionKey === "top_stories_section" && tileIndex === 0) {
+          //do something
+          layoutData.classNames.push(`col-${layout.columnCount}-medium`);
+          layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
+          layoutData.imageSizes[layout.columnCount] = "medium";
+        } else {
+          layoutData.classNames.push(`col-${layout.columnCount}-${tile.size}`);
+          layoutData.classNames.push(`col-${layout.columnCount}-position-${tileIndex}`);
+          layoutData.imageSizes[layout.columnCount] = tile.size;
+        }
 
         // The API tells us whether the tile should show the excerpt or not.
         // Apply extra styles accordingly.
@@ -11533,6 +11623,12 @@ function getMaxTiles(responsiveLayouts) {
 const prefToArray = (pref = "") => {
   return pref.split(",").map(item => item.trim()).filter(item => item);
 };
+function shouldShowOMCHighlight(messageData, componentId) {
+  if (!messageData || Object.keys(messageData).length === 0) {
+    return false;
+  }
+  return messageData?.content?.messageType === componentId;
+}
 function CardSection({
   sectionPosition,
   section,
@@ -11542,9 +11638,13 @@ function CardSection({
   is_collection,
   spocMessageVariant,
   ctaButtonVariant,
-  ctaButtonSponsors
+  ctaButtonSponsors,
+  anySectionsFollowed
 }) {
   const prefs = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Prefs.values);
+  const {
+    messageData
+  } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.Messages);
   const {
     sectionPersonalization
   } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.DiscoveryStream);
@@ -11555,6 +11655,9 @@ function CardSection({
   const selectedTopics = prefs[CardSections_PREF_TOPICS_SELECTED];
   const availableTopics = prefs[CardSections_PREF_TOPICS_AVAILABLE];
   const refinedCardsLayout = prefs[PREF_REFINED_CARDS_ENABLED];
+  const trendingEnabled = prefs[CardSections_PREF_TRENDING_SEARCH] && prefs[CardSections_PREF_TRENDING_SEARCH_SYSTEM] && prefs[CardSections_PREF_SEARCH_ENGINE]?.toLowerCase() === "google";
+  const trendingVariant = prefs[CardSections_PREF_TRENDING_SEARCH_VARIANT];
+  const shouldShowTrendingSearch = trendingEnabled && trendingVariant === "b";
   const {
     saveToPocketCard
   } = (0,external_ReactRedux_namespaceObject.useSelector)(state => state.DiscoveryStream);
@@ -11640,7 +11743,13 @@ function CardSection({
     className: "section-context-wrapper"
   }, /*#__PURE__*/external_React_default().createElement("div", {
     className: following ? "section-follow following" : "section-follow"
-  }, /*#__PURE__*/external_React_default().createElement("moz-button", {
+  }, !anySectionsFollowed && sectionPosition === 1 && shouldShowOMCHighlight(messageData, "FollowSectionButtonHighlight") && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
+    dispatch: dispatch
+  }, /*#__PURE__*/external_React_default().createElement(FollowSectionButtonHighlight, {
+    verticalPosition: "inset-block-center",
+    position: "arrow-inline-start",
+    dispatch: dispatch
+  })), /*#__PURE__*/external_React_default().createElement("moz-button", {
     onClick: following ? onUnfollowClick : onFollowClick,
     type: "default",
     index: sectionPosition,
@@ -11680,16 +11789,17 @@ function CardSection({
   }, subtitle)), mayHaveSectionsPersonalization ? sectionContextWrapper : null), /*#__PURE__*/external_React_default().createElement("div", {
     className: `ds-section-grid ds-card-grid`
   }, section.data.slice(0, maxTile).map((rec, index) => {
+    const layoutData = getLayoutData(responsiveLayouts, index, refinedCardsLayout, shouldShowTrendingSearch && sectionKey);
     const {
       classNames,
       imageSizes
-    } = getLayoutData(responsiveLayouts, index, refinedCardsLayout);
+    } = layoutData;
     if (!rec || rec.placeholder) {
       return /*#__PURE__*/external_React_default().createElement(PlaceholderDSCard, {
         key: `dscard-${index}`
       });
     }
-    return /*#__PURE__*/external_React_default().createElement(DSCard, {
+    const card = /*#__PURE__*/external_React_default().createElement(DSCard, {
       key: `dscard-${rec.id}`,
       pos: rec.pos,
       flightId: rec.flight_id,
@@ -11741,6 +11851,9 @@ function CardSection({
       sectionFollowed: following,
       isTimeSensitive: rec.isTimeSensitive
     });
+    return index === 0 && shouldShowTrendingSearch && sectionKey === "top_stories_section" ? [card, /*#__PURE__*/external_React_default().createElement(TrendingSearches, {
+      key: "trending"
+    })] : [card];
   })));
 }
 function CardSections({
@@ -11773,6 +11886,9 @@ function CardSections({
   const {
     interestPicker
   } = data;
+
+  // Used to determine if we should show FollowSectionButtonHighlight
+  const anySectionsFollowed = sectionPersonalization && Object.values(sectionPersonalization).some(section => section?.isFollowed);
   let filteredSections = data.sections.filter(section => !sectionPersonalization[section.sectionKey]?.isBlocked);
   if (interestPickerEnabled && visibleSections.length) {
     filteredSections = visibleSections.reduce((acc, visibleSection) => {
@@ -11795,7 +11911,8 @@ function CardSections({
     is_collection: is_collection,
     spocMessageVariant: spocMessageVariant,
     ctaButtonVariant: ctaButtonVariant,
-    ctaButtonSponsors: ctaButtonSponsors
+    ctaButtonSponsors: ctaButtonSponsors,
+    anySectionsFollowed: anySectionsFollowed
   }));
 
   // Add a billboard/leaderboard IAB ad to the sectionsToRender array (if enabled/possible).
@@ -11837,7 +11954,7 @@ function CardSections({
   }
   function displayP13nCard() {
     if (messageData && Object.keys(messageData).length >= 1) {
-      if (messageData?.content?.messageType === "PersonalizedCard") {
+      if (shouldShowOMCHighlight(messageData, "PersonalizedCard") && prefs[PREF_INFERRED_PERSONALIZATION_USER]) {
         const row = messageData.content.position;
         sectionsToRender.splice(row, 0, /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
           dispatch: dispatch,
@@ -12057,7 +12174,8 @@ class _DiscoveryStreamBase extends (external_React_default()).PureComponent {
             editorsPicksHeader: component.properties.editorsPicksHeader,
             recentSavesEnabled: this.props.DiscoveryStream.recentSavesEnabled,
             hideDescriptions: this.props.DiscoveryStream.hideDescriptions,
-            firstVisibleTimestamp: this.props.firstVisibleTimestamp
+            firstVisibleTimestamp: this.props.firstVisibleTimestamp,
+            spocPositions: component.spocs?.positions
           });
         }
       case "HorizontalRule":
@@ -13077,6 +13195,7 @@ class ContentSection extends (external_React_default()).PureComponent {
       mayHaveInferredPersonalization,
       mayHaveRecentSaves,
       mayHaveWeather,
+      mayHaveTrendingSearch,
       openPreferences,
       wallpapersEnabled,
       activeWallpaper,
@@ -13088,6 +13207,7 @@ class ContentSection extends (external_React_default()).PureComponent {
       topSitesEnabled,
       pocketEnabled,
       weatherEnabled,
+      trendingSearchEnabled,
       showInferredPersonalizationEnabled,
       showRecentSavesEnabled,
       topSitesRowsCount
@@ -13115,6 +13235,16 @@ class ContentSection extends (external_React_default()).PureComponent {
       "data-preference": "showWeather",
       "data-eventSource": "WEATHER",
       "data-l10n-id": "newtab-custom-weather-toggle"
+    })), mayHaveTrendingSearch && /*#__PURE__*/external_React_default().createElement("div", {
+      id: "trending-search-section",
+      className: "section"
+    }, /*#__PURE__*/external_React_default().createElement("moz-toggle", {
+      id: "trending-search-toggle",
+      pressed: trendingSearchEnabled || null,
+      onToggle: this.onPreferenceSelect,
+      "data-preference": "trendingSearch.enabled",
+      "data-eventSource": "TRENDING_SEARCH",
+      "data-l10n-id": "newtab-custom-trending-search-toggle"
     })), /*#__PURE__*/external_React_default().createElement("div", {
       id: "shortcuts-section",
       className: "section"
@@ -13261,16 +13391,21 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
       in: !this.props.showing,
       appear: true
     }, /*#__PURE__*/external_React_default().createElement("button", {
-      className: "icon icon-settings personalize-button",
+      className: "personalize-button",
+      "data-l10n-id": "newtab-customize-panel-icon-button",
       onClick: () => this.props.onOpen(),
       onKeyDown: e => {
         if (e.key === "Enter") {
           this.props.onOpen();
         }
       },
-      "data-l10n-id": "newtab-personalize-settings-icon-label",
       ref: c => this.openButton = c
-    })), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
+    }, /*#__PURE__*/external_React_default().createElement("div", null, /*#__PURE__*/external_React_default().createElement("img", {
+      role: "presentation",
+      src: "chrome://global/skin/icons/edit-outline.svg"
+    })), /*#__PURE__*/external_React_default().createElement("label", {
+      "data-l10n-id": "newtab-customize-panel-icon-button-label"
+    }))), /*#__PURE__*/external_React_default().createElement(external_ReactTransitionGroup_namespaceObject.CSSTransition, {
       timeout: 250,
       classNames: "customize-animate",
       in: this.props.showing,
@@ -13299,6 +13434,7 @@ class _CustomizeMenu extends (external_React_default()).PureComponent {
       mayHaveInferredPersonalization: this.props.mayHaveInferredPersonalization,
       mayHaveRecentSaves: this.props.DiscoveryStream.recentSavesEnabled,
       mayHaveWeather: this.props.mayHaveWeather,
+      mayHaveTrendingSearch: this.props.mayHaveTrendingSearch,
       dispatch: this.props.dispatch,
       exitEventFired: this.state.exitEventFired
     }))));
@@ -13502,7 +13638,8 @@ class _Search extends (external_React_default()).PureComponent {
    */
   render() {
     const wrapperClassName = ["search-wrapper", this.props.disable && "search-disabled", this.props.fakeFocus && "fake-focus"].filter(v => v).join(" ");
-    const trendingSearchEnabled = this.props.Prefs.values["trendingSearch.enabled"];
+    const prefs = this.props.Prefs.values;
+    const trendingSearchEnabled = prefs["trendingSearch.enabled"] && prefs["system.trendingSearch.enabled"] && prefs["trendingSearch.defaultSearchEngine"]?.toLowerCase() === "google";
     const trendingSearchVariant = this.props.Prefs.values["trendingSearch.variant"];
     return /*#__PURE__*/external_React_default().createElement((external_React_default()).Fragment, null, /*#__PURE__*/external_React_default().createElement("div", {
       className: wrapperClassName
@@ -13519,7 +13656,7 @@ class _Search extends (external_React_default()).PureComponent {
       className: "search-button",
       "data-l10n-id": "newtab-search-box-search-button",
       onClick: this.onSearchClick
-    }), trendingSearchEnabled && trendingSearchVariant === "a" && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null)), this.props.handoffEnabled && /*#__PURE__*/external_React_default().createElement("div", {
+    }), trendingSearchEnabled && (trendingSearchVariant === "a" || trendingSearchVariant === "c") && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null)), this.props.handoffEnabled && /*#__PURE__*/external_React_default().createElement("div", {
       className: "search-inner-wrapper"
     }, /*#__PURE__*/external_React_default().createElement("button", {
       className: "search-handoff-button",
@@ -13541,7 +13678,7 @@ class _Search extends (external_React_default()).PureComponent {
       ref: el => {
         this.fakeCaret = el;
       }
-    })), trendingSearchEnabled && trendingSearchVariant === "a" && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null))));
+    })), trendingSearchEnabled && (trendingSearchVariant === "a" || trendingSearchVariant === "c") && /*#__PURE__*/external_React_default().createElement(TrendingSearches, null))));
   }
 }
 const Search_Search = (0,external_ReactRedux_namespaceObject.connect)(state => ({
@@ -14342,7 +14479,7 @@ function TopicSelection({
 const PREF_MOBILE_DOWNLOAD_HIGHLIGHT_VARIANT_A = "mobileDownloadModal.variant-a";
 const PREF_MOBILE_DOWNLOAD_HIGHLIGHT_VARIANT_B = "mobileDownloadModal.variant-b";
 const PREF_MOBILE_DOWNLOAD_HIGHLIGHT_VARIANT_C = "mobileDownloadModal.variant-c";
-const FEATURE_ID = "FEATURE_DOWNLOAD_MOBILE_PROMO";
+const DownloadMobilePromoHighlight_FEATURE_ID = "FEATURE_DOWNLOAD_MOBILE_PROMO";
 function DownloadMobilePromoHighlight({
   position,
   dispatch,
@@ -14356,7 +14493,9 @@ function DownloadMobilePromoHighlight({
     dispatch(actionCreators.DiscoveryStreamUserEvent({
       event: "FEATURE_HIGHLIGHT_DISMISS",
       source: "FEATURE_HIGHLIGHT",
-      value: FEATURE_ID
+      value: {
+        feature: DownloadMobilePromoHighlight_FEATURE_ID
+      }
     }));
     handleDismiss();
     handleBlock();
@@ -14368,7 +14507,9 @@ function DownloadMobilePromoHighlight({
       dispatch(actionCreators.DiscoveryStreamUserEvent({
         event: "FEATURE_HIGHLIGHT_IMPRESSION",
         source: "FEATURE_HIGHLIGHT",
-        value: FEATURE_ID
+        value: {
+          feature: DownloadMobilePromoHighlight_FEATURE_ID
+        }
       }));
     }
   }, [dispatch, isIntersecting]);
@@ -14418,7 +14559,7 @@ function DownloadMobilePromoHighlight({
     className: "download-firefox-feature-highlight"
   }, /*#__PURE__*/external_React_default().createElement(FeatureHighlight, {
     position: position,
-    feature: FEATURE_ID,
+    feature: DownloadMobilePromoHighlight_FEATURE_ID,
     dispatch: dispatch,
     message: /*#__PURE__*/external_React_default().createElement("div", {
       className: "download-firefox-feature-highlight-content"
@@ -14532,20 +14673,8 @@ function Base_extends() { return Base_extends = Object.assign ? Object.assign.bi
 
 const Base_VISIBLE = "visible";
 const Base_VISIBILITY_CHANGE_EVENT = "visibilitychange";
-const Base_PREF_THUMBS_UP_DOWN_ENABLED = "discoverystream.thumbsUpDown.enabled";
-const PREF_THUMBS_UP_DOWN_LAYOUT_ENABLED = "discoverystream.thumbsUpDown.searchTopsitesCompact";
 const PREF_INFERRED_PERSONALIZATION_SYSTEM = "discoverystream.sections.personalization.inferred.enabled";
-const PREF_INFERRED_PERSONALIZATION_USER = "discoverystream.sections.personalization.inferred.user.enabled";
-const PrefsButton = ({
-  onClick,
-  icon
-}) => /*#__PURE__*/external_React_default().createElement("div", {
-  className: "prefs-button"
-}, /*#__PURE__*/external_React_default().createElement("button", {
-  className: `icon ${icon || "icon-settings"}`,
-  onClick: onClick,
-  "data-l10n-id": "newtab-settings-button"
-}));
+const Base_PREF_INFERRED_PERSONALIZATION_USER = "discoverystream.sections.personalization.inferred.user.enabled";
 
 // Returns a function will not be continuously triggered when called. The
 // function will be triggered if called again after `wait` milliseconds.
@@ -14732,66 +14861,24 @@ class BaseContent extends (external_React_default()).PureComponent {
       return;
     }
     const logoAlwaysVisible = prefs["logowordmark.alwaysVisible"];
-    const layoutsVariantAEnabled = prefs["newtabLayouts.variant-a"];
-    const layoutsVariantBEnabled = prefs["newtabLayouts.variant-b"];
-    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
-    const thumbsUpDownEnabled = prefs[Base_PREF_THUMBS_UP_DOWN_ENABLED];
-    // For the compact layout to be active,
-    // thumbs also has to be enabled until Bug 1932242 is fixed
-    const thumbsUpDownLayoutEnabled = prefs[PREF_THUMBS_UP_DOWN_LAYOUT_ENABLED] && thumbsUpDownEnabled;
 
     /* Bug 1917937: The logic presented below is fragile but accurate to the pixel. As new tab experiments with layouts, we have a tech debt of competing styles and classes the slightly modify where the search bar sits on the page. The larger solution for this is to replace everything with an intersection observer, but would require a larger refactor of this file. In the interim, we can programmatically calculate when to fire the fixed-scroll event and account for the moved elements so that topsites/etc stays in the same place. The CSS this references has been flagged to reference this logic so (hopefully) keep them in sync. */
 
     let SCROLL_THRESHOLD = 0; // When the fixed-scroll event fires
     let MAIN_OFFSET_PADDING = 0; // The padding to compensate for the moved elements
 
+    const CSS_VAR_SPACE_XXLARGE = 32.04; // Custom Acorn themed variable (8 * 0.267rem);
+
     let layout = {
-      outerWrapperPaddingTop: 30,
-      searchWrapperPaddingTop: 34,
-      searchWrapperPaddingBottom: 38,
+      outerWrapperPaddingTop: 24,
+      searchWrapperPaddingTop: 16,
+      searchWrapperPaddingBottom: CSS_VAR_SPACE_XXLARGE,
       searchWrapperFixedScrollPaddingTop: 27,
       searchWrapperFixedScrollPaddingBottom: 27,
       searchInnerWrapperMinHeight: 52,
-      logoAndWordmarkWrapperHeight: 64,
-      logoAndWordmarkWrapperMarginBottom: 48
+      logoAndWordmarkWrapperHeight: 0,
+      logoAndWordmarkWrapperMarginBottom: 0
     };
-    const CSS_VAR_SPACE_XXLARGE = 34.2; // Custom Acorn themed variable (8 * 0.267rem);
-
-    // Experimental layouts
-    // (Note these if statements are ordered to match the CSS cascade)
-    if (thumbsUpDownLayoutEnabled || layoutsVariantAorB) {
-      // Thumbs Compact View Layout
-      if (thumbsUpDownLayoutEnabled) {
-        layout.logoAndWordmarkWrapperMarginBottom = CSS_VAR_SPACE_XXLARGE;
-        if (!logoAlwaysVisible) {
-          layout.searchWrapperPaddingTop = CSS_VAR_SPACE_XXLARGE;
-          layout.searchWrapperPaddingBottom = CSS_VAR_SPACE_XXLARGE;
-        }
-      }
-
-      // Variant B Layout
-      if (layoutsVariantAEnabled) {
-        layout.outerWrapperPaddingTop = 24;
-        if (!thumbsUpDownLayoutEnabled) {
-          layout.searchWrapperPaddingTop = 0;
-          layout.searchWrapperPaddingBottom = 32;
-          layout.logoAndWordmarkWrapperMarginBottom = 32;
-        }
-      }
-
-      // Variant B Layout
-      if (layoutsVariantBEnabled) {
-        layout.outerWrapperPaddingTop = 24;
-        // Logo is positioned absolute, so remove it
-        layout.logoAndWordmarkWrapperHeight = 0;
-        layout.logoAndWordmarkWrapperMarginBottom = 0;
-        layout.searchWrapperPaddingTop = 16;
-        layout.searchWrapperPaddingBottom = CSS_VAR_SPACE_XXLARGE;
-        if (!thumbsUpDownLayoutEnabled) {
-          layout.searchWrapperPaddingBottom = 32;
-        }
-      }
-    }
 
     // Logo visibility applies to all layouts
     if (!logoAlwaysVisible) {
@@ -14968,7 +15055,9 @@ class BaseContent extends (external_React_default()).PureComponent {
         this.props.dispatch(actionCreators.DiscoveryStreamUserEvent({
           event: "FEATURE_HIGHLIGHT_OPEN",
           source: "FEATURE_HIGHLIGHT",
-          value: "FEATURE_DOWNLOAD_MOBILE_PROMO"
+          value: {
+            feature: "FEATURE_DOWNLOAD_MOBILE_PROMO"
+          }
         }));
       }
       return {
@@ -15031,10 +15120,7 @@ class BaseContent extends (external_React_default()).PureComponent {
       customizeMenuVisible
     } = App;
     const prefs = props.Prefs.values;
-    const layoutsVariantAEnabled = prefs["newtabLayouts.variant-a"];
-    const layoutsVariantBEnabled = prefs["newtabLayouts.variant-b"];
     const shortcutsRefresh = prefs["newtabShortcuts.refresh"];
-    const layoutsVariantAorB = layoutsVariantAEnabled || layoutsVariantBEnabled;
     const activeWallpaper = prefs[`newtabWallpapers.wallpaper`];
     const wallpapersEnabled = prefs["newtabWallpapers.enabled"];
     const weatherEnabled = prefs.showWeather;
@@ -15057,10 +15143,11 @@ class BaseContent extends (external_React_default()).PureComponent {
     const enabledSections = {
       topSitesEnabled: prefs["feeds.topsites"],
       pocketEnabled: prefs["feeds.section.topstories"],
-      showInferredPersonalizationEnabled: prefs[PREF_INFERRED_PERSONALIZATION_USER],
+      showInferredPersonalizationEnabled: prefs[Base_PREF_INFERRED_PERSONALIZATION_USER],
       showRecentSavesEnabled: prefs.showRecentSaves,
       topSitesRowsCount: prefs.topSitesRows,
-      weatherEnabled: prefs.showWeather
+      weatherEnabled: prefs.showWeather,
+      trendingSearchEnabled: prefs["trendingSearch.enabled"]
     };
     const pocketRegion = prefs["feeds.system.topstories"];
     const mayHaveSponsoredStories = prefs["system.showSponsored"];
@@ -15070,6 +15157,9 @@ class BaseContent extends (external_React_default()).PureComponent {
       mayHaveSponsoredTopSites
     } = prefs;
     const supportUrl = prefs["support.url"];
+
+    // Trending Searches experiment pref check
+    const mayHaveTrendingSearch = prefs["system.trendingSearch.enabled"] && prefs["trendingSearch.defaultSearchEngine"].toLowerCase() === "google";
 
     // Mobile Download Promo Pref Checks
     const mobileDownloadPromoEnabled = prefs["mobileDownloadModal.enabled"];
@@ -15091,10 +15181,9 @@ class BaseContent extends (external_React_default()).PureComponent {
     // Mobile download promo modal is enabled/visible
     weatherEnabled && mayHaveWeather && "has-weather",
     // Weather widget is enabled/visible
-    prefs.showSearch ? "has-search" : "no-search", layoutsVariantAEnabled ? "layout-variant-a" : "",
-    // Layout experiment variant A
-    layoutsVariantBEnabled ? "layout-variant-b" : "",
-    // Layout experiment variant B
+    prefs.showSearch ? "has-search" : "no-search",
+    // layoutsVariantAEnabled ? "layout-variant-a" : "", // Layout experiment variant A
+    // layoutsVariantBEnabled ? "layout-variant-b" : "", // Layout experiment variant B
     shortcutsRefresh ? "shortcuts-refresh" : "",
     // Shortcuts refresh experiment
     pocketEnabled ? "has-recommended-stories" : "no-recommended-stories", sectionsEnabled ? "has-sections-grid" : ""].filter(v => v).join(" ");
@@ -15132,6 +15221,7 @@ class BaseContent extends (external_React_default()).PureComponent {
       mayHaveSponsoredStories: mayHaveSponsoredStories,
       mayHaveInferredPersonalization: mayHaveInferredPersonalization,
       mayHaveWeather: mayHaveWeather,
+      mayHaveTrendingSearch: mayHaveTrendingSearch,
       spocMessageVariant: spocMessageVariant,
       showing: customizeMenuVisible
     }), this.shouldShowOMCHighlight("CustomWallpaperHighlight") && /*#__PURE__*/external_React_default().createElement(MessageWrapper, {
@@ -15150,10 +15240,8 @@ class BaseContent extends (external_React_default()).PureComponent {
       hiddenOverride: shouldShowDownloadHighlight,
       onDismiss: this.handleDismissDownloadHighlight,
       dispatch: this.props.dispatch
-    }, /*#__PURE__*/external_React_default().createElement(DownloadMobilePromoHighlight
-    // Var B layout has the weather right-aligned
-    , {
-      position: `${layoutsVariantBEnabled ? "inset-inline-start" : "inset-inline-end"} inset-block-end`,
+    }, /*#__PURE__*/external_React_default().createElement(DownloadMobilePromoHighlight, {
+      position: `inset-inline-start inset-block-end`,
       dispatch: this.props.dispatch
     })))), /*#__PURE__*/external_React_default().createElement("div", {
       className: outerClassName,
@@ -15166,7 +15254,7 @@ class BaseContent extends (external_React_default()).PureComponent {
     }, /*#__PURE__*/external_React_default().createElement(ErrorBoundary, null, /*#__PURE__*/external_React_default().createElement(Search_Search, Base_extends({
       showLogo: noSectionsEnabled || prefs["logowordmark.alwaysVisible"],
       handoffEnabled: searchHandoffEnabled
-    }, props.Search)))), !prefs.showSearch && layoutsVariantAorB && !noSectionsEnabled && /*#__PURE__*/external_React_default().createElement(Logo, null), /*#__PURE__*/external_React_default().createElement("div", {
+    }, props.Search)))), !prefs.showSearch && !noSectionsEnabled && /*#__PURE__*/external_React_default().createElement(Logo, null), /*#__PURE__*/external_React_default().createElement("div", {
       className: `body-wrapper${initialized ? " on" : ""}`
     }, isDiscoveryStream ? /*#__PURE__*/external_React_default().createElement(ErrorBoundary, {
       className: "borderless-error"

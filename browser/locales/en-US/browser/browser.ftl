@@ -373,7 +373,10 @@ quickactions-cmd-settings2 = settings, preferences, options, manage
 
 # Opens about:addons page in the themes section
 quickactions-themes = Manage themes
-quickactions-cmd-themes = themes
+# In English we provide multiple spellings for "add-ons". If that's not
+# applicable to your language, only use the correct spelling (don't repeat the
+# same word).
+quickactions-cmd-themes2 = themes, add-ons, addons
 
 # Opens a SUMO article explaining how to update the browser
 quickactions-update = Update { -brand-short-name }
@@ -543,6 +546,11 @@ urlbar-search-mode-indicator-close =
 urlbar-placeholder =
   .placeholder = Search or enter address
 
+# This placeholder is used when not in search mode and searching in the urlbar
+# is disabled via the keyword.enabled pref.
+urlbar-placeholder-keyword-disabled =
+  .placeholder = Enter address
+
 # This placeholder is used in search mode with search engines that search the
 # entire web.
 # Variables
@@ -657,30 +665,8 @@ urlbar-result-action-tabtosearch-web = Search with { $engine } directly from the
 urlbar-result-action-tabtosearch-other-engine = Search { $engine } directly from the address bar
 # Action text for copying to clipboard.
 urlbar-result-action-copy-to-clipboard = Copy
-# Shows the result of a formula expression being calculated, the last = sign will be shown
-# as part of the result (e.g. "= 2").
-# Variables
-#  $result (String): the string representation for a formula result
-urlbar-result-action-calculator-result = = { $result }
 # The string returned for an undefined calculator result such as when dividing by 0
 urlbar-result-action-undefined-calculator-result = undefined
-# Shows the result of a formula expression being calculated, in scientific notation.
-# The last = sign will be shown as part of the result (e.g. "= 1.0e17").
-# Variables
-#  $result (String): the string representation for a result in scientific notation
-#  (e.g. "1.0e17").
-urlbar-result-action-calculator-result-scientific-notation = = { $result }
-# Shows the result of a formula expression being calculated, this is used for numbers >= 1.
-# The last = sign will be shown as part of the result (e.g. "= 2").
-# Variables
-#  $result (String): the string representation for a formula result
-urlbar-result-action-calculator-result-3 = = { NUMBER($result, useGrouping: "false", maximumFractionDigits: 8)}
-# Shows the result of a formula expression being calculated, to a maximum of 9 significant
-# digits. This is used for numbers < 1.
-# The last = sign will be shown as part of the result (e.g. "= 0.333333333").
-# Variables
-#  $result (String): the string representation for a formula result
-urlbar-result-action-calculator-result-decimal = = { NUMBER($result, maximumSignificantDigits: 9)}
 
 # The title of a weather suggestion in the urlbar. The temperature and unit
 # substring should be inside a <strong> tag. If the temperature and unit are not
@@ -690,11 +676,34 @@ urlbar-result-action-calculator-result-decimal = = { NUMBER($result, maximumSign
 #   $temperature (number) - The temperature value
 #   $unit (String) - The unit for the temperature, either "C" or "F"
 #   $city (String) - The name of the city the weather data is for
-#   $region (String) - The name of the city's region. Depending on the user's
-#       location in relation to the city, this may be the name or abbreviation
-#       of one of the city's administrative divisions like a province or state,
-#       or it may be the name of the city's country.
+#   $region (String) - The name of the city's region or country. Depending on
+#       the user's location in relation to the city, this may be the name or
+#       abbreviation of one of the city's administrative divisions like a
+#       province or state, or it may be the name of the city's country.
 urlbar-result-weather-title = <strong>{ $temperature }°{ $unit }</strong> in { $city }, { $region }
+
+# The title of a weather suggestion in the urlbar including a region and
+# country. The temperature and unit substring should be inside a <strong> tag.
+# If the temperature and unit are not adjacent in the localization, it's OK to
+# include only the temperature in the tag.
+# Variables:
+#   $temperature (number) - The temperature value
+#   $unit (String) - The unit for the temperature, either "C" or "F"
+#   $city (String) - The name of the city the weather data is for
+#   $region (String) - The name or abbreviation of one of the city's
+#       administrative divisions like a province or state.
+#   $country (String) - The name of the city's country.
+urlbar-result-weather-title-with-country = <strong>{ $temperature }°{ $unit }</strong> in { $city }, { $region }, { $country }
+
+# The title of a weather suggestion in the urlbar only including the city. The
+# temperature and unit substring should be inside a <strong> tag. If the
+# temperature and unit are not adjacent in the localization, it's OK to include
+# only the temperature in the tag.
+# Variables:
+#   $temperature (number) - The temperature value
+#   $unit (String) - The unit for the temperature, either "C" or "F"
+#   $city (String) - The name of the city the weather data is for
+urlbar-result-weather-title-city-only = <strong>{ $temperature }°{ $unit }</strong> in { $city }
 
 # Shows the name of the provider of weather data in a weather suggestion in the
 # urlbar.
@@ -1046,8 +1055,8 @@ navbar-accessible =
 navbar-downloads =
     .label = Downloads
 
-navbar-overflow =
-    .tooltiptext = More tools…
+navbar-overflow-2 =
+    .tooltiptext = More tools
 
 # Variables:
 #   $shortcut (String): keyboard shortcut to print the page
@@ -1259,5 +1268,6 @@ file-picker-crashed-show-in-folder =
 
 ## Onboarding Finish Setup checklist
 
-onboarding-finish-setup-button-label =
+onboarding-aw-finish-setup-button =
     .label = Finish setup
+    .tooltiptext = Finish setting up { -brand-short-name }

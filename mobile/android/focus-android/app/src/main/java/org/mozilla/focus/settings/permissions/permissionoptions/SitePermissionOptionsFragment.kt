@@ -65,8 +65,8 @@ class SitePermissionOptionsFragment : BaseComposeFragment() {
         lifecycle.addObserver(hardwarePermissionCheckFeature)
     }
 
-    override val titleText: String
-        get() = sitePermissionOptionsScreenStore.state.sitePermissionLabel
+    override val titleRes: Int?
+        get() = sitePermission.labelRes
 
     @Composable
     override fun Content() {
@@ -79,11 +79,7 @@ class SitePermissionOptionsFragment : BaseComposeFragment() {
         val isAndroidPermissionGranted = sitePermissionOptionsScreenStore.observeAsComposableState { state ->
             state.isAndroidPermissionGranted
         }.value
-        if (
-            sitePermissionOptionSelected != null &&
-            sitePermissionOptionsList != null &&
-            isAndroidPermissionGranted != null
-        ) {
+        if (sitePermissionOptionSelected != null) {
             CreateOptionsPermissionList(
                 sitePermissionOptionSelected,
                 sitePermissionOptionsList,

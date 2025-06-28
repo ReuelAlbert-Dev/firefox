@@ -894,9 +894,6 @@ CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
         workerPrivate->StorageAccess() == StorageAccess::eAllow;
 
     if (isCHIPS && workerHasStorageAccess) {
-      // Assert that the cookie principal is unpartitioned.
-      MOZ_ASSERT(
-          cookiePrincipal->OriginAttributesRef().mPartitionKey.IsEmpty());
       // Only retrieve the partitioned originAttributes if the partitionKey is
       // set. The partitionKey could be empty for partitionKey in partitioned
       // originAttributes if the aWorker is for privilege context, such as the
@@ -962,9 +959,6 @@ CookieCommons::CheckGlobalAndRetrieveCookiePrincipals(
     }
 
     if (isCHIPS && documentHasStorageAccess) {
-      // Assert that the cookie principal is unpartitioned.
-      MOZ_ASSERT(
-          cookiePrincipal->OriginAttributesRef().mPartitionKey.IsEmpty());
       // Only append the partitioned originAttributes if the partitionKey is
       // set. The partitionKey could be empty for partitionKey in partitioned
       // originAttributes if the aDocument is for privilege context, such as the
@@ -1005,15 +999,16 @@ void CookieCommons::GetServerDateHeader(nsIChannel* aChannel,
 }
 
 // static
-int64_t CookieCommons::MaybeReduceExpiry(int64_t aCurrentTimeInSec,
-                                         int64_t aExpiryInSec) {
+int64_t CookieCommons::MaybeCapExpiry(int64_t aCurrentTimeInMSec,
+                                      int64_t aExpiryInMSec) {
   int64_t maxageCap = StaticPrefs::network_cookie_maxageCap();
 
   if (maxageCap) {
-    aExpiryInSec = std::min(aExpiryInSec, aCurrentTimeInSec + maxageCap);
+    aExpiryInMSec =
+        std::min(aExpiryInMSec, aCurrentTimeInMSec + maxageCap * 1000);
   }
 
-  return aExpiryInSec;
+  return aExpiryInMSec;
 }
 
 // static

@@ -178,9 +178,6 @@ with Files("InputEvent.webidl"):
 with Files("InstallTrigger.webidl"):
     BUG_COMPONENT = ("Toolkit", "Add-ons Manager")
 
-with Files("InvokerElement.webidl"):
-    BUG_COMPONENT = ("Core", "DOM: Core & HTML")
-
 with Files("KeyAlgorithm.webidl"):
     BUG_COMPONENT = ("Core", "DOM: Security")
 
@@ -347,7 +344,10 @@ with Files("UIEvent.webidl"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
 with Files("URL.webidl"):
-    BUG_COMPONENT = ("Core", "Audio/Video")
+    BUG_COMPONENT = ("Core", "DOM: Networking")
+
+with Files("URLPattern.webidl"):
+    BUG_COMPONENT = ("Core", "DOM: Networking")
 
 with Files("UserProximityEvent.webidl"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
@@ -477,6 +477,7 @@ WEBIDL_FILES = [
     "Clipboard.webidl",
     "ClipboardEvent.webidl",
     "CloseWatcher.webidl",
+    "CommandEvent.webidl",
     "Comment.webidl",
     "CompositionEvent.webidl",
     "CompressionStream.webidl",
@@ -712,8 +713,6 @@ WEBIDL_FILES = [
     "InputEvent.webidl",
     "IntersectionObserver.webidl",
     "IntlUtils.webidl",
-    "InvokeEvent.webidl",
-    "InvokerElement.webidl",
     "IterableIterator.webidl",
     "KeyAlgorithm.webidl",
     "KeyboardEvent.webidl",
@@ -1022,6 +1021,7 @@ WEBIDL_FILES = [
     "UnderlyingSink.webidl",
     "UnderlyingSource.webidl",
     "URL.webidl",
+    "URLPattern.webidl",
     "URLSearchParams.webidl",
     "UserActivation.webidl",
     "ValidityState.webidl",

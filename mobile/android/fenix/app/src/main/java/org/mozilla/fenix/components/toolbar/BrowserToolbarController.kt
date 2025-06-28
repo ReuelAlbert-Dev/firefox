@@ -43,7 +43,6 @@ import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.ext.navigateSafe
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.home.HomeScreenViewModel
-import org.mozilla.fenix.home.HomeScreenViewModel.Companion.ALL_PRIVATE_TABS
 import org.mozilla.fenix.utils.Settings
 
 /**
@@ -62,11 +61,6 @@ interface BrowserToolbarController {
      * @see [BrowserToolbarInteractor.onHomeButtonClicked]
      */
     fun handleHomeButtonClick()
-
-    /**
-     * @see [BrowserToolbarInteractor.onEraseButtonClicked]
-     */
-    fun handleEraseButtonClick()
 
     /**
      * @see [BrowserToolbarInteractor.onTranslationsButtonClicked]
@@ -225,18 +219,16 @@ class DefaultBrowserToolbarController(
 
     override fun handleHomeButtonClick() {
         Events.browserToolbarHomeTapped.record(NoExtras())
-        browserAnimator.captureEngineViewAndDrawStatically {
-            navController.navigate(
-                BrowserFragmentDirections.actionGlobalHome(),
-            )
-        }
-    }
 
-    override fun handleEraseButtonClick() {
-        Events.browserToolbarEraseTapped.record(NoExtras())
-        homeViewModel.sessionToDelete = ALL_PRIVATE_TABS
-        val directions = BrowserFragmentDirections.actionGlobalHome()
-        navController.navigate(directions)
+        if (settings.enableHomepageAsNewTab) {
+            fenixBrowserUseCases.navigateToHomepage()
+        } else {
+            browserAnimator.captureEngineViewAndDrawStatically {
+                navController.navigate(
+                    BrowserFragmentDirections.actionGlobalHome(),
+                )
+            }
+        }
     }
 
     override fun handleTranslationsButtonClick() {
@@ -256,7 +248,7 @@ class DefaultBrowserToolbarController(
         }
 
         if (url?.isContentUrl() == true) {
-            val tab = sessionId.let { store.state.findTab(it) } ?: return
+            val tab = store.state.findTab(sessionId) ?: return
 
             store.dispatch(
                 ShareResourceAction.AddShareAction(

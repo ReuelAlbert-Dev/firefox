@@ -38,6 +38,7 @@
 #include "nsIBufferedStreams.h"
 #include "nsBufferedStreams.h"
 #include "nsIChannelEventSink.h"
+#include "nsIClassifiedChannel.h"
 #include "nsIContentSniffer.h"
 #include "mozilla/dom/Document.h"
 #include "nsIDownloader.h"
@@ -491,6 +492,15 @@ nsresult NS_NewChannelInternal(
     }
   }
 
+  if (aLoadingNode) {
+    nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
+    ClassificationFlags flags =
+        aLoadingNode->OwnerDoc()->GetScriptTrackingFlags();
+
+    loadInfo->SetTriggeringFirstPartyClassificationFlags(flags.firstPartyFlags);
+    loadInfo->SetTriggeringThirdPartyClassificationFlags(flags.thirdPartyFlags);
+  }
+
   channel.forget(outChannel);
   return NS_OK;
 }
@@ -512,7 +522,8 @@ NS_NewChannelWithTriggeringPrincipal(
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
 
   // Special treatment for resources injected by add-ons.
-  if (aTriggeringPrincipal &&
+  if (aContentPolicyType != nsIContentPolicy::TYPE_DOCUMENT &&
+      aTriggeringPrincipal &&
       StaticPrefs::privacy_antitracking_isolateContentScriptResources() &&
       nsContentUtils::IsExpandedPrincipal(aTriggeringPrincipal)) {
     bool shouldResistFingerprinting =

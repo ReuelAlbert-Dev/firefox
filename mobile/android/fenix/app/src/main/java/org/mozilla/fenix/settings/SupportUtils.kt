@@ -29,6 +29,7 @@ object SupportUtils {
     const val GOOGLE_XX_URL = "https://www.google.com/webhp?client=firefox-b-m&channel=ts"
     const val WHATS_NEW_URL = "https://www.mozilla.org/firefox/android/notes"
     const val FXACCOUNT_SUMO_URL = "https://support.mozilla.org/kb/access-mozilla-services-firefox-account"
+    const val ANDROID_SUPPORT_SUMO_URL = "mzl.la/AndroidSupport"
 
     // This is locale-less on purpose so that the content negotiation happens on the AMO side because the current
     // user language might not be supported by AMO and/or the language might not be exactly what AMO is expecting
@@ -65,6 +66,7 @@ object SupportUtils {
         TECHNICAL_AND_INTERACTION_DATA("mobile-technical-and-interaction-data"),
         USAGE_PING_SETTINGS("usage-ping-settings-mobile"),
         MARKETING_DATA("mobile-marketing-data"),
+        REQUESTED_CRASH_MINIDUMP("unsent-crash-reports-in-firefox-android"),
     }
 
     enum class MozillaPage(internal val path: String) {
