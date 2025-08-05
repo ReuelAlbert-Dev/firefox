@@ -18,6 +18,11 @@
 #endif
 #include "mozilla/StaticPrefs_media.h"
 
+#ifdef MOZ_WIDGET_ANDROID
+#  include "ffvpx/mediacodec.h"
+#  include "ffvpx/hwcontext_mediacodec.h"
+#endif
+
 namespace mozilla {
 
 using TimeUnit = media::TimeUnit;
@@ -85,6 +90,7 @@ FFmpegAudioDecoder<LIBAV_VER>::FFmpegAudioDecoder(
 }
 
 RefPtr<MediaDataDecoder::InitPromise> FFmpegAudioDecoder<LIBAV_VER>::Init() {
+  AUTO_PROFILER_LABEL("FFmpegAudioDecoder::Init", MEDIA_PLAYBACK);
   AVDictionary* options = nullptr;
   if (mCodecID == AV_CODEC_ID_OPUS) {
     // Opus has a special feature for stereo coding where it represent wide
@@ -109,7 +115,20 @@ RefPtr<MediaDataDecoder::InitPromise> FFmpegAudioDecoder<LIBAV_VER>::Init() {
     }
   }
 
-  MediaResult rv = InitSWDecoder(&options);
+  MediaResult rv(NS_ERROR_NOT_AVAILABLE);
+#ifdef MOZ_WIDGET_ANDROID
+  if (XRE_IsRDDProcess() || XRE_IsUtilityProcess()) {
+    AVCodec* codec = FindHardwareAVCodec(mLib, mCodecID, AV_HWDEVICE_TYPE_NONE);
+    if (codec) {
+      rv = InitDecoder(codec, &options);
+    }
+  }
+
+  if (NS_FAILED(rv))
+#endif
+  {
+    rv = InitSWDecoder(&options);
+  }
 
   mLib->av_dict_free(&options);
 
