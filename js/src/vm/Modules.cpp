@@ -2888,8 +2888,8 @@ static bool OnResolvedDynamicModule(JSContext* cx, unsigned argc, Value* vp) {
     return RejectPromiseWithPendingError(cx, promise);
   }
 
-  // Step 6.d.ii. Perform ! Call(promiseCapability.[[Resolve]], undefined, «
-  // namespace »).
+  // Step 6.d.ii. Perform ! Call(promiseCapability.[[Resolve]], undefined, [
+  // namespace ]).
   RootedValue value(cx, ObjectValue(*ns));
   if (!PromiseObject::resolve(cx, promise, value)) {
     return false;

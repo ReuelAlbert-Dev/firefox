@@ -12,14 +12,28 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  box-shadow: var(--box-shadow-card);
 }
 
 .focus-timer-tabs {
+  display: flex;
   margin-block-end: var(--space-medium);
+  position: relative;
+  width: 100%;
+  padding-inline: var(--space-large);
 }
 
-.focus-timer-tabs > moz-button:first-child {
-  margin-inline-end: var(--space-small);
+.focus-timer-tabs-buttons {
+  display: flex;
+  gap: var(--space-small);
+  justify-content: center;
+  flex-grow: 1;
+  margin-inline-start: calc(var(--space-xlarge) + var(--space-small));
+}
+
+// Align the context menu button to the right while keeping the Focus/Break button centered
+.focus-timer-context-menu {
+  margin-inline-end: auto;
 }
 
 .progress-circle-wrapper {
@@ -36,16 +50,16 @@
   /* Complete timer */
   --timer-green: var(--color-green-20);
 
-  height: 0;
+  min-height: 0;
   opacity: 0;
   position: relative;
   width: 162px;
   overflow: hidden;
-  transition: height 0.8s ease, opacity 0.8s ease;
+  transition: min-height 0.8s ease, opacity 0.8s ease;
 
   &.visible {
     opacity: 1;
-    height: 162px;
+    min-height: 162px;
   }
 
   .progress-circle-background,
@@ -59,7 +73,7 @@
   }
 
   .progress-circle-background {
-    background-color: var(--border-color);
+    background-color: var(--border-color-interactive);
   }
 
   /* main timer colours */
@@ -135,6 +149,13 @@
   }
 }
 
+.timer-set-minutes,
+.timer-set-seconds {
+  &:focus {
+    outline: var(--focus-outline);
+  }
+}
+
 .set-timer-controls-wrapper {
   display: flex;
 
@@ -174,6 +195,3 @@
     padding: calc(var(--space-large) + 0.5 * var(--space-xxsmall)); // 17px
   }
 }
-
-
-
