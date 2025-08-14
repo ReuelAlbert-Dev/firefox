@@ -85,6 +85,8 @@
     <string name="preferences_debug_settings_composable_toolbar" translatable="false">Enable Composable Toolbar</string>
     <!-- Label for enabling the redesigned toolbar options -->
     <string name="preferences_debug_settings_toolbar_redesign" translatable="false">Enable Redesigned Toolbar Options</string>
+    <!-- Label for a longer description of the redesigned toolbar depending on the composable toolbar feature -->
+    <string name="preferences_debug_settings_toolbar_redesign_summary" translatable="false">This needs the Composable Toolbar feature enabled</string>
     <!-- Label for toggling Remote Crash Pull -->
     <string name="preferences_crash_pull_never_show_again" translatable="false">Never show Crash Pull</string>
     <!-- Label for enabling the Debug Drawer -->
@@ -111,7 +113,10 @@
 
     <!-- Label for toggling the Tab Manager enhancements -->
     <string name="preferences_tab_manager_enhancements" translatable="false">Enable Tab Manager enhancements</string>
-    
+
+    <!-- Label for enabling LNA blocking -->
+    <string name="preferences_debug_settings_enable_lna_blocking" translatable="false">Enable LNA blocking</string>
+
     <!-- A secret menu option in the tabs tray for making a tab inactive for testing. -->
     <string name="inactive_tabs_menu_item">Make inactive</string>
 

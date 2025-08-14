@@ -1149,7 +1149,7 @@ int32_t nsLayoutUtils::DoCompareTreePosition(const nsIFrame* aFrame1,
 // static
 int32_t nsLayoutUtils::DoCompareTreePosition(
     const nsIFrame* aFrame1, const nsIFrame* aFrame2,
-    nsTArray<const nsIFrame*>& aFrame2Ancestors,
+    const nsTArray<const nsIFrame*>& aFrame2Ancestors,
     const nsIFrame* aCommonAncestor) {
   MOZ_ASSERT(aFrame1, "aFrame1 must not be null");
   MOZ_ASSERT(aFrame2, "aFrame2 must not be null");
@@ -1161,11 +1161,16 @@ int32_t nsLayoutUtils::DoCompareTreePosition(
   }
 
   AutoTArray<const nsIFrame*, 20> frame1Ancestors;
-  if (aCommonAncestor &&
-      !FillAncestors(aFrame1, aCommonAncestor, &frame1Ancestors)) {
+  const nsIFrame* frame1CommonAncestor =
+      FillAncestors(aFrame1, aCommonAncestor, &frame1Ancestors);
+  if (aCommonAncestor && !frame1CommonAncestor) {
     // We reached the root of the frame tree ... if aCommonAncestor was set,
-    // it is wrong
-    return DoCompareTreePosition(aFrame1, aFrame2, nullptr);
+    // it is wrong. We need to recompute without aCommonAncestor,
+    // but computing frame1Ancestors array again can be avoided by
+    // swapping the order of the arguments.
+    const int32_t oppositeResult =
+        DoCompareTreePosition(aFrame2, aFrame1, frame1Ancestors, nullptr);
+    return -oppositeResult;
   }
 
   int32_t last1 = int32_t(frame1Ancestors.Length()) - 1;
