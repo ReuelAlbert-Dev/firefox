@@ -8,7 +8,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   ObliviousHTTP: "resource://gre/modules/ObliviousHTTP.sys.mjs",
-  pktApi: "chrome://pocket/content/pktApi.sys.mjs",
   PersistentCache: "resource://newtab/lib/PersistentCache.sys.mjs",
   Region: "resource://gre/modules/Region.sys.mjs",
   RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
@@ -138,6 +137,12 @@ const PREF_SURFACE_ID = "telemetry.surfaceId";
 const PREF_WIDGET_LISTS_ENABLED = "widgets.lists.enabled";
 
 let getHardcodedLayout;
+
+ChromeUtils.defineLazyGetter(lazy, "userAgent", () => {
+  return Cc["@mozilla.org/network/protocol;1?name=http"].getService(
+    Ci.nsIHttpProtocolHandler
+  ).userAgent;
+});
 
 export class DiscoveryStreamFeed {
   constructor() {
@@ -379,7 +384,6 @@ export class DiscoveryStreamFeed {
       ac.AlsoToPreloaded({
         type: at.DISCOVERY_STREAM_PREFS_SETUP,
         data: {
-          recentSavesEnabled: nimbusConfig.recentSavesEnabled,
           pocketButtonEnabled,
           hideDescriptions,
           compactImages: nimbusConfig.compactImages,
@@ -448,45 +452,6 @@ export class DiscoveryStreamFeed {
         },
       })
     );
-  }
-
-  async setupPocketState(target) {
-    let dispatch = action =>
-      this.store.dispatch(ac.OnlyToOneContent(action, target));
-    const isUserLoggedIn = lazy.pktApi.isUserLoggedIn();
-    dispatch({
-      type: at.DISCOVERY_STREAM_POCKET_STATE_SET,
-      data: {
-        isUserLoggedIn,
-      },
-    });
-
-    // If we're not logged in, don't bother fetching recent saves, we're done.
-    if (isUserLoggedIn) {
-      let recentSaves = await lazy.pktApi.getRecentSavesCache();
-      if (recentSaves) {
-        // We have cache, so we can use those.
-        dispatch({
-          type: at.DISCOVERY_STREAM_RECENT_SAVES,
-          data: {
-            recentSaves,
-          },
-        });
-      } else {
-        // We don't have cache, so fetch fresh stories.
-        lazy.pktApi.getRecentSaves({
-          success(data) {
-            dispatch({
-              type: at.DISCOVERY_STREAM_RECENT_SAVES,
-              data: {
-                recentSaves: data,
-              },
-            });
-          },
-          error() {},
-        });
-      }
-    }
   }
 
   uninitPrefs() {
@@ -786,8 +751,6 @@ export class DiscoveryStreamFeed {
       this.store.getState().Prefs.values[PREF_WIDGET_LISTS_ENABLED];
 
     const pocketConfig = this.store.getState().Prefs.values?.pocketConfig || {};
-    const onboardingExperience =
-      this.isBff && pocketConfig.onboardingExperience;
 
     // The Unified Ads API does not support the spoc topsite placement.
     const unifiedAdsEnabled =
@@ -910,7 +873,6 @@ export class DiscoveryStreamFeed {
       fourCardLayout: pocketConfig.fourCardLayout,
       newFooterSection: pocketConfig.newFooterSection,
       compactGrid: pocketConfig.compactGrid,
-      onboardingExperience,
       // For now button variants are for experimentation and English only.
       ctaButtonSponsors: this.locale.startsWith("en-") ? ctaButtonSponsors : [],
       ctaButtonVariant: this.locale.startsWith("en-") ? ctaButtonVariant : "",
@@ -1375,6 +1337,8 @@ export class DiscoveryStreamFeed {
       }
 
       if (placements?.length) {
+        const headers = new Headers();
+        headers.append("content-type", "application/json");
         const apiKeyPref = this.config.api_key_pref;
         const apiKey = Services.prefs.getCharPref(apiKeyPref, "");
         const state = this.store.getState();
@@ -1393,6 +1357,29 @@ export class DiscoveryStreamFeed {
           unifiedAdsPlacements = this.getAdsPlacements();
           const blockedSponsors =
             state.Prefs.values[PREF_UNIFIED_ADS_BLOCKED_LIST];
+          const preFlightConfig =
+            state.Prefs.values?.trainhopConfig?.marsPreFlight || {};
+
+          // We need some basic data that we can pass along to the ohttp request.
+          // We purposefully don't use ohttp on this request. We also expect to
+          // mostly hit the HTTP cache rather than the network with these requests.
+          if (preFlightConfig.enabled) {
+            const preFlight = await this.fetchFromEndpoint(
+              `${endpointBaseUrl}v1/o`,
+              {
+                method: "GET",
+              }
+            );
+
+            if (preFlight) {
+              // If we don't get a normalized_ua, it means it matched the default userAgent.
+              headers.append(
+                "X-User-Agent",
+                preFlight.normalized_ua || lazy.userAgent
+              );
+              headers.append("X-Geoname-ID", preFlight.geoname_id);
+            }
+          }
 
           body = {
             context_id: await lazy.ContextId.request(),
@@ -1401,9 +1388,7 @@ export class DiscoveryStreamFeed {
           };
         }
 
-        const headers = new Headers();
         const marsOhttpEnabled = state.Prefs.values[PREF_UNIFIED_ADS_OHTTP];
-        headers.append("content-type", "application/json");
 
         let spocsResponse;
         // Logic decision point: Query ads servers in this file or utilize AdsFeed method
@@ -2172,8 +2157,13 @@ export class DiscoveryStreamFeed {
 
       let inferredInterests = null;
       if (inferredPersonalization && merinoOhttpEnabled) {
+        const useLaplace =
+          !prefs.inferredPersonalizationConfig?.iv_unary_dp_in_request;
         inferredInterests =
-          this.store.getState().InferredPersonalization.inferredInterests || {};
+          (useLaplace
+            ? this.store.getState().InferredPersonalization.inferredInterests
+            : this.store.getState().InferredPersonalization
+                .coarsePrivateInferredInterests) || {};
       }
       const requestMetadata = {
         utc_offset: lazy.NewTabUtils.getUtcOffset(prefs[PREF_SURFACE_ID]),
@@ -2835,9 +2825,6 @@ export class DiscoveryStreamFeed {
           )
         );
         break;
-      case at.DISCOVERY_STREAM_POCKET_STATE_INIT:
-        this.setupPocketState(action.meta.fromTarget);
-        break;
       case at.DISCOVERY_STREAM_PERSONALIZATION_UPDATED:
         if (this.personalized) {
           const { feeds, spocs } = this.store.getState().DiscoveryStream;
@@ -3083,7 +3070,6 @@ export class DiscoveryStreamFeed {
      `fourCardLayout` Enable four Pocket cards per row.
      `newFooterSection` Changes the layout of the topics section.
      `compactGrid` Reduce the number of pixels between the Pocket cards.
-     `onboardingExperience` Show new users some UI explaining Pocket above the Pocket section.
      `ctaButtonSponsors` An array of sponsors we want to show a cta button on the card for.
      `ctaButtonVariant` Sets the variant for the cta sponsor button.
      `spocMessageVariant` Sets the variant for the sponsor message dialog.
@@ -3104,7 +3090,6 @@ getHardcodedLayout = ({
   fourCardLayout = false,
   newFooterSection = false,
   compactGrid = false,
-  onboardingExperience = false,
   ctaButtonSponsors = [],
   ctaButtonVariant = "",
   spocMessageVariant = "",
@@ -3179,7 +3164,6 @@ getHardcodedLayout = ({
             hideCardBackground,
             fourCardLayout,
             compactGrid,
-            onboardingExperience,
             ctaButtonSponsors,
             ctaButtonVariant,
             spocMessageVariant,

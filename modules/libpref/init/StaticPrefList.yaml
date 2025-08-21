@@ -1227,6 +1227,13 @@
   value: false
   mirror: always
 
+# On Windows, whether to bring the foreground window to the front when printing
+# to avoid a DLP agent stealing focus and cancelling the print (bug 1980225)
+- name: browser.contentanalysis.print_set_foreground_window
+  type: bool
+  value: true
+  mirror: always
+
 # What content analysis should return if there is a problem communicating
 # with the agent. (see DefaultResponse enum in ContentAnalysis.h)
 # Make sure these stay in sync with the out-of-range check in Policies.sys.mjs.
@@ -1313,14 +1320,6 @@
 - name: browser.contentanalysis.max_connections
   type: uint32_t
   value: 32
-  mirror: always
-
-# Enable an experiment where printing on Windows will disallow other
-# applications to take focus, to avoid a bug in printing-to-file.
-# This pref is relevant whether or not content analysis is used.
-- name: browser.contentanalysis.windows_lock_foreground_window_on_print
-  type: bool
-  value: true
   mirror: always
 
 # Should Firefox use content analysis for clipboard operations?
@@ -2643,7 +2642,7 @@
 # Enable extra cookie-store properties
 - name: dom.cookieStore.extra.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: false
   mirror: always
 
 # Is support for CSSPseudoElement enabled?
@@ -3652,7 +3651,7 @@
 # Enable ParentNode.moveBefore().
 - name: dom.movebefore.enabled
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether to dispatch mutation events.
@@ -9952,7 +9951,7 @@
 #   2 - also fonts from optional language packs
 #   3 - also user-installed fonts
 - name: layout.css.font-visibility
-  type: int32_t
+  type: RelaxedAtomicInt32
   value: 3
   mirror: always
 
@@ -10906,13 +10905,6 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
-# Whether to disable support for stretching operators with STIXGeneral fonts.
-# macos still has the deprecated STIXGeneral font pre-installed.
-- name: mathml.stixgeneral_operator_stretching.disabled
-  type: bool
-  value: true
-  mirror: always
-
 # Whether to render all unknown mathml elements as <mrow>
 - name: mathml.unknown_mrow.enabled
   type: bool
@@ -10929,6 +10921,12 @@
 #else
   value: true
 #endif
+  mirror: always
+
+# Whether to enable support for the math-shift CSS property.
+- name: mathml.math_shift.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Whether to disable the MathML3 support for the mathvariant attribute. For
@@ -12673,7 +12671,7 @@
  # pref works only when enabling the pref `media.geckoview.autoplay.request`.
  # 0=prompt as normal, 1=allow all, 2=deny all, 3=allow audible request,
  # 4=deny audible request, 5=allow inaudible request, 6=deny inaudible request.
- # 7=leave all requests pending.
+ # 7=leave all requests pending, 8=asynchronous allow all
 - name: media.geckoview.autoplay.request.testing
   type: uint32_t
   value: 0
@@ -13529,7 +13527,7 @@
 # Enables the predictive service.
 - name: network.predictor.enabled
   type: bool
-  value: true
+  value: false
   mirror: always
 
 # Disable requests to 0.0.0.0
@@ -13550,7 +13548,7 @@
 # actually treat localhost as a secure origin.
 - name: network.proxy.testing_localhost_is_secure_when_hijacked
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 # The timeout used when calling DhcpRequestParams. The call may sometimes hang
@@ -13580,7 +13578,7 @@
 
 - name: network.predictor.enable-prefetch
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: false
   mirror: always
 
 - name: network.predictor.page-degradation.day

@@ -14,8 +14,7 @@ use crate::dom::TElement;
 #[cfg(feature = "gecko")]
 use crate::gecko_bindings::structs::{ServoStyleSetSizes, StyleRuleInclusion};
 use crate::invalidation::element::invalidation_map::{
-    note_selector_for_invalidation, AdditionalRelativeSelectorInvalidationMap, Dependency,
-    InvalidationMap,
+    note_selector_for_invalidation, AdditionalRelativeSelectorInvalidationMap, Dependency, DependencyInvalidationKind, InvalidationMap, ScopeDependencyInvalidationKind
 };
 use crate::invalidation::media_queries::{
     EffectiveMediaQueryResults, MediaListKey, ToMediaListKey,
@@ -2183,13 +2182,13 @@ fn component_needs_revalidation(
             // See https://bugzilla.mozilla.org/show_bug.cgi?id=1369611
             passed_rightmost_selector
         },
-        Component::AttributeInNoNamespaceExists { .. } |
-        Component::AttributeInNoNamespace { .. } |
-        Component::AttributeOther(_) |
-        Component::Empty |
-        Component::Nth(_) |
-        Component::NthOf(_) |
-        Component::Has(_) => true,
+        Component::AttributeInNoNamespaceExists { .. }
+        | Component::AttributeInNoNamespace { .. }
+        | Component::AttributeOther(_)
+        | Component::Empty
+        | Component::Nth(_)
+        | Component::NthOf(_)
+        | Component::Has(_) => true,
         Component::NonTSPseudoClass(ref p) => p.needs_cache_revalidation(),
         _ => false,
     }
@@ -2224,8 +2223,8 @@ impl<'a> SelectorVisitor for StylistSelectorVisitor<'a> {
         // NOTE(emilio): this call happens before we visit any of the simple
         // selectors in the next ComplexSelector, so we can use this to skip
         // looking at them.
-        self.passed_rightmost_selector = self.passed_rightmost_selector ||
-            !matches!(combinator, None | Some(Combinator::PseudoElement));
+        self.passed_rightmost_selector = self.passed_rightmost_selector
+            || !matches!(combinator, None | Some(Combinator::PseudoElement));
 
         true
     }
@@ -2276,8 +2275,8 @@ impl<'a> SelectorVisitor for StylistSelectorVisitor<'a> {
     }
 
     fn visit_simple_selector(&mut self, s: &Component<SelectorImpl>) -> bool {
-        *self.needs_revalidation = *self.needs_revalidation ||
-            component_needs_revalidation(s, self.passed_rightmost_selector);
+        *self.needs_revalidation = *self.needs_revalidation
+            || component_needs_revalidation(s, self.passed_rightmost_selector);
 
         match *s {
             Component::NonTSPseudoClass(NonTSPseudoClass::CustomState(ref name)) => {
@@ -2352,8 +2351,8 @@ impl<Map: Default + MallocSizeOf> GenericElementAndPseudoRules<Map> {
         let mut current = self;
         for &pseudo_element in pseudo_elements {
             debug_assert!(
-                !pseudo_element.is_precomputed() &&
-                    !pseudo_element.is_unknown_webkit_pseudo_element(),
+                !pseudo_element.is_precomputed()
+                    && !pseudo_element.is_unknown_webkit_pseudo_element(),
                 "Precomputed pseudos should end up in precomputed_pseudo_element_decls, \
                  and unknown webkit pseudos should be discarded before getting here"
             );
@@ -2573,9 +2572,13 @@ impl ScopeBoundWithHashes {
     }
 
     fn new_no_hash(selectors: SelectorList<SelectorImpl>) -> Self {
-        let hashes = selectors.slice().iter().map(|_| {
-            AncestorHashes{ packed_hashes: [0, 0, 0] }
-        }).collect();
+        let hashes = selectors
+            .slice()
+            .iter()
+            .map(|_| AncestorHashes {
+                packed_hashes: [0, 0, 0],
+            })
+            .collect();
         Self { selectors, hashes }
     }
 }
@@ -3438,6 +3441,17 @@ impl CascadeData {
                     if let Some(cond) = cur_scope.condition.as_ref() {
                         let mut dependency_vector: Vec<Dependency> = Vec::new();
 
+                        if cond.start.is_none(){
+                            dependency_vector.push(Dependency::new(
+                                IMPLICIT_SCOPE.slice()[0].clone(),
+                                0,
+                                inner_scope_dependencies.clone(),
+                                DependencyInvalidationKind::Scope(
+                                    ScopeDependencyInvalidationKind::ImplicitScope
+                                ),
+                            ));
+                        }
+
                         for s in cond.iter_selectors() {
                             let mut new_inner_dependencies = note_selector_for_invalidation(
                                 &s.clone(),
@@ -3457,8 +3471,10 @@ impl CascadeData {
                                 nth_of_mapped_ids: &mut self.nth_of_mapped_ids,
                                 attribute_dependencies: &mut self.attribute_dependencies,
                                 nth_of_class_dependencies: &mut self.nth_of_class_dependencies,
-                                nth_of_attribute_dependencies: &mut self.nth_of_attribute_dependencies,
-                                nth_of_custom_state_dependencies: &mut self.nth_of_custom_state_dependencies,
+                                nth_of_attribute_dependencies: &mut self
+                                    .nth_of_attribute_dependencies,
+                                nth_of_custom_state_dependencies: &mut self
+                                    .nth_of_custom_state_dependencies,
                                 state_dependencies: &mut self.state_dependencies,
                                 nth_of_state_dependencies: &mut self.nth_of_state_dependencies,
                                 document_state_dependencies: &mut self.document_state_dependencies,
@@ -3865,13 +3881,13 @@ impl CascadeData {
                         if let Some(root) = stylesheet.implicit_scope_root() {
                             matches_shadow_host = root.matches_shadow_host();
                             match root {
-                                ImplicitScopeRoot::InLightTree(_) |
-                                ImplicitScopeRoot::Constructed |
-                                ImplicitScopeRoot::DocumentElement => {
+                                ImplicitScopeRoot::InLightTree(_)
+                                | ImplicitScopeRoot::Constructed
+                                | ImplicitScopeRoot::DocumentElement => {
                                     StylistImplicitScopeRoot::Normal(root)
                                 },
-                                ImplicitScopeRoot::ShadowHost(_) |
-                                ImplicitScopeRoot::InShadowTree(_) => {
+                                ImplicitScopeRoot::ShadowHost(_)
+                                | ImplicitScopeRoot::InShadowTree(_) => {
                                     // Style data can be shared between shadow trees, so we must
                                     // query the implicit root for that specific tree.
                                     // Shared stylesheet means shared sheet indices, so we can
@@ -4024,25 +4040,25 @@ impl CascadeData {
 
         while let Some(rule) = iter.next() {
             match *rule {
-                CssRule::Style(..) |
-                CssRule::NestedDeclarations(..) |
-                CssRule::Namespace(..) |
-                CssRule::FontFace(..) |
-                CssRule::Container(..) |
-                CssRule::CounterStyle(..) |
-                CssRule::Supports(..) |
-                CssRule::Keyframes(..) |
-                CssRule::Margin(..) |
-                CssRule::Page(..) |
-                CssRule::Property(..) |
-                CssRule::Document(..) |
-                CssRule::LayerBlock(..) |
-                CssRule::LayerStatement(..) |
-                CssRule::FontPaletteValues(..) |
-                CssRule::FontFeatureValues(..) |
-                CssRule::Scope(..) |
-                CssRule::StartingStyle(..) |
-                CssRule::PositionTry(..) => {
+                CssRule::Style(..)
+                | CssRule::NestedDeclarations(..)
+                | CssRule::Namespace(..)
+                | CssRule::FontFace(..)
+                | CssRule::Container(..)
+                | CssRule::CounterStyle(..)
+                | CssRule::Supports(..)
+                | CssRule::Keyframes(..)
+                | CssRule::Margin(..)
+                | CssRule::Page(..)
+                | CssRule::Property(..)
+                | CssRule::Document(..)
+                | CssRule::LayerBlock(..)
+                | CssRule::LayerStatement(..)
+                | CssRule::FontPaletteValues(..)
+                | CssRule::FontFeatureValues(..)
+                | CssRule::Scope(..)
+                | CssRule::StartingStyle(..)
+                | CssRule::PositionTry(..) => {
                     // Not affected by device changes.
                     continue;
                 },

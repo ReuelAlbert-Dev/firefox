@@ -82,7 +82,7 @@ export class ContentSection extends React.PureComponent {
         parseFloat(window.getComputedStyle(drawerRef)?.height) || 0;
 
       if (isOpen) {
-        drawerRef.style.marginTop = "var(--space-large)";
+        drawerRef.style.marginTop = "var(--space-small)";
       } else {
         drawerRef.style.marginTop = `-${drawerHeight + 3}px`;
       }
@@ -95,7 +95,6 @@ export class ContentSection extends React.PureComponent {
       enabledWidgets,
       pocketRegion,
       mayHaveInferredPersonalization,
-      mayHaveRecentSaves,
       mayHaveWeather,
       mayHaveTrendingSearch,
       mayHaveWidgets,
@@ -114,7 +113,6 @@ export class ContentSection extends React.PureComponent {
       weatherEnabled,
       trendingSearchEnabled,
       showInferredPersonalizationEnabled,
-      showRecentSavesEnabled,
       topSitesRowsCount,
     } = enabledSections;
     const { timerEnabled, listsEnabled } = enabledWidgets;
@@ -291,12 +289,16 @@ export class ContentSection extends React.PureComponent {
                 aria-describedby="custom-pocket-subtitle"
                 data-preference="feeds.section.topstories"
                 data-eventSource="TOP_STORIES"
-                data-l10n-id="newtab-custom-stories-toggle"
+                {...(mayHaveInferredPersonalization
+                  ? {
+                      label: "Stories",
+                    }
+                  : {
+                      "data-l10n-id": "newtab-custom-stories-toggle",
+                    })}
               >
                 <div slot="nested">
-                  {(mayHaveRecentSaves ||
-                    mayHaveInferredPersonalization ||
-                    mayHaveTopicSections) && (
+                  {(mayHaveInferredPersonalization || mayHaveTopicSections) && (
                     <div className="more-info-pocket-wrapper">
                       <div
                         className="more-information"
@@ -318,32 +320,12 @@ export class ContentSection extends React.PureComponent {
                               className="customize-menu-checkbox-label"
                               htmlFor="inferred-personalization"
                             >
-                              Recommendations inferred from your activity with
-                              the feed
+                              Personalized stories based on your activity
                             </label>
                           </div>
                         )}
                         {mayHaveTopicSections && (
                           <SectionsMgmtPanel exitEventFired={exitEventFired} />
-                        )}
-                        {mayHaveRecentSaves && (
-                          <div className="check-wrapper" role="presentation">
-                            <input
-                              id="recent-saves-pocket"
-                              className="customize-menu-checkbox"
-                              disabled={!pocketEnabled}
-                              checked={showRecentSavesEnabled}
-                              type="checkbox"
-                              onChange={this.onPreferenceSelect}
-                              data-preference="showRecentSaves"
-                              data-eventSource="POCKET_RECENT_SAVES"
-                            />
-                            <label
-                              className="customize-menu-checkbox-label"
-                              htmlFor="recent-saves-pocket"
-                              data-l10n-id="newtab-custom-pocket-show-recent-saves"
-                            />
-                          </div>
                         )}
                       </div>
                     </div>

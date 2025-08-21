@@ -8,6 +8,7 @@
 #define mozilla_layers_AsyncPanZoomController_h
 
 #include "Units.h"
+#include "apz/public/APZPublicUtils.h"
 #include "mozilla/layers/CompositorScrollUpdate.h"
 #include "mozilla/layers/GeckoContentController.h"
 #include "mozilla/layers/RepaintRequest.h"
@@ -180,10 +181,11 @@ struct PointerEventsConsumableFlags {
 class AsyncPanZoomController {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(AsyncPanZoomController)
 
-  typedef mozilla::MonitorAutoLock MonitorAutoLock;
-  typedef mozilla::gfx::Matrix4x4 Matrix4x4;
-  typedef mozilla::layers::RepaintRequest::ScrollOffsetUpdateType
-      RepaintUpdateType;
+  using MonitorAutoLock = mozilla::MonitorAutoLock;
+  using Matrix4x4 = mozilla::gfx::Matrix4x4;
+  using RepaintUpdateType =
+      mozilla::layers::RepaintRequest::ScrollOffsetUpdateType;
+  using ScrollAnimationKind = apz::ScrollAnimationKind;
 
  public:
   enum GestureBehavior {
@@ -1442,15 +1444,11 @@ class AsyncPanZoomController {
     ANIMATING_ZOOM,       /* animated zoom to a new rect */
     OVERSCROLL_ANIMATION, /* Spring-based animation used to relieve overscroll
                              once the finger is lifted. */
-    SMOOTH_SCROLL,        /* Smooth scrolling to destination, with physics
-                             controlled by prefs specific to the scroll origin. */
-    SMOOTHMSD_SCROLL,     /* SmoothMSD scrolling to destination. Used by
-                             CSSOM-View smooth scroll-behavior */
-    WHEEL_SCROLL,    /* Smooth scrolling to a destination for a wheel event. */
-    KEYBOARD_SCROLL, /* Smooth scrolling to a destination for a keyboard event.
-                      */
-    AUTOSCROLL,      /* Autoscroll animation. */
-    SCROLLBAR_DRAG   /* Async scrollbar drag. */
+    SMOOTH_SCROLL,        /* Smooth scrolling to destination. May be for a wheel
+                             event, keyboard event, scroll-behavior or scroll
+                             snapping. */
+    AUTOSCROLL,           /* Autoscroll animation. */
+    SCROLLBAR_DRAG        /* Async scrollbar drag. */
   };
   // This is in theory protected by |mRecursiveMutex|; that is, it should be
   // held whenever this is updated. In practice though... see bug 897017.
@@ -1475,6 +1473,12 @@ class AsyncPanZoomController {
    * Returns wheter a delayed transform end is queued.
    */
   void SetDelayedTransformEnd(bool aDelayedTransformEnd);
+
+  /**
+   * Check whether there is an ongoing smooth scroll animation of
+   * the specified kind.
+   */
+  bool InScrollAnimation(ScrollAnimationKind aKind) const;
 
   /**
    * Returns whether the specified PanZoomState does not need to be reset when
@@ -1620,9 +1624,8 @@ class AsyncPanZoomController {
   friend class AndroidFlingPhysics;
   friend class DesktopFlingPhysics;
   friend class OverscrollAnimation;
-  friend class SmoothMsdScrollAnimation;
   friend class GenericScrollAnimation;
-  friend class WheelScrollAnimation;
+  friend class SmoothScrollAnimation;
   friend class ZoomAnimation;
 
   friend class GenericOverscrollEffect;

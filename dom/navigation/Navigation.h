@@ -138,6 +138,10 @@ class Navigation final : public DOMEventTargetHelper {
   void AbortOngoingNavigation(
       JSContext* aCx, JS::Handle<JS::Value> aError = JS::UndefinedHandleValue);
 
+  void CreateNavigationActivationFrom(
+      SessionHistoryInfo* aPreviousEntryForActivation,
+      NavigationType aNavigationType);
+
  private:
   friend struct NavigationAPIMethodTracker;
   using UpcomingTraverseAPIMethodTrackers =
@@ -201,6 +205,9 @@ class Navigation final : public DOMEventTargetHelper {
 
   Document* GetAssociatedDocument() const;
 
+  // Update the state managing if we need to dispatch the traverse event or not.
+  void UpdateNeedsTraverse();
+
   void LogHistory() const;
 
   // https://html.spec.whatwg.org/multipage/nav-history-apis.html#navigation-entry-list
@@ -235,5 +242,16 @@ class Navigation final : public DOMEventTargetHelper {
 };
 
 }  // namespace mozilla::dom
+
+template <>
+struct fmt::formatter<mozilla::dom::NavigationType, char>
+    : public formatter<nsLiteralCString> {
+  template <typename FmtContext>
+  constexpr auto format(const mozilla::dom::NavigationType& aNavigationType,
+                        FmtContext& aCtx) const {
+    return formatter<nsLiteralCString>::format(
+        mozilla::dom::GetEnumString(aNavigationType), aCtx);
+  }
+};
 
 #endif  // mozilla_dom_Navigation_h___

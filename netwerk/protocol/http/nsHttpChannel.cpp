@@ -528,12 +528,9 @@ void nsHttpChannel::ReleaseMainThreadOnlyReferences() {
 
 nsresult nsHttpChannel::Init(nsIURI* uri, uint32_t caps, nsProxyInfo* proxyInfo,
                              uint32_t proxyResolveFlags, nsIURI* proxyURI,
-                             uint64_t channelId,
-                             ExtContentPolicyType aContentPolicyType,
-                             nsILoadInfo* aLoadInfo) {
-  nsresult rv =
-      HttpBaseChannel::Init(uri, caps, proxyInfo, proxyResolveFlags, proxyURI,
-                            channelId, aContentPolicyType, aLoadInfo);
+                             uint64_t channelId, nsILoadInfo* aLoadInfo) {
+  nsresult rv = HttpBaseChannel::Init(uri, caps, proxyInfo, proxyResolveFlags,
+                                      proxyURI, channelId, aLoadInfo);
   if (NS_FAILED(rv)) return rv;
 
   LOG1(("nsHttpChannel::Init [this=%p]\n", this));
@@ -2855,16 +2852,18 @@ nsresult nsHttpChannel::ProcessResponse(nsHttpConnectionInfo* aConnInfo) {
   // We use GetReferringPage because mReferrerInfo may not be set at all(this is
   // especially useful in xpcshell tests, where we don't have an actual pageload
   // to get a referrer from).
-  nsCOMPtr<nsIURI> referrer = GetReferringPage();
-  if (!referrer && mReferrerInfo) {
-    referrer = mReferrerInfo->GetOriginalReferrer();
-  }
+  if (StaticPrefs::network_predictor_enabled()) {
+    nsCOMPtr<nsIURI> referrer = GetReferringPage();
+    if (!referrer && mReferrerInfo) {
+      referrer = mReferrerInfo->GetOriginalReferrer();
+    }
 
-  if (referrer) {
-    nsCOMPtr<nsILoadContextInfo> lci = GetLoadContextInfo(this);
-    mozilla::net::Predictor::UpdateCacheability(
-        referrer, mURI, httpStatus, mRequestHead, mResponseHead.get(), lci,
-        IsThirdPartyTrackingResource());
+    if (referrer) {
+      nsCOMPtr<nsILoadContextInfo> lci = GetLoadContextInfo(this);
+      mozilla::net::Predictor::UpdateCacheability(
+          referrer, mURI, httpStatus, mRequestHead, mResponseHead.get(), lci,
+          IsThirdPartyTrackingResource());
+    }
   }
 
   // Only allow 407 (authentication required) to continue
@@ -11599,14 +11598,12 @@ nsresult nsHttpChannel::RedirectToInterceptedChannel() {
       InterceptedHttpChannel::CreateForInterception(
           mChannelCreationTime, mChannelCreationTimestamp, mAsyncOpenTime);
 
-  ExtContentPolicyType type = mLoadInfo->GetExternalContentPolicyType();
-
   nsCOMPtr<nsILoadInfo> redirectLoadInfo =
       CloneLoadInfoForRedirect(mURI, nsIChannelEventSink::REDIRECT_INTERNAL);
 
   nsresult rv = intercepted->Init(
       mURI, mCaps, static_cast<nsProxyInfo*>(mProxyInfo.get()),
-      mProxyResolveFlags, mProxyURI, mChannelId, type, redirectLoadInfo);
+      mProxyResolveFlags, mProxyURI, mChannelId, redirectLoadInfo);
 
   rv = SetupReplacementChannel(mURI, intercepted, true,
                                nsIChannelEventSink::REDIRECT_INTERNAL);

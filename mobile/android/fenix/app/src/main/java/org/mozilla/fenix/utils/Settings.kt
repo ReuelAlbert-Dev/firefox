@@ -580,6 +580,22 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     )
 
     /**
+     * Used to determine users who have interacted with any links from the Terms of Use prompt.
+     */
+    var hasClickedTermOfUsePromptLink by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_terms_clicked_link),
+        default = false,
+    )
+
+    /**
+     * Used to determine users who clicked the "remind me later" action.
+     */
+    var hasClickedTermOfUsePromptRemindMeLater by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_terms_clicked_remind_me_later),
+        default = false,
+    )
+
+    /**
      * The daily usage ping is not normally tied to normal telemetry.  We set the default value to
      * [isTelemetryEnabled] because this setting was added in early 2025 and we want to make
      * sure that users who upgrade and had telemetry disabled don't start sending the
@@ -2391,30 +2407,6 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         )
 
     /**
-     * Returns the height of the bottom toolbar container.
-     *
-     * The bottom toolbar container can consist of a navigation bar, the microsurvey prompt
-     * a combination of a navigation and microsurvey prompt, or be absent.
-     */
-    fun getBottomToolbarContainerHeight(): Int {
-        val isMicrosurveyEnabled = shouldShowMicrosurveyPrompt
-
-        val microsurveyHeight = if (isMicrosurveyEnabled) {
-            appContext.pixelSizeFor(R.dimen.browser_microsurvey_height)
-        } else {
-            0
-        }
-
-        val navBarHeight = if (shouldUseExpandedToolbar) {
-            appContext.pixelSizeFor(R.dimen.browser_navbar_height)
-        } else {
-            0
-        }
-
-        return microsurveyHeight + navBarHeight
-    }
-
-    /**
      * Indicates if the microsurvey feature is enabled.
      */
     var microsurveyFeatureEnabled by lazyFeatureFlagPreference(
@@ -2684,14 +2676,6 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var distributionId by stringPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_distribution_id),
         default = "",
-    )
-
-    /**
-     * Suffix of the currently selected app icon (launcher alias).
-     */
-    var selectedAppIcon by stringPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_selected_app_icon),
-        default = AppIcon.AppDefault.aliasSuffix,
     )
 
     /**

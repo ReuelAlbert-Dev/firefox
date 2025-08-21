@@ -909,6 +909,14 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
+    "widgets.lists.maxListItems",
+    {
+      title:
+        "Maximum number of items that can be created on an individual list",
+      value: 100,
+    },
+  ],
+  [
     "widgets.system.lists.enabled",
     {
       title: "Enables the to-do lists widget experiment in Nimbus",
@@ -1011,15 +1019,6 @@ export const PREFS_CONFIG = new Map([
         "Endpoint prefixes (comma-separated) that are allowed to be requested",
       value:
         "https://getpocket.cdn.mozilla.net/,https://firefox-api-proxy.cdn.mozilla.net/,https://spocs.getpocket.com/,https://merino.services.mozilla.com/,https://ads.mozilla.org/",
-    },
-  ],
-  [
-    "discoverystream.onboardingExperience.dismissed",
-    {
-      title: "Allows the user to dismiss the new Pocket onboarding experience",
-      skipBroadcast: true,
-      alsoToPreloaded: true,
-      value: false,
     },
   ],
   [
@@ -1164,13 +1163,6 @@ export const PREFS_CONFIG = new Map([
       title: "Enables topic labels for discovery stream",
       // pref is dynamic
       getValue: showTopicLabels,
-    },
-  ],
-  [
-    "showRecentSaves",
-    {
-      title: "Control whether a user wants recent saves visible on Newtab",
-      value: true,
     },
   ],
   [

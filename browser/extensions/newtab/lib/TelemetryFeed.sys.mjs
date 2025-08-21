@@ -41,7 +41,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   NewTabContentPing: "resource://newtab/lib/NewTabContentPing.sys.mjs",
   NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
-  pktApi: "chrome://pocket/content/pktApi.sys.mjs",
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -240,7 +239,7 @@ export class TelemetryFeed {
   }
 
   browserOpenNewtabStart() {
-    let now = Cu.now();
+    let now = ChromeUtils.now();
     this._browserOpenNewtabStart = Math.round(this.processStartTs + now);
 
     ChromeUtils.addProfilerMarker(
@@ -706,15 +705,12 @@ export class TelemetryFeed {
   }
 
   handleDiscoveryStreamUserEvent(action) {
-    const pocket_logged_in_status = lazy.pktApi.isUserLoggedIn();
-    Glean.pocket.isSignedIn.set(pocket_logged_in_status);
     this.handleUserEvent({
       ...action,
       data: {
         ...(action.data || {}),
         value: {
           ...(action.data?.value || {}),
-          pocket_logged_in_status,
         },
       },
     });
@@ -1933,7 +1929,6 @@ export class TelemetryFeed {
       const fullPrefName = ACTIVITY_STREAM_PREF_BRANCH + pref;
       this._setNewtabPrefMetrics(fullPrefName, false);
     }
-    Glean.pocket.isSignedIn.set(lazy.pktApi.isUserLoggedIn());
 
     Services.prefs.addObserver(TOP_SITES_BLOCKED_SPONSORS_PREF, this);
     this._setBlockedSponsorsMetrics();

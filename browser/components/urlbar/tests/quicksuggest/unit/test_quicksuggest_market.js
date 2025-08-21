@@ -27,6 +27,18 @@ const TEST_MERINO_SINGLE = [
   },
 ];
 
+const TEST_MERINO_EMPTY_POLYGON_VALUES = [
+  {
+    provider: "polygon",
+    score: 0,
+    custom_details: {
+      polygon: {
+        values: [],
+      },
+    },
+  },
+];
+
 add_setup(async function init() {
   // Disable search suggestions so we don't hit the network.
   Services.prefs.setBoolPref("browser.search.suggest.enabled", false);
@@ -34,6 +46,7 @@ add_setup(async function init() {
   await QuickSuggestTestUtils.ensureQuickSuggestInit({
     merinoSuggestions: TEST_MERINO_SINGLE,
     prefs: [
+      ["market.featureGate", true],
       ["suggest.market", true],
       ["suggest.quicksuggest.nonsponsored", true],
     ],
@@ -66,8 +79,8 @@ add_task(async function showLessFrequently() {
   UrlbarPrefs.clear("market.minKeywordLength");
 
   let cleanUpNimbus = await UrlbarTestUtils.initNimbusFeature({
-    marketMinKeywordLength: 0,
-    marketShowLessFrequentlyCap: 3,
+    realtimeMinKeywordLength: 0,
+    realtimeShowLessFrequentlyCap: 3,
   });
 
   let result = marketResult();
@@ -164,6 +177,19 @@ add_task(async function showLessFrequently() {
   await cleanUpNimbus();
   UrlbarPrefs.clear("market.showLessFrequentlyCount");
   UrlbarPrefs.clear("market.minKeywordLength");
+});
+
+// Tests in case of that the polygon values is empty.
+add_task(async function empty_polygon_values() {
+  MerinoTestUtils.server.response.body.suggestions =
+    TEST_MERINO_EMPTY_POLYGON_VALUES;
+  await check_results({
+    context: createContext("stock", {
+      providers: [UrlbarProviderQuickSuggest.name],
+      isPrivate: false,
+    }),
+    matches: [],
+  });
 });
 
 function marketResult() {

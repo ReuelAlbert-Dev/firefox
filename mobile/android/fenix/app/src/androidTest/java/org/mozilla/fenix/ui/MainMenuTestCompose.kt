@@ -374,7 +374,7 @@ class MainMenuTestCompose : TestSetup() {
         }.openThreeDotMenu(composeTestRule) {
             openMoreMenu()
         }.clickRemoveFromShortcutsButton {
-            verifySnackBarText(getStringResource(R.string.snackbar_top_site_removed))
+            composeTestRule.waitForIdle()
         }.goToHomescreen(composeTestRule) {
             verifyNotExistingTopSiteItem(composeTestRule, testPage.title)
         }
@@ -1378,6 +1378,23 @@ class MainMenuTestCompose : TestSetup() {
         }.openMainMenuFromRedesignedToolbar {
             verifySwitchToDesktopSiteButton(composeTestRule)
             verifyDesktopSiteButtonState(composeTestRule, isEnabled = false)
+        }
+    }
+
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3080110
+    @SmokeTest
+    @Test
+    fun verifyTheMoreMainMenuSubListTest() {
+        val firstTestPage = TestAssetHelper.getFirstForeignWebPageAsset(mockWebServer)
+
+        navigationToolbar {
+        }.enterURLAndEnterToBrowser(firstTestPage.url) {
+        }.openThreeDotMenu(composeTestRule) {
+            openMoreMenu()
+            verifyTheMoreMenuExpansion(composeTestRule, isExpanded = true)
+            verifyMoreMainMenuItems()
+            clickLessMenu()
+            verifyTheMoreMenuExpansion(composeTestRule, isExpanded = false)
         }
     }
 }

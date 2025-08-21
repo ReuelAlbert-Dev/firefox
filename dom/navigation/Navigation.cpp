@@ -19,6 +19,7 @@
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/NavigationActivation.h"
+#include "mozilla/dom/NavigationBinding.h"
 #include "mozilla/dom/NavigationCurrentEntryChangeEvent.h"
 #include "mozilla/dom/NavigationHistoryEntry.h"
 #include "mozilla/dom/NavigationTransition.h"
@@ -154,22 +155,13 @@ JSObject* Navigation::WrapObject(JSContext* aCx,
 }
 
 void Navigation::EventListenerAdded(nsAtom* aType) {
-  if (nsPIDOMWindowInner* window = GetOwnerWindow()) {
-    if (WindowGlobalChild* windowGlobal = window->GetWindowGlobalChild()) {
-      windowGlobal->NavigateAdded();
-    }
-  }
+  UpdateNeedsTraverse();
 
   EventTarget::EventListenerAdded(aType);
 }
 
 void Navigation::EventListenerRemoved(nsAtom* aType) {
-  if (nsPIDOMWindowInner* window = GetOwnerWindow()) {
-    if (WindowGlobalChild* windowGlobal = window->GetWindowGlobalChild()) {
-      windowGlobal->NavigateRemoved();
-    }
-  }
-
+  UpdateNeedsTraverse();
   EventTarget::EventListenerRemoved(aType);
 }
 
@@ -332,6 +324,10 @@ void Navigation::UpdateEntriesForSameDocumentNavigation(
   if (mOngoingAPIMethodTracker) {
     RefPtr<NavigationHistoryEntry> currentEntry = GetCurrentEntry();
     mOngoingAPIMethodTracker->NotifyAboutCommittedToEntry(currentEntry);
+  }
+
+  for (auto& entry : disposedEntries) {
+    entry->ResetIndexForDisposal();
   }
 
   // Steps 9-12.
@@ -1271,6 +1267,9 @@ void Navigation::PromoteUpcomingAPIMethodTrackerToOngoing(
   RefPtr<Navigation> navigation =
       aNavigationAPIMethodTracker->mNavigationObject;
 
+  auto needsTraverse =
+      MakeScopeExit([navigation]() { navigation->UpdateNeedsTraverse(); });
+
   // Step 2
   if (navigation->mOngoingAPIMethodTracker == aNavigationAPIMethodTracker) {
     navigation->mOngoingAPIMethodTracker = nullptr;
@@ -1371,6 +1370,43 @@ Document* Navigation::GetAssociatedDocument() const {
   return window ? window->GetDocument() : nullptr;
 }
 
+void Navigation::UpdateNeedsTraverse() {
+  nsGlobalWindowInner* innerWindow = GetOwnerWindow();
+  if (!innerWindow) {
+    return;
+  }
+
+  WindowContext* windowContext = innerWindow->GetWindowContext();
+  if (!windowContext) {
+    return;
+  }
+
+  // Since we only care about optimizing for the traversable, bail if we're not
+  // the top-level context.
+  if (BrowsingContext* browsingContext = innerWindow->GetBrowsingContext();
+      !browsingContext || !browsingContext->IsTop()) {
+    return;
+  }
+
+  // We need traverse if we have any method tracker.
+  bool needsTraverse = mOngoingAPIMethodTracker ||
+                       mUpcomingNonTraverseAPIMethodTracker ||
+                       !mUpcomingTraverseAPIMethodTrackers.IsEmpty();
+
+  // We need traverse if we have any event handlers.
+  if (EventListenerManager* eventListenerManager =
+          GetExistingListenerManager()) {
+    needsTraverse = needsTraverse || eventListenerManager->HasListeners();
+  }
+
+  // Don't toggle if nothing's changed.
+  if (windowContext->GetNeedsTraverse() == needsTraverse) {
+    return;
+  }
+
+  (void)windowContext->SetNeedsTraverse(needsTraverse);
+}
+
 void Navigation::LogHistory() const {
   if (!MOZ_LOG_TEST(gNavigationLog, LogLevel::Debug)) {
     return;
@@ -1416,6 +1452,9 @@ Navigation::MaybeSetUpcomingNonTraverseAPIMethodTracker(
   if (!HasEntriesAndEventsDisabled()) {
     mUpcomingNonTraverseAPIMethodTracker = apiMethodTracker;
   }
+
+  UpdateNeedsTraverse();
+
   // 6. Return apiMethodTracker.
   return apiMethodTracker;
 }
@@ -1443,8 +1482,73 @@ Navigation::AddUpcomingTraverseAPIMethodTracker(const nsID& aKey,
 
   // 4. Set navigation's upcoming traverse API method trackers[destinationKey]
   //    to apiMethodTracker.
+  RefPtr methodTracker =
+      mUpcomingTraverseAPIMethodTrackers.InsertOrUpdate(aKey, apiMethodTracker);
+
+  UpdateNeedsTraverse();
+
   // 5. Return apiMethodTracker.
-  return mUpcomingTraverseAPIMethodTrackers.InsertOrUpdate(aKey,
-                                                           apiMethodTracker);
+  return methodTracker;
 }
+
+// https://html.spec.whatwg.org/#update-document-for-history-step-application
+void Navigation::CreateNavigationActivationFrom(
+    SessionHistoryInfo* aPreviousEntryForActivation,
+    NavigationType aNavigationType) {
+  // Note: we do Step 7.1 at the end of method so we can both create and
+  // initialize the activation at once.
+  MOZ_LOG_FMT(gNavigationLog, LogLevel::Debug,
+              "Creating NavigationActivation for from={}, type={}",
+              fmt::ptr(aPreviousEntryForActivation), aNavigationType);
+  RefPtr currentEntry = GetCurrentEntry();
+  if (!currentEntry) {
+    return;
+  }
+
+  // Step 7.2. Let previousEntryIndex be the result of getting the navigation
+  // API entry index of previousEntryForActivation within navigation.
+  auto possiblePreviousEntry =
+      std::find_if(mEntries.begin(), mEntries.end(),
+                   [aPreviousEntryForActivation](const auto& entry) {
+                     return entry->IsSameEntry(aPreviousEntryForActivation);
+                   });
+
+  // 3. If previousEntryIndex is non-negative, then set activation's old entry
+  // to navigation's entry list[previousEntryIndex].
+  RefPtr<NavigationHistoryEntry> oldEntry;
+  if (possiblePreviousEntry != mEntries.end()) {
+    MOZ_LOG_FMT(gNavigationLog, LogLevel::Debug, "Found previous entry at {}",
+                fmt::ptr(possiblePreviousEntry->get()));
+    oldEntry = *possiblePreviousEntry;
+  } else if (aNavigationType == NavigationType::Replace &&
+             !aPreviousEntryForActivation->IsTransient()) {
+    // 4. Otherwise, if all the following are true:
+    //     navigationType is "replace";
+    //     previousEntryForActivation's document state's origin is same origin
+    //     with document's origin; and previousEntryForActivation's document's
+    //     initial about:blank is false,
+    // then set activation's old entry to a new NavigationHistoryEntry in
+    // navigation's relevant realm, whose session history entry is
+    // previousEntryForActivation.
+
+    nsIURI* previousURI = aPreviousEntryForActivation->GetURI();
+    nsIURI* currentURI = currentEntry->SessionHistoryInfo()->GetURI();
+    if (NS_SUCCEEDED(nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
+            currentURI, previousURI, false, false))) {
+      oldEntry = MakeRefPtr<NavigationHistoryEntry>(
+          GetOwnerGlobal(), aPreviousEntryForActivation, -1);
+      MOZ_LOG_FMT(gNavigationLog, LogLevel::Debug, "Created a new entry at {}",
+                  fmt::ptr(oldEntry.get()));
+    }
+  }
+
+  // 1. If navigation's activation is null, then set navigation's
+  // activation to a new NavigationActivation object in navigation's relevant
+  // realm.
+  // 5. Set activation's new entry to navigation's current entry.
+  // 6. Set activation's navigation type to navigationType.
+  mActivation = MakeRefPtr<NavigationActivation>(GetOwnerGlobal(), currentEntry,
+                                                 oldEntry, aNavigationType);
+}
+
 }  // namespace mozilla::dom
