@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
@@ -43,6 +44,9 @@ import androidx.compose.ui.semantics.collectionInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -63,6 +67,7 @@ import org.mozilla.fenix.compose.list.IconListItem
 import org.mozilla.fenix.compose.list.SelectableFaviconListItem
 import org.mozilla.fenix.settings.logins.ui.LoginsSortOrder.Alphabetical.isGuidToDelete
 import org.mozilla.fenix.theme.FirefoxTheme
+import mozilla.components.ui.icons.R as iconsR
 
 /**
  * The UI host for the Saved Logins list screen and related sub screens.
@@ -80,8 +85,22 @@ internal fun SavedLoginsScreen(
     val store = buildStore(navController)
 
     DisposableEffect(LocalLifecycleOwner.current) {
+        val observer = object : DefaultLifecycleObserver {
+            override fun onPause(owner: LifecycleOwner) {
+                super.onPause(owner)
+                store.dispatch(BiometricAuthenticationAction.AuthenticationFailed)
+            }
+
+            override fun onResume(owner: LifecycleOwner) {
+                super.onResume(owner)
+                store.dispatch(BiometricAuthenticationDialogAction(true))
+            }
+        }
+        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+
         onDispose {
             store.dispatch(ViewDisposed)
+            ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
         }
     }
 
@@ -130,39 +149,49 @@ private fun LoginsList(store: LoginsStore) {
         contentWindowInsets = WindowInsets(0.dp),
     ) { paddingValues ->
 
+        if (state.biometricAuthenticationDialogState.shouldShow) {
+            BiometricAuthenticationDialog(store = store)
+        }
+
         if (state.searchText.isNullOrEmpty() && state.loginItems.isEmpty()) {
             EmptyList(dispatcher = store::dispatch, paddingValues = paddingValues)
             return@Scaffold
         }
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f, false)
-                    .padding(paddingValues)
-                    .padding(vertical = 16.dp)
-                    .semantics {
-                        collectionInfo =
-                            CollectionInfo(rowCount = state.loginItems.size, columnCount = 1)
-                    },
-            ) {
-                itemsIndexed(state.loginItems) { _, item ->
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (state.biometricAuthenticationState == BiometricAuthenticationState.Authorized) {
+                LazyColumn(
+                    modifier = Modifier
+                        .padding(paddingValues)
+                        .width(FirefoxTheme.layout.size.containerMaxWidth)
+                        .weight(1f, false)
+                        .semantics {
+                            collectionInfo =
+                                CollectionInfo(rowCount = state.loginItems.size, columnCount = 1)
+                        },
+                ) {
+                    itemsIndexed(state.loginItems) { _, item ->
 
-                    if (state.isGuidToDelete(item.guid)) {
-                        return@itemsIndexed
+                        if (state.isGuidToDelete(item.guid)) {
+                            return@itemsIndexed
+                        }
+
+                        SelectableFaviconListItem(
+                            label = item.url.trimmed(),
+                            url = item.url,
+                            isSelected = false,
+                            onClick = { store.dispatch(LoginClicked(item)) },
+                            description = item.username.trimmed(),
+                        )
                     }
-
-                    SelectableFaviconListItem(
-                        label = item.url.trimmed(),
-                        url = item.url,
-                        isSelected = false,
-                        onClick = { store.dispatch(LoginClicked(item)) },
-                        description = item.username.trimmed(),
-                    )
                 }
             }
 
             AddPasswordItem(
+                modifier = Modifier.width(FirefoxTheme.layout.size.containerMaxWidth),
                 onAddPasswordClicked = { store.dispatch(AddLoginAction.InitAdd) },
             )
         }
@@ -171,11 +200,13 @@ private fun LoginsList(store: LoginsStore) {
 
 @Composable
 private fun AddPasswordItem(
+    modifier: Modifier = Modifier,
     onAddPasswordClicked: () -> Unit,
 ) {
     IconListItem(
         label = stringResource(R.string.preferences_logins_add_login_2),
-        beforeIconPainter = painterResource(R.drawable.ic_new),
+        modifier = modifier,
+        beforeIconPainter = painterResource(iconsR.drawable.mozac_ic_plus_24),
         onClick = { onAddPasswordClicked() },
     )
 }
@@ -191,12 +222,14 @@ private fun EmptyList(
         modifier = modifier
             .padding(paddingValues)
             .fillMaxSize(),
-        contentAlignment = Alignment.TopStart,
+        contentAlignment = Alignment.TopCenter,
     ) {
         Column(
+            modifier = Modifier
+                .padding(16.dp)
+                .width(FirefoxTheme.layout.size.containerMaxWidth),
             horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = modifier.padding(16.dp),
         ) {
             Text(
                 text = String.format(
@@ -272,7 +305,7 @@ private fun LoginsListTopBar(
                     contentDescription = null,
                 ) {
                     Icon(
-                        painter = painterResource(R.drawable.mozac_ic_back_24),
+                        painter = painterResource(iconsR.drawable.mozac_ic_back_24),
                         contentDescription = stringResource(R.string.logins_navigate_back_button_content_description),
                         tint = iconColor,
                     )
@@ -359,7 +392,7 @@ private fun SearchBar(
                         contentDescription = null,
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.mozac_ic_cross_24),
+                            painter = painterResource(iconsR.drawable.mozac_ic_cross_24),
                             contentDescription = null,
                             tint = FirefoxTheme.colors.iconPrimary,
                         )

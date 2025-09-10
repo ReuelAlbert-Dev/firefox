@@ -41,6 +41,8 @@ const { ClientID } = ChromeUtils.importESModule(
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AboutNewTabResourceMapping:
+    "resource:///modules/AboutNewTabResourceMapping.sys.mjs",
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
   AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   ASRouterPreferences:
@@ -718,13 +720,18 @@ const TargetingGetters = {
       return Promise.resolve(NONE);
     }
     return new Promise(resolve => {
-      // Note: calling init ensures this code is only executed after Search has been initialized
+      // Note: calling getAppProvidedEngines, calls Services.search.init which
+      // ensures this code is only executed after Search has been initialized.
       Services.search
         .getAppProvidedEngines()
         .then(engines => {
+          let { defaultEngine } = Services.search;
           resolve({
-            current: Services.search.defaultEngine.identifier,
-            installed: engines.map(engine => engine.identifier),
+            // Skip reporting the id for third party engines.
+            current: defaultEngine.isAppProvided ? defaultEngine.id : null,
+            // We don't need to filter the id here, as getAppProvidedEngines has
+            // already done that for us.
+            installed: engines.map(engine => engine.id),
           });
         })
         .catch(() => resolve(NONE));
@@ -785,7 +792,9 @@ const TargetingGetters = {
     return lazy.SessionStore.getSavedTabGroups().length;
   },
   get currentTabGroups() {
-    let win = lazy.BrowserWindowTracker.getTopWindow();
+    let win = lazy.BrowserWindowTracker.getTopWindow({
+      allowFromInactiveWorkspace: true,
+    });
     // If there's no window, there can't be any current tab groups.
     if (!win) {
       return 0;
@@ -911,7 +920,9 @@ const TargetingGetters = {
       return false;
     }
 
-    let window = lazy.BrowserWindowTracker.getTopWindow();
+    let window = lazy.BrowserWindowTracker.getTopWindow({
+      allowFromInactiveWorkspace: true,
+    });
 
     // Technically this doesn't mean we have active notifications,
     // but because we use !activeNotifications to check for conflicts, this should return true
@@ -1132,6 +1143,15 @@ const TargetingGetters = {
    */
   get useEmbeddedMigrationWizard() {
     return lazy.useEmbeddedMigrationWizard;
+  },
+
+  /**
+   * Returns the version number of the New Tab built-in addon being used
+   * by the build.
+   * @return {string}
+   */
+  get newtabAddonVersion() {
+    return lazy.AboutNewTabResourceMapping.addonVersion;
   },
 
   /**

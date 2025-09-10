@@ -1819,6 +1819,7 @@ add_task(
       type: "impression",
       source: "newtab",
       position: 0,
+      isPinned: false,
     };
     const SESSION_ID = "decafc0ffee";
     sandbox.stub(instance.sessions, "get").returns({ session_id: SESSION_ID });
@@ -1828,6 +1829,7 @@ add_task(
     Assert.equal(impressions.length, 1, "Recorded 1 impression");
 
     Assert.deepEqual(impressions[0].extra, {
+      is_pinned: String(false),
       newtab_visit_id: SESSION_ID,
       is_sponsored: String(false),
       position: String(0),
@@ -1852,6 +1854,7 @@ add_task(
       type: "click",
       source: "newtab",
       position: 0,
+      isPinned: false,
     };
     const SESSION_ID = "decafc0ffee";
     sandbox.stub(instance.sessions, "get").returns({ session_id: SESSION_ID });
@@ -1864,6 +1867,7 @@ add_task(
       newtab_visit_id: SESSION_ID,
       is_sponsored: String(false),
       position: String(0),
+      is_pinned: String(false),
     });
 
     sandbox.restore();
@@ -2134,7 +2138,7 @@ add_task(async function test_handleDiscoveryStreamUserEvent_tooltip_click() {
   let sandbox = sinon.createSandbox();
   let instance = new TelemetryFeed();
   Services.fog.testResetFOG();
-  const feature = "SPONSORED_CONTENT_INFO";
+  const feature = "FEATURE_HIGHLIGHT_DEFAULT";
   let action = actionCreators.DiscoveryStreamUserEvent({
     event: "CLICK",
     source: "FEATURE_HIGHLIGHT",

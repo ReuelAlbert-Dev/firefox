@@ -35,6 +35,10 @@ class FakeIPProtectionPanelElement {
 }
 
 add_setup(async function () {
+  // FxAccountsStorage.sys.mjs requires a profile directory.
+  do_get_profile();
+  await putServerInRemoteSettings();
+
   IPProtectionService.init();
 
   registerCleanupFunction(async () => {
@@ -226,6 +230,7 @@ add_task(async function test_IPProtectionPanel_started_stopped() {
     error: undefined,
     pass: {
       isValid: () => true,
+      asBearerToken: () => "Bearer helloworld",
     },
   });
 

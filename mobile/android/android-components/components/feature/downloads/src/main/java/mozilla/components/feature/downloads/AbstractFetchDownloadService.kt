@@ -143,7 +143,6 @@ abstract class AbstractFetchDownloadService : Service() {
             return getSecondsSinceTheLastNotificationUpdate() >= 1
         }
 
-        @Suppress("MagicNumber")
         internal fun getSecondsSinceTheLastNotificationUpdate(): Long {
             return (System.currentTimeMillis() - lastNotificationUpdate) / 1000
         }
@@ -483,7 +482,9 @@ abstract class AbstractFetchDownloadService : Service() {
 
         downloadJobs.values.forEach { state ->
             notificationManager.cancel(state.foregroundServiceId)
-            cancelDownloadJob(state)
+            if (state.status != COMPLETED && state.status != CANCELLED) {
+                cancelDownloadJob(state)
+            }
         }
         notificationManager.cancel(NOTIFICATION_DOWNLOAD_GROUP_ID)
     }

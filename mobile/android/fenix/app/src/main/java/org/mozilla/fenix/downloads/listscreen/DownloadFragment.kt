@@ -14,23 +14,33 @@ import androidx.navigation.fragment.findNavController
 import mozilla.components.feature.downloads.AbstractFetchDownloadService
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
+import org.mozilla.fenix.components.appstate.AppAction
+import org.mozilla.fenix.components.appstate.SupportedMenuNotifications
 import org.mozilla.fenix.components.lazyStore
 import org.mozilla.fenix.compose.snackbar.Snackbar
 import org.mozilla.fenix.compose.snackbar.SnackbarState
 import org.mozilla.fenix.downloads.getCannotOpenFileErrorMessage
 import org.mozilla.fenix.downloads.listscreen.di.DownloadUIMiddlewareProvider
-import org.mozilla.fenix.downloads.listscreen.di.DownloadUIMiddlewareProvider.provideUndoDelayProvider
 import org.mozilla.fenix.downloads.listscreen.store.DownloadUIAction
 import org.mozilla.fenix.downloads.listscreen.store.DownloadUIState
 import org.mozilla.fenix.downloads.listscreen.store.DownloadUIStore
 import org.mozilla.fenix.downloads.listscreen.store.FileItem
-import org.mozilla.fenix.ext.settings
+import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
  * Fragment for displaying and managing the downloads list.
  */
 class DownloadFragment : Fragment() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requireContext().applicationContext.components.appStore.dispatch(
+            AppAction.MenuNotification.RemoveMenuNotification(
+                SupportedMenuNotifications.Downloads,
+            ),
+        )
+    }
 
     private val downloadStore by lazyStore { viewModelScope ->
         DownloadUIStore(
@@ -50,7 +60,6 @@ class DownloadFragment : Fragment() {
         FirefoxTheme {
             DownloadsScreen(
                 downloadsStore = downloadStore,
-                undoDelayProvider = provideUndoDelayProvider(requireContext().settings()),
                 onItemClick = { openItem(it) },
                 onNavigationIconClick = {
                     if (downloadStore.state.mode is DownloadUIState.Mode.Editing) {

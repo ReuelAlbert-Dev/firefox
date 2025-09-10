@@ -108,6 +108,7 @@ class MacroAssemblerLOONG64 : public Assembler {
   // arithmetic based ops
   // add
   void ma_add_d(Register rd, Register rj, Imm32 imm);
+  void ma_add_d(Register rd, Register rj, ImmWord imm);
   void ma_add32TestOverflow(Register rd, Register rj, Register rk,
                             Label* overflow);
   void ma_add32TestOverflow(Register rd, Register rj, Imm32 imm,
@@ -133,6 +134,7 @@ class MacroAssemblerLOONG64 : public Assembler {
 
   // subtract
   void ma_sub_d(Register rd, Register rj, Imm32 imm);
+  void ma_sub_d(Register rd, Register rj, ImmWord imm);
   void ma_sub32TestOverflow(Register rd, Register rj, Register rk,
                             Label* overflow);
   void ma_subPtrTestOverflow(Register rd, Register rj, Register rk,
@@ -142,6 +144,7 @@ class MacroAssemblerLOONG64 : public Assembler {
 
   // multiplies.  For now, there are only few that we care about.
   void ma_mul_d(Register rd, Register rj, Imm32 imm);
+  void ma_mul_d(Register rd, Register rj, ImmWord imm);
   void ma_mulh_d(Register rd, Register rj, Imm32 imm);
   void ma_mulPtrTestOverflow(Register rd, Register rj, Register rk,
                              Label* overflow);
@@ -347,6 +350,9 @@ class MacroAssemblerLOONG64 : public Assembler {
   void moveFromFloat32(FloatRegister src, Register dest) {
     as_movfr2gr_s(dest, src);
   }
+
+  void minMaxPtr(Register lhs, Register rhs, Register dest, bool isMax);
+  void minMaxPtr(Register lhs, ImmWord rhs, Register dest, bool isMax);
 
   // Evaluate srcDest = minmax<isMax>{Float32,Double}(srcDest, other).
   // Handle NaN specially if handleNaN is true.

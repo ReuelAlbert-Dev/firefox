@@ -170,7 +170,8 @@ using namespace mozilla::gfx;
 
 using mozilla::LazyLogModule;
 
-extern mozilla::LazyLogModule gSHIPBFCacheLog;
+extern LazyLogModule gBCWebProgressLog;
+extern LazyLogModule gSHIPBFCacheLog;
 
 LazyLogModule gBrowserFocusLog("BrowserFocus");
 
@@ -2329,12 +2330,12 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizedEventResponse(
 
 mozilla::ipc::IPCResult BrowserParent::RecvSyncMessage(
     const nsString& aMessage, const ClonedMessageData& aData,
-    nsTArray<StructuredCloneData>* aRetVal) {
+    nsTArray<UniquePtr<ipc::StructuredCloneData>>* aRetVal) {
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING("BrowserParent::RecvSyncMessage",
                                              OTHER, aMessage);
   MMPrinter::Print("BrowserParent::RecvSyncMessage", aMessage, aData);
 
-  StructuredCloneData data;
+  ipc::StructuredCloneData data;
   ipc::UnpackClonedMessageData(aData, data);
 
   if (!ReceiveMessage(aMessage, true, &data, aRetVal)) {
@@ -3171,7 +3172,8 @@ bool BrowserParent::ReceiveProgressListenerData(
 
   // Look up the BrowsingContext which this notification was fired for.
   if (aWebProgressData.browsingContext().IsNullOrDiscarded()) {
-    NS_WARNING("WebProgress Ignored: BrowsingContext is null or discarded");
+    MOZ_LOG(gBCWebProgressLog, LogLevel::Warning,
+            ("WebProgress Ignored: BrowsingContext is null or discarded"));
     return false;
   }
   RefPtr<CanonicalBrowsingContext> browsingContext =
@@ -3184,7 +3186,8 @@ bool BrowserParent::ReceiveProgressListenerData(
   if (browsingContext != mBrowsingContext) {
     WindowGlobalParent* embedder = browsingContext->GetParentWindowContext();
     if (!embedder || embedder->GetBrowserParent() != this) {
-      NS_WARNING("WebProgress Ignored: wrong embedder process");
+      MOZ_LOG(gBCWebProgressLog, LogLevel::Warning,
+              ("WebProgress Ignored: wrong embedder process"));
       return false;
     }
   }
@@ -3195,7 +3198,8 @@ bool BrowserParent::ReceiveProgressListenerData(
   if (RefPtr<WindowGlobalParent> current =
           browsingContext->GetCurrentWindowGlobal();
       current && current->GetBrowserParent() != this) {
-    NS_WARNING("WebProgress Ignored: no longer current window global");
+    MOZ_LOG(gBCWebProgressLog, LogLevel::Warning,
+            ("WebProgress Ignored: no longer current window global"));
     return false;
   }
 
@@ -3499,9 +3503,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvSetInputContext(
   return IPC_OK();
 }
 
-bool BrowserParent::ReceiveMessage(const nsString& aMessage, bool aSync,
-                                   StructuredCloneData* aData,
-                                   nsTArray<StructuredCloneData>* aRetVal) {
+bool BrowserParent::ReceiveMessage(
+    const nsString& aMessage, bool aSync, ipc::StructuredCloneData* aData,
+    nsTArray<UniquePtr<ipc::StructuredCloneData>>* aRetVal) {
   // If we're for an oop iframe, don't deliver messages to the wrong place.
   if (mBrowserBridgeParent) {
     return true;

@@ -26,6 +26,8 @@ class nsIFrame;
 
 class nsAttrValue;
 
+enum class AttrModType : uint8_t;  // Defined in nsIMutationObserver.h
+
 namespace mozilla::dom {
 class Element;
 }
@@ -602,7 +604,7 @@ class LocalAccessible : public nsISupports, public Accessible {
    * document. This method is only used for ID changes and therefore does not
    * need to work for direct element references via ariaActiveDescendantElement.
    */
-  bool IsActiveDescendantId(LocalAccessible** aWidget = nullptr) const;
+  bool IsActiveDescendant(LocalAccessible** aWidget = nullptr) const;
 
   /**
    * Return true if the accessible is defunct.
@@ -746,6 +748,8 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   virtual float Opacity() const override;
 
+  virtual WritingMode GetWritingMode() const override;
+
   virtual void DOMNodeID(nsString& aID) const override;
 
   virtual void DOMNodeClass(nsString& aClass) const override;
@@ -792,7 +796,7 @@ class LocalAccessible : public nsISupports, public Accessible {
    * relevant events.
    */
   virtual void DOMAttributeChanged(int32_t aNameSpaceID, nsAtom* aAttribute,
-                                   int32_t aModType,
+                                   AttrModType aModType,
                                    const nsAttrValue* aOldValue,
                                    uint64_t aOldState);
 

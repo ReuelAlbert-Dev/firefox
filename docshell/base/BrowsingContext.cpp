@@ -81,9 +81,11 @@
 #include "PresShell.h"
 #include "nsIObserverService.h"
 #include "nsISHistory.h"
+#include "nsJSUtils.h"
 #include "nsContentUtils.h"
 #include "nsQueryObject.h"
 #include "nsSandboxFlags.h"
+#include "nsScreen.h"
 #include "nsScriptError.h"
 #include "nsThreadUtils.h"
 #include "xpcprivate.h"
@@ -2291,7 +2293,8 @@ BrowsingContext::CheckURLAndCreateLoadState(nsIURI* aURI,
 // https://bugzil.la/1974717 tracks the work to align this method with the spec.
 void BrowsingContext::Navigate(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
                                ErrorResult& aRv,
-                               NavigationHistoryBehavior aHistoryHandling) {
+                               NavigationHistoryBehavior aHistoryHandling,
+                               bool aShouldNotForceReplaceInOnLoad) {
   CallerType callerType = aSubjectPrincipal.IsSystemPrincipal()
                               ? CallerType::System
                               : CallerType::NonSystem;
@@ -2307,6 +2310,8 @@ void BrowsingContext::Navigate(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
   if (aRv.Failed()) {
     return;
   }
+
+  loadState->SetShouldNotForceReplaceInOnLoad(aShouldNotForceReplaceInOnLoad);
 
   // The steps 12 and 13 of #navigate are handled later in
   // nsDocShell::InternalLoad().
@@ -2968,7 +2973,51 @@ void BrowsingContext::DidSet(FieldIndex<IDX_InRDMPane>, bool aOldValue) {
   if (GetInRDMPane() == aOldValue) {
     return;
   }
+
+  // Reset screen orientation override when disabling RDM.
+  if (!GetInRDMPane()) {
+    ResetOrientationOverride();
+  }
+
   PresContextAffectingFieldChanged();
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_HasOrientationOverride>,
+                             bool aOldValue) {
+  bool hasOrientationOverride = GetHasOrientationOverride();
+  OrientationType type = GetCurrentOrientationType();
+  float angle = GetCurrentOrientationAngle();
+
+  PreOrderWalk([&](BrowsingContext* aBrowsingContext) {
+    if (RefPtr<WindowContext> windowContext =
+            aBrowsingContext->GetCurrentWindowContext()) {
+      if (nsCOMPtr<nsPIDOMWindowInner> window =
+              windowContext->GetInnerWindow()) {
+        ScreenOrientation* orientation =
+            nsGlobalWindowInner::Cast(window)->Screen()->Orientation();
+
+        float screenOrientationAngle =
+            orientation->DeviceAngle(CallerType::System);
+        OrientationType screenOrientationType =
+            orientation->DeviceType(CallerType::System);
+
+        bool overrideIsDifferentThanDevice =
+            screenOrientationType != type || screenOrientationAngle != angle;
+
+        // Reset orientation override.
+        if (!hasOrientationOverride && aOldValue) {
+          Unused << aBrowsingContext->SetCurrentOrientation(
+              screenOrientationType, screenOrientationAngle);
+        } else if (!aBrowsingContext->IsTop()) {
+          // Sync orientation override in the existing frames.
+          Unused << aBrowsingContext->SetCurrentOrientation(type, angle);
+        }
+
+        orientation->MaybeDispatchEventsForOverride(
+            aBrowsingContext, aOldValue, overrideIsDifferentThanDevice);
+      }
+    }
+  });
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_ForceDesktopViewport>,
@@ -3474,6 +3523,28 @@ void BrowsingContext::SetGeolocationServiceOverride(
         nsGeolocationService::GetGeolocationService();
     serviceOverride->MoveLocators(service);
   }
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_TimezoneOverride>,
+                             nsString&& aOldValue) {
+  MOZ_ASSERT(IsTop());
+
+  PreOrderWalk([&](BrowsingContext* aBrowsingContext) {
+    RefPtr<WindowContext> windowContext =
+        aBrowsingContext->GetCurrentWindowContext();
+
+    if (nsCOMPtr<nsPIDOMWindowInner> window = windowContext->GetInnerWindow()) {
+      JSObject* global = nsGlobalWindowInner::Cast(window)->GetGlobalJSObject();
+      JS::Realm* realm = JS::GetObjectRealmOrNull(global);
+
+      if (GetTimezoneOverride().IsEmpty()) {
+        JS::SetRealmTimezoneOverride(realm, nullptr);
+      } else {
+        JS::SetRealmTimezoneOverride(
+            realm, NS_ConvertUTF16toUTF8(GetTimezoneOverride()).get());
+      }
+    }
+  });
 }
 
 auto BrowsingContext::CanSet(FieldIndex<IDX_DefaultLoadFlags>,
@@ -4133,6 +4204,24 @@ void BrowsingContext::HistoryGo(
         aOffset, aHistoryEpoch, aRequireUserInteraction, aUserActivation,
         self->GetContentParent() ? Some(self->GetContentParent()->ChildID())
                                  : Nothing()));
+  }
+}
+
+void BrowsingContext::NavigationTraverse(
+    const nsID& aKey, uint64_t aHistoryEpoch, bool aUserActivation,
+    std::function<void(nsresult)>&& aResolver) {
+  if (XRE_IsContentProcess()) {
+    ContentChild::GetSingleton()->SendNavigationTraverse(
+        this, aKey, aHistoryEpoch, aUserActivation, std::move(aResolver),
+        [](mozilla::ipc::
+               ResponseRejectReason) { /* FIXME Is ignoring this fine? */ });
+  } else {
+    RefPtr<CanonicalBrowsingContext> self = Canonical();
+    self->NavigationTraverse(aKey, aHistoryEpoch, aUserActivation,
+                             self->GetContentParent()
+                                 ? Some(self->GetContentParent()->ChildID())
+                                 : Nothing(),
+                             std::move(aResolver));
   }
 }
 

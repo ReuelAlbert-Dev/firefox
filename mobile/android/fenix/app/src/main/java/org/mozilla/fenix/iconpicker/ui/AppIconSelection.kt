@@ -7,8 +7,8 @@ package org.mozilla.fenix.iconpicker.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -170,12 +170,23 @@ private fun AppIconOption(
 
         Spacer(modifier = Modifier.width(16.dp))
 
-        Text(
-            text = stringResource(appIcon.titleId),
-            modifier = Modifier.weight(1f),
-            style = FirefoxTheme.typography.subtitle1,
-            color = FirefoxTheme.colors.textPrimary,
-        )
+        Column {
+            Text(
+                text = stringResource(appIcon.titleId),
+                style = FirefoxTheme.typography.subtitle1,
+                color = FirefoxTheme.colors.textPrimary,
+            )
+
+            appIcon.subtitleId?.let {
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Text(
+                    text = stringResource(it),
+                    style = FirefoxTheme.typography.body2,
+                    color = FirefoxTheme.colors.textSecondary,
+                )
+            }
+        }
     }
 }
 
@@ -249,7 +260,10 @@ private fun RestartWarningDialog(
                 },
         text = {
             Text(
-                text = stringResource(R.string.restart_warning_dialog_body),
+                text = stringResource(
+                    id = R.string.restart_warning_dialog_body_2,
+                    stringResource(R.string.app_name),
+                ),
                 color = FirefoxTheme.colors.textPrimary,
                 style = FirefoxTheme.typography.body2,
             )
@@ -257,15 +271,13 @@ private fun RestartWarningDialog(
         onDismissRequest = { onDismiss() },
         confirmButton = {
             TextButton(
-                text = stringResource(id = R.string.restart_warning_dialog_button_positive),
-                upperCaseText = false,
+                text = stringResource(id = R.string.restart_warning_dialog_button_positive_2),
                 onClick = { onConfirm() },
             )
         },
         dismissButton = {
             TextButton(
                 text = stringResource(id = R.string.restart_warning_dialog_button_negative),
-                upperCaseText = false,
                 onClick = { onDismiss() },
             )
         },
@@ -292,6 +304,14 @@ private fun AppIconSelectionPreview() {
 private fun AppIconOptionPreview() {
     FirefoxTheme {
         AppIconOption(AppIcon.AppDefault, false) {}
+    }
+}
+
+@FlexibleWindowLightDarkPreview
+@Composable
+private fun AppIconOptionWithSubtitlePreview() {
+    FirefoxTheme {
+        AppIconOption(AppIcon.AppMomo, false) {}
     }
 }
 

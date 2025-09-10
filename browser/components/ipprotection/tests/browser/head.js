@@ -29,6 +29,13 @@ ChromeUtils.defineESModuleGetters(this, {
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
 });
 
+const { ProxyPass } = ChromeUtils.importESModule(
+  "resource:///modules/ipprotection/GuardianClient.sys.mjs"
+);
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
+);
+
 // Adapted from devtools/client/performance-new/test/browser/helpers.js
 function waitForPanelEvent(document, eventName) {
   return BrowserTestUtils.waitForEvent(document, eventName, false, event => {
@@ -112,8 +119,9 @@ async function setPanelState(state = defaultState, win = window) {
     IPProtectionWidget.PANEL_ID
   );
   let content = panelView.querySelector(IPProtectionPanel.CONTENT_TAGNAME);
-
-  await content.updateComplete;
+  if (content) {
+    await content.updateComplete;
+  }
 }
 
 /* exported setPanelState */
@@ -142,25 +150,36 @@ async function closePanel(win = window) {
  * Given it refuses the proxy connection, it will be removed from as proxy-info of the channel.
  *
  * @param {*} testFn
+ * @param {Function<Promise<void>>} handler - A custom path handler for "/" requests.
  */
-async function withProxyServer(testFn) {
+async function withProxyServer(testFn, handler) {
   const server = new HttpServer();
-
   let { promise, resolve } = Promise.withResolvers();
 
   server.registerPathHandler("/", (request, response) => {
+    console.log("Received request:", request.method, request.path);
+    if (handler) {
+      handler(request, response);
+      resolve();
+      return;
+    }
     if (request.host !== "example.com") {
       throw HTTP_403;
     }
-    console.log("Received request:", request.method, request.path);
+
     response.setStatusLine(request.httpVersion, 200, "OK");
     response.setHeader("Content-Type", "text/plain");
     response.write("hello world");
     resolve();
   });
 
-  server.registerPathHandler("CONNECT", (request, _response) => {
+  server.registerPathHandler("CONNECT", (request, response) => {
     console.log("Received request:", request.method, request.path);
+    if (handler) {
+      handler(request, response);
+      resolve();
+      return;
+    }
     let hostHeader = request.getHeader("host");
     Assert.equal(
       hostHeader,
@@ -212,9 +231,7 @@ let DEFAULT_SERVICE_STATUS = {
   proxyPass: {
     status: 200,
     error: undefined,
-    pass: {
-      isValid: () => true,
-    },
+    pass: makePass(),
   },
 };
 /* exported DEFAULT_SERVICE_STATUS */
@@ -234,6 +251,7 @@ add_setup(async function setupVPN() {
 
   setupService();
 
+  await putServerInRemoteSettings(DEFAULT_SERVICE_STATUS.serverList);
   IPProtectionService.init();
 
   if (DEFAULT_EXPERIMENT) {
@@ -245,6 +263,7 @@ add_setup(async function setupVPN() {
     IPProtectionService.uninit();
     setupSandbox.restore();
     cleanupExperiment();
+    CustomizableUI.reset();
   });
 });
 
@@ -285,21 +304,21 @@ function setupService(
   }
 
   if (typeof isEnrolled != "undefined") {
-    stubs.isLinkedToGuardian.returns(isEnrolled);
+    stubs.isLinkedToGuardian.resolves(isEnrolled);
   }
 
   if (typeof canEnroll != "undefined") {
-    stubs.enroll.returns({
+    stubs.enroll.resolves({
       ok: canEnroll,
     });
   }
 
   if (typeof entitlement != "undefined") {
-    stubs.fetchUserInfo.returns(entitlement);
+    stubs.fetchUserInfo.resolves(entitlement);
   }
 
   if (typeof proxyPass != "undefined") {
-    stubs.fetchProxyPass.returns(proxyPass);
+    stubs.fetchProxyPass.resolves(proxyPass);
   }
 }
 /* exported setupService */
@@ -341,3 +360,36 @@ async function cleanupExperiment() {
   }
 }
 /* exported cleanupExperiment */
+
+function makePass() {
+  const token =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.KMUFsIDTnFmyG3nMiGM6H9FNFUROf3wh7SmqJp-QV30";
+  return new ProxyPass(token, Date.now() + 31536000 * 1000);
+}
+/* exported makePass */
+
+async function putServerInRemoteSettings(
+  server = {
+    hostname: "test1.example.com",
+    port: 443,
+    quarantined: false,
+  }
+) {
+  const TEST_US_CITY = {
+    name: "Test City",
+    code: "TC",
+    servers: [server],
+  };
+  const US = {
+    name: "United States",
+    code: "US",
+    cities: [TEST_US_CITY],
+  };
+  const client = RemoteSettings("vpn-serverlist");
+  if (client && client.db) {
+    await client.db.clear();
+    await client.db.create(US);
+    await client.db.importChanges({}, Date.now());
+  }
+}
+/* exported putServerInRemoteSettings */

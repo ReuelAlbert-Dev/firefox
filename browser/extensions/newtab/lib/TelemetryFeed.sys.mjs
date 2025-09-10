@@ -463,7 +463,9 @@ export class TelemetryFeed {
     }
 
     if (session.perf.visibility_event_rcvd_ts) {
-      let absNow = this.processStartTs + Cu.now();
+      // @backward-compat { version 144 } This newtab train-hop compatibility
+      // shim can be removed once Firefox 144 makes it to the release channel.
+      let absNow = this.processStartTs + (ChromeUtils.now?.() || Cu.now());
       session.session_duration = Math.round(
         absNow - session.perf.visibility_event_rcvd_ts
       );
@@ -641,6 +643,7 @@ export class TelemetryFeed {
           newtab_visit_id: session.session_id,
           is_sponsored: false,
           position: action.data.position,
+          is_pinned: !!action.data.isPinned,
         });
         break;
 
@@ -649,6 +652,7 @@ export class TelemetryFeed {
           newtab_visit_id: session.session_id,
           is_sponsored: false,
           position: action.data.position,
+          is_pinned: !!action.data.isPinned,
         });
         break;
 
@@ -733,6 +737,7 @@ export class TelemetryFeed {
           format,
           is_list_card,
           is_section_followed,
+          layout_name,
           matches_selected_topic,
           received_rank,
           recommendation_id,
@@ -770,6 +775,7 @@ export class TelemetryFeed {
                   section,
                   section_position,
                   is_section_followed,
+                  layout_name,
                 }
               : {}),
             matches_selected_topic,
@@ -1446,8 +1452,13 @@ export class TelemetryFeed {
   handleCardSectionUserEvent(action) {
     const session = this.sessions.get(au.getPortIdOfSender(action));
     if (session) {
-      const { section, section_position, event_source, is_section_followed } =
-        action.data;
+      const {
+        section,
+        section_position,
+        event_source,
+        is_section_followed,
+        layout_name,
+      } = action.data;
       const gleanDataForPrivatePing = {
         section,
         section_position,
@@ -1489,6 +1500,7 @@ export class TelemetryFeed {
               section,
               section_position,
               is_section_followed,
+              layout_name,
             })
           );
           if (this.privatePingEnabled) {
@@ -1814,6 +1826,7 @@ export class TelemetryFeed {
                 section: tile.section,
                 section_position: tile.section_position,
                 is_section_followed: tile.is_section_followed,
+                layout_name: tile.layout_name,
               }
             : {}),
           position: tile.pos,

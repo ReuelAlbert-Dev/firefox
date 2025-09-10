@@ -49,7 +49,6 @@ import org.mozilla.fenix.ext.getPreferenceKey
 import org.mozilla.fenix.ext.pixelSizeFor
 import org.mozilla.fenix.home.pocket.ContentRecommendationsFeatureHelper
 import org.mozilla.fenix.home.topsites.TopSitesConfigConstants.TOP_SITES_MAX_COUNT
-import org.mozilla.fenix.iconpicker.AppIcon
 import org.mozilla.fenix.nimbus.CookieBannersSection
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.nimbus.HomeScreenSection
@@ -327,6 +326,16 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         default = 0L,
     )
 
+    /**
+     * Indicates if the custom review prompt feature should be enabled. `True` if the feature is
+     * enabled, `false` otherwise.
+     */
+    var customReviewPromptFeatureEnabled by lazyFeatureFlagPreference(
+        appContext.getPreferenceKey(R.string.pref_key_custom_review_prompt_enabled),
+        featureFlag = true,
+        default = { FxNimbus.features.customReviewPrompt.value().enabled },
+    )
+
     var lastCfrShownTimeInMillis by longPreference(
         appContext.getPreferenceKey(R.string.pref_key_last_cfr_shown_time),
         default = 0L,
@@ -460,11 +469,6 @@ class Settings(private val appContext: Context) : PreferencesHolder {
 
     var openLinksInAPrivateTab by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_open_links_in_a_private_tab),
-        default = false,
-    )
-
-    var allowScreenshotsInPrivateMode by booleanPreference(
-        appContext.getPreferenceKey(R.string.pref_key_allow_screenshots_in_private_mode),
         default = false,
     )
 
@@ -688,7 +692,7 @@ class Settings(private val appContext: Context) : PreferencesHolder {
      */
     val shortcutSuggestionsEnabled by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_show_shortcuts_suggestions),
-        default = true,
+        default = false,
     )
 
     /**
@@ -816,9 +820,19 @@ class Settings(private val appContext: Context) : PreferencesHolder {
      * This refers to whether or not we are blocking or allowing requests that originate from
      * remote origins targeting either localhost addresses or local network addresses.
      */
-    var isLnaBlockingEnabled by booleanPreference(
-        appContext.getPreferenceKey(R.string.pref_key_enable_lna_blocking_enabled),
-        default = false,
+    var isLnaBlockingEnabled by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_blocking_enabled),
+        featureFlag = true,
+        default = { FxNimbus.features.lnaBlocking.value().enabled },
+    )
+
+    /**
+     * Indicates whether isolated content processes are enabled or not.
+     */
+    var isIsolatedProcessEnabled by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_isolated_process),
+        featureFlag = true,
+        default = { FxNimbus.features.isolatedContentProcesses.value().enabled },
     )
 
     /**
@@ -2076,6 +2090,15 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var onboardingFeatureEnabled = FeatureFlags.onboardingFeatureEnabled
 
     /**
+     * Indicates if the onboarding redesign should be used.
+     */
+    var useOnboardingRedesign by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_use_onboarding_redesign),
+        featureFlag = true,
+        default = { FxNimbus.features.junoOnboarding.value().useOnboardingRedesign },
+    )
+
+    /**
      * Indicates if the marketing onboarding card should be shown to the user.
      */
     var shouldShowMarketingOnboarding by booleanPreference(
@@ -2086,7 +2109,7 @@ class Settings(private val appContext: Context) : PreferencesHolder {
     var shouldUseComposableToolbar by lazyFeatureFlagPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_composable_toolbar),
         default = { FxNimbus.features.composableToolbar.value().enabled },
-        featureFlag = FeatureFlags.composableToolbar,
+        featureFlag = true,
     )
 
     /**
@@ -2224,6 +2247,14 @@ class Settings(private val appContext: Context) : PreferencesHolder {
         key = appContext.getPreferenceKey(R.string.pref_key_enable_homepage_searchbar),
         default = { FxNimbus.features.homepageSearchBar.value().enabled },
         featureFlag = true,
+    )
+
+    /**
+     * Indicates if the Homepage "Discover more" stories is enabled.
+     */
+    var enableDiscoverMoreStories by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_discover_more_stories),
+        default = FeatureFlags.DISCOVER_MORE_STORIES,
     )
 
     /**
@@ -2520,7 +2551,7 @@ class Settings(private val appContext: Context) : PreferencesHolder {
      */
     var useNewCrashReporterDialog by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_use_new_crash_reporter),
-        default = false,
+        default = Config.channel.isNightlyOrDebug,
     )
 
     /**
@@ -2701,7 +2732,7 @@ class Settings(private val appContext: Context) : PreferencesHolder {
      */
     var tabManagerEnhancementsEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_tab_manager_enhancements),
-        default = DefaultTabManagementFeatureHelper.enhancementsEnabled,
+        default = { DefaultTabManagementFeatureHelper.enhancementsEnabled },
     )
 
     /**

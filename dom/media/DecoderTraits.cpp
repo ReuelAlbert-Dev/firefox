@@ -11,8 +11,11 @@
 #include "OggDemuxer.h"
 #include "WebMDecoder.h"
 #include "WebMDemuxer.h"
+#include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/glean/DomMediaHlsMetrics.h"
+#include "mozilla/glean/DomMediaMetrics.h"
+#include "nsMimeTypes.h"
 
 #ifdef MOZ_ANDROID_HLS_SUPPORT
 #  include "HLSDecoder.h"
@@ -31,6 +34,10 @@
 
 namespace mozilla {
 
+extern LazyLogModule gMediaDecoderLog;
+#define LOGD(x, ...) \
+  MOZ_LOG_FMT(gMediaDecoderLog, LogLevel::Debug, x, ##__VA_ARGS__)
+
 /* static */
 bool DecoderTraits::IsHttpLiveStreamingType(const MediaContainerType& aType) {
   const auto& mimeType = aType.Type();
@@ -41,6 +48,12 @@ bool DecoderTraits::IsHttpLiveStreamingType(const MediaContainerType& aType) {
       mimeType == MEDIAMIMETYPE("application/x-mpegurl") ||
       mimeType == MEDIAMIMETYPE("audio/mpegurl") ||
       mimeType == MEDIAMIMETYPE("audio/x-mpegurl");
+}
+
+static bool IsMatroskaType(const MediaContainerType& aType) {
+  const auto& mimeType = aType.Type();
+  return mimeType == MEDIAMIMETYPE(VIDEO_MATROSKA) ||
+         mimeType == MEDIAMIMETYPE(AUDIO_MATROSKA);
 }
 
 static CanPlayStatus CanHandleCodecsType(
@@ -116,6 +129,9 @@ static CanPlayStatus CanHandleMediaType(
     const MediaContainerType& aType, DecoderDoctorDiagnostics* aDiagnostics) {
   if (DecoderTraits::IsHttpLiveStreamingType(aType)) {
     glean::hls::canplay_requested.Add();
+  }
+  if (IsMatroskaType(aType)) {
+    glean::media::mkv_content_count.Add();
   }
 #ifdef MOZ_ANDROID_HLS_SUPPORT
   if (HLSDecoder::IsSupportedType(aType)) {
@@ -206,6 +222,8 @@ already_AddRefed<MediaDataDemuxer> DecoderTraits::CreateDemuxer(
     demuxer = new OggDemuxer(aResource);
   } else if (WebMDecoder::IsSupportedType(aType)) {
     demuxer = new WebMDemuxer(aResource);
+  } else {
+    LOGD("CreateDemuxer: unsupported type {}", aType.OriginalString().get());
   }
 
   return demuxer.forget();
@@ -291,3 +309,6 @@ nsTArray<UniquePtr<TrackInfo>> DecoderTraits::GetTracksInfo(
 }
 
 }  // namespace mozilla
+
+// avoid redefined macro in unified build
+#undef LOGD

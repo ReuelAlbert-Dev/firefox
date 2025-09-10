@@ -13,7 +13,6 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -72,7 +71,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -1492,13 +1490,13 @@ class AbstractFetchDownloadServiceTest {
         )
 
         val pausedDownload = DownloadState(
-            id = "1",
+            id = "2",
             url = "https://example.com/file.txt",
             fileName = "file.txt",
             status = PAUSED,
         )
         val pausedDownloadState = DownloadJobState(
-            state = inProgressDownload,
+            state = pausedDownload,
             foregroundServiceId = Random.nextInt(),
             status = PAUSED,
             job = CoroutineScope(IO).launch {
@@ -1507,13 +1505,13 @@ class AbstractFetchDownloadServiceTest {
             },
         )
         val initiatedDownload = DownloadState(
-            id = "1",
+            id = "3",
             url = "https://example.com/file.txt",
             fileName = "file.txt",
             status = INITIATED,
         )
         val initiatedDownloadState = DownloadJobState(
-            state = inProgressDownload,
+            state = initiatedDownload,
             foregroundServiceId = Random.nextInt(),
             status = INITIATED,
             job = CoroutineScope(IO).launch {
@@ -1522,13 +1520,13 @@ class AbstractFetchDownloadServiceTest {
             },
         )
         val failedDownload = DownloadState(
-            id = "1",
+            id = "4",
             url = "https://example.com/file.txt",
             fileName = "file.txt",
             status = FAILED,
         )
         val failedDownloadState = DownloadJobState(
-            state = inProgressDownload,
+            state = failedDownload,
             foregroundServiceId = Random.nextInt(),
             status = FAILED,
             job = CoroutineScope(IO).launch {
@@ -1552,6 +1550,53 @@ class AbstractFetchDownloadServiceTest {
             assertTrue(it.status == CANCELLED)
             verify(service).updateDownloadState(it.state.copy(status = CANCELLED))
         }
+    }
+
+    @Test
+    fun `WHEN clearAllDownloadsNotificationsAndJobs is called THEN all completed and cancelled downloads are unaffected`() = runTest(testsDispatcher) {
+        val completedDownload = DownloadState(
+            id = "1",
+            url = "https://example.com/file.txt",
+            fileName = "file.txt",
+            status = COMPLETED,
+        )
+        val completedDownloadState = DownloadJobState(
+            state = completedDownload,
+            foregroundServiceId = Random.nextInt(),
+            status = COMPLETED,
+            job = CoroutineScope(IO).launch {
+                @Suppress("ControlFlowWithEmptyBody")
+                while (true) { }
+            },
+        )
+
+        val cancelledDownload = DownloadState(
+            id = "2",
+            url = "https://example.com/file.txt",
+            fileName = "file.txt",
+            status = CANCELLED,
+        )
+        val cancelledDownloadState = DownloadJobState(
+            state = cancelledDownload,
+            foregroundServiceId = Random.nextInt(),
+            status = CANCELLED,
+            job = CoroutineScope(IO).launch {
+                @Suppress("ControlFlowWithEmptyBody")
+                while (true) { }
+            },
+        )
+
+        service.downloadJobs[completedDownload.id] = completedDownloadState
+        service.downloadJobs[cancelledDownload.id] = cancelledDownloadState
+
+        val expected = mapOf(
+            Pair(completedDownload.id, completedDownloadState.copy()),
+            Pair(cancelledDownload.id, cancelledDownloadState.copy()),
+        )
+
+        service.clearAllDownloadsNotificationsAndJobs()
+
+        assertEquals(expected, service.downloadJobs)
     }
 
     @Test

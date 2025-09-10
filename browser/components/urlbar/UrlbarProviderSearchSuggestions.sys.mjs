@@ -58,18 +58,9 @@ function looksLikeUrl(str, ignoreAlphanumericHosts = false) {
 /**
  * Class used to create the provider.
  */
-class ProviderSearchSuggestions extends UrlbarProvider {
+export class UrlbarProviderSearchSuggestions extends UrlbarProvider {
   constructor() {
     super();
-  }
-
-  /**
-   * Returns the name of this provider.
-   *
-   * @returns {string} the name of this provider.
-   */
-  get name() {
-    return "SearchSuggestions";
   }
 
   /**
@@ -84,9 +75,10 @@ class ProviderSearchSuggestions extends UrlbarProvider {
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
    *
-   * @param {UrlbarQueryContext} queryContext The query context object
+   * @param {UrlbarQueryContext} queryContext The query context object.
+   * @param {UrlbarController} controller The current controller.
    */
-  async isActive(queryContext) {
+  async isActive(queryContext, controller) {
     // If the sources don't include search or the user used a restriction
     // character other than search, don't allow any suggestions.
     if (
@@ -107,7 +99,7 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       return false;
     }
 
-    if (!this._allowSuggestions(queryContext)) {
+    if (!this._allowSuggestions(queryContext, controller)) {
       return false;
     }
 
@@ -147,15 +139,17 @@ class ProviderSearchSuggestions extends UrlbarProvider {
    * context.  If this returns false, then we shouldn't fetch either form
    * history or remote suggestions.
    *
-   * @param {object} queryContext The query context object
+   * @param {UrlbarQueryContext} queryContext The query context object.
+   * @param {UrlbarController} controller The current controller.
    * @returns {boolean} True if suggestions in general are allowed and false if
    *   not.
    */
-  _allowSuggestions(queryContext) {
+  _allowSuggestions(queryContext, controller) {
     if (
       // If the user typed a restriction token or token alias, we ignore the
       // pref to disable suggestions in the Urlbar.
-      (!lazy.UrlbarPrefs.get("suggest.searches") &&
+      (controller.input.isAddressbar &&
+        !lazy.UrlbarPrefs.get("suggest.searches") &&
         !this._isTokenOrRestrictionPresent(queryContext)) ||
       !lazy.UrlbarPrefs.get("browser.search.suggest.enabled") ||
       (queryContext.isPrivate &&
@@ -417,19 +411,18 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       }
     }
 
-    this._suggestionsFetchCompletePromise = this._suggestionsController.fetch(
-      searchString,
-      queryContext.isPrivate,
-      engine,
-      queryContext.userContextId,
-      this._isTokenOrRestrictionPresent(queryContext),
-      false,
-      this.#shouldFetchTrending(queryContext)
-    );
-
     // See `SearchSuggestionsController.fetch` documentation for a description
     // of `fetchData`.
-    let fetchData = await this._suggestionsFetchCompletePromise;
+    let fetchData = await this._suggestionsController.fetch({
+      searchString,
+      inPrivateBrowsing: queryContext.isPrivate,
+      engine,
+      userContextId: queryContext.userContextId,
+      restrictToEngine: this._isTokenOrRestrictionPresent(queryContext),
+      dedupeRemoteAndLocal: false,
+      fetchTrending: this.#shouldFetchTrending(queryContext),
+    });
+
     // The fetch was canceled.
     if (!fetchData) {
       return null;
@@ -649,5 +642,3 @@ function makeFormHistoryResult(queryContext, engine, entry) {
     })
   );
 }
-
-export var UrlbarProviderSearchSuggestions = new ProviderSearchSuggestions();

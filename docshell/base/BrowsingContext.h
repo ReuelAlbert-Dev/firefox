@@ -208,6 +208,7 @@ struct EmbedderColorSchemes {
   FIELD(CurrentOrientationAngle, float)                                       \
   FIELD(CurrentOrientationType, mozilla::dom::OrientationType)                \
   FIELD(OrientationLock, mozilla::hal::ScreenOrientation)                     \
+  FIELD(HasOrientationOverride, bool)                                         \
   FIELD(UserAgentOverride, nsString)                                          \
   FIELD(TouchEventsOverrideInternal, mozilla::dom::TouchEventsOverride)       \
   FIELD(EmbedderElementType, Maybe<nsString>)                                 \
@@ -241,6 +242,7 @@ struct EmbedderColorSchemes {
   /* DevTools override for prefers-color-scheme */                            \
   FIELD(PrefersColorSchemeOverride, dom::PrefersColorSchemeOverride)          \
   FIELD(LanguageOverride, nsCString)                                          \
+  FIELD(TimezoneOverride, nsString)                                           \
   /* DevTools override for forced-colors */                                   \
   FIELD(ForcedColorsOverride, dom::ForcedColorsOverride)                      \
   /* prefers-color-scheme override based on the color-scheme style of our     \
@@ -454,7 +456,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void Navigate(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv,
                 NavigationHistoryBehavior aHistoryHandling =
-                    NavigationHistoryBehavior::Auto);
+                    NavigationHistoryBehavior::Auto,
+                bool aShouldNotForceReplaceInOnLoad = false);
 
   // Removes the root document for this BrowsingContext tree from the BFCache,
   // if it is cached, and returns true if it was.
@@ -689,13 +692,37 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return txn.Commit(this);
   }
 
-  void SetRDMPaneOrientation(OrientationType aType, float aAngle,
-                             ErrorResult& aRv) {
-    if (InRDMPane()) {
-      if (NS_FAILED(SetCurrentOrientation(aType, aAngle))) {
-        aRv.ThrowInvalidStateError("Browsing context is discarded");
-      }
+  bool HasOrientationOverride() const {
+    return Top()->GetHasOrientationOverride();
+  }
+
+  [[nodiscard]] nsresult SetOrientationOverride(OrientationType aType,
+                                                float aAngle) {
+    if (GetHasOrientationOverride() && GetCurrentOrientationType() == aType &&
+        GetCurrentOrientationAngle() == aAngle) {
+      return NS_OK;
     }
+
+    Transaction txn;
+    txn.SetCurrentOrientationType(aType);
+    txn.SetCurrentOrientationAngle(aAngle);
+    txn.SetHasOrientationOverride(true);
+    return txn.Commit(this);
+  }
+
+  void SetOrientationOverride(OrientationType aType, float aAngle,
+                              ErrorResult& aRv) {
+    MOZ_ASSERT(IsTop());
+
+    if (NS_FAILED(SetOrientationOverride(aType, aAngle))) {
+      aRv.ThrowInvalidStateError("Browsing context is discarded");
+    }
+  }
+
+  void ResetOrientationOverride() {
+    MOZ_ASSERT(IsTop());
+
+    Unused << SetHasOrientationOverride(false);
   }
 
   void SetRDMPaneMaxTouchPoints(uint8_t aMaxTouchPoints, ErrorResult& aRv) {
@@ -926,6 +953,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                  bool aRequireUserInteraction, bool aUserActivation,
                  std::function<void(Maybe<int32_t>&&)>&& aResolver);
 
+  MOZ_CAN_RUN_SCRIPT
+  void NavigationTraverse(const nsID& aKey, uint64_t aHistoryEpoch,
+                          bool aUserActivation,
+                          std::function<void(nsresult)>&& aResolver);
+
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
 
   // Checks if we reached the rate limit for calls to Location and History API.
@@ -970,6 +1002,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void GetLanguageOverride(nsACString& aLanguageOverride) const {
     aLanguageOverride = GetLanguageOverride();
+  }
+
+  void GetTimezoneOverride(nsAString& aTimezoneOverride) const {
+    aTimezoneOverride = GetTimezoneOverride();
   }
 
   dom::PrefersColorSchemeOverride PrefersColorSchemeOverride() const {
@@ -1140,6 +1176,11 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return IsTop();
   }
 
+  bool CanSet(FieldIndex<IDX_TimezoneOverride>, const nsString&,
+              ContentParent*) {
+    return IsTop();
+  }
+
   bool CanSet(FieldIndex<IDX_MediumOverride>, const nsString&, ContentParent*) {
     return IsTop();
   }
@@ -1160,6 +1201,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   }
 
   void DidSet(FieldIndex<IDX_InRDMPane>, bool aOldValue);
+  void DidSet(FieldIndex<IDX_HasOrientationOverride>, bool aOldValue);
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void DidSet(FieldIndex<IDX_ForceDesktopViewport>,
                                           bool aOldValue);
 
@@ -1177,6 +1219,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   void PresContextAffectingFieldChanged();
 
   void DidSet(FieldIndex<IDX_LanguageOverride>, nsCString&& aOldValue);
+
+  void DidSet(FieldIndex<IDX_TimezoneOverride>, nsString&& aOldValue);
 
   void DidSet(FieldIndex<IDX_MediumOverride>, nsString&& aOldValue);
 

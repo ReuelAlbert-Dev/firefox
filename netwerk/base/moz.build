@@ -164,9 +164,9 @@ EXPORTS.mozilla.net += [
     "Dashboard.h",
     "DashboardTypes.h",
     "DefaultURI.h",
+    "ExecuteIfOnMainThreadEventTarget.h",
     "InterceptionInfo.h",
     "IPv4Parser.h",
-    "MemoryDownloader.h",
     "NetworkConnectivityService.h",
     "Predictor.h",
     "PrivateBrowsingChannel.h",
@@ -187,12 +187,12 @@ UNIFIED_SOURCES += [
     "Dashboard.cpp",
     "DefaultURI.cpp",
     "EventTokenBucket.cpp",
+    "ExecuteIfOnMainThreadEventTarget.cpp",
     "InterceptionInfo.cpp",
     "IPv4Parser.cpp",
     "LNAPermissionRequest.cpp",
     "LoadContextInfo.cpp",
     "LoadInfo.cpp",
-    "MemoryDownloader.cpp",
     "MockNetworkLayer.cpp",
     "MockNetworkLayerController.cpp",
     "NetworkConnectivityService.cpp",
@@ -302,7 +302,14 @@ EXTRA_JS_MODULES += [
     "SimpleURIUnknownSchemesRemoteObserver.sys.mjs",
 ]
 
-DIRS += ["mozurl", "rust-helper", "http-sfv", "idna_glue", "urlpattern_glue"]
+DIRS += [
+    "mozurl",
+    "rust-helper",
+    "http-sfv",
+    "idna_glue",
+    "uritemplate_glue",
+    "urlpattern_glue",
+]
 
 include("/ipc/chromium/chromium-config.mozbuild")
 

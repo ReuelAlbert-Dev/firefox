@@ -1594,6 +1594,9 @@ static bool SetTimeout(JSContext* cx, unsigned argc, Value* vp) {
   }
   if (delay != 0) {
     JS::WarnASCII(cx, "Treating non-zero delay as zero in setTimeout");
+    if (cx->isThrowingOutOfMemory()) {
+      return false;
+    }
   }
 
   ShellContext* sc = GetShellContext(cx);
@@ -3076,7 +3079,13 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
     // Serialize the encoded bytecode, recorded before the execution, into a
     // buffer which can be deserialized linearly.
     if (saveBytecodeWithDelazifications) {
-      if (!FinishCollectingDelazifications(cx, script, saveBuffer)) {
+      RefPtr<JS::Stencil> stencil;
+      if (!FinishCollectingDelazifications(cx, script,
+                                           getter_AddRefs(stencil))) {
+        return false;
+      }
+      JS::TranscodeResult result = JS::EncodeStencil(cx, stencil, saveBuffer);
+      if (result != JS::TranscodeResult::Ok) {
         return false;
       }
     }
@@ -7402,11 +7411,17 @@ static bool NewGlobal(JSContext* cx, unsigned argc, Value* vp) {
       creationOptions.setDefineSharedArrayBufferConstructor(v.toBoolean());
     }
 
-    if (!JS_GetProperty(cx, opts, "forceUTC", &v)) {
+    if (!JS_GetProperty(cx, opts, "timeZone", &v)) {
       return false;
     }
-    if (v.isBoolean()) {
-      creationOptions.setForceUTC(v.toBoolean());
+    if (v.isString()) {
+      RootedString str(cx, v.toString());
+      UniqueChars timeZone =
+          StringToTimeZone(cx, callee, str, AllowTimeZoneLink::No);
+      if (!timeZone) {
+        return false;
+      }
+      behaviors.setTimeZoneCopyZ(timeZone.get());
     }
 
     if (!JS_GetProperty(cx, opts, "alwaysUseFdlibm", &v)) {
@@ -12980,6 +12995,8 @@ bool InitOptionParser(OptionParser& op) {
 #endif
       !op.addBoolOption('\0', "no-fjcvtzs",
                         "Pretend CPU does not support FJCVTZS instruction.") ||
+      !op.addBoolOption('\0', "no-cssc",
+                        "Pretend CPU does not support CSSC extension.") ||
       !op.addBoolOption('\0', "more-compartments",
                         "Make newGlobal default to creating a new "
                         "compartment.") ||
@@ -13123,7 +13140,6 @@ bool InitOptionParser(OptionParser& op) {
                         "Enable WebAssembly tail-calls proposal.") ||
       !op.addBoolOption('\0', "wasm-js-string-builtins",
                         "Enable WebAssembly js-string-builtins proposal.") ||
-      !op.addBoolOption('\0', "enable-promise-try", "Enable Promise.try") ||
       !op.addBoolOption('\0', "enable-iterator-sequencing",
                         "Enable Iterator Sequencing") ||
       !op.addBoolOption('\0', "enable-math-sumprecise",
@@ -13183,9 +13199,6 @@ bool SetGlobalOptionsPreJSInit(const OptionParser& op) {
   }
   if (op.getBoolOption("enable-uint8array-base64")) {
     JS::Prefs::setAtStartup_experimental_uint8array_base64(true);
-  }
-  if (op.getBoolOption("enable-promise-try")) {
-    JS::Prefs::setAtStartup_experimental_promise_try(true);
   }
   if (op.getBoolOption("enable-math-sumprecise")) {
     JS::Prefs::setAtStartup_experimental_math_sumprecise(true);
@@ -13355,7 +13368,11 @@ bool SetGlobalOptionsPreJSInit(const OptionParser& op) {
 #if defined(JS_CODEGEN_ARM64)
   if (op.getBoolOption("no-fjcvtzs")) {
     vixl::CPUFeatures fjcvtzs(vixl::CPUFeatures::kJSCVT);
-    fjcvtzs.DisableGlobally();
+    jit::ARM64Flags::DisableCPUFeatures(fjcvtzs);
+  }
+  if (op.getBoolOption("no-cssc")) {
+    vixl::CPUFeatures cssc(vixl::CPUFeatures::kCSSC);
+    jit::ARM64Flags::DisableCPUFeatures(cssc);
   }
 #endif
 #ifndef __wasi__

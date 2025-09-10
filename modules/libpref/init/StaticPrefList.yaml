@@ -2207,8 +2207,12 @@
   mirror: always
 
 # If true, we'll use the triggering principal rather than the loading principal
-# when doing CORS checks.  This might be needed for WebExtensions to load their
-# own resources from content that they inject into sites.
+# when doing CORS checks.  Doing so is generally not correct, but we shipped
+# with this behavior for a long time, so we're leaving it preffable in case
+# it's needed for testing or if we discover some edge case that requires it.
+#
+# TODO(dholbert): Remove this pref after the 'false' default-value has
+# successfully shipped for a release or two.
 - name: content.cors.use_triggering_principal
   type: bool
   value: false
@@ -2524,12 +2528,6 @@
   value: true
   mirror: always
 
-# Block sandboxed BrowsingContexts from navigating to external protocols.
-- name: dom.block_external_protocol_navigation_from_sandbox
-  type: bool
-  value: true
-  mirror: always
-
 # Block Insecure downloads from Secure Origins
 - name: dom.block_download_insecure
   type: bool
@@ -2696,12 +2694,12 @@
 # Enable/disable Gecko specific edit commands
 - name: dom.document.edit_command.contentReadOnly.enabled
   type: bool
-  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+  value: false
   mirror: always
 
 - name: dom.document.edit_command.insertBrOnReturn.enabled
   type: bool
-  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+  value: false
   mirror: always
 
 # Only intended for fuzzing purposes, this will break mozPrintCallback, etc.
@@ -2732,7 +2730,7 @@
 # Whether the commandfor attribute implementation is enabled
 - name: dom.element.commandfor.enabled
   type: bool
-  value: false
+  value: true
   mirror: always
 
 # Whether the commandfor "toggle" and "open" details commands are enabled
@@ -3020,7 +3018,7 @@
 # Whether to dispatch `beforescriptexecute` and `afterscriptexecute` event.
 - name: dom.events.script_execute.enabled
   type: bool
-  value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+  value: false
   mirror: always
 
 # Whether to expose test interfaces of various sorts
@@ -3403,13 +3401,6 @@
   value: 1000
   mirror: always
 
-- name: dom.ipc.processPrelaunch.startupDelayMs
-  type: uint32_t
-# delay starting content processes for a short time after browser start
-# to provide time for the UI to come up
-  value: 1000
-  mirror: always
-
 # Process preallocation cache
 # Only used in fission; in e10s we use 1 always
 - name: dom.ipc.processPrelaunch.fission.number
@@ -3654,12 +3645,6 @@
   value: true
   mirror: always
 
-# Whether to dispatch mutation events.
-- name: dom.mutation_events.enabled
-  type: bool
-  value: false
-  mirror: always
-
 # Limit of location change caused by content scripts in a time span per
 # BrowsingContext. This includes calls to History and Location APIs.
 - name: dom.navigation.navigationRateLimit.count
@@ -3706,6 +3691,13 @@
 
 # Whether the codebase attribute in an <object> is used as the base URI.
 - name: dom.object_embed.codebase.enabled
+  type: bool
+  value: false
+  mirror: always
+
+# Whether the type attribute in an <object> is used as a hint for the Content-Type
+# of the loading document.
+- name: dom.object_embed.type_hint.enabled
   type: bool
   value: false
   mirror: always
@@ -3819,7 +3811,7 @@
 # Whether the interactionId will be computed and returned by performance observer*
 - name: dom.performance.event_timing.enable_interactionid
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Is support for Element.requestPointerLock enabled?
@@ -4242,7 +4234,7 @@
 # Enable Screen Orientation lock
 - name: dom.screenorientation.allow-lock
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Enable Screen Wake Lock API
@@ -4781,6 +4773,12 @@
   value: true
   mirror: always
 
+# Enable Storage-Access-Headers
+- name: dom.storage_access.headers.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Forward-Declared Storage-access API.
 - name: dom.storage_access.forward_declared.enabled
   type: bool
@@ -5139,7 +5137,7 @@
 # Is support for View Transitions Level 1 enabled?
 - name: dom.viewTransitions.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
   rust: true
 
@@ -5414,7 +5412,7 @@
 
 - name: dom.w3c_pointer_events.getcoalescedevents_only_in_securecontext
   type: bool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # `click` event target is defined as overridden by pointer capture target in
@@ -5489,6 +5487,11 @@
   value: @IS_NIGHTLY_BUILD@
   mirror: always
 
+- name: dom.shadowdom.referenceTarget.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # NOTE: This preference is used in unit tests. If it is removed or its default
 # value changes, please update test_sharedMap_static_prefs.js accordingly.
 - name: dom.webcomponents.shadowdom.report_usage
@@ -5503,7 +5506,7 @@
   value: false
   mirror: always
 
-# Is support for the Web GPU API enabled?
+# Is support for the WebGPU API enabled?
 - name: dom.webgpu.enabled
   type: RelaxedAtomicBool
 #ifdef XP_WIN
@@ -5549,7 +5552,11 @@
 # Whether WebGPU's GPUExternalTexture API is enabled.
 - name: dom.webgpu.external-texture.enabled
   type: bool
+#if defined(XP_WIN) || defined(XP_MACOSX)
+  value: true
+#else
   value: false
+#endif
   mirror: once
 
 # For testing purposes, crash if we don't get a hardware adapter.
@@ -5567,6 +5574,23 @@
   value: false
   mirror: once
   rust: true
+
+# Domains for which WebGPU is disabled.
+#
+# If `nsIGlobalObject::GetBaseURI` returns a base URI in this list,
+# then `GPU::requestAdapter` always rejects.
+#
+# This is a comma-separated list of domains to block. An entry of the
+# form `*.DOMAIN` blocks all subdomains of `DOMAIN`. It is interpreted
+# by `nsContentUtils::IsURIInList`.
+#
+# Bugs for the current default contents:
+#
+# easyeda.com: 1980392
+- name: dom.webgpu.blocked-domains
+  type: DataMutexString
+  value: "easyeda.com,*.easyeda.com"
+  mirror: always
 
 # Is support for HTMLInputElement.webkitEntries enabled?
 - name: dom.webkitBlink.filesystem.enabled
@@ -5898,16 +5922,8 @@
   value: false
   mirror: always
 
-# Whether the InstallTrigger implementation should be enabled (or hidden and
-# none of its methods available).
-- name: extensions.InstallTriggerImpl.enabled
-  type: bool
-  value: false
-  mirror: always
-
-# Whether the InstallTrigger implementation should be enabled (or completely
-# hidden), separate from InstallTriggerImpl because InstallTrigger is improperly
-# used also for UA detection.
+# Whether the InstallTrigger global should be enabled (kept for compatibility,
+# as it is still used in the wild as an improper UA detection method)
 - name: extensions.InstallTrigger.enabled
   type: bool
   value: true
@@ -7636,7 +7652,11 @@
 
 - name: gfx.webrender.layer-compositor
   type: bool
+#if defined(XP_WIN)
+  value: @IS_NIGHTLY_BUILD@
+#else
   value: false
+#endif
   mirror: once
 
 #ifdef XP_WIN
@@ -7773,6 +7793,10 @@
     type: RelaxedAtomicBool
     value: true
     mirror: always
+-   name: gfx.webrender.swap-chain-allow-tearing
+    type: bool
+    value: false
+    mirror: once
 #endif
 
 # Whether or not fallback to Software WebRender requires the GPU process.
@@ -7958,11 +7982,7 @@
 # Disable wait of GPU execution completion
 - name: gfx.webrender.wait-gpu-finished.disabled
   type: bool
-#if defined(XP_WIN)
-  value: true
-#else
   value: false
-#endif
   mirror: once
 
 # Enable VideoProcessor Super Resolution for video overlay
@@ -8010,7 +8030,7 @@
 - name: gfx.webrender.dithering
   type: bool
   rust: true
-  value: false
+  value: true
   mirror: once
 
 # Use vsync events generated by hardware
@@ -8521,7 +8541,7 @@
   # TSF/TIP requests to select from/by middle of a cluster.
 -   name: intl.tsf.hack.extend_setting_selection_range_to_cluster_boundaries
     type: bool
-    value: @IS_NOT_EARLY_BETA_OR_EARLIER@
+    value: false
     mirror: always
 
   # Whether Gecko supports IMM even if TSF is enabled.  This pref exists
@@ -8658,14 +8678,27 @@
   mirror: always  # LoadStartupJSPrefs
   do_not_use_directly: true
 
-#ifdef NIGHTLY_BUILD
-# Experimental support for off-main-thread baseline compilation.
-- name: javascript.options.experimental.baselinejit.offthread_compilation
-  type: bool
-  value: false
+# Select which OMT baseline compilation strategy to use:
+#    0:  None.  Disables OMT baseline compilation entirely.
+#
+#    1:  On-demand only.  Only perform OMT baseline compilation
+#        when needed during execution.
+#
+#    2:  Eager compilation only.  This will perform OMT baseline
+#        compilation eagerly when JitHints and bytecode is available.
+#
+#    3:  Eager and on-demand.  Perform eager compilation when
+#        JitHints and bytecode is available whenever possible,
+#        and also perform on-demand OMT baseline compilation.
+#
+#    4:  Aggressive eager compilation.  This is aggressively
+#        compiling all functions eagerly when bytecode is available,
+#        regardless of JitHints.  Not recommended for normal use.
+#
+- name: javascript.options.baselinejit.offthread_compilation_strategy
+  type: uint32_t
+  value: 2
   mirror: always  # LoadStartupJSPrefs
-  do_not_use_directly: true
-#endif
 
 # Enable off-main-thread Warp compilation.
 - name: javascript.options.ion.offthread_compilation
@@ -8706,7 +8739,7 @@
   do_not_use_directly: true
 
 # Whether object fuses are used to optimize constant properties on the global
-# object.
+# object and its lexical environment object.
 - name: javascript.options.objectfuse_for_global
   type: bool
   value: true
@@ -8796,13 +8829,6 @@
 
 # Experimental support for Uint8Array base64/hex in JavaScript.
 - name: javascript.options.experimental.uint8array_base64
-  type: bool
-  value: true
-  mirror: always
-  set_spidermonkey_pref: startup
-
-# Experimental support for Promise.try in JavaScript.
-- name: javascript.options.experimental.promise_try
   type: bool
   value: true
   mirror: always
@@ -10175,10 +10201,19 @@
   value: false
   mirror: always
 
-# Do we normalize font metrics to a block-size of 1em for ruby positioning?
-- name: layout.css.ruby.normalize-metrics
-  type: bool
-  value: @IS_NIGHTLY_BUILD@
+# Em-height scaling percentage used for ruby positioning:
+# 0 means use legacy behavior (based on line-box height);
+# 100 to use ascent/descent normalized to a total of 1em;
+# larger values will scale the em height accordingly.
+# The used value (if non-zero) is clamped to [100, 200] to
+# avoid sending annotations hugely far away from the base.
+- name: layout.css.ruby.normalize-metrics-factor
+  type: uint32_t
+#ifdef NIGHTLY_BUILD
+  value: 100
+#else
+  value: 0
+#endif
   mirror: always
 
 - name: layout.css.scroll-behavior.damping-ratio
@@ -10915,6 +10950,13 @@
 - name: mathml.unknown_mrow.enabled
   type: bool
   value: true
+  mirror: always
+
+# Whether to enable character and glyph level mirroring for operators when
+# the writing mode is right to left.
+- name: mathml.rtl_operator_mirroring.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Whether to disable fallback for mathvariant=italic/bold/bold-italic via
@@ -13046,6 +13088,13 @@
   value: false
   mirror: always
 
+# When true, the hashing of the certificate will be done with the hashing
+# algorithm specified in the cert instead of SHA256.
+- name: network.auth.sspi_detect_hash
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # See the full list of values in nsICookieService.idl.
 - name: network.cookie.cookieBehavior
   type: RelaxedAtomicInt32
@@ -13540,7 +13589,7 @@
 # See Bug 1889130
 - name: network.socket.ip_addr_any.disabled
   type: RelaxedAtomicBool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 
 # Set true to allow resolving proxy for localhost
@@ -14936,6 +14985,13 @@
   value: false
   mirror: always
 
+# According to RFC 9113, the maximum stream ID is 0x80000000.
+# However, we've been using a smaller value since the beginning.
+- name: network.http.http2.max_stream_id
+  type: RelaxedAtomicInt32
+  value: 0x7800000
+  mirror: always
+
 - name: network.http.move_to_pending_list_after_network_change
   type: RelaxedAtomicBool
   value: true
@@ -15406,6 +15462,14 @@
   value: true
   mirror: always
 
+# If true, it will include extra tags to be sniffed by nsUnknownDecoder
+# These tags were previously sniffed by Firefox for legacy/webcompat but
+# are not part of the MIME sniffing spec.
+- name: network.mimesniff.extra_moz_html_tags
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # The maximum count that we allow socket prrocess to crash. If this count is
 # reached, we won't use networking over socket process.
 - name: network.max_socket_process_failed_count
@@ -15799,6 +15863,13 @@
   value: true
   mirror: always
 
+# Whether simpler monochrome printing set-up is enabled for CUPS.
+# TODO(emilio): remove after a few releases on-by-default
+- name: print.cups.monochrome-gtk-simple.enabled
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # Disabling this will no-op window.print()
 - name: print.enabled
   type: RelaxedAtomicBool
@@ -16101,6 +16172,11 @@
   value: true
   mirror: always
 
+- name: privacy.fingerprintingProtection.testing
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Enable/Disable fingerprinting protections that are enabled in
 # Enhanced Tracking Protection Standard mode.
 # bFPP cannot be enabled in only PBM, it is either enabled
@@ -16314,12 +16390,6 @@
 - name: privacy.dynamic_firstparty.use_site
   type: RelaxedAtomicBool
   value: true
-  mirror: always
-
-# Controls whether or not the dFPI partition key includes non-standard ports
-- name: privacy.dynamic_firstparty.use_site.include_port
-  type: RelaxedAtomicBool
-  value: false
   mirror: always
 
 - name: privacy.partition.network_state
@@ -16674,7 +16744,11 @@
 - name: security.sandbox.gpu.level
   type: int32_t
 #if defined(XP_WIN)
+#if defined(NIGHTLY_BUILD)
+  value: 2
+#else
   value: 1
+#endif
 #else
   value: 0
 #endif
@@ -17325,7 +17399,7 @@
 # 1 - AES_CBC
 - name: security.sdr.mechanism
   type: RelaxedAtomicUint32
-  value: 0
+  value: 1
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -17617,6 +17691,12 @@
   mirror: always
 #endif
 
+# Enable the gecko trace system.
+- name: toolkit.gecko-trace.enable
+  type: bool
+  value: false
+  mirror: always
+
 # Returns true if BHR is disabled.
 - name: toolkit.content-background-hang-monitor.disabled
   type: bool
@@ -17747,7 +17827,7 @@
 #ifdef XP_WIN
 - name: ui.key.layout.load_when_first_needed
   type: bool
-  value: @IS_EARLY_BETA_OR_EARLIER@
+  value: true
   mirror: always
 #endif
 
@@ -18737,7 +18817,7 @@
 - name: widget.wayland.fractional-scale.enabled
   type: bool
   value: false
-  mirror: once
+  mirror: always
 
 # Use opaque region for MozContainer wl_surface
 - name: widget.wayland.opaque-region.enabled

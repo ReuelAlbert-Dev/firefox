@@ -1532,8 +1532,7 @@ void LIRGenerator::visitStrictConstantCompareBoolean(
     MStrictConstantCompareBoolean* ins) {
   MDefinition* value = ins->value();
 
-  auto* lir =
-      new (alloc()) LStrictConstantCompareBoolean(useBox(value), temp());
+  auto* lir = new (alloc()) LStrictConstantCompareBoolean(useBox(value));
   define(lir, ins);
 }
 
@@ -1908,6 +1907,21 @@ void LIRGenerator::visitNearbyInt(MNearbyInt* ins) {
     lir = new (alloc()) LNearbyInt(useRegisterAtStart(ins->input()));
   } else {
     lir = new (alloc()) LNearbyIntF(useRegisterAtStart(ins->input()));
+  }
+
+  define(lir, ins);
+}
+
+void LIRGenerator::visitRoundToDouble(MRoundToDouble* ins) {
+  MIRType inputType = ins->input()->type();
+  MOZ_ASSERT(IsFloatingPointType(inputType));
+  MOZ_ASSERT(ins->type() == inputType);
+
+  LInstructionHelper<1, 1, 0>* lir;
+  if (inputType == MIRType::Double) {
+    lir = new (alloc()) LRoundToDouble(useRegister(ins->input()));
+  } else {
+    lir = new (alloc()) LRoundToFloat32(useRegister(ins->input()));
   }
 
   define(lir, ins);
@@ -5491,14 +5505,21 @@ void LIRGenerator::visitLoadElementAndUnbox(MLoadElementAndUnbox* ins) {
 void LIRGenerator::visitAddAndStoreSlot(MAddAndStoreSlot* ins) {
   MOZ_ASSERT(ins->object()->type() == MIRType::Object);
 
-  LDefinition maybeTemp = LDefinition::BogusTemp();
-  if (ins->kind() != MAddAndStoreSlot::Kind::FixedSlot) {
-    maybeTemp = temp();
+  if (ins->preserveWrapper()) {
+    auto* lir = new (alloc()) LAddAndStoreSlotPreserveWrapper(
+        useRegister(ins->object()), useBox(ins->value()), temp(), temp());
+    assignSnapshot(lir, ins->bailoutKind());
+    add(lir, ins);
+    assignSafepoint(lir, ins);
+  } else {
+    LDefinition maybeTemp = LDefinition::BogusTemp();
+    if (ins->kind() != MAddAndStoreSlot::Kind::FixedSlot) {
+      maybeTemp = temp();
+    }
+    auto* lir = new (alloc()) LAddAndStoreSlot(useRegister(ins->object()),
+                                               useBox(ins->value()), maybeTemp);
+    add(lir, ins);
   }
-
-  auto* lir = new (alloc()) LAddAndStoreSlot(useRegister(ins->object()),
-                                             useBox(ins->value()), maybeTemp);
-  add(lir, ins);
 }
 
 void LIRGenerator::visitAllocateAndStoreSlot(MAllocateAndStoreSlot* ins) {

@@ -168,6 +168,9 @@
     }
   }
 
+  *:focus-visible {
+    outline: var(--focus-outline);
+  }
 }
 
 .grid-skip {
@@ -309,6 +312,11 @@
 
       .check-wrapper {
         margin-block-end: var(--space-small);
+      }
+
+      // Prevent focus outline clipping by allowing overflow
+      &:has(moz-box-button:focus-within) {
+        overflow: visible;
       }
     }
 

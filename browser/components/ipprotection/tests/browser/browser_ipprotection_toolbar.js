@@ -74,6 +74,7 @@ add_task(async function toolbar_icon_status() {
   IPProtectionService.isEnrolled = true;
   IPProtectionService.isEntitled = true;
   content.state.isSignedIn = true;
+  await putServerInRemoteSettings();
   content.requestUpdate();
   await content.updateComplete;
   lazy.IPProtectionService.isSignedIn = true;
@@ -115,6 +116,53 @@ add_task(async function toolbar_icon_status() {
   await panelHiddenPromise;
 });
 
+/**
+ * Tests that the toolbar icon in a new window has the previous status.
+ */
+add_task(async function toolbar_icon_status_new_window() {
+  setupService({
+    isSignedIn: true,
+    isEnrolled: true,
+  });
+  // Mock signing in
+  IPProtectionService.isSignedIn = false;
+  await IPProtectionService.updateSignInStatus();
+
+  let content = await openPanel({
+    isSignedIn: true,
+  });
+
+  let vpnOnPromise = BrowserTestUtils.waitForEvent(
+    lazy.IPProtectionService,
+    "IPProtectionService:Started"
+  );
+  // Toggle the VPN on
+  content.connectionToggleEl.click();
+  await vpnOnPromise;
+
+  let button = document.getElementById(IPProtectionWidget.WIDGET_ID);
+  Assert.ok(
+    button.classList.contains("ipprotection-on"),
+    "Toolbar icon should now show connected status"
+  );
+
+  // Check the icon status is set for new windows
+  let newWindow = await BrowserTestUtils.openNewBrowserWindow({
+    url: "about:newtab",
+  });
+  let newButton = newWindow.document.getElementById(
+    IPProtectionWidget.WIDGET_ID
+  );
+  Assert.ok(
+    newButton.classList.contains("ipprotection-on"),
+    "New toolbar icon should show connected status"
+  );
+  await BrowserTestUtils.closeWindow(newWindow);
+
+  await setPanelState();
+  cleanupService();
+});
+
 add_task(async function customize_toolbar_remove_widget() {
   let widget = document.getElementById(IPProtectionWidget.WIDGET_ID);
   Assert.ok(
@@ -141,5 +189,54 @@ add_task(async function customize_toolbar_remove_widget() {
     IPProtectionWidget.WIDGET_ID,
     CustomizableUI.AREA_NAVBAR,
     prevPosition
+  );
+});
+
+/**
+ * Tests that toolbar widget can be moved and will not reset
+ * back to the initial area on re-init.
+ */
+add_task(async function toolbar_placement_customized() {
+  let start = CustomizableUI.getPlacementOfWidget(IPProtectionWidget.WIDGET_ID);
+  Assert.equal(
+    start.area,
+    CustomizableUI.AREA_NAVBAR,
+    "IP Protection widget is initially added to the nav bar"
+  );
+
+  // Move widget to overflow
+  CustomizableUI.addWidgetToArea(
+    IPProtectionWidget.WIDGET_ID,
+    CustomizableUI.AREA_FIXED_OVERFLOW_PANEL
+  );
+
+  let end = CustomizableUI.getPlacementOfWidget(IPProtectionWidget.WIDGET_ID);
+  Assert.equal(
+    end.area,
+    CustomizableUI.AREA_FIXED_OVERFLOW_PANEL,
+    "IP Protection widget moved to the overflow area"
+  );
+
+  // Disable the feature
+  await cleanupExperiment();
+  let widget = document.getElementById(IPProtectionWidget.WIDGET_ID);
+  Assert.equal(widget, null, "IP Protection widget is removed");
+
+  // Reenable the feature
+  await setupExperiment();
+
+  let restored = CustomizableUI.getPlacementOfWidget(
+    IPProtectionWidget.WIDGET_ID
+  );
+  Assert.equal(
+    restored.area,
+    CustomizableUI.AREA_FIXED_OVERFLOW_PANEL,
+    "IP Protection widget is still in the overflow area"
+  );
+
+  CustomizableUI.addWidgetToArea(
+    IPProtectionWidget.WIDGET_ID,
+    start.area,
+    start.position
   );
 });

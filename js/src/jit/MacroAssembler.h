@@ -239,6 +239,7 @@ enum class Trap;
 namespace jit {
 
 // Defined in JitFrames.h
+class FrameDescriptor;
 enum class ExitFrameType : uint8_t;
 
 class AutoSaveLiveRegisters;
@@ -559,6 +560,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void PushEmptyRooted(VMFunctionData::RootType rootType);
   inline CodeOffset PushWithPatch(ImmWord word);
   inline CodeOffset PushWithPatch(ImmPtr imm);
+
+  using MacroAssemblerSpecific::push;
 
   void Pop(const Operand op) DEFINED_ON(x86_shared);
   void Pop(Register reg) PER_SHARED_ARCH;
@@ -896,17 +899,17 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   // The frame descriptor is the second field of all Jit frames, pushed before
   // calling the Jit function. See CommonFrameLayout::descriptor_.
-  inline void pushFrameDescriptor(FrameType type);
-  inline void PushFrameDescriptor(FrameType type);
+  inline void push(FrameDescriptor descriptor);
+  inline void Push(FrameDescriptor descriptor);
 
   // For JitFrameLayout, the descriptor also stores the number of arguments
   // passed by the caller. See MakeFrameDescriptorForJitCall.
-  inline void pushFrameDescriptorForJitCall(FrameType type, uint32_t argc);
   inline void pushFrameDescriptorForJitCall(FrameType type, Register argc,
-                                            Register scratch);
-  inline void PushFrameDescriptorForJitCall(FrameType type, uint32_t argc);
+                                            Register scratch,
+                                            bool hasInlineICScript = false);
   inline void PushFrameDescriptorForJitCall(FrameType type, Register argc,
-                                            Register scratch);
+                                            Register scratch,
+                                            bool hasInlineICScript = false);
 
   // Load the number of actual arguments from the frame's JitFrameLayout.
   inline void loadNumActualArgs(Register framePtr, Register dest);
@@ -1329,6 +1332,18 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void randomDouble(Register rng, FloatRegister dest, Register64 temp0,
                     Register64 temp1);
 
+  inline void min32(Register lhs, Register rhs, Register result) PER_ARCH;
+  inline void min32(Register lhs, Imm32 rhs, Register result) PER_ARCH;
+
+  inline void max32(Register lhs, Register rhs, Register result) PER_ARCH;
+  inline void max32(Register lhs, Imm32 rhs, Register result) PER_ARCH;
+
+  inline void minPtr(Register lhs, Register rhs, Register result) PER_ARCH;
+  inline void minPtr(Register lhs, ImmWord rhs, Register result) PER_ARCH;
+
+  inline void maxPtr(Register lhs, Register rhs, Register result) PER_ARCH;
+  inline void maxPtr(Register lhs, ImmWord rhs, Register result) PER_ARCH;
+
   // srcDest = {min,max}{Float32,Double}(srcDest, other)
   // For min and max, handle NaN specially if handleNaN is true.
 
@@ -1356,6 +1371,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
              Register temp2, Label* onOver);
   void powPtr(Register base, Register power, Register dest, Register temp1,
               Register temp2, Label* onOver);
+
+  // Inline implementation of Math.round.
+  void roundFloat32(FloatRegister src, FloatRegister dest);
+  void roundDouble(FloatRegister src, FloatRegister dest);
 
   void sameValueDouble(FloatRegister left, FloatRegister right,
                        FloatRegister temp, Register dest);
@@ -5623,6 +5642,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void newGCBigInt(Register result, Register temp, gc::Heap initialHeap,
                    Label* fail);
 
+  void preserveWrapper(Register wrapper, Register temp1, Register temp2,
+                       const LiveRegisterSet& liveRegs);
+
  private:
   void branchIfNotStringCharsEquals(Register stringChars,
                                     const JSOffThreadAtom* str, Label* label);
@@ -5890,9 +5912,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
  public:
   void loadJitCodeRaw(Register func, Register dest);
-  void loadBaselineJitCodeRaw(Register func, Register dest,
-                              Label* failure = nullptr);
-  void storeICScriptInJSContext(Register icScript);
+  void loadJitCodeRawNoIon(Register func, Register dest, Register scratch);
 
   void loadBaselineFramePtr(Register framePtr, Register dest);
 

@@ -79,7 +79,7 @@ class DownloadTest : TestSetup() {
         downloadRobot {
             openPageAndDownloadFile(url = downloadTestPage.toUri(), downloadFile = "1GB.zip")
             setNetworkEnabled(enabled = false)
-            verifyDownloadFailedSnackbar(fileName = "1GB.zip")
+            verifyDownloadFailedSnackbar(activityTestRule, fileName = "1GB.zip")
             clickSnackbarButton(composeTestRule = activityTestRule, "DETAILS")
         }.openNotificationShade {
             verifySystemNotificationExists("Download failed")
@@ -180,7 +180,7 @@ class DownloadTest : TestSetup() {
             verifyDownloadedFileExistsInDownloadsList(activityTestRule, "smallZip.zip")
             clickDownloadItemMenuIcon(activityTestRule, "smallZip.zip")
             deleteDownloadedItem(activityTestRule, "smallZip.zip")
-            clickSnackbarButton(activityTestRule, "UNDO")
+            clickSnackbarButton(activityTestRule, "Undo")
             verifyDownloadedFileExistsInDownloadsList(activityTestRule, "smallZip.zip")
             clickDownloadItemMenuIcon(activityTestRule, "smallZip.zip")
             deleteDownloadedItem(activityTestRule, "smallZip.zip")
@@ -213,7 +213,7 @@ class DownloadTest : TestSetup() {
             openMultiSelectMoreOptionsMenu(activityTestRule)
             clickMultiSelectRemoveButton(activityTestRule)
             clickMultiSelectDeleteDialogButton(activityTestRule)
-            clickSnackbarButton(activityTestRule, "UNDO")
+            clickSnackbarButton(activityTestRule, "Undo")
             verifyDownloadedFileExistsInDownloadsList(activityTestRule, firstDownloadedFile)
             verifyDownloadedFileExistsInDownloadsList(activityTestRule, secondDownloadedFile)
             longClickDownloadedItem(activityTestRule, firstDownloadedFile)
@@ -283,7 +283,7 @@ class DownloadTest : TestSetup() {
         downloadRobot {
             openPageAndDownloadFile(url = downloadTestPage.toUri(), downloadFile = "1GB.zip")
             setNetworkEnabled(enabled = false)
-            verifyDownloadFailedSnackbar(fileName = "1GB.zip")
+            verifyDownloadFailedSnackbar(activityTestRule, fileName = "1GB.zip")
         }
         browserScreen {
         }.openNotificationShade {
@@ -379,7 +379,7 @@ class DownloadTest : TestSetup() {
         downloadRobot {
             openPageAndDownloadFile(url = downloadTestPage.toUri(), downloadFile = "3GB.zip")
             setNetworkEnabled(false)
-            verifyDownloadFailedSnackbar(fileName = "3GB.zip")
+            verifyDownloadFailedSnackbar(activityTestRule, fileName = "3GB.zip")
             setNetworkEnabled(true)
             clickSnackbarButton(composeTestRule = activityTestRule, "DETAILS")
             verifyDownloadFileFailedMessage(activityTestRule, "3GB.zip")

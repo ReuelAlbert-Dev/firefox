@@ -57,6 +57,23 @@ nsresult LoadInfoArgsToLoadInfo(const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
 
 #define LOADINFO_FOR_EACH_FIELD(GETTER, SETTER)                                \
   /*     Type  Name                  LoadInfoArgs Name     Default         */  \
+  GETTER(uint32_t, TriggeringSandboxFlags, triggeringSandboxFlags, 0)          \
+  SETTER(uint32_t, TriggeringSandboxFlags)                                     \
+                                                                               \
+  GETTER(uint64_t, TriggeringWindowId, triggeringWindowId, 0)                  \
+  SETTER(uint64_t, TriggeringWindowId)                                         \
+                                                                               \
+  GETTER(bool, TriggeringStorageAccess, triggeringStorageAccess, false)        \
+  SETTER(bool, TriggeringStorageAccess)                                        \
+                                                                               \
+  GETTER(uint32_t, TriggeringFirstPartyClassificationFlags,                    \
+         triggeringFirstPartyClassificationFlags, 0)                           \
+  SETTER(uint32_t, TriggeringFirstPartyClassificationFlags)                    \
+                                                                               \
+  GETTER(uint32_t, TriggeringThirdPartyClassificationFlags,                    \
+         triggeringThirdPartyClassificationFlags, 0)                           \
+  SETTER(uint32_t, TriggeringThirdPartyClassificationFlags)                    \
+                                                                               \
   GETTER(bool, BlockAllMixedContent, blockAllMixedContent, false)              \
                                                                                \
   GETTER(bool, UpgradeInsecureRequests, upgradeInsecureRequests, false)        \
@@ -78,6 +95,10 @@ nsresult LoadInfoArgsToLoadInfo(const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
          false)                                                                \
   SETTER(bool, AllowInsecureRedirectToDataURI)                                 \
                                                                                \
+  GETTER(dom::ForceMediaDocument, ForceMediaDocument, forceMediaDocument,      \
+         /* ForceMediaDocument::None */ dom::ForceMediaDocument(0))            \
+  SETTER(dom::ForceMediaDocument, ForceMediaDocument)                          \
+                                                                               \
   GETTER(bool, SkipContentPolicyCheckForWebRequest,                            \
          skipContentPolicyCheckForWebRequest, false)                           \
   SETTER(bool, SkipContentPolicyCheckForWebRequest)                            \
@@ -90,7 +111,120 @@ nsresult LoadInfoArgsToLoadInfo(const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
                                                                                \
   GETTER(uint64_t, InnerWindowID, innerWindowID, 0)                            \
                                                                                \
-  GETTER(uint64_t, BrowsingContextID, browsingContextID, 0)
+  GETTER(uint64_t, BrowsingContextID, browsingContextID, 0)                    \
+                                                                               \
+  GETTER(uint64_t, FrameBrowsingContextID, frameBrowsingContextID, 0)          \
+                                                                               \
+  GETTER(bool, IsOn3PCBExceptionList, isOn3PCBExceptionList, false)            \
+  SETTER(bool, IsOn3PCBExceptionList)                                          \
+                                                                               \
+  GETTER(bool, IsFormSubmission, isFormSubmission, false)                      \
+  SETTER(bool, IsFormSubmission)                                               \
+                                                                               \
+  GETTER(bool, IsGETRequest, isGETRequest, true)                               \
+  SETTER(bool, IsGETRequest)                                                   \
+                                                                               \
+  GETTER(bool, SendCSPViolationEvents, sendCSPViolationEvents, true)           \
+  SETTER(bool, SendCSPViolationEvents)                                         \
+                                                                               \
+  GETTER(uint32_t, RequestBlockingReason, requestBlockingReason,               \
+         BLOCKING_REASON_NONE)                                                 \
+  SETTER(uint32_t, RequestBlockingReason)                                      \
+                                                                               \
+  GETTER(bool, ForcePreflight, forcePreflight, false)                          \
+                                                                               \
+  GETTER(bool, IsPreflight, isPreflight, false)                                \
+                                                                               \
+  GETTER(bool, ServiceWorkerTaintingSynthesized,                               \
+         serviceWorkerTaintingSynthesized, false)                              \
+                                                                               \
+  GETTER(bool, DocumentHasUserInteracted, documentHasUserInteracted, false)    \
+  SETTER(bool, DocumentHasUserInteracted)                                      \
+                                                                               \
+  GETTER(bool, AllowListFutureDocumentsCreatedFromThisRedirectChain,           \
+         allowListFutureDocumentsCreatedFromThisRedirectChain, false)          \
+  SETTER(bool, AllowListFutureDocumentsCreatedFromThisRedirectChain)           \
+                                                                               \
+  GETTER(bool, NeedForCheckingAntiTrackingHeuristic,                           \
+         needForCheckingAntiTrackingHeuristic, false)                          \
+  SETTER(bool, NeedForCheckingAntiTrackingHeuristic)                           \
+                                                                               \
+  GETTER(bool, SkipContentSniffing, skipContentSniffing, false)                \
+  SETTER(bool, SkipContentSniffing)                                            \
+                                                                               \
+  GETTER(uint32_t, HttpsOnlyStatus, httpsOnlyStatus,                           \
+         nsILoadInfo::HTTPS_ONLY_UNINITIALIZED)                                \
+  SETTER(uint32_t, HttpsOnlyStatus)                                            \
+                                                                               \
+  GETTER(bool, HstsStatus, httpsOnlyStatus, false)                             \
+  SETTER(bool, HstsStatus)                                                     \
+                                                                               \
+  GETTER(bool, HasValidUserGestureActivation, hasValidUserGestureActivation,   \
+         false)                                                                \
+  SETTER(bool, HasValidUserGestureActivation)                                  \
+                                                                               \
+  GETTER(bool, TextDirectiveUserActivation, textDirectiveUserActivation,       \
+         false)                                                                \
+  SETTER(bool, TextDirectiveUserActivation)                                    \
+                                                                               \
+  GETTER(bool, AllowDeprecatedSystemRequests, allowDeprecatedSystemRequests,   \
+         false)                                                                \
+  SETTER(bool, AllowDeprecatedSystemRequests)                                  \
+                                                                               \
+  GETTER(bool, IsInDevToolsContext, isInDevToolsContext, false)                \
+  SETTER(bool, IsInDevToolsContext)                                            \
+                                                                               \
+  GETTER(bool, ParserCreatedScript, parserCreatedScript, false)                \
+  SETTER(bool, ParserCreatedScript)                                            \
+                                                                               \
+  GETTER(Maybe<dom::RequestMode>, RequestMode, requestMode, Nothing())         \
+  SETTER(Maybe<dom::RequestMode>, RequestMode)                                 \
+                                                                               \
+  GETTER(nsILoadInfo::StoragePermissionState, StoragePermission,               \
+         storagePermission, nsILoadInfo::NoStoragePermission)                  \
+  SETTER(nsILoadInfo::StoragePermissionState, StoragePermission)               \
+                                                                               \
+  GETTER(nsILoadInfo::IPAddressSpace, ParentIpAddressSpace,                    \
+         parentIPAddressSpace, nsILoadInfo::Unknown)                           \
+  SETTER(nsILoadInfo::IPAddressSpace, ParentIpAddressSpace)                    \
+                                                                               \
+  GETTER(nsILoadInfo::IPAddressSpace, IpAddressSpace, ipAddressSpace,          \
+         nsILoadInfo::Unknown)                                                 \
+  SETTER(nsILoadInfo::IPAddressSpace, IpAddressSpace)                          \
+                                                                               \
+  GETTER(bool, IsMetaRefresh, isMetaRefresh, false)                            \
+  SETTER(bool, IsMetaRefresh)                                                  \
+                                                                               \
+  GETTER(bool, IsFromProcessingFrameAttributes,                                \
+         isFromProcessingFrameAttributes, false)                               \
+                                                                               \
+  GETTER(bool, IsMediaRequest, isMediaRequest, false)                          \
+  SETTER(bool, IsMediaRequest)                                                 \
+                                                                               \
+  GETTER(bool, IsMediaInitialRequest, isMediaInitialRequest, false)            \
+  SETTER(bool, IsMediaInitialRequest)                                          \
+                                                                               \
+  GETTER(bool, IsFromObjectOrEmbed, isFromObjectOrEmbed, false)                \
+  SETTER(bool, IsFromObjectOrEmbed)                                            \
+                                                                               \
+  GETTER(nsILoadInfo::CrossOriginEmbedderPolicy, LoadingEmbedderPolicy,        \
+         loadingEmbedderPolicy, nsILoadInfo::EMBEDDER_POLICY_NULL)             \
+  SETTER(nsILoadInfo::CrossOriginEmbedderPolicy, LoadingEmbedderPolicy)        \
+                                                                               \
+  GETTER(bool, IsOriginTrialCoepCredentiallessEnabledForTopLevel,              \
+         originTrialCoepCredentiallessEnabledForTopLevel, false)               \
+  SETTER(bool, IsOriginTrialCoepCredentiallessEnabledForTopLevel)              \
+                                                                               \
+  GETTER(bool, HasInjectedCookieForCookieBannerHandling,                       \
+         hasInjectedCookieForCookieBannerHandling, false)                      \
+  SETTER(bool, HasInjectedCookieForCookieBannerHandling)                       \
+                                                                               \
+  GETTER(nsILoadInfo::HTTPSUpgradeTelemetryType, HttpsUpgradeTelemetry,        \
+         httpsUpgradeTelemetry, nsILoadInfo::NOT_INITIALIZED)                  \
+  SETTER(nsILoadInfo::HTTPSUpgradeTelemetryType, HttpsUpgradeTelemetry)        \
+                                                                               \
+  GETTER(bool, IsNewWindowTarget, isNewWindowTarget, false)                    \
+  SETTER(bool, IsNewWindowTarget)
 
 // Heads-up: LoadInfoToLoadInfoArgs still needs to be manually updated.
 
@@ -276,51 +410,27 @@ class LoadInfo final : public nsILoadInfo {
            const Maybe<mozilla::dom::ClientInfo>& aInitialClientInfo,
            const Maybe<mozilla::dom::ServiceWorkerDescriptor>& aController,
            nsSecurityFlags aSecurityFlags, uint32_t aSandboxFlags,
-           uint32_t aTriggeringSandboxFlags, uint64_t aTriggeringWindowId,
-           bool aTriggeringStorageAccess,
-           uint32_t aTriggeringFirstPartyClassificationFlags,
-           uint32_t aTriggeringThirdPartyClassificationFlags,
            nsContentPolicyType aContentPolicyType, LoadTainting aTainting,
 
 #define DEFINE_PARAMETER(type, name, _n, _d) type a##name,
            LOADINFO_FOR_EACH_FIELD(DEFINE_PARAMETER, LOADINFO_DUMMY_SETTER)
 #undef DEFINE_PARAMETER
 
-               uint64_t aFrameBrowsingContextID,
-           bool aInitialSecurityCheckDone, bool aIsThirdPartyContext,
+               bool aInitialSecurityCheckDone,
+           bool aIsThirdPartyContext,
            const Maybe<bool>& aIsThirdPartyContextToTopWindow,
-           bool aIsOn3PCBExceptionList, bool aIsFormSubmission,
-           bool aIsGETRequest, bool aSendCSPViolationEvents,
            const OriginAttributes& aOriginAttributes,
            RedirectHistoryArray&& aRedirectChainIncludingInternalRedirects,
            RedirectHistoryArray&& aRedirectChain,
            nsTArray<nsCOMPtr<nsIPrincipal>>&& aAncestorPrincipals,
            const nsTArray<uint64_t>& aAncestorBrowsingContextIDs,
-           const nsTArray<nsCString>& aCorsUnsafeHeaders, bool aForcePreflight,
-           bool aIsPreflight, bool aLoadTriggeredFromExternal,
-           bool aServiceWorkerTaintingSynthesized,
-           bool aDocumentHasUserInteracted,
-           bool aAllowListFutureDocumentsCreatedFromThisRedirectChain,
-           bool aNeedForCheckingAntiTrackingHeuristic,
-           const nsAString& aCspNonce, const nsAString& aIntegrityMetadata,
-           bool aSkipContentSniffing, uint32_t aHttpsOnlyStatus,
-           bool aHstsStatus, bool aHasValidUserGestureActivation,
-           bool aTextDirectiveUserActivation, bool aIsSameDocumentNavigation,
-           bool aAllowDeprecatedSystemRequests, bool aIsInDevToolsContext,
-           bool aParserCreatedScript, Maybe<dom::RequestMode> aRequestMode,
-           nsILoadInfo::StoragePermissionState aStoragePermission,
-           nsILoadInfo::IPAddressSpace aParentIPAddressSpace,
-           nsILoadInfo::IPAddressSpace aIPAddressSpace,
+           const nsTArray<nsCString>& aCorsUnsafeHeaders,
+           bool aLoadTriggeredFromExternal, const nsAString& aCspNonce,
+           const nsAString& aIntegrityMetadata, bool aIsSameDocumentNavigation,
            const Maybe<RFPTargetSet>& aOverriddenFingerprintingSettings,
-           bool aIsMetaRefresh, uint32_t aRequestBlockingReason,
-           nsINode* aLoadingContext,
-           nsILoadInfo::CrossOriginEmbedderPolicy aLoadingEmbedderPolicy,
-           bool aIsOriginTrialCoepCredentiallessEnabledForTopLevel,
-           nsIURI* aUnstrippedURI, nsIInterceptionInfo* aInterceptionInfo,
-           bool aHasInjectedCookieForCookieBannerHandling,
+           nsINode* aLoadingContext, nsIURI* aUnstrippedURI,
+           nsIInterceptionInfo* aInterceptionInfo,
            nsILoadInfo::SchemelessInputType aSchemelessInput,
-           nsILoadInfo::HTTPSUpgradeTelemetryType aHttpsUpgradeTelemetry,
-           bool aIsNewWindowTarget,
            dom::UserNavigationInvolvement aUserNavigationInvolvement);
 
   LoadInfo(const LoadInfo& rhs);
@@ -388,11 +498,6 @@ class LoadInfo final : public nsILoadInfo {
   nsWeakPtr mContextForTopLevelLoad;
   nsSecurityFlags mSecurityFlags;
   uint32_t mSandboxFlags;
-  uint32_t mTriggeringSandboxFlags = 0;
-  uint64_t mTriggeringWindowId = 0;
-  bool mTriggeringStorageAccess = false;
-  uint32_t mTriggeringFirstPartyClassificationFlags = 0;
-  uint32_t mTriggeringThirdPartyClassificationFlags = 0;
   nsContentPolicyType mInternalContentPolicyType;
   LoadTainting mTainting = LoadTainting::Basic;
 
@@ -401,47 +506,21 @@ class LoadInfo final : public nsILoadInfo {
 #undef DEFINE_FIELD
 
   uint64_t mWorkerAssociatedBrowsingContextID = 0;
-  uint64_t mFrameBrowsingContextID = 0;
   bool mInitialSecurityCheckDone = false;
   // NB: TYPE_DOCUMENT implies !third-party.
   bool mIsThirdPartyContext = false;
   Maybe<bool> mIsThirdPartyContextToTopWindow;
-  bool mIsOn3PCBExceptionList = false;
-  bool mIsFormSubmission = false;
-  bool mIsGETRequest = true;
-  bool mSendCSPViolationEvents = true;
   OriginAttributes mOriginAttributes;
   RedirectHistoryArray mRedirectChainIncludingInternalRedirects;
   RedirectHistoryArray mRedirectChain;
   nsTArray<nsCOMPtr<nsIPrincipal>> mAncestorPrincipals;
   nsTArray<uint64_t> mAncestorBrowsingContextIDs;
   nsTArray<nsCString> mCorsUnsafeHeaders;
-  uint32_t mRequestBlockingReason = BLOCKING_REASON_NONE;
-  bool mForcePreflight = false;
-  bool mIsPreflight = false;
   bool mLoadTriggeredFromExternal = false;
-  bool mServiceWorkerTaintingSynthesized = false;
-  bool mDocumentHasUserInteracted = false;
-  bool mAllowListFutureDocumentsCreatedFromThisRedirectChain = false;
-  bool mNeedForCheckingAntiTrackingHeuristic = false;
   nsString mCspNonce;
   nsString mIntegrityMetadata;
-  bool mSkipContentSniffing = false;
-  uint32_t mHttpsOnlyStatus = nsILoadInfo::HTTPS_ONLY_UNINITIALIZED;
-  bool mHstsStatus = false;
-  bool mHasValidUserGestureActivation = false;
-  bool mTextDirectiveUserActivation = false;
   bool mIsSameDocumentNavigation = false;
-  bool mAllowDeprecatedSystemRequests = false;
   bool mIsUserTriggeredSave = false;
-  bool mIsInDevToolsContext = false;
-  bool mParserCreatedScript = false;
-  Maybe<dom::RequestMode> mRequestMode;
-  nsILoadInfo::StoragePermissionState mStoragePermission =
-      nsILoadInfo::NoStoragePermission;
-  // IP Address space of the parent browsing context.
-  nsILoadInfo::IPAddressSpace mParentIPAddressSpace = nsILoadInfo::Unknown;
-  nsILoadInfo::IPAddressSpace mIPAddressSpace = nsILoadInfo::Unknown;
 
   Maybe<RFPTargetSet> mOverriddenFingerprintingSettings;
 #ifdef DEBUG
@@ -449,44 +528,17 @@ class LoadInfo final : public nsILoadInfo {
   // before use it.
   bool mOverriddenFingerprintingSettingsIsSet = false;
 #endif
-  bool mIsMetaRefresh = false;
-
-  // Is true if this load was triggered by processing the attributes of the
-  // browsing context container.
-  // See nsILoadInfo.isFromProcessingFrameAttributes
-  bool mIsFromProcessingFrameAttributes = false;
-
-  // See nsILoadInfo.isMediaRequest and nsILoadInfo.isMediaInitialRequest.
-  bool mIsMediaRequest = false;
-  bool mIsMediaInitialRequest = false;
-
-  // See nsILoadInfo.isFromObjectOrEmbed
-  bool mIsFromObjectOrEmbed = false;
-
-  // The cross origin embedder policy that the loading need to respect.
-  // If the value is nsILoadInfo::EMBEDDER_POLICY_REQUIRE_CORP, CORP checking
-  // must be performed for the loading.
-  // See https://wicg.github.io/cross-origin-embedder-policy/#corp-check.
-  nsILoadInfo::CrossOriginEmbedderPolicy mLoadingEmbedderPolicy =
-      nsILoadInfo::EMBEDDER_POLICY_NULL;
-
-  bool mIsOriginTrialCoepCredentiallessEnabledForTopLevel = false;
 
   nsCOMPtr<nsIURI> mUnstrippedURI;
 
   nsCOMPtr<nsIInterceptionInfo> mInterceptionInfo;
 
-  bool mHasInjectedCookieForCookieBannerHandling = false;
   nsILoadInfo::SchemelessInputType mSchemelessInput =
       nsILoadInfo::SchemelessInputTypeUnset;
-
-  nsILoadInfo::HTTPSUpgradeTelemetryType mHttpsUpgradeTelemetry =
-      nsILoadInfo::NOT_INITIALIZED;
 
   dom::UserNavigationInvolvement mUserNavigationInvolvement =
       dom::UserNavigationInvolvement::None;
 
-  bool mIsNewWindowTarget = false;
   bool mSkipHTTPSUpgrade = false;
 };
 // This is exposed solely for testing purposes and should not be used outside of

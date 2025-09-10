@@ -11,6 +11,7 @@
 
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/Try.h"
 #include "mozilla/dom/nsCSPContext.h"
 #include "mozilla/dom/NavigatorLogin.h"
 #include "mozilla/glean/AntitrackingMetrics.h"
@@ -70,6 +71,7 @@
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/FlowMarkers.h"
 #include "mozilla/Components.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_security.h"
@@ -572,6 +574,44 @@ nsHttpChannel::LogMimeTypeMismatch(const nsACString& aMessageName,
 //-----------------------------------------------------------------------------
 // nsHttpChannel <private>
 //-----------------------------------------------------------------------------
+
+void nsHttpChannel::AddStorageAccessHeadersToRequest() {
+  if (!StaticPrefs::dom_storage_access_enabled() ||
+      !StaticPrefs::dom_storage_access_headers_enabled()) {
+    return;
+  }
+
+  // check if request is eligible for storage-access
+  uint32_t cookiePolicy = 0;
+  if (mLoadInfo->GetCookiePolicy(&cookiePolicy) != NS_OK) {
+    return;
+  }
+  if (cookiePolicy != nsILoadInfo::SEC_COOKIES_INCLUDE) {
+    return;
+  }
+
+  // check whether we have storage-access permission set in channel
+  nsILoadInfo::StoragePermissionState storageAccess =
+      AntiTrackingUtils::GetStoragePermissionStateInParent(this);
+
+  switch (storageAccess) {
+    case nsILoadInfo::HasStoragePermission:
+    case nsILoadInfo::StoragePermissionAllowListed:
+      SetRequestHeader(nsHttp::Sec_Fetch_Storage_Access.val(), "active"_ns,
+                       false);
+      break;
+    case nsILoadInfo::InactiveStoragePermission:
+      SetRequestHeader(nsHttp::Sec_Fetch_Storage_Access.val(), "inactive"_ns,
+                       false);
+      break;
+    case nsILoadInfo::DisabledStoragePermission:
+      SetRequestHeader(nsHttp::Sec_Fetch_Storage_Access.val(), "none"_ns,
+                       false);
+      break;
+    case nsILoadInfo::NoStoragePermission:
+      break;
+  }
+}
 
 nsresult nsHttpChannel::PrepareToConnect() {
   LOG(("nsHttpChannel::PrepareToConnect [this=%p]\n", this));
@@ -6640,6 +6680,24 @@ nsresult nsHttpChannel::CancelInternal(nsresult status) {
   mCanceled = true;
   mStatus = NS_FAILED(status) ? status : NS_ERROR_ABORT;
 
+  // If we're waiting for LNA permission result and the channel is being
+  // cancelled, we need to call OnPermissionPromptResult with permission denied
+  // to resume the channel properly
+  if (mWaitingForLNAPermission) {
+    LOG(
+        ("nsHttpChannel::CancelInternal [this=%p] cancelling while waiting for "
+         "LNA permission, denying permission",
+         this));
+    // Determine permission key dynamically from transaction
+    const nsACString& permissionKey =
+        (mTransaction && mTransaction->GetTargetIPAddressSpace() ==
+                             nsILoadInfo::IPAddressSpace::Local)
+            ? LOCAL_HOST_PERMISSION_KEY
+            : LOCAL_NETWORK_PERMISSION_KEY;
+    OnPermissionPromptResult(false, permissionKey);
+    return NS_OK;
+  }
+
   if (StaticPrefs::network_http_network_error_logging_enabled() &&
       LoadUsedNetwork() && !mReportedNEL) {
     if (nsCOMPtr<nsINetworkErrorLogging> nel =
@@ -7201,6 +7259,7 @@ nsresult nsHttpChannel::BeginConnect() {
   mRequestHead.SetHTTPS(isHttps);
   mRequestHead.SetOrigin(scheme, host, port);
 
+  AddStorageAccessHeadersToRequest();
   SetOriginHeader();
   SetDoNotTrack();
   SetGlobalPrivacyControl();
@@ -8176,6 +8235,7 @@ nsresult nsHttpChannel::ProcessLNAActions() {
   // Suspend to block any notification to the channel.
   // This will get resumed in
   // nsHttpChannel::OnPermissionPromptResult
+  mWaitingForLNAPermission = true;
   Suspend();
   auto permissionKey = mTransaction->GetTargetIPAddressSpace() ==
                                nsILoadInfo::IPAddressSpace::Local
@@ -8462,11 +8522,9 @@ nsHttpChannel::OnStartRequest(nsIRequest* request) {
       };
 
       if (nsCOMPtr<nsIURI> fallbackURI = GetFallbackURI(mURI)) {
-        rv = StartRedirectChannelToURI(
-            fallbackURI,
-            nsIChannelEventSink::REDIRECT_INTERNAL |
-                nsIChannelEventSink::REDIRECT_TRANSPARENT,
-            passDomainCategory);
+        rv = StartRedirectChannelToURI(fallbackURI,
+                                       nsIChannelEventSink::REDIRECT_INTERNAL,
+                                       passDomainCategory);
         if (NS_SUCCEEDED(rv)) {
           nsCOMPtr<nsIObserverService> obsService =
               services::GetObserverService();
@@ -8531,6 +8589,7 @@ void nsHttpChannel::MaybeUpdateDocumentIPAddressSpaceFromCache() {
 
 nsresult nsHttpChannel::OnPermissionPromptResult(bool aGranted,
                                                  const nsACString& aType) {
+  mWaitingForLNAPermission = false;
   if (aGranted) {
     LOG(
         ("nsHttpChannel::OnPermissionPromptResult [this=%p] "
@@ -8585,6 +8644,12 @@ nsresult nsHttpChannel::OnPermissionPromptResult(bool aGranted,
     mLNAPermission.mLocalNetworkPermission = LNAPermission::Denied;
   }
 
+  if (!mSuspendCount) {
+    return ContinueOnStartRequest1(
+        nsresult::NS_ERROR_LOCAL_NETWORK_ACCESS_DENIED);
+  }
+  // channel is suspended state. We will continue when the channel is
+  // resumed
   return CallOrWaitForResume([](auto* self) {
     return self->ContinueOnStartRequest1(
         nsresult::NS_ERROR_LOCAL_NETWORK_ACCESS_DENIED);
@@ -8938,19 +9003,6 @@ static void RecordHTTPSUpgradeTelemetry(nsIURI* aURI, nsILoadInfo* aLoadInfo) {
 static void RecordIPAddressSpaceTelemetry(bool aLoadSuccess, nsIURI* aURI,
                                           nsILoadInfo* aLoadInfo,
                                           NetAddr& aPeerAddr) {
-  bool isIpAddrAny = false;
-
-  if (NS_SUCCEEDED(gIOService->HostnameIsIPAddressAny(aURI, &isIpAddrAny)) &&
-      isIpAddrAny) {
-    if (aLoadSuccess) {
-      mozilla::glean::networking::http_ip_addr_any_hostnames.Get("sucess"_ns)
-          .Add(1);
-    } else {
-      mozilla::glean::networking::http_ip_addr_any_hostnames.Get("failure"_ns)
-          .Add(1);
-    }
-  }
-
   // if the load was not successful, then there is nothing to record here
   if (!aLoadSuccess) {
     return;
@@ -10881,7 +10933,21 @@ void nsHttpChannel::SetOriginHeader() {
 
   // Step 4. Otherwise, if request’s method is neither `GET` nor `HEAD`, then:
   if (mRequestHead.IsGet() || mRequestHead.IsHead()) {
-    return;
+    // Modified Step 4 in case storage-access-headers are enabled
+    if (!StaticPrefs::dom_storage_access_enabled() ||
+        !StaticPrefs::dom_storage_access_headers_enabled()) {
+      // proceed with unmodified fetch spec
+      return;
+    } else {
+      // the result of getting `Sec-Fetch-Storage-Access` from request’s header
+      // list is "inactive"
+      nsAutoCString storageAccess;
+      nsresult rv =
+          GetRequestHeader("Sec-Fetch-Storage-Access"_ns, storageAccess);
+      if (NS_FAILED(rv) || !storageAccess.EqualsLiteral("inactive")) {
+        return;
+      }
+    }
   }
 
   if (!serializedOrigin.EqualsLiteral("null")) {

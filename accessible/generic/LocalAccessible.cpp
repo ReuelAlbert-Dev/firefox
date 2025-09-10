@@ -42,6 +42,7 @@
 #include "nsIDOMXULButtonElement.h"
 #include "nsIDOMXULSelectCntrlEl.h"
 #include "nsIDOMXULSelectCntrlItemEl.h"
+#include "nsIMutationObserver.h"
 #include "nsINodeList.h"
 
 #include "mozilla/dom/Document.h"
@@ -80,7 +81,6 @@
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/TreeWalker.h"
 #include "mozilla/dom/UserActivation.h"
-#include "mozilla/dom/MutationEventBinding.h"
 
 using namespace mozilla;
 using namespace mozilla::a11y;
@@ -1329,7 +1329,8 @@ bool LocalAccessible::AttributeChangesState(nsAtom* aAttribute) {
 }
 
 void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
-                                          nsAtom* aAttribute, int32_t aModType,
+                                          nsAtom* aAttribute,
+                                          AttrModType aModType,
                                           const nsAttrValue* aOldValue,
                                           uint64_t aOldState) {
   // Fire accessible event after short timer, because we need to wait for
@@ -1462,8 +1463,7 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   if (aAttribute == nsGkAtoms::aria_describedby) {
     mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
     mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_DESCRIPTION_CHANGE, this);
-    if (aModType == dom::MutationEvent_Binding::MODIFICATION ||
-        aModType == dom::MutationEvent_Binding::ADDITION) {
+    if (IsAdditionOrModification(aModType)) {
       // The subtrees of the new aria-describedby targets might be used to
       // compute the description for this. Therefore, we need to set
       // the eHasDescriptionDependent flag on all Accessibles in these subtrees.
@@ -1481,8 +1481,7 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
     // document itself.
     mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
     mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, this);
-    if (aModType == dom::MutationEvent_Binding::MODIFICATION ||
-        aModType == dom::MutationEvent_Binding::ADDITION) {
+    if (IsAdditionOrModification(aModType)) {
       // The subtrees of the new aria-labelledby targets might be used to
       // compute the name for this. Therefore, we need to set
       // the eHasNameDependent flag on all Accessibles in these subtrees.
@@ -1496,8 +1495,7 @@ void LocalAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
 
   if ((aAttribute == nsGkAtoms::aria_expanded ||
        aAttribute == nsGkAtoms::href) &&
-      (aModType == dom::MutationEvent_Binding::ADDITION ||
-       aModType == dom::MutationEvent_Binding::REMOVAL)) {
+      IsAdditionOrRemoval(aModType)) {
     // The presence of aria-expanded adds an expand/collapse action.
     mDoc->QueueCacheUpdate(this, CacheDomain::Actions);
   }
@@ -3234,42 +3232,16 @@ LocalAccessible* LocalAccessible::ContainerWidget() const {
   return nullptr;
 }
 
-bool LocalAccessible::IsActiveDescendantId(LocalAccessible** aWidget) const {
-  if (!HasOwnContent() || !mContent->HasID()) {
-    return false;
+bool LocalAccessible::IsActiveDescendant(LocalAccessible** aWidget) const {
+  RelatedAccIterator widgets(mDoc, mContent, nsGkAtoms::aria_activedescendant);
+  if (LocalAccessible* widget = widgets.Next()) {
+    if (aWidget) {
+      *aWidget = widget;
+    }
+    return true;
   }
 
-  dom::DocumentOrShadowRoot* docOrShadowRoot =
-      mContent->GetUncomposedDocOrConnectedShadowRoot();
-  if (!docOrShadowRoot) {
-    return false;
-  }
-
-  nsAutoCString selector;
-  selector.AppendPrintf(
-      "[aria-activedescendant=\"%s\"]",
-      NS_ConvertUTF16toUTF8(mContent->GetID()->GetUTF16String()).get());
-  IgnoredErrorResult er;
-
-  dom::Element* widgetElm =
-      docOrShadowRoot->AsNode().QuerySelector(selector, er);
-
-  if (!widgetElm || er.Failed()) {
-    return false;
-  }
-
-  if (widgetElm->IsInclusiveDescendantOf(mContent)) {
-    // Don't want a cyclical descendant relationship. That would be bad.
-    return false;
-  }
-
-  LocalAccessible* widget = mDoc->GetAccessible(widgetElm);
-
-  if (aWidget) {
-    *aWidget = widget;
-  }
-
-  return !!widget;
+  return false;
 }
 
 void LocalAccessible::Announce(const nsAString& aAnnouncement,
@@ -4057,6 +4029,13 @@ already_AddRefed<AccAttributes> LocalAccessible::BundleFieldsForCache(
       fields->SetAttribute(CacheKey::Opacity, DeleteEntry());
     }
 
+    WritingMode wm = GetWritingMode();
+    if (wm.GetBits()) {
+      fields->SetAttribute(CacheKey::WritingMode, wm);
+    } else if (IsUpdatePush(CacheDomain::Style)) {
+      fields->SetAttribute(CacheKey::WritingMode, DeleteEntry());
+    }
+
     if (frame &&
         frame->StyleDisplay()->mPosition == StylePositionProperty::Fixed &&
         nsLayoutUtils::IsReallyFixedPos(frame)) {
@@ -4449,6 +4428,14 @@ float LocalAccessible::Opacity() const {
   }
 
   return 1.0f;
+}
+
+WritingMode LocalAccessible::GetWritingMode() const {
+  if (nsIFrame* frame = GetFrame()) {
+    return WritingMode(frame->Style());
+  }
+
+  return WritingMode();
 }
 
 void LocalAccessible::DOMNodeID(nsString& aID) const {

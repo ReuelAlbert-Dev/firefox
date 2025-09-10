@@ -116,7 +116,6 @@ class ContentMediaController;
 enum class ImageBitmapFormat : uint8_t;
 class IdleRequest;
 class IdleRequestCallback;
-class InstallTriggerImpl;
 class IntlUtils;
 class MediaQueryList;
 class OwningExternalOrWindowProxy;
@@ -918,6 +917,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void Restore();
   void GetWorkspaceID(nsAString& workspaceID);
   void MoveToWorkspace(const nsAString& workspaceID);
+  bool IsCloaked() const;
   void NotifyDefaultButtonLoaded(mozilla::dom::Element& aDefaultButton,
                                  mozilla::ErrorResult& aError);
   mozilla::dom::ChromeMessageBroadcaster* MessageManager();
@@ -936,7 +936,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
 
   bool ShouldReportForServiceWorkerScope(const nsAString& aScope);
 
-  mozilla::dom::InstallTriggerImpl* GetInstallTrigger();
+  void GetInstallTrigger(JSContext* aCx, JS::MutableHandle<JSObject*> aResult);
 
   nsIDOMWindowUtils* GetWindowUtils(mozilla::ErrorResult& aRv);
 
@@ -1106,7 +1106,7 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   void ScrollTo(const mozilla::CSSPoint& aScroll,
                 const mozilla::dom::ScrollOptions& aOptions);
 
-  already_AddRefed<nsIWidget> GetMainWidget();
+  already_AddRefed<nsIWidget> GetMainWidget() const;
   nsIWidget* GetNearestWidget() const;
 
   bool IsInModalState();
@@ -1389,7 +1389,6 @@ class nsGlobalWindowInner final : public mozilla::dom::EventTarget,
   RefPtr<mozilla::dom::CookieStore> mCookieStore;
   RefPtr<mozilla::dom::Worklet> mPaintWorklet;
   RefPtr<mozilla::dom::External> mExternal;
-  RefPtr<mozilla::dom::InstallTriggerImpl> mInstallTrigger;
 
   RefPtr<mozilla::dom::Storage> mLocalStorage;
   RefPtr<mozilla::dom::Storage> mSessionStorage;

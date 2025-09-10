@@ -38,9 +38,7 @@ import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.navigateWithBreadcrumb
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.ext.tabClosedUndoMessage
-
-const val WEBCOMPAT_SNACKBAR_DURATION_MS = 20000
-const val DOWNLOAD_SNACKBAR_DURATION_MS = 20000
+import org.mozilla.fenix.utils.getSnackbarTimeout
 
 /**
  * A binding for observing the [SnackbarState] in the [AppStore] and displaying the snackbar.
@@ -243,19 +241,9 @@ class SnackbarBinding(
 
                     SnackbarState.WebCompatReportSent -> {
                         snackbarDelegate.show(
-                            text = context.getString(R.string.webcompat_reporter_success_snackbar_text),
-                            duration = WEBCOMPAT_SNACKBAR_DURATION_MS,
-                            action = context.getString(R.string.webcompat_reporter_dismiss_success_snackbar_text),
+                            text = context.getString(R.string.webcompat_reporter_success_snackbar_text_2),
+                            duration = context.getSnackbarTimeout().value.toInt(),
                             listener = { snackbarDelegate.dismiss() },
-                        )
-
-                        appStore.dispatch(SnackbarAction.SnackbarShown)
-                    }
-
-                    SnackbarState.SiteDataCleared -> {
-                        snackbarDelegate.show(
-                            text = R.string.clear_site_data_snackbar,
-                            duration = Snackbar.LENGTH_LONG,
                         )
 
                         appStore.dispatch(SnackbarAction.SnackbarShown)
@@ -275,7 +263,7 @@ class SnackbarBinding(
                     is SnackbarState.DownloadInProgress -> {
                         snackbarDelegate.show(
                             text = context.getString(R.string.download_in_progress_snackbar),
-                            duration = DOWNLOAD_SNACKBAR_DURATION_MS,
+                            duration = context.getSnackbarTimeout(hasAction = true).value.toInt(),
                             action = context.getString(R.string.download_in_progress_snackbar_action_details),
                         ) {
                             navController.navigate(
@@ -291,7 +279,7 @@ class SnackbarBinding(
                             text = context.getString(R.string.download_item_status_failed),
                             subText = state.fileName,
                             subTextOverflow = TextOverflow.MiddleEllipsis,
-                            duration = DOWNLOAD_SNACKBAR_DURATION_MS,
+                            duration = context.getSnackbarTimeout(hasAction = true).value.toInt(),
                             action = context.getString(R.string.download_failed_snackbar_action_details),
                         ) {
                             navController.navigate(
@@ -306,7 +294,7 @@ class SnackbarBinding(
                             text = context.getString(R.string.download_completed_snackbar),
                             subText = state.downloadState.fileName,
                             subTextOverflow = TextOverflow.MiddleEllipsis,
-                            duration = DOWNLOAD_SNACKBAR_DURATION_MS,
+                            duration = context.getSnackbarTimeout(hasAction = true).value.toInt(),
                             action = context.getString(R.string.download_completed_snackbar_action_open),
                         ) {
                             val fileWasOpened = AbstractFetchDownloadService.openFile(
@@ -332,7 +320,7 @@ class SnackbarBinding(
                                 context,
                                 state.downloadState.filePath,
                             ),
-                            duration = DOWNLOAD_SNACKBAR_DURATION_MS,
+                            duration = context.getSnackbarTimeout(hasAction = false).value.toInt(),
                         )
                         appStore.dispatch(SnackbarAction.SnackbarShown)
                     }
