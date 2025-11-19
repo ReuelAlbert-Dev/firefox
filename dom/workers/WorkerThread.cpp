@@ -6,16 +6,12 @@
 
 #include "WorkerThread.h"
 
-#include <utility>
-
 #include "WorkerPrivate.h"
 #include "WorkerRunnable.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/Atomics.h"
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/EventQueue.h"
 #include "mozilla/Logging.h"
-#include "mozilla/MacroForEach.h"
 #include "mozilla/NotNull.h"
 #include "mozilla/ThreadEventQueue.h"
 #include "mozilla/UniquePtr.h"

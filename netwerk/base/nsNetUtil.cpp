@@ -16,6 +16,7 @@
 #include "mozilla/Encoding.h"
 #include "mozilla/LoadContext.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_network.h"
@@ -108,7 +109,6 @@
 #include "mozilla/net/ExtensionProtocolHandler.h"
 #include "mozilla/net/PageThumbProtocolHandler.h"
 #include "mozilla/net/SFVService.h"
-#include <limits>
 #include "nsICookieService.h"
 #include "nsIXPConnect.h"
 #include "nsParserConstants.h"
@@ -1399,7 +1399,11 @@ Result<nsCOMPtr<nsIInputStream>, nsresult> NS_NewBufferedInputStream(
 
 namespace {
 
-#define BUFFER_SIZE 8192
+// Returns the buffer size from the pref, floored to the nearest power of two.
+static uint32_t GetBufferSize() {
+  uint32_t prefValue = StaticPrefs::network_buffer_default_size();
+  return uint32_t(1) << FloorLog2(prefValue);
+}
 
 class BufferWriter final : public nsIInputStreamCallback {
  public:
@@ -1424,8 +1428,9 @@ class BufferWriter final : public nsIInputStreamCallback {
     // Let's make the inputStream buffered if it's not.
     if (!NS_InputStreamIsBuffered(mInputStream)) {
       nsCOMPtr<nsIInputStream> bufferedStream;
-      nsresult rv = NS_NewBufferedInputStream(
-          getter_AddRefs(bufferedStream), mInputStream.forget(), BUFFER_SIZE);
+      nsresult rv =
+          NS_NewBufferedInputStream(getter_AddRefs(bufferedStream),
+                                    mInputStream.forget(), GetBufferSize());
       NS_ENSURE_SUCCESS(rv, rv);
 
       mInputStream = bufferedStream;
@@ -1518,7 +1523,7 @@ class BufferWriter final : public nsIInputStreamCallback {
       }
 
       uint64_t offset = mWrittenData;
-      uint64_t length = mCount == -1 ? BUFFER_SIZE : mCount;
+      uint64_t length = mCount == -1 ? GetBufferSize() : mCount;
 
       // Let's try to read data directly.
       uint32_t writtenData;
@@ -1604,15 +1609,16 @@ class BufferWriter final : public nsIInputStreamCallback {
 
     MOZ_ASSERT(mCount == -1);
 
-    if (mBufferSize >= mWrittenData + BUFFER_SIZE) {
+    uint32_t bufSize = GetBufferSize();
+    if (mBufferSize >= mWrittenData + bufSize) {
       // The buffer is big enough.
       return true;
     }
 
     CheckedUint32 bufferSize =
-        std::max<uint32_t>(static_cast<uint32_t>(mWrittenData), BUFFER_SIZE);
+        std::max<uint32_t>(static_cast<uint32_t>(mWrittenData), bufSize);
     while (bufferSize.isValid() &&
-           bufferSize.value() < mWrittenData + BUFFER_SIZE) {
+           bufferSize.value() < mWrittenData + bufSize) {
       bufferSize *= 2;
     }
 
@@ -3106,7 +3112,7 @@ nsresult NS_ShouldSecureUpgrade(
   }
   // The loadInfo indicates no HTTPS upgrade.
   bool skipHTTPSUpgrade = false;
-  Unused << aLoadInfo->GetSkipHTTPSUpgrade(&skipHTTPSUpgrade);
+  (void)aLoadInfo->GetSkipHTTPSUpgrade(&skipHTTPSUpgrade);
   if (skipHTTPSUpgrade) {
     aLoadInfo->SetHttpsUpgradeTelemetry(nsILoadInfo::SKIP_HTTPS_UPGRADE);
     aShouldUpgrade = false;
@@ -3369,7 +3375,7 @@ bool NS_ShouldClassifyChannel(nsIChannel* aChannel, ClassifyType aType) {
   }
 
   nsLoadFlags loadFlags;
-  Unused << aChannel->GetLoadFlags(&loadFlags);
+  (void)aChannel->GetLoadFlags(&loadFlags);
   //  If our load flags dictate that we must let this channel through without
   //  URL classification, obey that here without performing more checks.
   if (loadFlags & nsIChannel::LOAD_BYPASS_URL_CLASSIFIER) {
@@ -3424,7 +3430,7 @@ nsresult GetParameterHTTP(const nsACString& aHeaderVal, const char* aParamName,
 bool ChannelIsPost(nsIChannel* aChannel) {
   if (nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(aChannel)) {
     nsAutoCString method;
-    Unused << httpChannel->GetRequestMethod(method);
+    (void)httpChannel->GetRequestMethod(method);
     return method.EqualsLiteral("POST");
   }
   return false;
@@ -3510,7 +3516,7 @@ already_AddRefed<nsIURI> TryChangeProtocol(nsIURI* aURI,
   rv = clone->GetScheme(newScheme);
   if (NS_FAILED(rv) || !net::IsSchemeChangePermitted(aURI, newScheme)) {
     nsAutoCString url;
-    Unused << clone->GetSpec(url);
+    (void)clone->GetSpec(url);
     AutoTArray<nsString, 2> params;
     params.AppendElement(NS_ConvertUTF8toUTF16(url));
     params.AppendElement(NS_ConvertUTF8toUTF16(newScheme));
@@ -4044,6 +4050,128 @@ void WarnIgnoredPreload(const mozilla::dom::Document& aDoc, nsIURI& aURI) {
                                   "PreloadIgnoredInvalidAttr", params);
 }
 
+bool NS_ParseUseAsDictionary(const nsACString& aValue, nsACString& aMatch,
+                             nsACString& aMatchId,
+                             nsTArray<nsCString>& aMatchDestItems,
+                             nsACString& aType) {
+  // Note: match= is required
+  // Use-As-Dictionary = %s"match" /
+  //                     %il"match-dest" /
+  //                     %s"id" /
+  //                     %t"type" ; case-sensitive
+
+  nsCOMPtr<nsISFVService> sfv = GetSFVService();
+
+  nsCOMPtr<nsISFVDictionary> parsedHeader;
+  nsresult rv;
+  if (NS_FAILED(
+          rv = sfv->ParseDictionary(aValue, getter_AddRefs(parsedHeader)))) {
+    return false;
+  }
+
+  nsCOMPtr<nsISFVItemOrInnerList> match;
+  rv = parsedHeader->Get("match"_ns, getter_AddRefs(match));
+  if (NS_FAILED(rv)) {
+    return false;  // match is required, fail if not found
+  }
+  if (nsCOMPtr<nsISFVItem> listItem = do_QueryInterface(match)) {
+    nsCOMPtr<nsISFVBareItem> value;
+    rv = listItem->GetValue(getter_AddRefs(value));
+    if (NS_FAILED(rv)) {
+      return false;
+    }
+    if (nsCOMPtr<nsISFVString> stringVal = do_QueryInterface(value)) {
+      if (NS_FAILED(stringVal->GetValue(aMatch))) {
+        return false;
+      }
+      if (aMatch.IsEmpty()) {
+        return false;  // match is required, fail if not found
+      }
+    } else {
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  nsCOMPtr<nsISFVItemOrInnerList> matchdest;
+  rv = parsedHeader->Get("match-dest"_ns, getter_AddRefs(matchdest));
+  if (NS_SUCCEEDED(rv)) {
+    if (nsCOMPtr<nsISFVInnerList> innerList = do_QueryInterface(matchdest)) {
+      // Extract the first entry of each inner list, which should contain the
+      // endpoint's URL string
+      nsTArray<RefPtr<nsISFVItem>> items;
+      if (NS_FAILED(innerList->GetItems(items))) {
+        return false;
+      }
+      // Don't check items.IsEmpty() because an empty list is valid
+
+      for (auto& item : items) {
+        nsCOMPtr<nsISFVBareItem> value;
+        if (NS_FAILED(item->GetValue(getter_AddRefs(value)))) {
+          return false;
+        }
+        if (nsCOMPtr<nsISFVString> stringVal = do_QueryInterface(value)) {
+          nsAutoCString string;
+          if (NS_FAILED(stringVal->GetValue(string))) {
+            return false;
+          }
+          aMatchDestItems.AppendElement(string);
+        } else {
+          return false;  // match-dest is an inner list of strings
+        }
+      }
+    }
+  }
+
+  nsCOMPtr<nsISFVItemOrInnerList> matchid;
+  rv = parsedHeader->Get("id"_ns, getter_AddRefs(matchid));
+  if (NS_SUCCEEDED(rv)) {
+    if (nsCOMPtr<nsISFVItem> listItem = do_QueryInterface(matchid)) {
+      nsCOMPtr<nsISFVBareItem> value;
+      rv = listItem->GetValue(getter_AddRefs(value));
+      if (NS_FAILED(rv)) {
+        return false;
+      }
+      if (nsCOMPtr<nsISFVString> stringVal = do_QueryInterface(value)) {
+        if (NS_FAILED(stringVal->GetValue(aMatchId))) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  nsCOMPtr<nsISFVItemOrInnerList> type;
+  rv = parsedHeader->Get("type"_ns, getter_AddRefs(type));
+  if (NS_SUCCEEDED(rv)) {
+    if (nsCOMPtr<nsISFVItem> listItem = do_QueryInterface(type)) {
+      nsCOMPtr<nsISFVBareItem> value;
+      rv = listItem->GetValue(getter_AddRefs(value));
+      if (NS_FAILED(rv)) {
+        return false;
+      }
+      if (nsCOMPtr<nsISFVToken> tokenVal = do_QueryInterface(value)) {
+        if (NS_FAILED(tokenVal->GetValue(aType))) {
+          return false;
+        }
+        if (!aType.Equals("raw"_ns)) {
+          return false;
+        }
+      } else {
+        return false;
+      }
+    } else {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 nsresult HasRootDomain(const nsACString& aInput, const nsACString& aHost,
                        bool* aResult) {
   if (NS_WARN_IF(!aResult)) {
@@ -4142,7 +4270,7 @@ void CheckForBrokenChromeURL(nsILoadInfo* aLoadInfo, nsIURI* aURI) {
 #ifdef DEBUG
     if (NS_IsMainThread()) {
       nsCOMPtr<nsIXPConnect> xpc = nsIXPConnect::XPConnect();
-      Unused << xpc->DebugDumpJSStack(false, false, false);
+      (void)xpc->DebugDumpJSStack(false, false, false);
     }
 #endif
     MOZ_CRASH_UNSAFE_PRINTF("Missing chrome or resource URLs: %s", spec.get());
@@ -4222,5 +4350,65 @@ bool IsLocalOrPrivateNetworkAccess(
   return IsPrivateNetworkAccess(aParentIPAddressSpace, aTargetIPAddressSpace) ||
          IsLocalHostAccess(aParentIPAddressSpace, aTargetIPAddressSpace);
 }
+
+Result<ActivateStorageAccess, nsresult> ParseActivateStorageAccess(
+    const nsACString& aActivateStorageAcess) {
+  nsCOMPtr<nsISFVService> sfv = GetSFVService();
+
+  // Parse storage acces values
+  //  * Activate-Storage-Access: load
+  //  * Activate-Storage-Access: retry; allowed-origin="https://foo.bar"
+  //  * Activate-Storage-Access: retry; allowed-origin=*
+  // into ActivateStorageAccess struct. See ActivateStorageAccessVariant for
+  // documentation on fields
+  nsCOMPtr<nsISFVItem> parsedHeader;
+  MOZ_TRY(sfv->ParseItem(aActivateStorageAcess, getter_AddRefs(parsedHeader)));
+
+  nsCOMPtr<nsISFVBareItem> value;
+  MOZ_TRY(parsedHeader->GetValue(getter_AddRefs(value)));
+
+  nsCOMPtr<nsISFVToken> token = do_QueryInterface(value);
+  if (!token) {
+    return Err(NS_ERROR_FAILURE);
+  }
+  nsAutoCString tokenValue;
+  token->GetValue(tokenValue);
+
+  if (tokenValue.EqualsLiteral("load")) {
+    return ActivateStorageAccess{
+        ActivateStorageAccessVariant::Load,
+    };
+  }
+  if (!tokenValue.EqualsLiteral("retry")) {
+    return Err(NS_ERROR_FAILURE);
+  }
+  nsCOMPtr<nsISFVParams> params;
+  MOZ_TRY(parsedHeader->GetParams(getter_AddRefs(params)));
+
+  nsCOMPtr<nsISFVBareItem> item;
+  MOZ_TRY(params->Get("allowed-origin"_ns, getter_AddRefs(item)));
+
+  // Evaluate whether the token value is a wildcard symbol.
+  nsCOMPtr<nsISFVToken> itemToken = do_QueryInterface(item);
+  if (itemToken) {
+    itemToken->GetValue(tokenValue);
+    if (!tokenValue.EqualsLiteral("*")) {
+      return Err(NS_ERROR_FAILURE);
+    }
+    return ActivateStorageAccess{
+        ActivateStorageAccessVariant::RetryAny,
+    };
+  }
+
+  // Evaluate whether the token value is an origin.
+  nsCOMPtr<nsISFVString> itemString = do_QueryInterface(item);
+  if (!itemString) {
+    return Err(NS_ERROR_FAILURE);
+  }
+  ActivateStorageAccess result{ActivateStorageAccessVariant::RetryOrigin};
+  itemString->GetValue(result.origin);
+  return result;
+}
+
 }  // namespace net
 }  // namespace mozilla

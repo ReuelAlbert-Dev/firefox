@@ -36,6 +36,7 @@ user_pref("browser.safebrowsing.provider.google5.gethashURL", "http://127.0.0.1/
 user_pref("browser.safebrowsing.provider.google5.updateURL", "http://127.0.0.1/safebrowsing5-dummy/update");
 user_pref("browser.safebrowsing.provider.mozilla.gethashURL", "http://127.0.0.1/safebrowsing-dummy/gethash");
 user_pref("browser.safebrowsing.provider.mozilla.updateURL", "http://127.0.0.1/safebrowsing-dummy/update");
+user_pref("browser.ipProtection.guardian.endpoint", "http://127.0.0.1/vpn-dummy");
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.warnOnQuit", false);
 user_pref("datareporting.healthreport.documentServerURI", "http://127.0.0.1/healthreport/");
@@ -52,6 +53,8 @@ user_pref("dom.push.connection.enabled", false);
 user_pref("extensions.autoDisableScopes", 10);
 user_pref("extensions.blocklist.enabled", false);
 user_pref("extensions.checkCompatibility", false);
+user_pref("extensions.formautofill.addresses.enabled", true);
+user_pref("extensions.formautofill.creditCards.enabled", true);
 user_pref("extensions.getAddons.get.url", "http://127.0.0.1/extensions-dummy/repositoryGetURL");
 user_pref("extensions.getAddons.search.browseURL", "http://127.0.0.1/extensions-dummy/repositoryBrowseURL");
 user_pref("extensions.hotfix.url", "http://127.0.0.1/extensions-dummy/hotfixURL");

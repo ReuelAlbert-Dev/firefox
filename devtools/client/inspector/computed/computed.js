@@ -759,6 +759,7 @@ class CssComputedView {
 
   /**
    * Set the filter style search value.
+   *
    * @param {String} value
    *        The search value.
    */
@@ -989,7 +990,7 @@ class CssComputedView {
 }
 
 class PropertyInfo {
-  /*
+  /**
    * @param {CssComputedView} tree
    *        The CssComputedView instance we are working with.
    * @param {String} name
@@ -1023,7 +1024,7 @@ class PropertyInfo {
  * A container to give easy access to property data from the template engine.
  */
 class PropertyView {
-  /*
+  /**
    * @param {CssComputedView} tree
    *        The CssComputedView instance we are working with.
    * @param {String} name
@@ -1635,6 +1636,7 @@ class SelectorView {
 
   /**
    * Decode for cssInfo.rule.status
+   *
    * @see SelectorView.prototype.#cacheStatusNames
    * @see CssLogic.STATUS
    */
@@ -1649,6 +1651,7 @@ class SelectorView {
    *
    * These statuses are localized inside the styleinspector.properties string
    * bundle.
+   *
    * @see css-logic.js - the CssLogic.STATUS array.
    */
   #cacheStatusNames() {

@@ -131,13 +131,26 @@ bitflags::bitflags! {
         const CUBE_ARRAY_TEXTURES = 1 << 15;
         /// Support for 64-bit signed and unsigned integers.
         const SHADER_INT64 = 1 << 16;
-        /// Support for subgroup operations.
-        /// Implies support for subgroup operations in both fragment and compute stages,
-        /// but not necessarily in the vertex stage, which requires [`Capabilities::SUBGROUP_VERTEX_STAGE`].
+        /// Support for subgroup operations (except barriers) in fragment and compute shaders.
+        ///
+        /// Subgroup operations in the vertex stage require
+        /// [`Capabilities::SUBGROUP_VERTEX_STAGE`] in addition to `Capabilities::SUBGROUP`.
+        /// (But note that `create_validator` automatically sets
+        /// `Capabilities::SUBGROUP` whenever `Features::SUBGROUP_VERTEX` is
+        /// available.)
+        ///
+        /// Subgroup barriers require [`Capabilities::SUBGROUP_BARRIER`] in addition to
+        /// `Capabilities::SUBGROUP`.
         const SUBGROUP = 1 << 17;
-        /// Support for subgroup barriers.
+        /// Support for subgroup barriers in compute shaders.
+        ///
+        /// Requires [`Capabilities::SUBGROUP`]. Without it, enables nothing.
         const SUBGROUP_BARRIER = 1 << 18;
-        /// Support for subgroup operations in the vertex stage.
+        /// Support for subgroup operations (not including barriers) in the vertex stage.
+        ///
+        /// Without [`Capabilities::SUBGROUP`], enables nothing. (But note that
+        /// `create_validator` automatically sets `Capabilities::SUBGROUP`
+        /// whenever `Features::SUBGROUP_VERTEX` is available.)
         const SUBGROUP_VERTEX_STAGE = 1 << 19;
         /// Support for [`AtomicFunction::Min`] and [`AtomicFunction::Max`] on
         /// 64-bit integers in the [`Storage`] address space, when the return
@@ -173,6 +186,10 @@ bitflags::bitflags! {
         /// Support for `quantizeToF16`, `pack2x16float`, and `unpack2x16float`, which store
         /// `f16`-precision values in `f32`s.
         const SHADER_FLOAT16_IN_FLOAT32 = 1 << 28;
+        /// Support for fragment shader barycentric coordinates.
+        const SHADER_BARYCENTRICS = 1 << 29;
+        /// Support for task shaders, mesh shaders, and per-primitive fragment inputs
+        const MESH_SHADER = 1 << 30;
     }
 }
 
@@ -206,7 +223,11 @@ bitflags::bitflags! {
     #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub struct SubgroupOperationSet: u8 {
-        /// Elect, Barrier
+        /// Barriers
+        // Possibly elections, when that is supported.
+        // https://github.com/gfx-rs/wgpu/issues/6042#issuecomment-3272603431
+        // Contrary to what the name "basic" suggests, HLSL/DX12 support the
+        // other subgroup operations, but do not support subgroup barriers.
         const BASIC = 1 << 0;
         /// Any, All
         const VOTE = 1 << 1;
@@ -261,6 +282,8 @@ bitflags::bitflags! {
         const VERTEX = 0x1;
         const FRAGMENT = 0x2;
         const COMPUTE = 0x4;
+        const MESH = 0x8;
+        const TASK = 0x10;
     }
 }
 

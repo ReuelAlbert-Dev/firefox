@@ -9,6 +9,7 @@
 #ifndef vm_JSContext_h
 #define vm_JSContext_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/BaseProfilerUtils.h"  // BaseProfilerThreadId
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
@@ -25,6 +26,7 @@
 #include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/Debug.h"           // JS::CustomObjectSummaryCallback
 #include "js/Exception.h"
+#include "js/friend/MicroTask.h"
 #include "js/GCVector.h"
 #include "js/Interrupt.h"
 #include "js/Promise.h"
@@ -93,6 +95,9 @@ class InternalJobQueue : public JS::JobQueue {
   bool getHostDefinedData(JSContext* cx,
                           JS::MutableHandle<JSObject*> data) const override;
 
+  bool getHostDefinedGlobal(JSContext*,
+                            JS::MutableHandle<JSObject*>) const override;
+
   bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
                          JS::HandleObject job, JS::HandleObject allocationSite,
                          JS::HandleObject hostDefinedData) override;
@@ -149,6 +154,63 @@ enum class InterruptReason : uint32_t {
 };
 
 enum class ShouldCaptureStack { Maybe, Always };
+
+// A wrapper type to allow customization of tracing of
+// MicroTaskElements.
+struct MicroTaskQueueElement {
+  MOZ_IMPLICIT
+  MicroTaskQueueElement(const JS::Value& val) : value(val) {}
+
+  operator JS::Value() const { return value; }
+
+  void trace(JSTracer* trc);
+
+ private:
+  js::HeapPtr<JS::Value> value;
+};
+
+// Use TempAllocPolicy to report OOM
+// MG:XXX: It would be nice to explore the typical depth of the queue
+//         to see if we can get it all inline in the common case.
+// MG:XXX: This appears to be broken for non-zero values of inline!
+using MicroTaskQueue =
+    js::TraceableFifo<MicroTaskQueueElement, 0, TempAllocPolicy>;
+
+// A pair of microtask queues; one debug and one 'regular' (non-debug).
+struct MicroTaskQueueSet {
+  explicit MicroTaskQueueSet(JSContext* cx)
+      : microTaskQueue(cx), debugMicroTaskQueue(cx) {}
+
+  // We want to swap so we need move constructors
+  MicroTaskQueueSet(MicroTaskQueueSet&&) = default;
+  MicroTaskQueueSet& operator=(MicroTaskQueueSet&&) = default;
+
+  // Don't copy.
+  MicroTaskQueueSet(const MicroTaskQueueSet&) = delete;
+  MicroTaskQueueSet& operator=(const MicroTaskQueueSet&) = delete;
+
+  bool enqueueRegularMicroTask(JSContext* cx, const JS::GenericMicroTask&);
+  bool enqueueDebugMicroTask(JSContext* cx, const JS::GenericMicroTask&);
+  bool prependRegularMicroTask(JSContext* cx, const JS::GenericMicroTask&);
+
+  JS::GenericMicroTask popFront();
+  JS::GenericMicroTask popDebugFront();
+
+  bool empty() { return microTaskQueue.empty() && debugMicroTaskQueue.empty(); }
+
+  void trace(JSTracer* trc) {
+    microTaskQueue.trace(trc);
+    debugMicroTaskQueue.trace(trc);
+  }
+
+  void clear() {
+    microTaskQueue.clear();
+    debugMicroTaskQueue.clear();
+  }
+
+  MicroTaskQueue microTaskQueue;
+  MicroTaskQueue debugMicroTaskQueue;
+};
 
 } /* namespace js */
 
@@ -217,6 +279,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   inline bool isInsideCurrentCompartment(T thing) const {
     return thing->compartment() == compartment();
   }
+
+  bool safeToCaptureStackTrace() const;
 
   void onOutOfMemory();
   void* onOutOfMemory(js::AllocFunction allocFunc, arena_id_t arena,
@@ -396,11 +460,9 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return offsetof(JSContext, jitActivation);
   }
 
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   static size_t offsetOfInUnsafeCallWithABI() {
     return offsetof(JSContext, inUnsafeCallWithABI);
   }
-#endif
 
  public:
   js::InterpreterStack& interpreterStack() {
@@ -439,10 +501,9 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
    */
   js::ContextData<js::EnterDebuggeeNoExecute*> noExecuteDebuggerTop;
 
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
+  js::ContextData<bool> unsafeToCaptureStackTrace;
   js::ContextData<uint32_t> inUnsafeCallWithABI;
   js::ContextData<bool> hasAutoUnsafeCallWithABI;
-#endif
 
 #ifdef DEBUG
   js::ContextData<uint32_t> liveArraySortDataInstances;
@@ -573,6 +634,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
  public:
   js::wasm::Context& wasm() { return wasm_; }
+  static constexpr size_t offsetOfWasm() { return offsetof(JSContext, wasm_); }
 
   /* Temporary arena pool used while compiling and decompiling. */
   static const size_t TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE = 4 * 1024;
@@ -641,6 +703,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     hadUncatchableException_ = true;
 #endif
   }
+
+  // OOM stack trace buffer management
+  void unsetOOMStackTrace();
+  const char* getOOMStackTrace() const;
+  bool hasOOMStackTrace() const;
+  void maybeCaptureOOMStackTrace();
 
   js::ContextData<int32_t> reportGranularity; /* see vm/Probes.h */
 
@@ -914,6 +982,14 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
       promiseRejectionTrackerCallback;
   js::ContextData<void*> promiseRejectionTrackerCallbackData;
 
+  // Pre-allocated buffer for storing out-of-memory stack traces.
+  // This buffer is allocated during context initialization to avoid
+  // allocation during OOM conditions. The buffer stores a formatted
+  // stack trace string that can be retrieved by privileged JavaScript.
+  static constexpr size_t OOMStackTraceBufferSize = 4096;
+  js::ContextData<char*> oomStackTraceBuffer_;
+  js::ContextData<bool> oomStackTraceBufferValid_;
+
   JSObject* getIncumbentGlobal(JSContext* cx);
   bool enqueuePromiseJob(JSContext* cx, js::HandleFunction job,
                          js::HandleObject promise,
@@ -1007,6 +1083,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   bool hasExecutionTracer() { return false; }
 #endif
 
+  js::UniquePtr<js::MicroTaskQueueSet> microTaskQueues;
 }; /* struct JSContext */
 
 inline JSContext* JSRuntime::mainContextFromOwnThread() {
@@ -1137,11 +1214,18 @@ class MOZ_RAII AutoNoteExclusiveDebuggerOnEval {
   }
 };
 
-enum UnsafeABIStrictness {
-  NoExceptions,
-  AllowPendingExceptions,
-  AllowThrownExceptions
+// Should be used in functions that manipulate the stack so FrameIter is unable
+// to iterate over it.
+class MOZ_RAII AutoUnsafeStackTrace {
+  JSContext* cx_;
+  bool nested_;
+
+ public:
+  explicit AutoUnsafeStackTrace(JSContext* cx);
+  ~AutoUnsafeStackTrace();
 };
+
+enum UnsafeABIStrictness { NoExceptions, AllowPendingExceptions };
 
 // Should be used in functions called directly from JIT code (with
 // masm.callWithABI). This assert invariants in debug builds. Resets
@@ -1159,22 +1243,17 @@ enum UnsafeABIStrictness {
 // the function is not called with a pending exception, and that it does not
 // throw an exception itself.
 class MOZ_RAII AutoUnsafeCallWithABI {
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   JSContext* cx_;
   bool nested_;
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   bool checkForPendingException_;
 #endif
   JS::AutoCheckCannotGC nogc;
 
  public:
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   explicit AutoUnsafeCallWithABI(
       UnsafeABIStrictness strictness = UnsafeABIStrictness::NoExceptions);
   ~AutoUnsafeCallWithABI();
-#else
-  explicit AutoUnsafeCallWithABI(
-      UnsafeABIStrictness unused_ = UnsafeABIStrictness::NoExceptions) {}
-#endif
 };
 
 template <typename T>
@@ -1191,7 +1270,7 @@ inline BufferHolder<T>::BufferHolder(JSContext* cx, T* buffer)
  *
  * ## Checking Results when your return type is not Result
  *
- * This header defines alternatives to MOZ_TRY and MOZ_TRY_VAR for when you
+ * This header defines alternatives to MOZ_TRY for when you
  * need to call a `Result` function from a function that uses false or nullptr
  * to indicate errors:
  *

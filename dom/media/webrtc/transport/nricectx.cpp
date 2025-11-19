@@ -54,7 +54,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "nsServiceManagerUtils.h"
 #include "nsXULAppAPI.h"
 #include "pk11pub.h"
-#include "plbase64.h"
 #include "runnable_utils.h"
 
 // nICEr includes
@@ -62,6 +61,7 @@ extern "C" {
 // clang-format off
 #include "nr_api.h"
 #include "registry.h"
+#include "addrs.h"
 #include "async_timer.h"
 #include "r_crc32.h"
 #include "r_memory.h"
@@ -71,7 +71,6 @@ extern "C" {
 #include "nr_socket.h"
 #include "nr_socket_local.h"
 #include "stun_reg.h"
-#include "stun_util.h"
 #include "ice_codeword.h"
 #include "ice_ctx.h"
 #include "ice_candidate.h"
@@ -79,6 +78,7 @@ extern "C" {
 }
 
 // Local includes
+#include "mozilla/Base64.h"
 #include "nr_socket_prsock.h"
 #include "nricectx.h"
 #include "nricemediastream.h"
@@ -618,7 +618,7 @@ nsTArray<NrIceStunAddr> NrIceCtx::GetStunAddrs() {
   }
 
   MOZ_MTLOG(ML_INFO, "NrIceCtx static call to find local stun addresses");
-  if (nr_stun_find_local_addresses(local_addrs, MAXADDRS, &addr_ct)) {
+  if (nr_stun_get_addrs(local_addrs, MAXADDRS, &addr_ct)) {
     MOZ_MTLOG(ML_INFO, "Error finding local stun addresses");
   } else {
     for (int i = 0; i < addr_ct; ++i) {
@@ -1044,7 +1044,7 @@ void NrIceCtx::gather_cb(NR_SOCKET s, int h, void* arg) {
 
 void NrIceCtx::SignalAllStreamsFailed() {
   for (auto& [id, stream] : streams_) {
-    Unused << id;
+    (void)id;
     stream->Failed();
     SignalConnectionStateChange(stream, ICE_CTX_FAILED);
   }
@@ -1116,9 +1116,9 @@ void nr_ice_compute_codeword(char* buf, int len, char* codeword) {
   UINT4 c;
 
   r_crc32(buf, len, &c);
-
-  PL_Base64Encode(reinterpret_cast<char*>(&c), 3, codeword);
-  codeword[4] = 0;
+  [[maybe_unused]] nsresult nr = mozilla::Base64Encode(
+      reinterpret_cast<char*>(&c), 3, mozilla::Span(codeword, 5));
+  MOZ_ASSERT(NS_SUCCEEDED(nr));
 }
 
 int nr_socket_local_create(void* obj, nr_transport_addr* addr,

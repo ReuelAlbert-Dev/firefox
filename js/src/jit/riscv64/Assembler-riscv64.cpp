@@ -1420,6 +1420,10 @@ void Assembler::TraceDataRelocations(JSTracer* trc, JitCode* code,
   }
 }
 
+UseScratchRegisterScope::UseScratchRegisterScope(Assembler& assembler)
+    : available_(assembler.GetScratchRegisterList()),
+      old_available_(*available_) {}
+
 UseScratchRegisterScope::UseScratchRegisterScope(Assembler* assembler)
     : available_(assembler->GetScratchRegisterList()),
       old_available_(*available_) {}
@@ -1434,6 +1438,13 @@ Register UseScratchRegisterScope::Acquire() {
   Register index = GeneralRegisterSet::FirstRegister(available_->bits());
   available_->takeRegisterIndex(index);
   return index;
+}
+
+void UseScratchRegisterScope::Release(const Register& reg) {
+  MOZ_ASSERT(available_ != nullptr);
+  MOZ_ASSERT(old_available_.hasRegisterIndex(reg));
+  MOZ_ASSERT(!available_->hasRegisterIndex(reg));
+  Include(GeneralRegisterSet(1 << reg.code()));
 }
 
 bool UseScratchRegisterScope::hasAvailable() const {
@@ -1485,11 +1496,13 @@ bool Assembler::appendRawCode(const uint8_t* code, size_t numBytes) {
 }
 
 void Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled) {
+#ifdef DEBUG
   Instruction* i0 = (Instruction*)inst_.raw();
   Instruction* i1 = (Instruction*)(inst_.raw() + 1 * kInstrSize);
   Instruction* i2 = (Instruction*)(inst_.raw() + 2 * kInstrSize);
   Instruction* i3 = (Instruction*)(inst_.raw() + 3 * kInstrSize);
   Instruction* i4 = (Instruction*)(inst_.raw() + 4 * kInstrSize);
+#endif
   Instruction* i5 = (Instruction*)(inst_.raw() + 5 * kInstrSize);
   Instruction* i6 = (Instruction*)(inst_.raw() + 6 * kInstrSize);
 
@@ -1499,6 +1512,7 @@ void Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled) {
   MOZ_ASSERT(IsOri(i3->InstructionBits()));
   MOZ_ASSERT(IsSlli(i4->InstructionBits()));
   MOZ_ASSERT(IsOri(i5->InstructionBits()));
+
   if (enabled) {
     Instr jalr_ = JALR | (ra.code() << kRdShift) | (0x0 << kFunct3Shift) |
                   (i5->RdValue() << kRs1Shift) | (0x0 << kImm12Shift);

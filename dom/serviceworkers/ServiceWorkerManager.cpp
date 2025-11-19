@@ -29,18 +29,15 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/ContentBlockingAllowList.h"
-#include "mozilla/EnumSet.h"
 #include "mozilla/ErrorNames.h"
 #include "mozilla/LoadContext.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/PermissionManager.h"
 #include "mozilla/Result.h"
-#include "mozilla/ResultExtensions.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_extensions.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StoragePrincipalHelper.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/ClientHandle.h"
 #include "mozilla/dom/ClientManager.h"
@@ -185,6 +182,7 @@ nsresult PopulateRegistrationData(
   }
 
   aData.scope() = aRegistration->Scope();
+  aData.type() = aRegistration->Type();
 
   // TODO: When bug 1426401 is implemented we will need to handle more
   //       than just the active worker here.
@@ -207,6 +205,13 @@ nsresult PopulateRegistrationData(
   aData.lastUpdateTime() = aRegistration->GetLastUpdateTime();
 
   aData.navigationPreloadState() = aRegistration->GetNavigationPreloadState();
+
+  aData.numberOfAttemptedActivations() =
+      aRegistration->GetNumberOfAttemptedActivations();
+
+  aData.isBroken() = aRegistration->IsBroken();
+
+  aData.cacheAPIId() = aRegistration->GetCacheAPIId();
 
   MOZ_ASSERT(ServiceWorkerRegistrationDataIsValid(aData));
 
@@ -705,7 +710,7 @@ void ServiceWorkerManager::MaybeFinishShutdown() {
 
   RefPtr<TeardownRunnable> runnable = new TeardownRunnable(mActor);
   nsresult rv = NS_DispatchToMainThread(runnable);
-  Unused << NS_WARN_IF(NS_FAILED(rv));
+  (void)NS_WARN_IF(NS_FAILED(rv));
   mActor = nullptr;
   mETPPermissionObserver = nullptr;
 
@@ -811,8 +816,10 @@ ServiceWorkerManager::RegisterForTest(nsIPrincipal* aPrincipal,
   auto scope = NS_ConvertUTF16toUTF8(aScopeURL);
   auto scriptURL = NS_ConvertUTF16toUTF8(aScriptURL);
 
-  auto regPromise = Register(clientInfo.ref(), scope, scriptURL,
-                             dom::ServiceWorkerUpdateViaCache::Imports);
+  auto regPromise =
+      Register(clientInfo.ref(), scope, WorkerType::Classic, scriptURL,
+               dom::ServiceWorkerUpdateViaCache::Imports);
+
   const RefPtr<ServiceWorkerManager> self(this);
   const nsCOMPtr<nsIPrincipal> principal(aPrincipal);
   regPromise->Then(
@@ -840,7 +847,8 @@ ServiceWorkerManager::RegisterForTest(nsIPrincipal* aPrincipal,
 
 RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::Register(
     const ClientInfo& aClientInfo, const nsACString& aScopeURL,
-    const nsACString& aScriptURL, ServiceWorkerUpdateViaCache aUpdateViaCache) {
+    const WorkerType& aType, const nsACString& aScriptURL,
+    ServiceWorkerUpdateViaCache aUpdateViaCache) {
   AUTO_PROFILER_MARKER_UNTYPED("SWM Register", DOM, {});
 
   nsCOMPtr<nsIURI> scopeURI;
@@ -893,7 +901,7 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::Register(
   auto lifetime = DetermineLifetimeForClient(aClientInfo);
 
   RefPtr<ServiceWorkerRegisterJob> job = new ServiceWorkerRegisterJob(
-      principal, aScopeURL, aScriptURL,
+      principal, aScopeURL, aType, aScriptURL,
       static_cast<ServiceWorkerUpdateViaCache>(aUpdateViaCache), lifetime);
 
   job->AppendResultCallback(cb);
@@ -1095,8 +1103,8 @@ ServiceWorkerManager::SendPushEvent(const nsACString& aOriginAttributes,
 nsresult ServiceWorkerManager::SendCookieChangeEvent(
     const OriginAttributes& aOriginAttributes, const nsACString& aScope,
     const net::CookieStruct& aCookie, bool aCookieDeleted) {
-  nsCOMPtr<nsIPrincipal> principal;
-  MOZ_TRY_VAR(principal, ScopeToPrincipal(aScope, aOriginAttributes));
+  nsCOMPtr<nsIPrincipal> principal =
+      MOZ_TRY(ScopeToPrincipal(aScope, aOriginAttributes));
 
   RefPtr<ServiceWorkerRegistrationInfo> registration =
       GetRegistration(principal, aScope);
@@ -1123,8 +1131,7 @@ nsresult ServiceWorkerManager::SendPushEvent(
     return NS_ERROR_INVALID_ARG;
   }
 
-  nsCOMPtr<nsIPrincipal> principal;
-  MOZ_TRY_VAR(principal, ScopeToPrincipal(aScope, attrs));
+  nsCOMPtr<nsIPrincipal> principal = MOZ_TRY(ScopeToPrincipal(aScope, attrs));
 
   // The registration handling a push notification must have an exact scope
   // match. This will try to find an exact match, unlike how fetch may find the
@@ -1637,11 +1644,11 @@ void ServiceWorkerManager::LoadRegistration(
   RefPtr<ServiceWorkerRegistrationInfo> registration =
       GetRegistration(principal, aRegistration.scope());
   if (!registration) {
-    registration =
-        CreateNewRegistration(aRegistration.scope(), principal,
-                              static_cast<ServiceWorkerUpdateViaCache>(
-                                  aRegistration.updateViaCache()),
-                              aRegistration.navigationPreloadState());
+    registration = CreateNewRegistration(
+        aRegistration.scope(), aRegistration.type(), principal,
+        static_cast<ServiceWorkerUpdateViaCache>(
+            aRegistration.updateViaCache()),
+        aRegistration.navigationPreloadState());
   } else {
     // If active worker script matches our expectations for a "current worker",
     // then we are done. Since scripts with the same URL might have different
@@ -1666,9 +1673,9 @@ void ServiceWorkerManager::LoadRegistration(
   const nsCString& currentWorkerURL = aRegistration.currentWorkerURL();
   if (!currentWorkerURL.IsEmpty()) {
     registration->SetActive(new ServiceWorkerInfo(
-        registration->Principal(), registration->Scope(), registration->Id(),
-        registration->Version(), currentWorkerURL, aRegistration.cacheName(),
-        importsLoadFlags));
+        registration->Principal(), registration->Scope(), registration->Type(),
+        registration->Id(), registration->Version(), currentWorkerURL,
+        aRegistration.cacheName(), importsLoadFlags));
     registration->GetActive()->SetHandlesFetch(
         aRegistration.currentWorkerHandlesFetch());
     registration->GetActive()->SetInstalledTime(
@@ -2932,9 +2939,10 @@ ServiceWorkerManager::RegisterForAddonPrincipal(nsIPrincipal* aPrincipal,
     return NS_OK;
   }
 
-  auto regPromise =
-      Register(clientInfo.ref(), scope, NS_ConvertUTF16toUTF8(scriptURL),
-               dom::ServiceWorkerUpdateViaCache::Imports);
+  auto regPromise = Register(clientInfo.ref(), scope, WorkerType::Classic,
+                             NS_ConvertUTF16toUTF8(scriptURL),
+                             dom::ServiceWorkerUpdateViaCache::Imports);
+
   const RefPtr<ServiceWorkerManager> self(this);
   const nsCOMPtr<nsIPrincipal> principal(aPrincipal);
   regPromise->Then(
@@ -3027,8 +3035,7 @@ ServiceWorkerManager::WakeForExtensionAPIEvent(
     return NS_OK;
   }
 
-  nsCOMPtr<nsIPrincipal> principal;
-  MOZ_TRY_VAR(principal, ScopeToPrincipal(scopeURI, {}));
+  nsCOMPtr<nsIPrincipal> principal = MOZ_TRY(ScopeToPrincipal(scopeURI, {}));
 
   auto* addonPolicy = BasePrincipal::Cast(principal)->AddonPolicy();
   if (NS_WARN_IF(!addonPolicy)) {
@@ -3108,7 +3115,7 @@ ServiceWorkerManager::GetRegistration(const nsACString& aScopeKey,
 
 already_AddRefed<ServiceWorkerRegistrationInfo>
 ServiceWorkerManager::CreateNewRegistration(
-    const nsCString& aScope, nsIPrincipal* aPrincipal,
+    const nsCString& aScope, const WorkerType& aType, nsIPrincipal* aPrincipal,
     ServiceWorkerUpdateViaCache aUpdateViaCache,
     IPCNavigationPreloadState aNavigationPreloadState) {
 #ifdef DEBUG
@@ -3123,7 +3130,8 @@ ServiceWorkerManager::CreateNewRegistration(
 #endif
 
   RefPtr<ServiceWorkerRegistrationInfo> registration =
-      new ServiceWorkerRegistrationInfo(aScope, aPrincipal, aUpdateViaCache,
+      new ServiceWorkerRegistrationInfo(aScope, aType, aPrincipal,
+                                        aUpdateViaCache,
                                         std::move(aNavigationPreloadState));
 
   // From now on ownership of registration is with
@@ -3481,8 +3489,7 @@ void ServiceWorkerManager::MaybeSendUnregister(nsIPrincipal* aPrincipal,
     return;
   }
 
-  Unused << mActor->SendUnregister(principalInfo,
-                                   NS_ConvertUTF8toUTF16(aScope));
+  (void)mActor->SendUnregister(principalInfo, NS_ConvertUTF8toUTF16(aScope));
 }
 
 void ServiceWorkerManager::AddOrphanedRegistration(

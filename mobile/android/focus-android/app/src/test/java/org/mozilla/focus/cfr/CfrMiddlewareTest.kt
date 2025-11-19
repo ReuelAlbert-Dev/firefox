@@ -12,8 +12,6 @@ import mozilla.components.browser.state.state.createTab
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.concept.engine.content.blocking.Tracker
-import mozilla.components.support.test.ext.joinBlocking
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -62,9 +60,8 @@ class CfrMiddlewareTest {
                 ),
             )
 
-            browserStore.dispatch(updateSecurityInfoAction).joinBlocking()
-            browserStore.dispatch(trackerBlockedAction).joinBlocking()
-            appStore.waitUntilIdle()
+            browserStore.dispatch(updateSecurityInfoAction)
+            browserStore.dispatch(trackerBlockedAction)
 
             assertTrue(appStore.state.showTrackingProtectionCfrForTab.getOrDefault("1", false))
         }
@@ -83,9 +80,8 @@ class CfrMiddlewareTest {
                 ),
             )
 
-            browserStore.dispatch(TabListAction.AddTabAction(insecureTab)).joinBlocking()
-            browserStore.dispatch(updateSecurityInfoAction).joinBlocking()
-            appStore.waitUntilIdle()
+            browserStore.dispatch(TabListAction.AddTabAction(insecureTab))
+            browserStore.dispatch(updateSecurityInfoAction)
 
             assertFalse(appStore.state.showTrackingProtectionCfrForTab.getOrDefault("1", false))
         }
@@ -94,7 +90,7 @@ class CfrMiddlewareTest {
     @Test
     fun `GIVEN mozilla tab WHEN UpdateSecurityInfoAction is intercepted THEN showTrackingProtectionCfr is not changed to true`() {
         if (onboardingExperiment.isCfrEnabled) {
-            val mozillaTab = createTab(id = "1", url = "https://www.mozilla.org")
+            val mozillaTab = createTab(tabId = 1, tabUrl = "https://www.mozilla.org")
             val updateSecurityInfoAction = ContentAction.UpdateSecurityInfoAction(
                 "1",
                 SecurityInfoState(
@@ -103,9 +99,8 @@ class CfrMiddlewareTest {
                     issuer = "Test",
                 ),
             )
-            browserStore.dispatch(TabListAction.AddTabAction(mozillaTab)).joinBlocking()
-            browserStore.dispatch(updateSecurityInfoAction).joinBlocking()
-            appStore.waitUntilIdle()
+            browserStore.dispatch(TabListAction.AddTabAction(mozillaTab))
+            browserStore.dispatch(updateSecurityInfoAction)
 
             assertFalse(appStore.state.showTrackingProtectionCfrForTab.getOrDefault("1", false))
         }

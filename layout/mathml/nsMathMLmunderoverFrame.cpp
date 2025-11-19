@@ -15,6 +15,7 @@
 #include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/MathMLElement.h"
+#include "nsIMathMLFrame.h"
 #include "nsLayoutUtils.h"
 #include "nsMathMLmmultiscriptsFrame.h"
 #include "nsPresContext.h"
@@ -231,6 +232,13 @@ XXX The winner is the outermost setting in conflicting settings like these:
       } else if (value.LowerCaseEqualsLiteral("false")) {
         mEmbellishData.flags &= ~NS_MATHML_EMBELLISH_ACCENTUNDER;
       }
+    } else if (NS_MATHML_EMBELLISH_IS_ACCENTUNDER(mEmbellishData.flags)) {
+      AutoTArray<nsString, 1> params;
+      params.AppendElement(mContent->NodeInfo()->NodeName());
+      PresContext()->Document()->WarnOnceAbout(
+          dom::DeprecatedOperations::
+              eMathML_DeprecatedMunderNonExplicitAccentunder,
+          false, params);
     }
   }
 
@@ -252,6 +260,12 @@ XXX The winner is the outermost setting in conflicting settings like these:
       } else if (value.LowerCaseEqualsLiteral("false")) {
         mEmbellishData.flags &= ~NS_MATHML_EMBELLISH_ACCENTOVER;
       }
+    } else if (NS_MATHML_EMBELLISH_IS_ACCENTOVER(mEmbellishData.flags)) {
+      AutoTArray<nsString, 1> params;
+      params.AppendElement(mContent->NodeInfo()->NodeName());
+      PresContext()->Document()->WarnOnceAbout(
+          dom::DeprecatedOperations::eMathML_DeprecatedMoverNonExplicitAccent,
+          false, params);
     }
   }
 
@@ -365,9 +379,9 @@ i.e.,:
 */
 
 /* virtual */
-nsresult nsMathMLmunderoverFrame::Place(DrawTarget* aDrawTarget,
-                                        const PlaceFlags& aFlags,
-                                        ReflowOutput& aDesiredSize) {
+void nsMathMLmunderoverFrame::Place(DrawTarget* aDrawTarget,
+                                    const PlaceFlags& aFlags,
+                                    ReflowOutput& aDesiredSize) {
   float fontSizeInflation = nsLayoutUtils::FontSizeInflationFor(this);
   if (NS_MATHML_EMBELLISH_IS_MOVABLELIMITS(mEmbellishData.flags) &&
       StyleFont()->mMathStyle == StyleMathStyle::Compact) {
@@ -732,7 +746,6 @@ nsresult nsMathMLmunderoverFrame::Place(DrawTarget* aDrawTarget,
                         dy, ReflowChildFlags::Default);
     }
   }
-  return NS_OK;
 }
 
 bool nsMathMLmunderoverFrame::IsMathContentBoxHorizontallyCentered() const {

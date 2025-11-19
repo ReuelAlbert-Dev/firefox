@@ -8,7 +8,6 @@
 
 #include "SVGGeometryProperty.h"
 #include "imgINotificationObserver.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/FetchPriority.h"
 #include "mozilla/dom/SVGImageElementBinding.h"
@@ -66,7 +65,7 @@ SVGImageElement::SVGImageElement(
 
 SVGImageElement::~SVGImageElement() { nsImageLoadingContent::Destroy(); }
 
-nsCSSPropertyID SVGImageElement::GetCSSPropertyIdForAttrEnum(
+NonCustomCSSPropertyId SVGImageElement::GetCSSPropertyIdForAttrEnum(
     uint8_t aAttrEnum) {
   switch (aAttrEnum) {
     case ATTR_X:

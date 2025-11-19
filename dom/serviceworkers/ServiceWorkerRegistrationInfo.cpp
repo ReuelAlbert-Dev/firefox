@@ -70,11 +70,11 @@ void ServiceWorkerRegistrationInfo::ClearAsCorrupt() {
 bool ServiceWorkerRegistrationInfo::IsCorrupt() const { return mCorrupt; }
 
 ServiceWorkerRegistrationInfo::ServiceWorkerRegistrationInfo(
-    const nsACString& aScope, nsIPrincipal* aPrincipal,
+    const nsACString& aScope, WorkerType aType, nsIPrincipal* aPrincipal,
     ServiceWorkerUpdateViaCache aUpdateViaCache,
     IPCNavigationPreloadState&& aNavigationPreloadState)
     : mPrincipal(aPrincipal),
-      mDescriptor(GetNextId(), GetNextVersion(), aPrincipal, aScope,
+      mDescriptor(GetNextId(), GetNextVersion(), aPrincipal, aScope, aType,
                   aUpdateViaCache),
       mControlledClientsCounter(0),
       mDelayMultiplier(0),
@@ -128,6 +128,10 @@ void ServiceWorkerRegistrationInfo::RemoveInstance(
 
 const nsCString& ServiceWorkerRegistrationInfo::Scope() const {
   return mDescriptor.Scope();
+}
+
+WorkerType ServiceWorkerRegistrationInfo::Type() const {
+  return mDescriptor.Type();
 }
 
 nsIPrincipal* ServiceWorkerRegistrationInfo::Principal() const {
@@ -338,6 +342,7 @@ void ServiceWorkerRegistrationInfo::TryToActivate(
     ServiceWorkerLifetimeExtension&& aLifetimeExtension,
     TryToActivateCallback&& aCallback) {
   MOZ_ASSERT(NS_IsMainThread());
+  ++mNumberOfAttemptedActivations;
   bool controlling = IsControllingClients();
   bool skipWaiting = mWaitingWorker && mWaitingWorker->SkipWaitingFlag();
   bool idle = IsIdle();
@@ -447,11 +452,11 @@ bool ServiceWorkerRegistrationInfo::IsLastUpdateCheckTimeOverOneDay() const {
 }
 
 void ServiceWorkerRegistrationInfo::UpdateRegistrationState() {
-  UpdateRegistrationState(mDescriptor.UpdateViaCache());
+  UpdateRegistrationState(mDescriptor.UpdateViaCache(), mDescriptor.Type());
 }
 
 void ServiceWorkerRegistrationInfo::UpdateRegistrationState(
-    ServiceWorkerUpdateViaCache aUpdateViaCache) {
+    ServiceWorkerUpdateViaCache aUpdateViaCache, WorkerType aType) {
   MOZ_ASSERT(NS_IsMainThread());
 
   TimeStamp oldest = TimeStamp::Now() - TimeDuration::FromSeconds(30);
@@ -473,6 +478,7 @@ void ServiceWorkerRegistrationInfo::UpdateRegistrationState(
   mDescriptor.SetWorkers(mInstallingWorker, mWaitingWorker, mActiveWorker);
 
   mDescriptor.SetUpdateViaCache(aUpdateViaCache);
+  mDescriptor.SetWorkerType(aType);
 
   for (RefPtr<ServiceWorkerRegistrationListener> pinnedTarget :
        mInstanceList.ForwardRange()) {
@@ -763,9 +769,9 @@ ServiceWorkerUpdateViaCache ServiceWorkerRegistrationInfo::GetUpdateViaCache()
   return mDescriptor.UpdateViaCache();
 }
 
-void ServiceWorkerRegistrationInfo::SetUpdateViaCache(
-    ServiceWorkerUpdateViaCache aUpdateViaCache) {
-  UpdateRegistrationState(aUpdateViaCache);
+void ServiceWorkerRegistrationInfo::SetOptions(
+    ServiceWorkerUpdateViaCache aUpdateViaCache, WorkerType aType) {
+  UpdateRegistrationState(aUpdateViaCache, aType);
 }
 
 int64_t ServiceWorkerRegistrationInfo::GetLastUpdateTime() const {

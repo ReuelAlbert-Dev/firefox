@@ -27,7 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,10 +44,6 @@ import androidx.compose.ui.semantics.collectionInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.DefaultLifecycleObserver
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -65,6 +61,7 @@ import org.mozilla.fenix.compose.LinkText
 import org.mozilla.fenix.compose.LinkTextState
 import org.mozilla.fenix.compose.list.IconListItem
 import org.mozilla.fenix.compose.list.SelectableFaviconListItem
+import org.mozilla.fenix.settings.biometric.ui.SecureScreen
 import org.mozilla.fenix.settings.logins.ui.LoginsSortOrder.Alphabetical.isGuidToDelete
 import org.mozilla.fenix.theme.FirefoxTheme
 import mozilla.components.ui.icons.R as iconsR
@@ -74,68 +71,42 @@ import mozilla.components.ui.icons.R as iconsR
  *
  * @param buildStore A builder function to construct a [LoginsStore] using the NavController that's local
  * to the nav graph for the Logins view hierarchy.
+ * @param exitLogins A callback invoked when the user indicates to exit the secure screen.
  * @param startDestination the screen on which to initialize [SavedLoginsScreen] with.
  */
 @Composable
 internal fun SavedLoginsScreen(
     buildStore: (NavHostController) -> LoginsStore,
+    exitLogins: () -> Unit = {},
     startDestination: String = LoginsDestinations.LIST,
 ) {
     val navController = rememberNavController()
     val store = buildStore(navController)
 
-    DisposableEffect(LocalLifecycleOwner.current) {
-        val observer = object : DefaultLifecycleObserver {
-            override fun onPause(owner: LifecycleOwner) {
-                super.onPause(owner)
-                if (store.state.pinVerificationState != PinVerificationState.Started) {
-                    store.dispatch(BiometricAuthenticationAction.AuthenticationFailed)
-                    store.dispatch(BiometricAuthenticationDialogAction(false))
-                } else {
-                    store.dispatch(PinVerificationAction.Duplicate)
-                }
-            }
-
-            override fun onResume(owner: LifecycleOwner) {
-                super.onResume(owner)
-                val noPinVerification =
-                    store.state.pinVerificationState == PinVerificationState.Inert
-                val pinVerificationDuplicated =
-                    store.state.pinVerificationState == PinVerificationState.Duplicated
-                if (noPinVerification || pinVerificationDuplicated) {
-                    store.dispatch(BiometricAuthenticationDialogAction(true))
-                } else {
-                    store.dispatch(PinVerificationAction.None)
-                }
-            }
-        }
-        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
-
-        onDispose {
-            store.dispatch(ViewDisposed)
-            ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
-        }
-    }
-
-    NavHost(
-        navController = navController,
-        startDestination = startDestination,
+    SecureScreen(
+        title = stringResource(R.string.logins_biometric_prompt_message_2),
+        onExit = exitLogins,
     ) {
-        composable(route = LoginsDestinations.LIST) {
-            BackHandler { store.dispatch(LoginsListBackClicked) }
-            LoginsList(store = store)
-        }
-        composable(route = LoginsDestinations.ADD_LOGIN) {
-            BackHandler { store.dispatch(AddLoginBackClicked) }
-            AddLoginScreen(store = store)
-        }
-        composable(route = LoginsDestinations.EDIT_LOGIN) {
-            BackHandler { store.dispatch(EditLoginBackClicked) }
-            EditLoginScreen(store = store)
-        }
-        composable(route = LoginsDestinations.LOGIN_DETAILS) {
-            BackHandler { store.dispatch(LoginsDetailBackClicked) }
-            LoginDetailsScreen(store = store)
+        NavHost(
+            navController = navController,
+            startDestination = startDestination,
+        ) {
+            composable(route = LoginsDestinations.LIST) {
+                BackHandler { store.dispatch(LoginsListBackClicked) }
+                LoginsList(store = store)
+            }
+            composable(route = LoginsDestinations.ADD_LOGIN) {
+                BackHandler { store.dispatch(AddLoginBackClicked) }
+                AddLoginScreen(store = store)
+            }
+            composable(route = LoginsDestinations.EDIT_LOGIN) {
+                BackHandler { store.dispatch(EditLoginBackClicked) }
+                EditLoginScreen(store = store)
+            }
+            composable(route = LoginsDestinations.LOGIN_DETAILS) {
+                BackHandler { store.dispatch(LoginsDetailBackClicked) }
+                LoginDetailsScreen(store = store)
+            }
         }
     }
 }
@@ -151,6 +122,10 @@ internal object LoginsDestinations {
 private fun LoginsList(store: LoginsStore) {
     val state by store.observeAsState(store.state) { it }
 
+    LaunchedEffect(Unit) {
+        store.dispatch(LoginsListAppeared)
+    }
+
     Scaffold(
         topBar = {
             LoginsListTopBar(
@@ -161,11 +136,6 @@ private fun LoginsList(store: LoginsStore) {
         containerColor = FirefoxTheme.colors.layer1,
         contentWindowInsets = WindowInsets(0.dp),
     ) { paddingValues ->
-
-        if (state.biometricAuthenticationDialogState.shouldShow) {
-            BiometricAuthenticationDialog(store = store)
-        }
-
         if (state.searchText.isNullOrEmpty() && state.loginItems.isEmpty()) {
             EmptyList(dispatcher = store::dispatch, paddingValues = paddingValues)
             return@Scaffold
@@ -175,31 +145,29 @@ private fun LoginsList(store: LoginsStore) {
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (state.biometricAuthenticationState == BiometricAuthenticationState.Authorized) {
-                LazyColumn(
-                    modifier = Modifier
-                        .padding(paddingValues)
-                        .width(FirefoxTheme.layout.size.containerMaxWidth)
-                        .weight(1f, false)
-                        .semantics {
-                            collectionInfo =
-                                CollectionInfo(rowCount = state.loginItems.size, columnCount = 1)
-                        },
-                ) {
-                    itemsIndexed(state.loginItems) { _, item ->
+            LazyColumn(
+                modifier = Modifier
+                    .padding(paddingValues)
+                    .width(FirefoxTheme.layout.size.containerMaxWidth)
+                    .weight(1f, false)
+                    .semantics {
+                        collectionInfo =
+                            CollectionInfo(rowCount = state.loginItems.size, columnCount = 1)
+                    },
+            ) {
+                itemsIndexed(state.loginItems) { _, item ->
 
-                        if (state.isGuidToDelete(item.guid)) {
-                            return@itemsIndexed
-                        }
-
-                        SelectableFaviconListItem(
-                            label = item.url.trimmed(),
-                            url = item.url,
-                            isSelected = false,
-                            onClick = { store.dispatch(LoginClicked(item)) },
-                            description = item.username.trimmed(),
-                        )
+                    if (state.isGuidToDelete(item.guid)) {
+                        return@itemsIndexed
                     }
+
+                    SelectableFaviconListItem(
+                        label = item.url.trimmed(),
+                        url = item.url,
+                        isSelected = false,
+                        onClick = { store.dispatch(LoginClicked(item)) },
+                        description = item.username.trimmed(),
+                    )
                 }
             }
 
@@ -278,7 +246,7 @@ private fun EmptyList(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-@Suppress("LongMethod")
+@Suppress("LongMethod", "CognitiveComplexMethod")
 private fun LoginsListTopBar(
     store: LoginsStore,
     text: String,
@@ -476,7 +444,9 @@ private fun LoginsListScreenPreview() {
 
     FirefoxTheme {
         Box(modifier = Modifier.background(color = FirefoxTheme.colors.layer1)) {
-            SavedLoginsScreen(store)
+            SavedLoginsScreen(
+                buildStore = store,
+            )
         }
     }
 }
@@ -495,7 +465,9 @@ private fun EmptyLoginsListScreenPreview() {
 
     FirefoxTheme {
         Box(modifier = Modifier.background(color = FirefoxTheme.colors.layer1)) {
-            SavedLoginsScreen(store)
+            SavedLoginsScreen(
+                buildStore = store,
+            )
         }
     }
 }

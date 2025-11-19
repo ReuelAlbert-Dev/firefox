@@ -46,8 +46,6 @@ activity_stream:
       "DRAG",
       "DROP",
       "IMPRESSION",
-      "FAKESPOT_CATEGORY",
-      "FAKESPOT_CLICK",
       "MIGRATION_CANCEL",
       "MIGRATION_START",
       "OPEN_NEWTAB_PREFS",
@@ -215,13 +213,13 @@ addonsManager:
           - site_warning, site_blocked, install_disabled_warning
           - download_started, download_completed, download_failed
     notification_emails: ["addons-dev-internal@mozilla.com"]
-    expiry_version: "147"
+    expiry_version: "154"
     products:
       - "firefox"
       - "fennec"
       - "thunderbird"
     record_in_processes: ["main"]
-    bug_numbers: [1433335, 1515697, 1523641, 1549770, 1590736, 1630596, 1672570, 1714251, 1749878, 1781974, 1817100, 1861295, 1912166, 1958151]
+    bug_numbers: [1433335, 1515697, 1523641, 1549770, 1590736, 1630596, 1672570, 1714251, 1749878, 1781974, 1817100, 1861295, 1912166, 1958151, 1994595]
     release_channel_collection: opt-out
   install_stats:
     description: >
@@ -290,13 +288,13 @@ addonsManager:
         The add-on blocklistState (0 not-blocked, 1 soft-blocked, 2
         hard-blocked) at the time the manage event was being collected.
     notification_emails: ["addons-dev-internal@mozilla.com"]
-    expiry_version: "147"
+    expiry_version: "154"
     products:
       - "firefox"
       - "fennec"
       - "thunderbird"
     record_in_processes: ["main"]
-    bug_numbers: [1433335, 1515697, 1523641, 1549770, 1590736, 1630596, 1672570, 1714251, 1749878, 1781974, 1817100, 1861295, 1912166, 1917859, 1958149]
+    bug_numbers: [1433335, 1515697, 1523641, 1549770, 1590736, 1630596, 1672570, 1714251, 1749878, 1781974, 1817100, 1861295, 1912166, 1917859, 1958149, 1994595]
     release_channel_collection: opt-out
 addonsSearchDetection:
   etld_change:
@@ -776,7 +774,7 @@ normandy:
       This is different from enrollment or experiment activation because it
       registers when a user actually gets exposed to the experiment feature.
     bug_numbers: [1675104]
-    notification_emails: ["ujet@mozilla.com"]
+    notification_emails: ["omc-core@mozilla.com"]
     expiry_version: "never"
     extra_keys:
       branchSlug: The slug for the branch the user is enrolled in.
@@ -1427,7 +1425,17 @@ messaging_experiments:
       "fxms_message_12",
       "fxms_message_13",
       "fxms_message_14",
-      "fxms_message_15"
+      "fxms_message_15",
+      "fxms_message_16",
+      "fxms_message_17",
+      "fxms_message_18",
+      "fxms_message_19",
+      "fxms_message_20",
+      "fxms_message_21",
+      "fxms_message_22",
+      "fxms_message_23",
+      "fxms_message_24",
+      "fxms_message_25"
     ]
     methods: ["reach"]
     release_channel_collection: opt-out
@@ -1439,7 +1447,7 @@ messaging_experiments:
       experiments. All qualified branch ID(s) will be recorded in the 'extra_keys'
       for each active experiment, and the event 'value' will be the experiment ID
     bug_numbers: [1471318]
-    notification_emails: ["ujet@mozilla.com"]
+    notification_emails: ["omc-core@mozilla.com"]
     expiry_version: "never"
     extra_keys:
       branches: >
@@ -1465,7 +1473,7 @@ messaging_experiments:
     bug_numbers:
       - 1644743
     notification_emails:
-      - ujet@mozilla.com
+      - omc-core@mozilla.com
     expiry_version: never
 
 # This category contains event entries used for Telemetry tests.
@@ -2473,8 +2481,9 @@ intl.ui.browserLanguage:
       installId: The id for an install.
     products:
       - firefox
-    expiry_version: "148"
+    expiry_version: "161"
     notification_emails:
+      - bolsson@mozilla.com
       - earo@mozilla.com
       - flod@mozilla.com
       - mstriemer@mozilla.com
@@ -2490,6 +2499,7 @@ intl.ui.browserLanguage:
       - 1861299
       - 1911321
       - 1928262
+      - 1999880
 
 network.dns:
   trrConfirmation:
@@ -3267,7 +3277,7 @@ avif:
 mfcdm:
   eme_playback:
     objects: ["gecko"]
-    bug_numbers: [1873394, 1902169]
+    bug_numbers: [1873394, 1902169, 1989168]
     description:
       Record the information about the EME playback when using the media engine.
       The value of this event is the key system name.
@@ -3275,7 +3285,7 @@ mfcdm:
       - firefox
     record_in_processes: ["all"]
     release_channel_collection: opt-out
-    expiry_version: "146"
+    expiry_version: "152"
     notification_emails:
       - media-alerts@mozilla.com
     extra_keys:
@@ -3287,7 +3297,7 @@ mfcdm:
       dropped_frames: The amount of video frames don't get rendered but dropped
   error:
     objects: ["gecko"]
-    bug_numbers: [1873394, 1902169]
+    bug_numbers: [1873394, 1902169, 1989168]
     description:
       Record the error or crash happened while using the media engine playback.
       The value of this event is the name of error.
@@ -3295,7 +3305,7 @@ mfcdm:
       - firefox
     record_in_processes: ["all"]
     release_channel_collection: opt-out
-    expiry_version: "146"
+    expiry_version: "152"
     notification_emails:
       - media-alerts@mozilla.com
     extra_keys:
@@ -3854,6 +3864,13 @@ browser.backup:
     record_in_processes: [main]
     release_channel_collection: opt-out
     expiry_version: never
+    extra_keys:
+      encrypted: Whether or not encryption is enabled for the backup.
+      location: >
+        The location of the backup. This can be either "onedrive",
+        "documents", or "other". "other" will be sent if the parent directory
+        of the backup doesn't match the default "documents" or "onedrive"
+        save paths.
   toggle_off:
     objects: ["BackupService"]
     description: >
@@ -3880,6 +3897,16 @@ browser.backup:
     record_in_processes: [main]
     release_channel_collection: opt-out
     expiry_version: never
+    extra_keys:
+      encrypted: Whether or not encryption is enabled for the backup.
+      location: >
+        The location of the backup. This can be either "onedrive",
+        "documents", or "other". "other" will be sent if the parent directory
+        of the backup doesn't match the default "documents" or "onedrive"
+        save paths.
+      size: >
+        The size-on-disk of the created backup. This is rounded to the
+        nearest mebibyte to reduce fingerprintability.
   change_location:
     objects: ["BackupService"]
     description: >

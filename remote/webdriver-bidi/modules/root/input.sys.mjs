@@ -11,8 +11,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   assert: "chrome://remote/content/shared/webdriver/Assert.sys.mjs",
   error: "chrome://remote/content/shared/webdriver/Errors.sys.mjs",
   event: "chrome://remote/content/shared/webdriver/Event.sys.mjs",
+  NavigableManager: "chrome://remote/content/shared/NavigableManager.sys.mjs",
   pprint: "chrome://remote/content/shared/Format.sys.mjs",
-  TabManager: "chrome://remote/content/shared/TabManager.sys.mjs",
 });
 
 class InputModule extends RootBiDiModule {
@@ -78,17 +78,31 @@ class InputModule extends RootBiDiModule {
    *     Promise that resolves once the event is dispatched.
    */
   async #dispatchEvent(eventName, context, details) {
-    if (
-      eventName === "synthesizeWheelAtPoint" &&
-      lazy.actions.useAsyncWheelEvents
-    ) {
-      details.eventData.asyncEnabled = true;
-    }
+    details.eventData.asyncEnabled =
+      (eventName === "synthesizeWheelAtPoint" &&
+        lazy.actions.useAsyncWheelEvents) ||
+      (eventName == "synthesizeMouseAtPoint" &&
+        lazy.actions.useAsyncMouseEvents);
 
     // TODO: Call the _dispatchEvent method of the windowglobal module once
     // chrome support was added for the message handler.
     if (details.eventData.asyncEnabled) {
+      if (!context || context.isDiscarded) {
+        const id = lazy.NavigableManager.getIdForBrowsingContext(context);
+        throw new lazy.error.NoSuchFrameError(
+          `Browsing Context with id ${id} not found`
+        );
+      }
+
       switch (eventName) {
+        case "synthesizeMouseAtPoint":
+          await lazy.event.synthesizeMouseAtPoint(
+            details.x,
+            details.y,
+            details.eventData,
+            context.topChromeWindow
+          );
+          break;
         case "synthesizeWheelAtPoint":
           await lazy.event.synthesizeWheelAtPoint(
             details.x,
@@ -115,12 +129,16 @@ class InputModule extends RootBiDiModule {
    *
    * @param {BrowsingContext} context
    *     The browsing context to forward the command to.
-   *
-   * @returns {Promise}
-   *     Promise that resolves when the finalization is done.
    */
-  #finalizeAction(context) {
-    return this._forwardToWindowGlobal("_finalizeAction", context.id);
+  async #finalizeAction(context) {
+    try {
+      await this._forwardToWindowGlobal("_finalizeAction", context.id);
+    } catch (e) {
+      // Ignore the error if the underlying browsing context is already gone.
+      if (e.name !== "DiscardedBrowsingContextError") {
+        throw e;
+      }
+    }
   }
 
   /**
@@ -267,12 +285,7 @@ class InputModule extends RootBiDiModule {
       lazy.pprint`Expected "context" to be a string, got ${contextId}`
     );
 
-    const context = lazy.TabManager.getBrowsingContextById(contextId);
-    if (!context) {
-      throw new lazy.error.NoSuchFrameError(
-        `Browsing context with id ${contextId} not found`
-      );
-    }
+    const context = this._getNavigable(contextId);
 
     // Bug 1821460: Fetch top-level browsing context.
     const inputState = this.#getInputState(context);
@@ -313,12 +326,7 @@ class InputModule extends RootBiDiModule {
       lazy.pprint`Expected "context" to be a string, got ${contextId}`
     );
 
-    const context = lazy.TabManager.getBrowsingContextById(contextId);
-    if (!context) {
-      throw new lazy.error.NoSuchFrameError(
-        `Browsing context with id ${contextId} not found`
-      );
-    }
+    const context = this._getNavigable(contextId);
 
     // Bug 1821460: Fetch top-level browsing context.
     const inputState = this.#getInputState(context);
@@ -366,12 +374,7 @@ class InputModule extends RootBiDiModule {
       lazy.pprint`Expected "context" to be a string, got ${contextId}`
     );
 
-    const context = lazy.TabManager.getBrowsingContextById(contextId);
-    if (!context) {
-      throw new lazy.error.NoSuchFrameError(
-        `Browsing context with id ${contextId} not found`
-      );
-    }
+    const context = this._getNavigable(contextId);
 
     lazy.assert.array(
       files,
@@ -392,7 +395,7 @@ class InputModule extends RootBiDiModule {
   }
 
   static get supportedEvents() {
-    return [];
+    return ["input.fileDialogOpened"];
   }
 }
 

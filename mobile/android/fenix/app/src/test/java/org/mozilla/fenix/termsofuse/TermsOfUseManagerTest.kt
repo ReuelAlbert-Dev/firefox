@@ -5,6 +5,7 @@
 package org.mozilla.fenix.termsofuse
 
 import io.mockk.every
+import io.mockk.spyk
 import junit.framework.TestCase.assertFalse
 import junit.framework.TestCase.assertTrue
 import mozilla.components.support.test.robolectric.testContext
@@ -140,5 +141,46 @@ class TermsOfUseManagerTest {
         settings.lastTermsOfUsePromptTimeInMillis = System.currentTimeMillis() - Settings.FIVE_DAYS_MS
 
         assertTrue(termsOfUseManager.shouldShowTermsOfUsePromptOnHomepage())
+    }
+
+    @Test
+    fun `GIVEN other conditions satisfied WHEN prompt has not been displayed THEN shouldShowTermsOfUsePrompt returns true`() {
+        val settings = spyk(settings)
+        settings.hasAcceptedTermsOfService = false
+        settings.isTermsOfUsePromptEnabled = true
+        settings.hasPostponedAcceptingTermsOfUse = false
+        // Prompt display count configuration.
+        settings.termsOfUsePromptDisplayedCount = 0
+        every { settings.getTermsOfUseMaxDisplayCount() } returns 2
+
+        termsOfUseManager.onStart()
+
+        assertTrue(termsOfUseManager.shouldShowTermsOfUsePrompt())
+    }
+
+    @Test
+    fun `GIVEN other conditions satisfied WHEN prompt has been displayed the maximum number of times THEN shouldShowTermsOfUsePrompt returns false`() {
+        val settings = spyk(settings)
+        settings.hasAcceptedTermsOfService = false
+        settings.isTermsOfUsePromptEnabled = true
+        settings.hasPostponedAcceptingTermsOfUse = false
+        // Prompt display count configuration.
+        settings.termsOfUsePromptDisplayedCount = 2
+        every { settings.getTermsOfUseMaxDisplayCount() } returns 2
+
+        assertFalse(termsOfUseManager.shouldShowTermsOfUsePrompt())
+    }
+
+    @Test
+    fun `GIVEN other conditions satisfied WHEN prompt has been displayed more than the maximum number of times THEN shouldShowTermsOfUsePrompt returns false`() {
+        val settings = spyk(settings)
+        settings.hasAcceptedTermsOfService = false
+        settings.isTermsOfUsePromptEnabled = true
+        settings.hasPostponedAcceptingTermsOfUse = false
+        // Prompt display count configuration.
+        settings.termsOfUsePromptDisplayedCount = 3
+        every { settings.getTermsOfUseMaxDisplayCount() } returns 2
+
+        assertFalse(termsOfUseManager.shouldShowTermsOfUsePrompt())
     }
 }

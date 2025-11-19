@@ -8,7 +8,6 @@
 #include "WebBrowserPersistDocumentParent.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/Try.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/BrowserParent.h"
 #include "mozilla/dom/BrowsingContext.h"
@@ -762,7 +761,7 @@ nsresult PersistNodeFixup::FixupAnchor(nsINode* aNode) {
     nsresult rv = NS_NewURI(getter_AddRefs(newURI), oldCValue,
                             mParent->GetCharacterSet(), relativeURI);
     if (NS_SUCCEEDED(rv) && newURI) {
-      Unused << NS_MutateURI(newURI).SetUserPass(""_ns).Finalize(newURI);
+      (void)NS_MutateURI(newURI).SetUserPass(""_ns).Finalize(newURI);
       nsAutoCString uriSpec;
       rv = newURI->GetSpec(uriSpec);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -1260,9 +1259,8 @@ nsresult WebBrowserPersistLocalDocument::GetDocEncoder(
       do_createDocumentEncoder(PromiseFlatCString(aContentType).get());
   NS_ENSURE_TRUE(encoder, NS_ERROR_FAILURE);
 
-  nsresult rv =
-      encoder->NativeInit(mDocument, NS_ConvertASCIItoUTF16(aContentType),
-                          ConvertEncoderFlags(aEncoderFlags));
+  nsresult rv = encoder->Init(mDocument, NS_ConvertASCIItoUTF16(aContentType),
+                              ConvertEncoderFlags(aEncoderFlags));
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
 
   nsAutoCString charSet;

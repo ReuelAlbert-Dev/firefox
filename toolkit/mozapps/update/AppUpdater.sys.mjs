@@ -782,19 +782,19 @@ XPCOMUtils.defineLazyServiceGetter(
   AppUpdater.prototype,
   "aus",
   "@mozilla.org/updates/update-service;1",
-  "nsIApplicationUpdateService"
+  Ci.nsIApplicationUpdateService
 );
 XPCOMUtils.defineLazyServiceGetter(
   AppUpdater.prototype,
   "checker",
   "@mozilla.org/updates/update-checker;1",
-  "nsIUpdateChecker"
+  Ci.nsIUpdateChecker
 );
 XPCOMUtils.defineLazyServiceGetter(
   AppUpdater.prototype,
   "um",
   "@mozilla.org/updates/update-manager;1",
-  "nsIUpdateManager"
+  Ci.nsIUpdateManager
 );
 
 AppUpdater.STATUS = {
@@ -890,6 +890,7 @@ AppUpdater.STATUS = {
 /**
  * Logs a string to the error console. If enabled, also logs to the update
  * messages file.
+ *
  * @param   string
  *          The string to write to the error console.
  */

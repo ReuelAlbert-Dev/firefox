@@ -87,6 +87,7 @@ class PROT_ListManager {
 
   /**
    * Register a new table table
+   *
    * @param tableName - the name of the table
    * @param updateUrl - the url for updating the table
    * @param gethashUrl - the url for fetching hash completions
@@ -200,6 +201,7 @@ class PROT_ListManager {
 
   /**
    * Returns true if any table associated with the updateUrl requires updates.
+   *
    * @param updateUrl - the updateUrl
    */
   #updatesNeeded(updateUrl) {
@@ -469,6 +471,7 @@ class PROT_ListManager {
   /**
    * Method that fires the actual HTTP update request.
    * First we reset any tables that have disappeared.
+   *
    * @param tableData List of table data already in the database, in the form
    *        tablename;<chunk ranges>\n
    */
@@ -583,7 +586,10 @@ class PROT_ListManager {
         streamerMap.isPostRequest = false;
       } else if (provider === "google5") {
         // The request body for v5 is empty and it uses the query parameters to
-        // pass the table lists and their versions.
+        // pass the table lists and their versions. We need to encode the
+        // versions with URL encoding to avoid issues with special characters.
+        stateArray = stateArray.map(encodeURIComponent);
+
         streamerMap.requestPayload = "";
         streamerMap.requestQueryParameters = urlUtils.makeUpdateRequestV5(
           tableArray,
@@ -694,6 +700,7 @@ class PROT_ListManager {
 
   /**
    * Callback function if the update request succeeded.
+   *
    * @param waitForUpdate String The number of seconds that the client should
    *        wait before requesting again.
    */
@@ -788,6 +795,7 @@ class PROT_ListManager {
 
   /**
    * Callback function if the update request succeeded.
+   *
    * @param result String The error code of the failure
    */
   #updateError(table, updateUrl, result) {
@@ -807,6 +815,7 @@ class PROT_ListManager {
 
   /**
    * Callback function when the download failed
+   *
    * @param status String http status or an empty string if connection refused.
    */
   #downloadError(table, updateUrl, status) {

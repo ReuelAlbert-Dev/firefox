@@ -30,6 +30,11 @@ import mozilla.components.support.ktx.android.content.appName
 // Minimum time for dialog to settle before accepting user interactions.
 internal const val MAX_SUCCESSIVE_DIALOG_MILLIS_LIMIT: Int = 500 // 0.5 seconds
 
+internal val WALLET_SCHEMES: Array<String> = arrayOf(
+    "openid4vp", "mdoc", "mdoc-openid4vp", "haip",
+    "eudi-wallet", "eudi-openid4vp", "openid-credential-offer",
+)
+
 /**
  * This feature implements observer for handling redirects to external apps. The users are asked to
  * confirm their intention before leaving the app if in private session.  These include the Android
@@ -75,19 +80,34 @@ class AppLinksFeature(
     override fun start() {
         scope = store.flowScoped { flow ->
             flow.mapNotNull { state -> state.findTabOrCustomTabOrSelectedTab(sessionId) }
-                .distinctUntilChangedBy {
-                    it.content.appIntent
+                // monitor either appIntent OR url changes
+                .distinctUntilChangedBy { session ->
+                    val content = session.content
+                    content.appIntent to content.url
                 }
                 .collect { sessionState ->
-                    sessionState.content.appIntent?.let {
+                    val content = sessionState.content
+                    val intent = content.appIntent
+                    val url = content.url
+
+                    if (intent != null) {
                         handleAppIntent(
                             sessionState = sessionState,
-                            url = it.url,
-                            appIntent = it.appIntent,
-                            fallbackUrl = it.fallbackUrl,
-                            appName = it.appName,
+                            url = intent.url,
+                            appIntent = intent.appIntent,
+                            fallbackUrl = intent.fallbackUrl,
+                            appName = intent.appName,
                         )
+
+                        // Clear the consumed app intent so we don't re-handle it
                         store.dispatch(ContentAction.ConsumeAppIntentAction(sessionState.id))
+                    } else {
+                        // No appIntent present, but url changed, remove the external application prompt
+                        findPreviousDialogFragment()?.let {
+                            if (it.triggerUrl != url) {
+                                fragmentManager?.beginTransaction()?.remove(it)?.commit()
+                            }
+                        }
                     }
                 }
         }
@@ -112,10 +132,11 @@ class AppLinksFeature(
         if (appIntent == null) return
 
         val isPrivate = sessionState.content.private
+        val isWallet = isWalletLink(url, appIntent)
         val isAuthenticationFlow =
             AppLinksInterceptor.isAuthentication(sessionState, appIntent.component?.packageName)
 
-        if (shouldBypassPrompt(isPrivate, isAuthenticationFlow, fragmentManager)) {
+        if (shouldBypassPrompt(isPrivate, isWallet, isAuthenticationFlow, fragmentManager)) {
             openApp(appIntent)
             return
         }
@@ -131,6 +152,7 @@ class AppLinksFeature(
             appIntent = appIntent,
             appName = appName,
             isPrivate = isPrivate,
+            isWallet = isWallet,
             fragmentManager = fragmentManager,
         )
     }
@@ -138,10 +160,11 @@ class AppLinksFeature(
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal fun shouldBypassPrompt(
         isPrivate: Boolean,
+        isWallet: Boolean,
         isAuthenticationFlow: Boolean,
         fragmentManager: FragmentManager?,
     ): Boolean {
-        val shouldShowPrompt = isPrivate || shouldPrompt()
+        val shouldShowPrompt = isPrivate || isWallet || shouldPrompt()
         return fragmentManager == null || !shouldShowPrompt || isAuthenticationFlow
     }
 
@@ -175,6 +198,7 @@ class AppLinksFeature(
         )
     }
 
+    @Suppress("LongParameterList")
     private fun showRedirectDialog(
         sessionState: SessionState,
         url: String,
@@ -182,13 +206,20 @@ class AppLinksFeature(
         appIntent: Intent,
         appName: String?,
         isPrivate: Boolean,
+        isWallet: Boolean,
         fragmentManager: FragmentManager?,
     ) {
         if (fragmentManager == null) {
             return
         }
 
-        getOrCreateDialog(isPrivate, url, appName).apply {
+        getOrCreateDialog(
+            isPrivate = isPrivate,
+            isWallet = isWallet,
+            triggerUrl = sessionState.content.url,
+            url = url,
+            targetAppName = appName,
+        ).apply {
             onConfirmRedirect = { isCheckboxTicked ->
                 if (isCheckboxTicked) {
                     alwaysOpenCheckboxAction?.invoke()
@@ -204,6 +235,8 @@ class AppLinksFeature(
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal fun getOrCreateDialog(
         isPrivate: Boolean,
+        isWallet: Boolean,
+        triggerUrl: String?,
         url: String,
         targetAppName: String?,
     ): RedirectDialogFragment {
@@ -241,8 +274,9 @@ class AppLinksFeature(
         return SimpleRedirectDialogFragment.newInstance(
             dialogTitleString = dialogTitle,
             dialogMessageString = dialogMessage,
-            showCheckbox = if (isPrivate) false else alwaysOpenCheckboxAction != null,
+            showCheckbox = if (isPrivate || isWallet) false else alwaysOpenCheckboxAction != null,
             maxSuccessiveDialogMillisLimit = MAX_SUCCESSIVE_DIALOG_MILLIS_LIMIT,
+            triggerUrl = triggerUrl,
         )
     }
 
@@ -257,5 +291,13 @@ class AppLinksFeature(
 
     private fun findPreviousDialogFragment(): RedirectDialogFragment? {
         return fragmentManager?.findFragmentByTag(FRAGMENT_TAG) as? RedirectDialogFragment
+    }
+
+    @VisibleForTesting
+    internal fun isWalletLink(url: String, appIntent: Intent?): Boolean {
+        val urlScheme = url.toUri().scheme?.lowercase()
+        val intentScheme = appIntent?.data?.scheme?.lowercase()
+        return (urlScheme != null && WALLET_SCHEMES.contains(urlScheme)) ||
+            (intentScheme != null && WALLET_SCHEMES.contains(intentScheme))
     }
 }

@@ -34,7 +34,6 @@
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/BrowserBridgeParent.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowserSessionStore.h"
@@ -98,7 +97,6 @@
 #include "nsQueryActor.h"
 #include "nsSHistory.h"
 #include "nsVariant.h"
-#include "nsViewManager.h"
 #ifndef XP_WIN
 #  include "nsJARProtocolHandler.h"
 #endif
@@ -463,7 +461,7 @@ already_AddRefed<nsPIDOMWindowOuter> BrowserParent::GetParentWindowOuter() {
 already_AddRefed<nsIWidget> BrowserParent::GetTopLevelWidget() {
   if (RefPtr<Element> element = mFrameElement) {
     if (PresShell* presShell = element->OwnerDoc()->GetPresShell()) {
-      return do_AddRef(presShell->GetViewManager()->GetRootWidget());
+      return do_AddRef(presShell->GetRootWidget());
     }
   }
   return nullptr;
@@ -638,7 +636,7 @@ void BrowserParent::SetOwnerElement(Element* aElement) {
       newWindowHandle =
           reinterpret_cast<uintptr_t>(widget->GetNativeData(NS_NATIVE_WINDOW));
     }
-    Unused << SendUpdateNativeWindowHandle(newWindowHandle);
+    (void)SendUpdateNativeWindowHandle(newWindowHandle);
     a11y::DocAccessibleParent* doc = GetTopLevelDocAccessible();
     if (doc) {
       HWND hWnd = reinterpret_cast<HWND>(doc->GetEmulatedWindowHandle());
@@ -712,7 +710,7 @@ void BrowserParent::RemoveWindowListeners() {
 void BrowserParent::Deactivated() {
   if (mShowingTooltip) {
     // Reuse the normal tooltip hiding method.
-    mozilla::Unused << RecvHideTooltip();
+    (void)RecvHideTooltip();
   }
   UnlockNativePointer();
   UnsetTopLevelWebFocus(this);
@@ -806,7 +804,7 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
   nsTArray<PContentPermissionRequestParent*> parentArray =
       nsContentPermissionUtils::GetContentPermissionRequestParentById(mTabId);
   for (auto& permissionRequestParent : parentArray) {
-    Unused << PContentPermissionRequestParent::Send__delete__(
+    (void)PContentPermissionRequestParent::Send__delete__(
         permissionRequestParent);
   }
 
@@ -899,8 +897,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvMoveFocus(
                    this, aForward, aForDocumentNavigation));
   BrowserBridgeParent* bridgeParent = GetBrowserBridgeParent();
   if (bridgeParent) {
-    mozilla::Unused << bridgeParent->SendMoveFocus(aForward,
-                                                   aForDocumentNavigation);
+    (void)bridgeParent->SendMoveFocus(aForward, aForDocumentNavigation);
     return IPC_OK();
   }
 
@@ -981,7 +978,7 @@ void BrowserParent::LoadURL(nsDocShellLoadState* aLoadState) {
     return;
   }
 
-  Unused << SendLoadURL(WrapNotNull(aLoadState), GetShowInfo());
+  (void)SendLoadURL(WrapNotNull(aLoadState), GetShowInfo());
 }
 
 void BrowserParent::ResumeLoad(uint64_t aPendingSwitchID) {
@@ -991,7 +988,7 @@ void BrowserParent::ResumeLoad(uint64_t aPendingSwitchID) {
     return;
   }
 
-  Unused << SendResumeLoad(aPendingSwitchID, GetShowInfo());
+  (void)SendResumeLoad(aPendingSwitchID, GetShowInfo());
 }
 
 void BrowserParent::InitRendering() {
@@ -1013,20 +1010,20 @@ void BrowserParent::InitRendering() {
 
   TextureFactoryIdentifier textureFactoryIdentifier;
   mRemoteLayerTreeOwner.GetTextureFactoryIdentifier(&textureFactoryIdentifier);
-  Unused << SendInitRendering(textureFactoryIdentifier, layersId,
-                              mRemoteLayerTreeOwner.GetCompositorOptions(),
-                              mRemoteLayerTreeOwner.IsLayersConnected());
+  (void)SendInitRendering(textureFactoryIdentifier, layersId,
+                          mRemoteLayerTreeOwner.GetCompositorOptions(),
+                          mRemoteLayerTreeOwner.IsLayersConnected());
 
   RefPtr<nsIWidget> widget = GetTopLevelWidget();
   if (widget) {
-    Unused << SendSafeAreaInsetsChanged(widget->GetSafeAreaInsets());
+    (void)SendSafeAreaInsetsChanged(widget->GetSafeAreaInsets());
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
   MOZ_ASSERT(widget);
 
   if (GetBrowsingContext()->IsTopContent()) {
-    Unused << SendDynamicToolbarMaxHeightChanged(
+    (void)SendDynamicToolbarMaxHeightChanged(
         widget->GetDynamicToolbarMaxHeight());
   }
 #endif
@@ -1056,7 +1053,7 @@ bool BrowserParent::Show(const OwnerShowInfo& aOwnerInfo) {
   }
 
   mSizeMode = aOwnerInfo.sizeMode();
-  Unused << SendShow(GetShowInfo(), aOwnerInfo);
+  (void)SendShow(GetShowInfo(), aOwnerInfo);
   return true;
 }
 
@@ -1129,7 +1126,7 @@ void BrowserParent::UpdateDimensions(const LayoutDeviceIntRect& rect,
 
   LayoutDeviceIntPoint clientOffset = GetClientOffset();
   LayoutDeviceIntPoint chromeOffset = !GetBrowserBridgeParent()
-                                          ? -GetChildProcessOffset()
+                                          ? GetChildProcessOffset()
                                           : LayoutDeviceIntPoint();
 
   if (!mUpdatedDimensions || mDimensions != size || !mRect.IsEqualEdges(rect) ||
@@ -1140,7 +1137,7 @@ void BrowserParent::UpdateDimensions(const LayoutDeviceIntRect& rect,
     mClientOffset = clientOffset;
     mChromeOffset = chromeOffset;
 
-    Unused << SendUpdateDimensions(GetDimensionInfo());
+    (void)SendUpdateDimensions(GetDimensionInfo());
     UpdateNativePointerLockCenter(widget);
   }
 }
@@ -1163,32 +1160,32 @@ void BrowserParent::UpdateNativePointerLockCenter(nsIWidget* aWidget) {
 void BrowserParent::SizeModeChanged(const nsSizeMode& aSizeMode) {
   if (!mIsDestroyed && aSizeMode != mSizeMode) {
     mSizeMode = aSizeMode;
-    Unused << SendSizeModeChanged(aSizeMode);
+    (void)SendSizeModeChanged(aSizeMode);
   }
 }
 
 void BrowserParent::DynamicToolbarMaxHeightChanged(ScreenIntCoord aHeight) {
   if (!mIsDestroyed) {
-    Unused << SendDynamicToolbarMaxHeightChanged(aHeight);
+    (void)SendDynamicToolbarMaxHeightChanged(aHeight);
   }
 }
 
 void BrowserParent::DynamicToolbarOffsetChanged(ScreenIntCoord aOffset) {
   if (!mIsDestroyed) {
-    Unused << SendDynamicToolbarOffsetChanged(aOffset);
+    (void)SendDynamicToolbarOffsetChanged(aOffset);
   }
 }
 
 #ifdef MOZ_WIDGET_ANDROID
 void BrowserParent::KeyboardHeightChanged(ScreenIntCoord aHeight) {
   if (!mIsDestroyed) {
-    Unused << SendKeyboardHeightChanged(aHeight);
+    (void)SendKeyboardHeightChanged(aHeight);
   }
 }
 
 void BrowserParent::AndroidPipModeChanged(bool aPipMode) {
   if (!mIsDestroyed) {
-    Unused << SendAndroidPipModeChanged(aPipMode);
+    (void)SendAndroidPipModeChanged(aPipMode);
   }
 }
 #endif
@@ -1201,7 +1198,7 @@ void BrowserParent::HandleAccessKey(const WidgetKeyboardEvent& aEvent,
     // Therefore, we should use local copy to send it.
     WidgetKeyboardEvent localEvent(aEvent);
     RequestingAccessKeyEventData::Set(localEvent);
-    Unused << SendHandleAccessKey(localEvent, aCharCodes);
+    (void)SendHandleAccessKey(localEvent, aCharCodes);
   }
 }
 
@@ -1209,7 +1206,7 @@ void BrowserParent::Activate(uint64_t aActionId) {
   LOGBROWSERFOCUS(("Activate %p actionid: %" PRIu64, this, aActionId));
   if (!mIsDestroyed) {
     SetTopLevelWebFocus(this);  // Intentionally inside "if"
-    Unused << SendActivate(aActionId);
+    (void)SendActivate(aActionId);
   }
 }
 
@@ -1219,7 +1216,7 @@ void BrowserParent::Deactivate(bool aWindowLowering, uint64_t aActionId) {
     UnsetTopLevelWebFocus(this);  // Intentionally outside the next "if"
   }
   if (!mIsDestroyed) {
-    Unused << SendDeactivate(aActionId);
+    (void)SendDeactivate(aActionId);
   }
 }
 
@@ -2596,7 +2593,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestFocus(
     const bool& aCanRaise, const CallerType aCallerType) {
   LOGBROWSERFOCUS(("RecvRequestFocus %p, aCanRaise: %d", this, aCanRaise));
   if (BrowserBridgeParent* bridgeParent = GetBrowserBridgeParent()) {
-    mozilla::Unused << bridgeParent->SendRequestFocus(aCanRaise, aCallerType);
+    (void)bridgeParent->SendRequestFocus(aCanRaise, aCallerType);
     return IPC_OK();
   }
 
@@ -2720,7 +2717,7 @@ BrowserParent::GetChildToParentConversionMatrix() {
   if (mChildToParentConversionMatrix) {
     return *mChildToParentConversionMatrix;
   }
-  LayoutDevicePoint offset(-GetChildProcessOffset());
+  LayoutDevicePoint offset(GetChildProcessOffset());
   return LayoutDeviceToLayoutDeviceMatrix4x4::Translation(offset);
 }
 
@@ -2738,41 +2735,26 @@ void BrowserParent::SetChildToParentConversionMatrix(
   if (mIsDestroyed) {
     return;
   }
-  mozilla::Unused << SendChildToParentMatrix(ToUnknownMatrix(aMatrix),
-                                             aRemoteDocumentRect);
+  (void)SendChildToParentMatrix(ToUnknownMatrix(aMatrix), aRemoteDocumentRect);
 }
 
 LayoutDeviceIntPoint BrowserParent::GetChildProcessOffset() {
   // The "toplevel widget" in child processes is always at position
   // 0,0.  Map the event coordinates to match that.
-
-  LayoutDeviceIntPoint offset(0, 0);
   RefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
   if (!frameLoader) {
-    return offset;
+    return {};
   }
   nsIFrame* targetFrame = frameLoader->GetPrimaryFrameOfOwningContent();
   if (!targetFrame) {
-    return offset;
+    return {};
   }
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
-    return offset;
+    return {};
   }
 
-  nsPresContext* presContext = targetFrame->PresContext();
-  nsIFrame* rootFrame = presContext->PresShell()->GetRootFrame();
-  nsView* rootView = rootFrame ? rootFrame->GetView() : nullptr;
-  if (!rootView) {
-    return offset;
-  }
-
-  // Note that we don't want to take into account transforms here:
-#if 0
-  nsPoint pt(0, 0);
-  nsLayoutUtils::TransformPoint(targetFrame, rootFrame, pt);
-#endif
   // In practice, when transforms are applied to this frameLoader, we currently
   // get the wrong results whether we take transforms into account here or not.
   // But applying transforms here gives us the wrong results in all
@@ -2784,15 +2766,13 @@ LayoutDeviceIntPoint BrowserParent::GetChildProcessOffset() {
   // What we actually need to do is apply the transforms to the coordinates of
   // any events we send to the child, and reverse them for any screen
   // coordinates that we retrieve from the child.
-
-  // TODO: Once we take into account transforms here, set viewportType
-  // correctly. For now we use Visual as this means we don't apply
-  // the layout-to-visual transform in TranslateViewToWidget().
-  ViewportType viewportType = ViewportType::Visual;
-
-  nsPoint pt = targetFrame->GetOffsetTo(rootFrame);
-  return -nsLayoutUtils::TranslateViewToWidget(presContext, rootView, pt,
-                                               viewportType, widget);
+  auto point = nsLayoutUtils::FrameToWidgetOffset(targetFrame, widget);
+  if (!point) {
+    return {};
+  }
+  nsPresContext* pc = targetFrame->PresContext();
+  return LayoutDeviceIntPoint::FromAppUnitsRounded(*point,
+                                                   pc->AppUnitsPerDevPixel());
 }
 
 LayoutDeviceIntPoint BrowserParent::GetClientOffset() {
@@ -2811,7 +2791,7 @@ void BrowserParent::StopIMEStateManagement() {
   if (mIsDestroyed) {
     return;
   }
-  Unused << SendStopIMEStateManagement();
+  (void)SendStopIMEStateManagement();
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvReplyKeyEvent(
@@ -2980,12 +2960,12 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStateChange(
     }
 
     if (nsCOMPtr<nsIBrowser> browser = GetBrowser()) {
-      Unused << browser->SetIsNavigating(aStateChangeData->isNavigating());
-      Unused << browser->SetMayEnableCharacterEncodingMenu(
+      (void)browser->SetIsNavigating(aStateChangeData->isNavigating());
+      (void)browser->SetMayEnableCharacterEncodingMenu(
           aStateChangeData->mayEnableCharacterEncodingMenu());
-      Unused << browser->UpdateForStateChange(aStateChangeData->charset(),
-                                              aStateChangeData->documentURI(),
-                                              aStateChangeData->contentType());
+      (void)browser->UpdateForStateChange(aStateChangeData->charset(),
+                                          aStateChangeData->documentURI(),
+                                          aStateChangeData->contentType());
     }
   }
 
@@ -3035,7 +3015,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
 
   nsCOMPtr<nsIBrowser> browser = GetBrowser();
   if (!mozilla::SessionHistoryInParent() && browser) {
-    Unused << browser->UpdateWebNavigationForLocationChange(
+    (void)browser->UpdateWebNavigationForLocationChange(
         aCanGoBack, aCanGoBackIgnoringUserInteraction, aCanGoForward);
   }
 
@@ -3047,8 +3027,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
     }
 
     if (browser) {
-      Unused << browser->SetIsNavigating(aLocationChangeData->isNavigating());
-      Unused << browser->UpdateForLocationChange(
+      (void)browser->SetIsNavigating(aLocationChangeData->isNavigating());
+      (void)browser->UpdateForLocationChange(
           aLocation, aLocationChangeData->charset(),
           aLocationChangeData->mayEnableCharacterEncodingMenu(),
           aLocationChangeData->documentURI(), aLocationChangeData->title(),
@@ -3229,8 +3209,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvIntrinsicSizeOrRatioChanged(
     return IPC_OK();
   }
 
-  Unused << bridge->SendIntrinsicSizeOrRatioChanged(aIntrinsicSize,
-                                                    aIntrinsicRatio);
+  (void)bridge->SendIntrinsicSizeOrRatioChanged(aIntrinsicSize,
+                                                aIntrinsicRatio);
 
   return IPC_OK();
 }
@@ -3242,7 +3222,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvImageLoadComplete(
     return IPC_OK();
   }
 
-  Unused << bridge->SendImageLoadComplete(aResult);
+  (void)bridge->SendImageLoadComplete(aResult);
 
   return IPC_OK();
 }
@@ -3671,7 +3651,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvRespondStartSwipeEvent(
   return IPC_OK();
 }
 
-bool BrowserParent::GetDocShellIsActive() {
+bool BrowserParent::GetDocShellIsActive() const {
   return mBrowsingContext && mBrowsingContext->IsActive();
 }
 
@@ -3698,7 +3678,7 @@ void BrowserParent::SetRenderLayers(bool aEnabled) {
 }
 
 void BrowserParent::SetRenderLayersInternal(bool aEnabled) {
-  Unused << SendRenderLayers(aEnabled);
+  (void)SendRenderLayers(aEnabled);
 
   // Ask the child to repaint/unload layers using the PHangMonitor
   // channel/thread (which may be less congested).
@@ -3727,7 +3707,7 @@ void BrowserParent::PreserveLayers(bool aPreserveLayers) {
     return;
   }
   mIsPreservingLayers = aPreserveLayers;
-  Unused << SendPreserveLayers(aPreserveLayers);
+  (void)SendPreserveLayers(aPreserveLayers);
 }
 
 void BrowserParent::NotifyResolutionChanged() {
@@ -3742,8 +3722,8 @@ void BrowserParent::NotifyResolutionChanged() {
   // fails to cache the values, then mDefaultScale.scale might be invalid.
   // We don't want to send that value to content. Just send -1 for it too in
   // that case.
-  Unused << SendUIResolutionChanged(mDPI, mRounding,
-                                    mDPI < 0 ? -1.0 : mDefaultScale.scale);
+  (void)SendUIResolutionChanged(mDPI, mRounding,
+                                mDPI < 0 ? -1.0 : mDefaultScale.scale);
 }
 
 bool BrowserParent::CanCancelContentJS(
@@ -3856,11 +3836,11 @@ void BrowserParent::SuppressDisplayport(bool aEnabled) {
   MOZ_ASSERT(mActiveSupressDisplayportCount >= 0);
 #endif
 
-  Unused << SendSuppressDisplayport(aEnabled);
+  (void)SendSuppressDisplayport(aEnabled);
 }
 
 void BrowserParent::NavigateByKey(bool aForward, bool aForDocumentNavigation) {
-  Unused << SendNavigateByKey(aForward, aForDocumentNavigation);
+  (void)SendNavigateByKey(aForward, aForDocumentNavigation);
 }
 
 void BrowserParent::LayerTreeUpdate(bool aActive) {
@@ -3945,8 +3925,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvInvokeDragSession(
     const MaybeDiscarded<WindowContext>& aSourceTopWindowContext) {
   PresShell* presShell = mFrameElement->OwnerDoc()->GetPresShell();
   if (!presShell) {
-    Unused << SendEndDragSession(true, true, LayoutDeviceIntPoint(), 0,
-                                 nsIDragService::DRAGDROP_ACTION_NONE);
+    (void)SendEndDragSession(true, true, LayoutDeviceIntPoint(), 0,
+                             nsIDragService::DRAGDROP_ACTION_NONE);
     // Continue sending input events with input priority when stopping the dnd
     // session.
     Manager()->SetInputPriorityEventEnabled(true);
@@ -4040,9 +4020,8 @@ void BrowserParent::MaybeInvokeDragSession(EventMessage aMessage) {
       session->GetSourceTopWindowContext(getter_AddRefs(sourceTopWC));
       RefPtr<nsIPrincipal> principal;
       session->GetTriggeringPrincipal(getter_AddRefs(principal));
-      mozilla::Unused << SendInvokeChildDragSession(
-          sourceWC, sourceTopWC, principal, std::move(ipcTransferables),
-          action);
+      (void)SendInvokeChildDragSession(sourceWC, sourceTopWC, principal,
+                                       std::move(ipcTransferables), action);
     }
     return;
   }
@@ -4054,8 +4033,8 @@ void BrowserParent::MaybeInvokeDragSession(EventMessage aMessage) {
 
     RefPtr<nsIPrincipal> principal;
     session->GetTriggeringPrincipal(getter_AddRefs(principal));
-    mozilla::Unused << SendUpdateDragSession(
-        principal, std::move(ipcTransferables), aMessage);
+    (void)SendUpdateDragSession(principal, std::move(ipcTransferables),
+                                aMessage);
   }
 }
 
@@ -4148,8 +4127,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(
   }
   nsCOMPtr<IHistory> history = components::History::Service();
   if (history) {
-    Unused << history->VisitURI(widget, aURI, aLastVisitedURI, aFlags,
-                                aBrowserId);
+    (void)history->VisitURI(widget, aURI, aLastVisitedURI, aFlags, aBrowserId);
   }
   return IPC_OK();
 }
@@ -4226,8 +4204,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvMaybeFireEmbedderLoadEvents(
     return IPC_OK();
   }
 
-  Unused << bridge->SendMaybeFireEmbedderLoadEvents(
-      aFireEventAtEmbeddingElement);
+  (void)bridge->SendMaybeFireEmbedderLoadEvents(aFireEventAtEmbeddingElement);
   return IPC_OK();
 }
 
@@ -4240,8 +4217,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvScrollRectIntoView(
     return IPC_OK();
   }
 
-  Unused << bridge->SendScrollRectIntoView(aRect, aVertical, aHorizontal,
-                                           aScrollFlags, aAppUnitsPerDevPixel);
+  (void)bridge->SendScrollRectIntoView(aRect, aVertical, aHorizontal,
+                                       aScrollFlags, aAppUnitsPerDevPixel);
   return IPC_OK();
 }
 

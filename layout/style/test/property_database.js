@@ -1013,27 +1013,19 @@ var basicShapeUnbalancedValues = [
   "inset(1px 2px 3px 4px round 5px / 6px",
 ];
 
-var basicShapeXywhRectValues = [];
-if (IsCSSPropertyPrefEnabled("layout.css.basic-shape-xywh.enabled")) {
-  basicShapeXywhRectValues.push(
-    "xywh(1px 2% 3px 4em)",
-    "xywh(1px 2% 3px 4em round 0px)",
-    "xywh(1px 2% 3px 4em round 0px 1%)",
-    "xywh(1px 2% 3px 4em round 0px 1% 2px)",
-    "xywh(1px 2% 3px 4em round 0px 1% 2px 3em)"
-  );
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.basic-shape-rect.enabled")) {
-  basicShapeXywhRectValues.push(
-    "rect(auto auto auto auto)",
-    "rect(1px 2% auto 4em)",
-    "rect(1px 2% auto 4em round 0px)",
-    "rect(1px 2% auto 4em round 0px 1%)",
-    "rect(1px 2% auto 4em round 0px 1% 2px)",
-    "rect(1px 2% auto 4em round 0px 1% 2px 3em)"
-  );
-}
+var basicShapeXywhRectValues = [
+  "xywh(1px 2% 3px 4em)",
+  "xywh(1px 2% 3px 4em round 0px)",
+  "xywh(1px 2% 3px 4em round 0px 1%)",
+  "xywh(1px 2% 3px 4em round 0px 1% 2px)",
+  "xywh(1px 2% 3px 4em round 0px 1% 2px 3em)",
+  "rect(auto auto auto auto)",
+  "rect(1px 2% auto 4em)",
+  "rect(1px 2% auto 4em round 0px)",
+  "rect(1px 2% auto 4em round 0px 1%)",
+  "rect(1px 2% auto 4em round 0px 1% 2px)",
+  "rect(1px 2% auto 4em round 0px 1% 2px 3em)",
+];
 
 var basicShapeShapeValues = [];
 var basicShapeShapeValuesWithFillRule = [];
@@ -1048,8 +1040,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.basic-shape-shape.enabled")) {
     "shape(from 10px 10px, move by 10px 5px, line by 20px 40%, close)",
     "shape(from 10px 10px, hline by 10px, vline to 5rem)",
     "shape(from 10px 10px, vline by 5%, hline to 1vw)",
-    "shape(from 10px 10px, curve to 50px 20px via 10rem 1%)",
-    "shape(from 10px 10px, smooth to 50px 20px via 10rem 1%)",
+    "shape(from 10px 10px, curve to 50px 20px with 10rem 1%)",
+    "shape(from 10px 10px, smooth to 50px 20px with 10rem 1%)",
     "shape(from 10% 1rem, arc to 50px 1pt of 20% cw large rotate 25deg)"
   );
 
@@ -5446,6 +5438,7 @@ var gCSSProperties = {
     domProp: "counterIncrement",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["none"],
     other_values: [
       "foo 1",
@@ -5470,6 +5463,7 @@ var gCSSProperties = {
     domProp: "counterReset",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["none"],
     other_values: [
       "foo 1",
@@ -5493,6 +5487,7 @@ var gCSSProperties = {
     domProp: "counterSet",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["none"],
     other_values: [
       "foo 1",
@@ -5516,6 +5511,7 @@ var gCSSProperties = {
     domProp: "cursor",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["auto"],
     other_values: [
       "crosshair",
@@ -7089,13 +7085,11 @@ var gCSSProperties = {
     initial_values: [
       "none",
       "medium",
-      "thin",
-      // XXX Should be invert, but currently currentcolor.
-      //"invert", "none medium invert"
       "currentColor",
       "none medium currentcolor",
     ],
     other_values: [
+      "thin",
       "solid",
       "medium solid",
       "green solid",
@@ -7538,6 +7532,7 @@ var gCSSProperties = {
     domProp: "quotes",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["auto"],
     other_values: [
       "none",
@@ -8265,6 +8260,7 @@ var gCSSProperties = {
     domProp: "textEmphasisColor",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     prerequisites: { color: "black" },
     initial_values: ["currentColor", "black", "rgb(0,0,0)"],
     other_values: ["red", "rgba(255,255,255,0.5)", "transparent"],
@@ -8283,6 +8279,7 @@ var gCSSProperties = {
     domProp: "textEmphasisPosition",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["auto"],
     other_values: [
       "over right",
@@ -8314,6 +8311,7 @@ var gCSSProperties = {
     domProp: "textEmphasisStyle",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["none"],
     other_values: [
       "filled",
@@ -8433,6 +8431,7 @@ var gCSSProperties = {
     type: CSS_TYPE_LONGHAND,
     applies_to_first_letter: true,
     applies_to_first_line: true,
+    applies_to_marker: true,
     applies_to_placeholder: true,
     applies_to_cue: true,
     prerequisites: { color: "blue" },
@@ -9052,6 +9051,7 @@ var gCSSProperties = {
     domProp: "hyphens",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["manual"],
     other_values: ["none", "auto"],
     invalid_values: [],
@@ -10313,6 +10313,9 @@ var gCSSProperties = {
       "calc(3em / 100% * 3em)",
       "calc(3em * (3em / 100%))",
       "calc(3em * 3em / 100%)",
+      "anchor-size()",
+      "anchor-size(--a width)",
+      "anchor-size(--a width, 10px)",
     ],
   },
   "flex-direction": {
@@ -10452,6 +10455,7 @@ var gCSSProperties = {
     domProp: "MozHyphens",
     inherited: true,
     type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+    applies_to_marker: true,
     alias_for: "hyphens",
     subproperties: ["hyphens"],
   },
@@ -10475,6 +10479,7 @@ var gCSSProperties = {
     domProp: "textOrientation",
     inherited: true,
     type: CSS_TYPE_LONGHAND,
+    applies_to_marker: true,
     initial_values: ["mixed"],
     other_values: [
       "upright",
@@ -13136,48 +13141,6 @@ if (IsCSSPropertyPrefEnabled("layout.css.scroll-anchoring.enabled")) {
   };
 }
 
-if (IsCSSPropertyPrefEnabled("layout.css.overflow-clip-box.enabled")) {
-  gCSSProperties["overflow-clip-box-block"] = {
-    domProp: "overflowClipBoxBlock",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    applies_to_placeholder: true,
-    initial_values: ["padding-box"],
-    other_values: ["content-box"],
-    invalid_values: ["auto", "border-box", "0", "padding-box padding-box"],
-  };
-  gCSSProperties["overflow-clip-box-inline"] = {
-    domProp: "overflowClipBoxInline",
-    inherited: false,
-    type: CSS_TYPE_LONGHAND,
-    applies_to_placeholder: true,
-    initial_values: ["padding-box"],
-    other_values: ["content-box"],
-    invalid_values: ["none", "border-box", "0", "content-box content-box"],
-  };
-  gCSSProperties["overflow-clip-box"] = {
-    domProp: "overflowClipBox",
-    inherited: false,
-    type: CSS_TYPE_TRUE_SHORTHAND,
-    subproperties: ["overflow-clip-box-block", "overflow-clip-box-inline"],
-    initial_values: ["padding-box"],
-    other_values: [
-      "content-box",
-      "padding-box content-box",
-      "content-box padding-box",
-      "content-box content-box",
-    ],
-    invalid_values: [
-      "none",
-      "auto",
-      "content-box none",
-      "border-box",
-      "0",
-      "content-box, content-box",
-    ],
-  };
-}
-
 gCSSProperties["overscroll-behavior-x"] = {
   domProp: "overscrollBehaviorX",
   inherited: false,
@@ -13380,9 +13343,16 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
     domProp: "positionAnchor",
     inherited: false,
     type: CSS_TYPE_LONGHAND,
-    initial_values: ["auto"],
-    other_values: ["--foo"],
-    invalid_values: ["none", "--foo, auto", "auto, --bar", "foo"],
+    initial_values: ["none"],
+    other_values: ["auto", "--foo"],
+    invalid_values: [
+      "normal",
+      "none, auto",
+      "--foo none",
+      "--foo, auto",
+      "auto, --bar",
+      "foo",
+    ],
   };
 
   gCSSProperties["position-area"] = {
@@ -13401,10 +13371,10 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "x-end",
       "span-x-start",
       "span-x-end",
-      "x-self-start",
-      "x-self-end",
-      "span-x-self-start",
-      "span-x-self-end",
+      "self-x-start",
+      "self-x-end",
+      "span-self-x-start",
+      "span-self-x-end",
       "top",
       "bottom",
       "span-top",
@@ -13413,10 +13383,10 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "y-end",
       "span-y-start",
       "span-y-end",
-      "y-self-start",
-      "y-self-end",
-      "span-y-self-start",
-      "span-y-self-end",
+      "self-y-start",
+      "self-y-end",
+      "span-self-y-start",
+      "span-self-y-end",
       "block-start",
       "block-end",
       "span-block-start",
@@ -13472,6 +13442,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "--foo",
       "flip-block",
       "flip-inline",
+      "flip-x",
+      "flip-y",
       "flip-start",
       "left",
       "span-y-start",
@@ -13521,6 +13493,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "--foo",
       "flip-block",
       "flip-inline",
+      "flip-x",
+      "flip-y",
       "flip-start",
       "left",
       "span-y-start",
@@ -13531,6 +13505,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "most-width --foo",
       "most-width flip-block",
       "most-width flip-inline",
+      "most-width flip-x",
+      "most-width flip-y",
       "most-width flip-start",
       "most-width left",
       "most-width span-y-start",
@@ -13541,6 +13517,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "most-height --foo",
       "most-height flip-block",
       "most-height flip-inline",
+      "most-height flip-x",
+      "most-height flip-y",
       "most-height flip-start",
       "most-height left",
       "most-height span-y-start",
@@ -13551,6 +13529,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "most-block-size --foo",
       "most-block-size flip-block",
       "most-block-size flip-inline",
+      "most-block-size flip-x",
+      "most-block-size flip-y",
       "most-block-size flip-start",
       "most-block-size left",
       "most-block-size span-y-start",
@@ -13561,6 +13541,8 @@ if (IsCSSPropertyPrefEnabled("layout.css.anchor-positioning.enabled")) {
       "most-inline-size --foo",
       "most-inline-size flip-block",
       "most-inline-size flip-inline",
+      "most-inline-size flip-x",
+      "most-inline-size flip-y",
       "most-inline-size flip-start",
       "most-inline-size left",
       "most-inline-size span-y-start",
@@ -14213,9 +14195,9 @@ if (IsCSSPropertyPrefEnabled("layout.css.text-autospace.enabled")) {
       applies_to_first_letter: true,
       applies_to_first_line: true,
       applies_to_placeholder: true,
-      initial_values: ["normal"],
+      initial_values: ["no-autospace"],
       other_values: [
-        "no-autospace",
+        "normal",
         "auto",
         "ideograph-alpha",
         "ideograph-numeric",
@@ -14470,19 +14452,17 @@ if (IsCSSPropertyPrefEnabled("dom.viewTransitions.enabled")) {
   });
 }
 
-if (IsCSSPropertyPrefEnabled("layout.css.text-decoration-trim.enabled")) {
+if (IsCSSPropertyPrefEnabled("layout.css.text-decoration-inset.enabled")) {
   Object.assign(gCSSProperties, {
-    "text-decoration-trim": {
-      domProp: "textDecorationTrim",
+    "text-decoration-inset": {
+      domProp: "textDecorationInset",
       inherited: false,
       type: CSS_TYPE_LONGHAND,
       applies_to_first_letter: true,
       applies_to_first_line: true,
       applies_to_placeholder: true,
-      applies_to_cue: true,
       initial_values: ["0"],
       other_values: [
-        "0",
         "-14px",
         "25px",
         "100em",
@@ -14495,7 +14475,7 @@ if (IsCSSPropertyPrefEnabled("layout.css.text-decoration-trim.enabled")) {
         "-1mm -2px",
         "calc(-1mm + 2em)",
         "2px calc(2px - 1em)",
-        "calc(0) 0",
+        "calc(1px) 0",
       ],
       invalid_values: [
         "13",

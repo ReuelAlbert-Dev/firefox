@@ -9,9 +9,7 @@
 
 #include "ErrorList.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/Maybe.h"
 #include "mozilla/RangedPtr.h"
-#include "mozilla/RefPtr.h"
 #include "mozilla/Result.h"
 #include "mozilla/ipc/SharedMemoryMapping.h"
 

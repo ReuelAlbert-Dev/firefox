@@ -13,13 +13,14 @@
 #include "base/basictypes.h"
 #include "base/process.h"
 #include "mozilla/EventTargetAndLockCapability.h"
+#include "mozilla/Mutex.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
-#include "mozilla/WeakPtr.h"
 #include "chrome/common/ipc_message.h"
 
+#include "nsISerialEventTarget.h"
+
 #ifdef XP_WIN
-#  include <string>
 #endif
 
 namespace IPC {

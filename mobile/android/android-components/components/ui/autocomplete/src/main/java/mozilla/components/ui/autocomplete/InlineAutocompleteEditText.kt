@@ -569,7 +569,7 @@ open class InlineAutocompleteEditText @JvmOverloads constructor(
      *
      * Also turns off text prediction for private mode tabs.
      */
-    @SuppressWarnings("ComplexMethod")
+    @Suppress("CognitiveComplexMethod")
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         val ic = super.onCreateInputConnection(outAttrs) ?: return null
 
@@ -801,7 +801,7 @@ open class InlineAutocompleteEditText @JvmOverloads constructor(
      *
      * Method matching TextView#paste() but which also strips unwanted schemes before actually pasting.
      */
-    @Suppress("NestedBlockDepth")
+    @Suppress("NestedBlockDepth", "CognitiveComplexMethod")
     @VisibleForTesting
     internal fun paste(min: Int, max: Int, withFormatting: Boolean) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

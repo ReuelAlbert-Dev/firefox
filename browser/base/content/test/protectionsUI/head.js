@@ -9,7 +9,7 @@ XPCOMUtils.defineLazyServiceGetter(
   this,
   "TrackingDBService",
   "@mozilla.org/tracking-db-service;1",
-  "nsITrackingDBService"
+  Ci.nsITrackingDBService
 );
 
 ChromeUtils.defineLazyGetter(this, "TRACK_DB_PATH", function () {
@@ -62,7 +62,7 @@ async function openProtectionsPanel(toast, win = window) {
   // Move out than move over the shield icon to trigger the hover event in
   // order to fetch tracker count.
   EventUtils.synthesizeMouseAtCenter(
-    win.gURLBar.textbox,
+    win.gURLBar,
     {
       type: "mousemove",
     },

@@ -17,16 +17,13 @@
 #include "nsTArray.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/HashFunctions.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/RandomNum.h"
 #include "mozilla/ReverseIterator.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_telemetry.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/glean/AntitrackingMetrics.h"
-#include "mozilla/XorShift128PlusRNG.h"
 
 namespace mozilla {
 
@@ -101,21 +98,21 @@ Maybe<uint32_t> ContentBlockingLog::RecordLogParent(
     case nsIWebProgressListener::STATE_LOADED_EMAILTRACKING_LEVEL_2_CONTENT:
     case nsIWebProgressListener::STATE_PURGED_BOUNCETRACKER:
     case nsIWebProgressListener::STATE_COOKIES_PARTITIONED_TRACKER:
-      Unused << RecordLogInternal(aOrigin, aType, blockedValue);
+      (void)RecordLogInternal(aOrigin, aType, blockedValue);
       break;
 
     case nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER:
     case nsIWebProgressListener::STATE_COOKIES_BLOCKED_SOCIALTRACKER:
-      Unused << RecordLogInternal(aOrigin, aType, blockedValue, aReason,
-                                  aTrackingFullHashes);
+      (void)RecordLogInternal(aOrigin, aType, blockedValue, aReason,
+                              aTrackingFullHashes);
       break;
 
     case nsIWebProgressListener::STATE_REPLACED_FINGERPRINTING_CONTENT:
     case nsIWebProgressListener::STATE_ALLOWED_FINGERPRINTING_CONTENT:
     case nsIWebProgressListener::STATE_REPLACED_TRACKING_CONTENT:
     case nsIWebProgressListener::STATE_ALLOWED_TRACKING_CONTENT:
-      Unused << RecordLogInternal(aOrigin, aType, blockedValue, aReason,
-                                  aTrackingFullHashes);
+      (void)RecordLogInternal(aOrigin, aType, blockedValue, aReason,
+                              aTrackingFullHashes);
       break;
     case nsIWebProgressListener::STATE_ALLOWED_FONT_FINGERPRINTING:
       MOZ_ASSERT(!aBlocked,
@@ -384,9 +381,9 @@ void ContentBlockingLog::ReportEmailTrackingLog(
       }
 
       if (isLevel1EmailTracker) {
-        Unused << level1SiteSet.EnsureInserted(baseDomain);
+        (void)level1SiteSet.EnsureInserted(baseDomain);
       } else {
-        Unused << level2SiteSet.EnsureInserted(baseDomain);
+        (void)level2SiteSet.EnsureInserted(baseDomain);
       }
     }
   }

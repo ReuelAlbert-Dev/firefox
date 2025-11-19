@@ -148,7 +148,7 @@ DMABufDevice* DMABufDeviceLock::EnsureDMABufDevice() {
       LOGDMABUF(("EnsureDMABufDevice(): created DMABufDevice"));
     } else {
       nsCString failureId;
-      Unused << sDMABufDevice->IsEnabled(failureId);
+      (void)sDMABufDevice->IsEnabled(failureId);
       LOGDMABUF(("EnsureDMABufDevice(): failed to init DMABufDevice: %s",
                  failureId.get()));
     }
@@ -197,7 +197,10 @@ int DMABufDevice::GetDmabufFD(uint32_t aGEMHandle) {
   return GbmLib::DrmPrimeHandleToFD(mDRMFd, aGEMHandle, 0, &fd) < 0 ? -1 : fd;
 }
 
-int DMABufDevice::OpenDRMFd() { return open(mDrmRenderNode.get(), O_RDWR); }
+int DMABufDevice::OpenDRMFd() {
+  LOGDMABUF(("DMABufDevice::OpenDRMFd() DRM device %s", mDrmRenderNode.get()));
+  return open(mDrmRenderNode.get(), O_RDWR | O_CLOEXEC);
+}
 
 bool DMABufDevice::IsEnabled(nsACString& aFailureId) {
   if (mDRMFd == -1) {
@@ -252,8 +255,7 @@ bool DMABufDevice::Init() {
     return false;
   }
 
-  LOGDMABUF(("Using DRM device %s", mDrmRenderNode.get()));
-  mDRMFd = open(mDrmRenderNode.get(), O_RDWR);
+  mDRMFd = OpenDRMFd();
   if (mDRMFd < 0) {
     LOGDMABUF(("Failed to open drm render node %s error %s\n",
                mDrmRenderNode.get(), strerror(errno)));
@@ -261,7 +263,13 @@ bool DMABufDevice::Init() {
     return false;
   }
 
-  DMABufSurface::InitMemoryReporting();
+  if (NS_IsMainThread()) {
+    DMABufSurface::InitMemoryReporting();
+  } else {
+    NS_DispatchToMainThread(
+        NS_NewRunnableFunction("DMABufSurface::InitMemoryReporting()",
+                               [] { DMABufSurface::InitMemoryReporting(); }));
+  }
 
   LOGDMABUF(("DMABuf is enabled"));
   return true;

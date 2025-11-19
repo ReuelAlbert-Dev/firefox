@@ -9,9 +9,7 @@
  */
 #include "pc/codec_vendor.h"
 
-#include <stddef.h>
-
-#include <algorithm>
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <string>
@@ -80,11 +78,8 @@ std::optional<Codec> FindMatchingCodec(const CodecList& codecs1,
 }
 
 void StripCNCodecs(CodecList& audio_codecs) {
-  audio_codecs.writable_codecs().erase(
-      std::remove_if(
-          audio_codecs.begin(), audio_codecs.end(),
-          [](const Codec& codec) { return IsComfortNoiseCodec(codec); }),
-      audio_codecs.end());
+  std::erase_if(audio_codecs.writable_codecs(),
+                [](const Codec& codec) { return IsComfortNoiseCodec(codec); });
 }
 
 bool IsMediaContentOfType(const ContentInfo* content, MediaType media_type) {

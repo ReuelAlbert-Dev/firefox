@@ -3,10 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/HelperMacros.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/Services.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/WidgetUtils.h"
@@ -45,13 +46,13 @@
 #include "nsXULAppAPI.h"
 #include "nsThreadUtils.h"
 
+#include "nsIObserverService.h"
 #include "nsIRunnable.h"
 #include "nsXREDirProvider.h"
 #include "nsAppRunner.h"
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsNativeCharsetUtils.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/Sprintf.h"
 #include "nsPrintfCString.h"
 #include "mozilla/dom/DOMMozPromiseRequestHolder.h"
@@ -201,7 +202,7 @@ nsresult RemoveProfileFiles(nsIFile* aRootDir, nsIFile* aLocalDir,
   if (undeletedFiles.Length() > 0) {
     uint32_t retries = 1;
     while (undeletedFiles.Length() > 0 && retries <= 10) {
-      Unused << PR_Sleep(PR_MillisecondsToInterval(10 * retries));
+      (void)PR_Sleep(PR_MillisecondsToInterval(10 * retries));
       for (auto&& file :
            std::exchange(undeletedFiles, nsTArray<nsCOMPtr<nsIFile>>{})) {
         RemoveProfileRecursion(file,
@@ -232,7 +233,7 @@ nsresult RemoveProfileFiles(nsIFile* aRootDir, nsIFile* aLocalDir,
     // and lockfile, no other files are here.
     // As we do this only if we had no other blockers, this is as safe
     // as deleting the lockfile explicitely after unlocking.
-    Unused << aRootDir->Remove(true);
+    (void)aRootDir->Remove(true);
   }
 
   return NS_OK;
@@ -455,6 +456,10 @@ nsToolkitProfile::SetShowProfileSelector(bool aShowProfileSelector) {
   NS_ENSURE_SUCCESS(rv, rv);
 
   mShowProfileSelector = aShowProfileSelector;
+#  ifdef XP_WIN
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  obs->NotifyObservers(nullptr, "profile-show-selector-changed", nullptr);
+#  endif
   return NS_OK;
 #else
   return NS_ERROR_FAILURE;
@@ -1738,11 +1743,11 @@ nsresult nsToolkitProfileService::SelectStartupProfile(
         rv =
             mProfileDB.SetString("BackgroundTasksProfiles", profilePrefix.get(),
                                  saltedProfilePrefix.get());
-        Unused << NS_WARN_IF(NS_FAILED(rv));
+        (void)NS_WARN_IF(NS_FAILED(rv));
 
         if (NS_SUCCEEDED(rv)) {
           rv = Flush();
-          Unused << NS_WARN_IF(NS_FAILED(rv));
+          (void)NS_WARN_IF(NS_FAILED(rv));
         }
       }
     }
@@ -2293,7 +2298,7 @@ NS_IMETHODIMP
 nsToolkitProfileService::GetProfileCount(uint32_t* aResult) {
   *aResult = 0;
   for (nsToolkitProfile* profile : mProfiles) {
-    Unused << profile;
+    (void)profile;
     (*aResult)++;
   }
 
@@ -2753,6 +2758,15 @@ nsresult nsToolkitProfileService::GetLocalDirFromRootDir(nsIFile* aRootDir,
   localDir.forget(aResult);
 
   return NS_OK;
+}
+
+bool nsToolkitProfileService::HasShowProfileSelector() {
+  for (RefPtr<nsToolkitProfile> profile : mProfiles) {
+    if (profile->GetShowProfileSelector()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 already_AddRefed<nsToolkitProfileService> NS_GetToolkitProfileService() {

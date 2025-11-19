@@ -11,7 +11,6 @@
 #include <cstdlib>
 #include <limits>
 #include <set>
-#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -27,17 +26,13 @@
 #include "mozilla/IntegerRange.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
-#ifdef XP_WIN
-#  include "mozilla/TimeStamp_windows.h"
-#endif
 
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 #include "mozilla/Vector.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
 #include "mozilla/dom/UserActivation.h"
 #include "gfxPlatform.h"
-#include "nsCSSPropertyID.h"
+#include "NonCustomCSSPropertyId.h"
 #include "nsContentPermissionHelper.h"
 #include "nsDebug.h"
 #include "nsIContentPolicy.h"
@@ -52,9 +47,7 @@
 
 // XXX Includes that are only required by implementations which could be moved
 // to the cpp file.
-#include "base/string_util.h"    // for StringPrintf
-#include "mozilla/ArrayUtils.h"  // for ArrayLength
-#include "mozilla/CheckedInt.h"
+#include "base/string_util.h"  // for StringPrintf
 
 #ifdef _MSC_VER
 #  pragma warning(disable : 4800)
@@ -324,7 +317,7 @@ struct ParamTraits<std::set<V, Compare, Allocator>> final {
     T set;
     for (const auto i : mozilla::IntegerRange(size)) {
       V value;
-      mozilla::Unused << i;
+      (void)i;
       if (!ReadParam(reader, &(value))) {
         return false;
       }
@@ -354,7 +347,7 @@ struct ParamTraits<std::unordered_map<K, V>> final {
     map.reserve(size);
     for (const auto i : mozilla::IntegerRange(size)) {
       std::pair<K, V> pair;
-      mozilla::Unused << i;
+      (void)i;
       if (!ReadParam(reader, &(pair.first)) ||
           !ReadParam(reader, &(pair.second))) {
         return false;
@@ -380,9 +373,9 @@ struct ParamTraits<float> {
 };
 
 template <>
-struct ParamTraits<nsCSSPropertyID>
-    : public ContiguousEnumSerializer<nsCSSPropertyID, eCSSProperty_UNKNOWN,
-                                      eCSSProperty_COUNT> {};
+struct ParamTraits<NonCustomCSSPropertyId>
+    : public ContiguousEnumSerializer<
+          NonCustomCSSPropertyId, eCSSProperty_FIRST, eCSSProperty_INVALID> {};
 
 template <>
 struct ParamTraits<nsID> {
@@ -437,27 +430,6 @@ struct ParamTraits<mozilla::TimeStamp> {
     return ReadParam(aReader, &aResult->mValue);
   };
 };
-
-#ifdef XP_WIN
-
-template <>
-struct ParamTraits<mozilla::TimeStampValue> {
-  typedef mozilla::TimeStampValue paramType;
-  static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    WriteParam(aWriter, aParam.mGTC);
-    WriteParam(aWriter, aParam.mQPC);
-    WriteParam(aWriter, aParam.mIsNull);
-    WriteParam(aWriter, aParam.mHasQPC);
-  }
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    return (ReadParam(aReader, &aResult->mGTC) &&
-            ReadParam(aReader, &aResult->mQPC) &&
-            ReadParam(aReader, &aResult->mIsNull) &&
-            ReadParam(aReader, &aResult->mHasQPC));
-  }
-};
-
-#endif
 
 template <>
 struct ParamTraits<mozilla::dom::ipc::StructuredCloneData> {

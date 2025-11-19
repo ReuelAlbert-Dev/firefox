@@ -6,12 +6,10 @@
 
 #include "vm/NativeObject-inl.h"
 
-#include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 
 #include <algorithm>
-#include <iterator>
 
 #include "gc/MaybeRooted.h"
 #include "gc/StableCellHasher.h"
@@ -2356,7 +2354,7 @@ bool js::NativeGetElement(JSContext* cx, Handle<NativeObject*> obj,
   RootedId id(cx);
 
   if (MOZ_LIKELY(index >= 0)) {
-    if (!IndexToId(cx, index, &id)) {
+    if (!IndexToId(cx, uint32_t(index), &id)) {
       return false;
     }
   } else {

@@ -31,7 +31,7 @@ import org.mozilla.fenix.share.ShareActionReducer
  * Reducer for [AppStore].
  */
 internal object AppStoreReducer {
-    @Suppress("LongMethod")
+    @Suppress("LongMethod", "CognitiveComplexMethod")
     fun reduce(state: AppState, action: AppAction): AppState = when (action) {
         is AppAction.UpdateInactiveExpanded ->
             state.copy(inactiveTabsExpanded = action.expanded)
@@ -173,6 +173,10 @@ internal object AppStoreReducer {
             snackbarState = SnackbarState.BookmarkDeleted(title = action.title),
         )
 
+        is AppAction.BookmarkAction.BookmarkOperationResultReported -> state.copy(
+            snackbarState = SnackbarState.BookmarkOperationResultReported(action.globalResultReport),
+        )
+
         is AppAction.DeleteAndQuitStarted -> {
             state.copy(snackbarState = SnackbarState.DeletingBrowserDataInProgress)
         }
@@ -246,6 +250,7 @@ internal object AppStoreReducer {
             snackbarState = SnackbarState.DownloadCompleted(
                 action.downloadState,
             ),
+            supportedMenuNotifications = state.supportedMenuNotifications + SupportedMenuNotifications.Downloads,
         )
 
         is AppAction.DownloadAction.CannotOpenFile -> state.copy(

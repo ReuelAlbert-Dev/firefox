@@ -17,6 +17,27 @@ const { RESERVED_WORDS } = require("peggy");
 const TAGLIST = require.resolve("../../parser/htmlparser/nsHTMLTagList.h");
 const BINDINGS = require.resolve("../../dom/bindings/Bindings.conf");
 
+// TODO Bug TBD: Ideally we should get details about the generated files from
+// the build system.
+const GENERATED_WEDIDL_FILES = [
+  "CSSPageDescriptors.webidl",
+  "CSSPositionTryDescriptors.webidl",
+  "CSSStyleProperties.webidl",
+];
+
+// Support overrides using the syntax from @typescript/dom-lib-generator which
+// is parsing our webidl files and generating types.
+// https://github.com/microsoft/TypeScript-DOM-lib-generator/blob/main/inputfiles/overridingTypes.jsonc
+const OVERRIDE_TYPES = {
+  callbackFunctions: {
+    callbackFunction: {
+      CustomElementConstructor: {
+        overrideSignatures: ["new (...params: any[]): HTMLElement"],
+      },
+    },
+  },
+};
+
 const HEADER = `/**
  * NOTE: Do not modify this file by hand.
  * Content was generated from source .webidl files.
@@ -159,6 +180,8 @@ async function emitDom(webidls, builtin = "builtin.webidl") {
     }
   }
 
+  merge(all, OVERRIDE_TYPES);
+
   let additionalExports = customize(all, baseTypeConversionMap);
   let exposed = getExposedTypes(all, ["Window"], new Set());
   let dts = await Promise.all([
@@ -193,8 +216,12 @@ function postprocess(additionalExports, generated) {
 }
 
 // Build and save the dom lib.
-async function main(lib_dts, webidl_dir, ...webidl_files) {
-  let dts = await emitDom(webidl_files.map(f => `${webidl_dir}/${f}`));
+async function main(lib_dts, webidl_dir, objdir_webidl, ...webidl_files) {
+  let files = [
+    ...GENERATED_WEDIDL_FILES.map(f => `${objdir_webidl}/${f}`),
+    ...webidl_files.map(f => `${webidl_dir}/${f}`),
+  ];
+  let dts = await emitDom(files);
   console.log(`[INFO] ${lib_dts} (${dts.length.toLocaleString()} bytes)`);
   fs.writeFileSync(lib_dts, dts);
 }

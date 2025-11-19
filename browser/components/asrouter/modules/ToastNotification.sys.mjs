@@ -13,7 +13,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
-  AlertsService: ["@mozilla.org/alerts-service;1", "nsIAlertsService"],
+  AlertsService: ["@mozilla.org/alerts-service;1", Ci.nsIAlertsService],
 });
 
 export const ToastNotification = {
@@ -35,6 +35,7 @@ export const ToastNotification = {
 
   /**
    * Show a toast notification.
+   *
    * @param message             Message containing content to show.
    * @param dispatch            A function to dispatch resulting actions.
    * @return                    boolean value capturing if toast notification was displayed.

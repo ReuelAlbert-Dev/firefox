@@ -115,6 +115,7 @@ function isV4PingFormat(aPing) {
 
 /**
  * Check if the provided ping is a deletion-request ping.
+ *
  * @param {Object} aPing The ping to check.
  * @return {Boolean} True if the ping is a deletion-request ping, false otherwise.
  */
@@ -124,6 +125,7 @@ function isDeletionRequestPing(aPing) {
 
 /**
  * Generate a string suitable for including in a profiler marker as a ping description.
+ *
  * @param {Object} aPing The ping to describe.
  */
 function getPingMarkerString(aPing) {
@@ -137,6 +139,7 @@ function getPingMarkerString(aPing) {
 
 /**
  * Save the provided ping as a pending ping.
+ *
  * @param {Object} aPing The ping to save.
  * @return {Promise} A promise resolved when the ping is saved.
  */
@@ -738,13 +741,8 @@ export var TelemetrySendImpl = {
   _tooLateToSend: false,
   // Array of {url, path} awaiting flushPingSenderBatch().
   _pingSenderBatch: [],
-
-  OBSERVER_TOPICS: [
-    TOPIC_IDLE_DAILY,
-    TOPIC_QUIT_APPLICATION_GRANTED,
-    TOPIC_QUIT_APPLICATION_FORCED,
-    TOPIC_PROFILE_CHANGE_NET_TEARDOWN,
-  ],
+  _quitObserverRegistered: false,
+  _observerRegistered: false,
 
   OBSERVED_PREFERENCES: [
     TelemetryUtils.Preferences.TelemetryEnabled,
@@ -790,8 +788,11 @@ export var TelemetrySendImpl = {
 
     // Install the observer to detect OS shutdown early enough, so
     // that we catch this before the delayed setup happens.
-    Services.obs.addObserver(this, TOPIC_QUIT_APPLICATION_FORCED);
-    Services.obs.addObserver(this, TOPIC_QUIT_APPLICATION_GRANTED);
+    if (!this._quitObserverRegistered) {
+      Services.obs.addObserver(this, TOPIC_QUIT_APPLICATION_FORCED);
+      Services.obs.addObserver(this, TOPIC_QUIT_APPLICATION_GRANTED);
+      this._quitObserverRegistered = true;
+    }
   },
 
   QueryInterface: ChromeUtils.generateQI(["nsISupportsWeakReference"]),
@@ -801,8 +802,11 @@ export var TelemetrySendImpl = {
 
     this._testMode = testing;
 
-    Services.obs.addObserver(this, TOPIC_IDLE_DAILY);
-    Services.obs.addObserver(this, TOPIC_PROFILE_CHANGE_NET_TEARDOWN);
+    if (!this._observerRegistered) {
+      Services.obs.addObserver(this, TOPIC_IDLE_DAILY);
+      Services.obs.addObserver(this, TOPIC_PROFILE_CHANGE_NET_TEARDOWN);
+      this._observerRegistered = true;
+    }
 
     this._server = Services.prefs.getStringPref(
       TelemetryUtils.Preferences.Server,
@@ -878,6 +882,7 @@ export var TelemetrySendImpl = {
 
   /**
    * Discard old pings from the pending pings and detect overdue ones.
+   *
    * @return {Boolean} True if we have overdue pings, false otherwise.
    */
   async _checkPendingPings() {
@@ -910,15 +915,15 @@ export var TelemetrySendImpl = {
       Services.prefs.removeObserver(pref, this);
     }
 
-    for (let topic of this.OBSERVER_TOPICS) {
-      try {
-        Services.obs.removeObserver(this, topic);
-      } catch (ex) {
-        this._log.error(
-          "shutdown - failed to remove observer for " + topic,
-          ex
-        );
-      }
+    if (this._observerRegistered) {
+      Services.obs.removeObserver(this, TOPIC_IDLE_DAILY);
+      Services.obs.removeObserver(this, TOPIC_PROFILE_CHANGE_NET_TEARDOWN);
+      this._observerRegistered = false;
+    }
+    if (this._quitObserverRegistered) {
+      Services.obs.removeObserver(this, TOPIC_QUIT_APPLICATION_FORCED);
+      Services.obs.removeObserver(this, TOPIC_QUIT_APPLICATION_GRANTED);
+      this._quitObserverRegistered = false;
     }
 
     // We can't send anymore now.
@@ -1574,6 +1579,7 @@ export var TelemetrySendImpl = {
 
   /**
    * Check if sending is temporarily disabled.
+   *
    * @return {Boolean} True if we can send pings to the server right now, false if
    *         sending is temporarily disabled.
    */
@@ -1634,6 +1640,7 @@ export var TelemetrySendImpl = {
 
   /**
    * Return a promise that allows to wait on pending pings.
+   *
    * @return {Object<Promise>} A promise resolved when all the pending pings promises
    *         are resolved.
    */

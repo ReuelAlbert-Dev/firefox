@@ -665,18 +665,54 @@ async function getBrowsingContextsAndFrameIdsForSubFrames(
   return browsingContextsAndFrames;
 }
 
+/**
+ * Test helper for getUserMedia calls.
+ *
+ * @param {boolean} aRequestAudio - Whether to request audio
+ * @param {boolean} aRequestVideo - Whether to request video
+ * @param {string} aFrameId - The ID of the frame
+ * @param {string} aType - The type of screen sharing.
+ * @param {BrowsingContext} aBrowsingContext - The browsing context
+ * @param {boolean} [aBadDevice=false] - Whether to use a bad device
+ * @param {boolean} [viaButtonClick=false] - Whether to call gUM directly or to
+ *   request via simulated button click.
+ * @returns {Promise} - Resolves when the gUM request has been made.
+ */
 async function promiseRequestDevice(
   aRequestAudio,
   aRequestVideo,
   aFrameId,
   aType,
   aBrowsingContext,
-  aBadDevice = false
+  aBadDevice = false,
+  viaButtonClick = false
 ) {
   info("requesting devices");
   let bc =
     aBrowsingContext ??
     (await getBrowsingContextForFrame(gBrowser.selectedBrowser, aFrameId));
+
+  if (viaButtonClick) {
+    return SpecialPowers.spawn(
+      bc,
+      [{ aRequestAudio, aRequestVideo, aType, aBadDevice }],
+      async function (args) {
+        let global = content.wrappedJSObject;
+        global.queueRequestDeviceViaBtn(
+          args.aRequestAudio,
+          args.aRequestVideo,
+          args.aType,
+          args.aBadDevice
+        );
+        await EventUtils.synthesizeMouseAtCenter(
+          global.document.getElementById("gum"),
+          {},
+          content
+        );
+      }
+    );
+  }
+
   return SpecialPowers.spawn(
     bc,
     [{ aRequestAudio, aRequestVideo, aType, aBadDevice }],
@@ -686,7 +722,8 @@ async function promiseRequestDevice(
         args.aRequestAudio,
         args.aRequestVideo,
         args.aType,
-        args.aBadDevice
+        args.aBadDevice,
+        args.withUserActivation
       );
     }
   );
@@ -898,6 +935,7 @@ function checkDeviceSelectors(aExpectedTypes, aWindow = window) {
 /**
  * Tests the siteIdentity icons, the permission panel and the global indicator
  * UI state.
+ *
  * @param {Object} aExpected - Expected state for the current tab.
  * @param {window} [aWin] - Top level chrome window to test state of.
  * @param {Object} [aExpectedGlobal] - Expected state for all tabs.

@@ -481,10 +481,11 @@ export class FeatureCallout {
       case "popupshowing":
         // If another panel is showing, close the tour.
         if (
+          event.target.ownerGlobal === this.win &&
           event.target !== this._container &&
           event.target.localName === "panel" &&
           event.target.id !== "ctrlTab-panel" &&
-          event.target.ownerGlobal === this.win
+          event.target.getAttribute("noautohide") !== "true"
         ) {
           this.endTour();
         }
@@ -671,6 +672,7 @@ export class FeatureCallout {
    * Return the first visible anchor element for the current screen. Screens can
    * specify multiple anchors in an array, and the first one that is visible
    * will be used. If none are visible, return null.
+   *
    * @returns {Anchor|null}
    */
   _getAnchor() {
@@ -1168,6 +1170,7 @@ export class FeatureCallout {
     /**
      * Horizontally align a top/bottom-positioned callout according to the
      * passed position.
+     *
      * @param {String} position one of...
      *   - "center": for use with top/bottom. arrow is in the center, and the
      *       center of the callout aligns with the parent center.
@@ -1620,6 +1623,7 @@ export class FeatureCallout {
 
   /**
    * Emit an event to the broker, if one is present.
+   *
    * @param {String} name
    * @param {any} data
    */
@@ -1748,6 +1752,7 @@ export class FeatureCallout {
    * provided, try requesting one from ASRouter. The message content is stored
    * in this.config, which is returned by AWGetFeatureConfig. The aboutwelcome
    * bundle will use that function to get the content when it executes.
+   *
    * @param {Object} [message] ASRouter message. Omit to request a new one.
    * @param {Number} [screenIndex] Index of the screen to render.
    * @returns {Promise<boolean>} true if a message is loaded, false if not.
@@ -1822,6 +1827,7 @@ export class FeatureCallout {
   /**
    * Request a message from ASRouter, targeting the `browser` and `page` values
    * passed to the constructor.
+   *
    * @returns {Promise<Object>} the requested message.
    */
   async _loadConfig() {
@@ -1839,6 +1845,7 @@ export class FeatureCallout {
 
   /**
    * Try to render the callout in the current document.
+   *
    * @returns {Promise<Boolean>} whether the callout was rendered.
    */
   async _renderCallout() {
@@ -1859,6 +1866,7 @@ export class FeatureCallout {
 
   /**
    * For each member of the screen's page_event_listeners array, add a listener.
+   *
    * @param {Array<PageEventListenerConfig>} listeners
    *
    * @typedef {Object} PageEventListenerConfig
@@ -1907,6 +1915,7 @@ export class FeatureCallout {
 
   /**
    * Perform an action in response to a page event.
+   *
    * @param {PageEventListenerAction} action
    * @param {Event} event Triggering event
    */
@@ -1973,6 +1982,7 @@ export class FeatureCallout {
 
   /**
    * For a given element, calculate a unique string that identifies it.
+   *
    * @param {Element} target Element to calculate the selector for
    * @returns {String} Computed event target selector, e.g. `button#next`
    */
@@ -2018,6 +2028,7 @@ export class FeatureCallout {
    * button is found, focus the first input element. If no affirmative action is
    * found, focus the first button, which is probably the dismiss button. A
    * custom selector can also be provided to focus a specific element.
+   *
    * @param {AutoFocusOptions} [options]
    * @returns {Element|null} The element to focus when the callout is shown.
    */
@@ -2054,6 +2065,7 @@ export class FeatureCallout {
   /**
    * Show a feature callout message, either by requesting one from ASRouter or
    * by showing a message passed as an argument.
+   *
    * @param {Object} [message] optional message to show instead of requesting one
    * @returns {Promise<Boolean>} true if a message was shown
    */
@@ -2171,6 +2183,7 @@ export class FeatureCallout {
 
   /**
    * Combine the preset and custom themes into a single object and store it.
+   *
    * @param {FeatureCalloutTheme} theme
    */
   _initTheme(theme) {
@@ -2221,6 +2234,7 @@ export class FeatureCallout {
 
   /**
    * Set or remove a CSS custom property on the feature callout container
+   *
    * @param {String} name Name of the CSS custom property
    * @param {String|void} [value] Value of the property, or omit to remove it
    */

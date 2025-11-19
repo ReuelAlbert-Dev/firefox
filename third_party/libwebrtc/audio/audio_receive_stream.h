@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "api/array_view.h"
 #include "api/audio/audio_frame.h"
 #include "api/audio/audio_mixer.h"
 #include "api/audio_codecs/audio_format.h"
@@ -31,17 +32,32 @@
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
 #include "api/transport/rtp/rtp_source.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
+// This can be removed after Bug 1768116 enables
+// c++20 builds across the entire Mozilla tree.
+#if !defined(WEBRTC_MOZILLA_BUILD)
 #include "audio/audio_state.h"
+#endif
 #include "call/audio_receive_stream.h"
 #include "call/audio_state.h"
 #include "call/syncable.h"
 #include "rtc_base/system/no_unique_address.h"
 #include "rtc_base/thread_annotations.h"
+#include "system_wrappers/include/ntp_time.h"
 
 namespace webrtc {
 class PacketRouter;
 class RtpStreamReceiverControllerInterface;
 class RtpStreamReceiverInterface;
+
+// This can be removed after Bug 1768116 enables
+// c++20 builds across the entire Mozilla tree.
+#if defined(WEBRTC_MOZILLA_BUILD)
+namespace internal {
+class AudioState;
+}
+#endif
 
 namespace voe {
 class ChannelReceiveInterface;
@@ -117,13 +133,12 @@ class AudioReceiveStreamImpl final : public webrtc::AudioReceiveStreamInterface,
   // Syncable
   uint32_t id() const override;
   std::optional<Syncable::Info> GetInfo() const override;
-  bool GetPlayoutRtpTimestamp(uint32_t* rtp_timestamp,
-                              int64_t* time_ms) const override;
-  void SetEstimatedPlayoutNtpTimestampMs(int64_t ntp_timestamp_ms,
-                                         int64_t time_ms) override;
-  bool SetMinimumPlayoutDelay(int delay_ms) override;
+  std::optional<Syncable::PlayoutInfo> GetPlayoutRtpTimestamp() const override;
+  void SetEstimatedPlayoutNtpTimestamp(NtpTime ntp_time,
+                                       Timestamp time) override;
+  bool SetMinimumPlayoutDelay(TimeDelta delay) override;
 
-  void DeliverRtcp(const uint8_t* packet, size_t length);
+  void DeliverRtcp(ArrayView<const uint8_t> packet);
 
   void SetSyncGroup(absl::string_view sync_group);
 

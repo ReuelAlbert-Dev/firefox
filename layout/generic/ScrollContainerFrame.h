@@ -14,7 +14,6 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ScrollOrigin.h"
 #include "mozilla/ScrollTypes.h"
-#include "mozilla/TypedEnumBits.h"
 #include "mozilla/dom/WindowBinding.h"  // for mozilla::dom::ScrollBehavior
 #include "mozilla/layout/ScrollAnchorContainer.h"
 #include "nsContainerFrame.h"
@@ -278,6 +277,12 @@ class ScrollContainerFrame : public nsContainerFrame,
     }
     return mScrollPort.Size();
   }
+
+  /**
+   * Get the size used for window.innerWidth or innerHeight.
+   * This works only for the root scroll container.
+   */
+  nsSize GetSizeForWindowInnerSize() const;
 
   /**
    * GetScrolledRect is designed to encapsulate deciding which
@@ -978,7 +983,11 @@ class ScrollContainerFrame : public nsContainerFrame,
   bool UsesOverlayScrollbars() const;
   bool IsLastSnappedTarget(const nsIFrame* aFrame) const;
 
-  static bool ShouldActivateAllScrollFrames();
+  // If aBuilder is non-null, returns the value cached on aBuilder. Pass null
+  // for aBuilder to get the correct value to cache on a new builder or new
+  // frame of painting, or if you need the correct value outside of paint time.
+  static bool ShouldActivateAllScrollFrames(nsDisplayListBuilder* aBuilder,
+                                            nsIFrame* aFrame);
   nsRect RestrictToRootDisplayPort(const nsRect& aDisplayportBase);
   bool DecideScrollableLayer(nsDisplayListBuilder* aBuilder,
                              nsRect* aVisibleRect, nsRect* aDirtyRect,
@@ -1324,6 +1333,11 @@ class ScrollContainerFrame : public nsContainerFrame,
 
   nsTArray<ScrollPositionUpdate> mScrollUpdates;
 
+  // The minimum-scale size, this is specific to mobile environments where the
+  // initial-scale can be less than 1.0.
+  // See
+  // https://github.com/bokand/bokand.github.io/blob/master/web_viewports_explainer.md#minimum-scale
+  // for details.
   nsSize mMinimumScaleSize;
 
   // Stores the ICB size for the root document if this frame is using the

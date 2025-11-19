@@ -471,17 +471,8 @@ void nsTableCellFrame::AlignChildWithinCell(
   FinishAndStoreOverflow(&reflowOutput);
 
   if (kidPosition != kidRect.Origin(innerWM)) {
-    // Make sure any child views are correctly positioned. We know the inner
-    // table cell won't have a view.
-    nsContainerFrame::PositionChildViews(inner);
-
     // Invalidate new overflow rect.
     inner->InvalidateFrameSubtree();
-  }
-  if (HasView()) {
-    nsContainerFrame::SyncFrameViewAfterReflow(PresContext(), this, GetView(),
-                                               reflowOutput.InkOverflow(),
-                                               ReflowChildFlags::Default);
   }
 }
 
@@ -1160,6 +1151,9 @@ void nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   // the 'empty-cells' property has no effect on 'outline'
   DisplayOutline(aBuilder, aLists);
+  if (HidesContent()) {
+    return;
+  }
 
   // The child's background will go in our BorderBackground() list.
   // This isn't a problem since it won't have a real background except for

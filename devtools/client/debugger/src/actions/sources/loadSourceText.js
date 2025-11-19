@@ -2,9 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
-import { PROMISE } from "../utils/middleware/promise";
+const {
+  PROMISE,
+} = require("resource://devtools/client/shared/redux/middleware/promise.js");
 import {
-  getSourceTextContent,
+  getSourceTextContentForSource,
   getSettledSourceTextContent,
   getSourcesEpoch,
   getBreakpointsForSource,
@@ -159,6 +161,7 @@ async function onSourceTextContentAvailable(
 
 /**
  * Loads the source text for the generated source based of the source actor
+ *
  * @param {Object} sourceActor
  *                 There can be more than one source actor per source
  *                 so the source actor needs to be specified. This is
@@ -173,12 +176,10 @@ export const loadGeneratedSourceText = memoizeableAction(
         return null;
       }
 
-      const sourceTextContent = getSourceTextContent(
+      const sourceTextContent = getSourceTextContentForSource(
         getState(),
-        createLocation({
-          source: sourceActor.sourceObject,
-          sourceActor,
-        })
+        sourceActor.sourceObject,
+        sourceActor
       );
 
       if (!sourceTextContent || sourceTextContent.state === "pending") {
@@ -201,6 +202,7 @@ export const loadGeneratedSourceText = memoizeableAction(
 
 /**
  * Loads the source text for an original source and source actor
+ *
  * @param {Object} source
  *                 The original source to load the source text
  */
@@ -212,11 +214,9 @@ export const loadOriginalSourceText = memoizeableAction(
         return null;
       }
 
-      const sourceTextContent = getSourceTextContent(
+      const sourceTextContent = getSourceTextContentForSource(
         getState(),
-        createLocation({
-          source,
-        })
+        source
       );
       if (!sourceTextContent || sourceTextContent.state === "pending") {
         return sourceTextContent;

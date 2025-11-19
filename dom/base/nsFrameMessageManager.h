@@ -10,14 +10,12 @@
 #include <string.h>
 
 #include <cstdint>
-#include <utility>
 
 #include "ErrorList.h"
 #include "js/TypeDecls.h"
 #include "js/Value.h"
 #include "js/experimental/JSStencil.h"
 #include "mozilla/AlreadyAddRefed.h"
-#include "mozilla/Assertions.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"

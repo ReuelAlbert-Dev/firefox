@@ -4,6 +4,7 @@
 
 package org.mozilla.fenix.settings.logins.ui
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,7 @@ import mozilla.components.compose.base.annotation.FlexibleWindowLightDarkPreview
 import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.menu.DropdownMenu
 import mozilla.components.compose.base.menu.MenuItem
+import mozilla.components.compose.base.snackbar.Snackbar
 import mozilla.components.compose.base.snackbar.displaySnackbar
 import mozilla.components.compose.base.textfield.TextField
 import mozilla.components.compose.base.textfield.TextFieldColors
@@ -82,36 +84,31 @@ internal fun LoginDetailsScreen(store: LoginsStore) {
             SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.imePadding(),
-            )
+            ) {
+                Snackbar(snackbarData = it)
+            }
         },
     ) { paddingValues ->
-
-        if (state.biometricAuthenticationDialogState.shouldShow) {
-            BiometricAuthenticationDialog(store = store)
-        }
-
-        if (state.biometricAuthenticationState == BiometricAuthenticationState.Authorized) {
-            Column(
-                modifier = Modifier
-                    .padding(paddingValues)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Spacer(modifier = Modifier.height(FirefoxTheme.layout.space.static200))
-                LoginDetailsUrl(store = store, url = detailState.login.url)
-                Spacer(modifier = Modifier.height(8.dp))
-                LoginDetailsUsername(
-                    store = store,
-                    snackbarHostState = snackbarHostState,
-                    username = detailState.login.username,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                LoginDetailsPassword(
-                    store = store,
-                    snackbarHostState = snackbarHostState,
-                    password = detailState.login.password,
-                )
-            }
+        Column(
+            modifier = Modifier
+                .padding(paddingValues)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(modifier = Modifier.height(FirefoxTheme.layout.space.static200))
+            LoginDetailsUrl(store = store, url = detailState.login.url)
+            Spacer(modifier = Modifier.height(8.dp))
+            LoginDetailsUsername(
+                store = store,
+                snackbarHostState = snackbarHostState,
+                username = detailState.login.username,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LoginDetailsPassword(
+                store = store,
+                snackbarHostState = snackbarHostState,
+                password = detailState.login.password,
+            )
         }
     }
 }
@@ -286,11 +283,13 @@ private fun LoginDetailsUsername(
                     .size(48.dp),
                 onClick = {
                     store.dispatch(DetailLoginAction.CopyUsernameClicked(username))
-                    showTextCopiedSnackbar(
-                        message = usernameSnackbarText,
-                        coroutineScope = coroutineScope,
-                        snackbarHostState = snackbarHostState,
-                    )
+                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+                        showTextCopiedSnackbar(
+                            message = usernameSnackbarText,
+                            coroutineScope = coroutineScope,
+                            snackbarHostState = snackbarHostState,
+                        )
+                    }
                 },
                 contentDescription = stringResource(R.string.saved_login_copy_username),
             ) {
@@ -343,11 +342,13 @@ private fun LoginDetailsPassword(
                     .size(48.dp),
                 onClick = {
                     store.dispatch(DetailLoginAction.CopyPasswordClicked(password))
-                    showTextCopiedSnackbar(
-                        message = passwordSnackbarText,
-                        coroutineScope = coroutineScope,
-                        snackbarHostState = snackbarHostState,
-                    )
+                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+                        showTextCopiedSnackbar(
+                            message = passwordSnackbarText,
+                            coroutineScope = coroutineScope,
+                            snackbarHostState = snackbarHostState,
+                        )
+                    }
                 },
                 contentDescription = stringResource(R.string.saved_logins_copy_password),
             ) {
@@ -385,7 +386,7 @@ private fun LoginDeletionDialog(
                 onClick = onDeleteTapped,
             ) {
                 Text(
-                    text = stringResource(R.string.bookmark_menu_delete_button).uppercase(),
+                    text = stringResource(R.string.bookmark_menu_delete_button),
                 )
             }
         },
@@ -394,7 +395,7 @@ private fun LoginDeletionDialog(
                 onClick = onCancelTapped,
             ) {
                 Text(
-                    text = stringResource(R.string.bookmark_delete_negative).uppercase(),
+                    text = stringResource(R.string.bookmark_delete_negative),
                 )
             }
         },

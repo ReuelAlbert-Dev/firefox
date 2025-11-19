@@ -27,6 +27,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   FaviconFeed: "resource://newtab/lib/FaviconFeed.sys.mjs",
   HighlightsFeed: "resource://newtab/lib/HighlightsFeed.sys.mjs",
   ListsFeed: "resource://newtab/lib/Widgets/ListsFeed.sys.mjs",
+  NewTabAttributionFeed: "resource://newtab/lib/NewTabAttributionFeed.sys.mjs",
+  NewTabActorRegistry: "resource://newtab/lib/NewTabActorRegistry.sys.mjs",
   NewTabInit: "resource://newtab/lib/NewTabInit.sys.mjs",
   NewTabMessaging: "resource://newtab/lib/NewTabMessaging.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
@@ -82,11 +84,6 @@ const REGION_THUMBS_CONFIG =
 const LOCALE_THUMBS_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.thumbsUpDown.locale-thumbs-config";
 
-const REGION_CONTEXTUAL_CONTENT_CONFIG =
-  "browser.newtabpage.activity-stream.discoverystream.contextualContent.region-content-config";
-const LOCALE_CONTEXTUAL_CONTENT_CONFIG =
-  "browser.newtabpage.activity-stream.discoverystream.contextualContent.locale-content-config";
-
 const REGION_CONTEXTUAL_AD_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.sections.contextualAds.region-config";
 const LOCALE_CONTEXTUAL_AD_CONFIG =
@@ -98,6 +95,43 @@ const LOCALE_SECTIONS_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.sections.locale-content-config";
 
 const BROWSER_URLBAR_PLACEHOLDERNAME = "browser.urlbar.placeholderName";
+const PREF_SHOULD_AS_INITIALIZE_FEEDS =
+  "browser.newtabpage.activity-stream.testing.shouldInitializeFeeds";
+
+export const WEATHER_OPTIN_REGIONS = [
+  "AT", // Austria
+  "BE", // Belgium
+  "BG", // Bulgaria
+  "HR", // Croatia
+  "CY", // Cyprus
+  "CZ", // Czechia
+  "DK", // Denmark
+  "EE", // Estonia
+  "FI", // Finland
+  "FR", // France
+  "DE", // Germany
+  "GB", // United Kingdom
+  "GR", // Greece
+  "HU", // Hungary
+  "IS", // Iceland
+  "IE", // Ireland
+  "IT", // Italy
+  "LV", // Latvia
+  "LI", // Liechtenstein
+  "LT", // Lithuania
+  "MT", // Malta
+  "NL", // Netherlands
+  "NO", // Norway
+  "PL", // Poland
+  "PT", // Portugal
+  "RO", // Romania
+  "SG", // Singapore
+  "SK", // Slovakia
+  "SI", // Slovenia
+  "ES", // Spain
+  "SE", // Sweden
+  "CH", // Switzerland
+];
 
 export function csvPrefHasValue(stringPrefName, value) {
   if (typeof stringPrefName !== "string") {
@@ -111,6 +145,17 @@ export function csvPrefHasValue(stringPrefName, value) {
     .filter(item => item);
 
   return prefValues.includes(value);
+}
+
+export function shouldInitializeFeeds(defaultValue = true) {
+  // For tests/automation: when false, newtab won't initialize
+  // select feeds in this session.
+  // Flipping after initialization has no effect on the current session.
+  const shouldInitialize = Services.prefs.getBoolPref(
+    PREF_SHOULD_AS_INITIALIZE_FEEDS,
+    defaultValue
+  );
+  return shouldInitialize;
 }
 
 function useInferredPersonalization({ geo, locale }) {
@@ -142,6 +187,10 @@ function showWeather({ geo, locale }) {
   );
 }
 
+function showWeatherOptIn({ geo }) {
+  return WEATHER_OPTIN_REGIONS.includes(geo);
+}
+
 function showTopicsSelection({ geo, locale }) {
   return (
     csvPrefHasValue(REGION_TOPICS_CONFIG, geo) &&
@@ -160,13 +209,6 @@ function showThumbsUpDown({ geo, locale }) {
   return (
     csvPrefHasValue(REGION_THUMBS_CONFIG, geo) &&
     csvPrefHasValue(LOCALE_THUMBS_CONFIG, locale)
-  );
-}
-
-function showContextualContent({ geo, locale }) {
-  return (
-    csvPrefHasValue(REGION_CONTEXTUAL_CONTENT_CONFIG, geo) &&
-    csvPrefHasValue(LOCALE_CONTEXTUAL_CONTENT_CONFIG, locale)
   );
 }
 
@@ -334,6 +376,45 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
+    "system.showWeatherOptIn",
+    {
+      title: "system.showWeatherOptIn",
+      // pref is dynamic
+      getValue: showWeatherOptIn,
+    },
+  ],
+  [
+    "discoverystream.optIn-region-weather-config",
+    {
+      title: "Regions for weather opt-in.",
+      value: "DE,GB,FR,ES,IT,CH,AT,BE,IE,NL,PL,CZ,SE,SG,HU,SK,FI,DK,NO,PT",
+    },
+  ],
+  [
+    "weather.optInDisplayed",
+    {
+      title:
+        "Enable opt-in dialog to display for weather widget in GDPR regions.",
+      value: true,
+    },
+  ],
+  [
+    "weather.optInAccepted",
+    {
+      title:
+        "User choice made when prompted with the opt-in dialog for weather.",
+      value: false,
+    },
+  ],
+  [
+    "weather.staticData.enabled",
+    {
+      title:
+        "Static weather data shown when user has not set/enabled location from opt-in.",
+      value: true,
+    },
+  ],
+  [
     "weather.query",
     {
       title: "weather.query",
@@ -438,6 +519,12 @@ export const PREFS_CONFIG = new Map([
     {
       title: "Enables the private ping sent over OHTTP through Glean",
       value: false,
+    },
+  ],
+  [
+    "telemetry.surfaceId",
+    {
+      title: "surface id",
     },
   ],
   [
@@ -656,6 +743,13 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
+    "discoverystream.sections.personalization.inferred.interests.override",
+    {
+      title:
+        "Testing feature to allow specification of specific user interests",
+    },
+  ],
+  [
     "discoverystream.dailyBrief.enabled",
     {
       title: "Boolean flag to enable the daily brief section",
@@ -681,6 +775,13 @@ export const PREFS_CONFIG = new Map([
     {
       title:
         "Boolean flag to enable logging shortcuts interactions even if enabled is off",
+      value: false,
+    },
+  ],
+  [
+    "discoverystream.attribution.enabled",
+    {
+      title: "Boolean flag to enable newtab attribution",
       value: false,
     },
   ],
@@ -890,6 +991,13 @@ export const PREFS_CONFIG = new Map([
     "widgets.system.enabled",
     {
       title: "Enables visibility of all widgets and controls to enable them",
+      value: false,
+    },
+  ],
+  [
+    "widgets.enabled",
+    {
+      title: "Allows users to toggle all widgets on and off at once",
       value: false,
     },
   ],
@@ -1194,6 +1302,13 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
+    "discoverystream.spocs.onDemand",
+    {
+      title: "Set sponsored content to only update cache when requested.",
+      value: false,
+    },
+  ],
+  [
     "discoverystream.spocs.cacheTimeout",
     {
       title: "Set sponsored content cache timeout in minutes.",
@@ -1207,73 +1322,16 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
-    "discoverystream.contextualContent.enabled",
-    {
-      title: "Controls if contextual content (List feed) is displayed",
-      getValue: showContextualContent,
-    },
-  ],
-  [
-    "discoverystream.contextualContent.feeds",
-    {
-      title: "CSV list of possible topics for the contextual content feed",
-      value: "need_to_know, fakespot",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.selectedFeed",
-    {
-      title:
-        "currently selected feed (one of discoverystream.contextualContent.feeds) to display in listfeed",
-      value: "need_to_know",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.listFeedTitle",
-    {
-      title: "Title for currently selected feed",
-      value: "",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.fakespot.defaultCategoryTitle",
-    {
-      title: "Title default category from fakespot endpoint",
-      value: "",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.fakespot.footerCopy",
-    {
-      title: "footer copy for fakespot feed",
-      value: "",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.fakespot.enabled",
-    {
-      title: "User controlled pref that displays fakespot feed",
-      value: true,
-    },
-  ],
-  [
-    "discoverystream.contextualContent.fakespot.ctaCopy",
-    {
-      title: "cta copy for fakespot feed",
-      value: "",
-    },
-  ],
-  [
-    "discoverystream.contextualContent.fakespot.ctaUrl",
-    {
-      title: "cta link for fakespot feed",
-      value: "",
-    },
-  ],
-  [
     "discoverystream.publisherFavicon.enabled",
     {
       title: "Enables publisher favicons on recommended stories",
+      value: false,
+    },
+  ],
+  [
+    "discoverystream.sections.clientLayout.enabled",
+    {
+      title: "Enables client side layout for recommended stories",
       value: false,
     },
   ],
@@ -1309,15 +1367,6 @@ export const PREFS_CONFIG = new Map([
       getValue: () => {
         return Services.appinfo.caretBlinkTime;
       },
-    },
-  ],
-  // Sponsored checkboxes placement experiment
-  [
-    "system.showSponsoredCheckboxes",
-    {
-      title:
-        "Switches on grouping of sponsored checkboxes on 'about:settings#home' page",
-      value: true,
     },
   ],
   [
@@ -1498,6 +1547,12 @@ const FEEDS_DATA = [
     value: true,
   },
   {
+    name: "newtabattributionfeed",
+    factory: () => new lazy.NewTabAttributionFeed(),
+    title: "Handles a local DB for story and shortcuts clicks and impressions",
+    value: true,
+  },
+  {
     name: "newtabmessaging",
     factory: () => new lazy.NewTabMessaging(),
     title: "Handles fetching and triggering ASRouter messages in newtab",
@@ -1524,6 +1579,7 @@ const FEEDS_DATA = [
 ];
 
 const FEEDS_CONFIG = new Map();
+
 for (const config of FEEDS_DATA) {
   const pref = `feeds.${config.name}`;
   FEEDS_CONFIG.set(pref, config.factory);
@@ -1537,8 +1593,22 @@ export class ActivityStream {
   constructor() {
     this.initialized = false;
     this.store = new lazy.Store();
-    this.feeds = FEEDS_CONFIG;
     this._defaultPrefs = new lazy.DefaultPrefs(PREFS_CONFIG);
+  }
+
+  get feeds() {
+    if (shouldInitializeFeeds()) {
+      return FEEDS_CONFIG;
+    }
+
+    // We currently make excpetions for topsites, and prefs feeds
+    // because they currently impacts tests timing for places initialization.
+    // See bug 1999166.
+    const feeds = new Map([
+      ["feeds.system.topsites", FEEDS_CONFIG.get("feeds.system.topsites")],
+      ["feeds.prefs", FEEDS_CONFIG.get("feeds.prefs")],
+    ]);
+    return feeds;
   }
 
   init() {
@@ -1546,6 +1616,7 @@ export class ActivityStream {
     this._defaultPrefs.init();
     Services.obs.addObserver(this, "intl:app-locales-changed");
     Services.obs.addObserver(this, "browser-search-engine-modified");
+    lazy.NewTabActorRegistry.init();
 
     // Bug 1969587: Because our pref system does not support async getValue(),
     // we mirror the value of the BROWSER_URLBAR_PLACEHOLDERNAME pref into
@@ -1609,8 +1680,10 @@ export class ActivityStream {
     if (this.geo === "") {
       Services.obs.removeObserver(this, lazy.Region.REGION_TOPIC);
     }
+    delete this.geo;
 
     Services.obs.removeObserver(this, "intl:app-locales-changed");
+    Services.obs.removeObserver(this, "browser-search-engine-modified");
 
     Services.prefs.removeObserver(BROWSER_URLBAR_PLACEHOLDERNAME, this);
 
@@ -1621,6 +1694,10 @@ export class ActivityStream {
   _updateDynamicPrefs() {
     // Save the geo pref if we have it
     if (lazy.Region.home) {
+      if (this.geo === "") {
+        // The observer has become obsolete.
+        Services.obs.removeObserver(this, lazy.Region.REGION_TOPIC);
+      }
       this.geo = lazy.Region.home;
     } else if (this.geo !== "") {
       // Watch for geo changes and use a dummy value for now

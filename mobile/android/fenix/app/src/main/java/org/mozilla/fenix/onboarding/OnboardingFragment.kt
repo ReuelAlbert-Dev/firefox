@@ -110,7 +110,7 @@ class OnboardingFragment : Fragment() {
         DefaultBrowserPromptManager(
             storage = defaultBrowserPromptStorage,
             promptToSetAsDefaultBrowser = {
-                requireContext().components.strictMode.resetAfter(StrictMode.allowThreadDiskReads()) {
+                requireContext().components.strictMode.allowViolation(StrictMode::allowThreadDiskReads) {
                     promptToSetAsDefaultBrowser()
                 }
             },
@@ -162,7 +162,6 @@ class OnboardingFragment : Fragment() {
             feature = MarketingPageRemovalSupport(
                 prefKey = requireContext().getString(R.string.pref_key_should_show_marketing_onboarding),
                 pagesToDisplay = pagesToDisplay,
-                distributionIdManager = requireComponents.distributionIdManager,
                 settings = requireContext().settings(),
                 lifecycleOwner = viewLifecycleOwner,
             ),

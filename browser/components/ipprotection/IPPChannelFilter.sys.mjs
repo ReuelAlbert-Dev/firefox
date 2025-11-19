@@ -13,11 +13,32 @@ const lazy = XPCOMUtils.declareLazy({
 const { TRANSPARENT_PROXY_RESOLVES_HOST } = Ci.nsIProxyInfo;
 const failOverTimeout = 10; // seconds
 
+const MODE_PREF = "browser.ipProtection.mode";
+
+export const IPPMode = Object.freeze({
+  MODE_FULL: 0,
+  MODE_PB: 1,
+  MODE_TRACKER: 2,
+});
+
+const TRACKING_FLAGS =
+  Ci.nsIClassifiedChannel.CLASSIFIED_TRACKING |
+  Ci.nsIClassifiedChannel.CLASSIFIED_TRACKING_AD |
+  Ci.nsIClassifiedChannel.CLASSIFIED_TRACKING_ANALYTICS |
+  Ci.nsIClassifiedChannel.CLASSIFIED_TRACKING_SOCIAL |
+  Ci.nsIClassifiedChannel.CLASSIFIED_TRACKING_CONTENT;
+
 const DEFAULT_EXCLUDED_URL_PREFS = [
   "browser.ipProtection.guardian.endpoint",
   "identity.fxaccounts.remote.profile.uri",
   "identity.fxaccounts.auth.uri",
   "identity.fxaccounts.remote.profile.uri",
+];
+
+const ESSENTIAL_URL_PREFS = [
+  "toolkit.telemetry.server",
+  "network.trr.uri",
+  "network.trr.default_provider_uri",
 ];
 
 /**
@@ -29,60 +50,147 @@ const DEFAULT_EXCLUDED_URL_PREFS = [
  */
 export class IPPChannelFilter {
   /**
-   * Creates a new IPPChannelFilter that can connect to a proxy server.
+   * Creates a new IPPChannelFilter that can connect to a proxy server. After
+   * created, the proxy can be immediately activated. It will suspend all the
+   * received nsIChannel until the object is fully initialized.
    *
-   * @param {string} authToken - a bearer token for the proxy server.
-   * @param {string} host - the host of the proxy server.
-   * @param {number} port - the port of the proxy server.
-   * @param {string} proxyType - "socks" or "http" or "https"
    * @param {Array<string>} [excludedPages] - list of page URLs whose *origin* should bypass the proxy
    */
-  static create(
-    authToken = "",
-    host = "",
-    port = 443,
-    proxyType = "https",
-    excludedPages = []
-  ) {
-    const proxyInfo = lazy.ProxyService.newProxyInfo(
-      proxyType,
-      host,
-      port,
-      authToken,
-      IPPChannelFilter.makeIsolationKey(),
-      TRANSPARENT_PROXY_RESOLVES_HOST,
-      failOverTimeout,
-      null // Failover proxy info
-    );
-    if (!proxyInfo) {
-      throw new Error("Failed to create proxy info");
-    }
-    return new IPPChannelFilter(proxyInfo, excludedPages);
+  static create(excludedPages = []) {
+    return new IPPChannelFilter(excludedPages);
   }
 
   /**
-   * @param {nsIProxyInfo} proxyInfo
-   * @param {Array<string>} [excludedPages]
+   * Sets the IPP Mode.
+   *
+   * @param {IPPMode} [mode] - the new mode
    */
-  constructor(proxyInfo, excludedPages = []) {
-    if (!proxyInfo) {
-      throw new Error("ProxyInfo is required for IPPChannelFilter");
-    }
+  static setMode(mode) {
+    Services.prefs.setIntPref(MODE_PREF, mode);
+  }
 
+  /**
+   * Takes a protocol definition and constructs the appropriate nsIProxyInfo
+   *
+   * @typedef {import("./IPProtectionServerlist.sys.mjs").MasqueProtocol} MasqueProtocol
+   * @typedef {import("./IPProtectionServerlist.sys.mjs").ConnectProtocol } ConnectProtocol
+   *
+   * @param {string} authToken - a bearer token for the proxy server.
+   * @param {string} isolationKey - the isolation key for the proxy connection.
+   * @param {MasqueProtocol|ConnectProtocol} protocol - the protocol definition.
+   * @param {nsIProxyInfo} fallBackInfo - optional fallback proxy info.
+   * @returns {nsIProxyInfo}
+   */
+  static constructProxyInfo(
+    authToken,
+    isolationKey,
+    protocol,
+    fallBackInfo = null
+  ) {
+    switch (protocol.name) {
+      case "masque":
+        return lazy.ProxyService.newMASQUEProxyInfo(
+          protocol.host,
+          protocol.port,
+          protocol.templateString,
+          authToken,
+          isolationKey,
+          TRANSPARENT_PROXY_RESOLVES_HOST,
+          failOverTimeout,
+          fallBackInfo
+        );
+      case "connect":
+        return lazy.ProxyService.newProxyInfo(
+          protocol.scheme,
+          protocol.host,
+          protocol.port,
+          authToken,
+          isolationKey,
+          TRANSPARENT_PROXY_RESOLVES_HOST,
+          failOverTimeout,
+          fallBackInfo
+        );
+      default:
+        throw new Error(
+          "Cannot construct ProxyInfo for Unknown server-protocol: " +
+            protocol.name
+        );
+    }
+  }
+  /**
+   * Takes a server definition and constructs the appropriate nsIProxyInfo
+   * If the server supports multiple Protocols, a fallback chain will be created.
+   * The first protocol in the list will be the primary one, with the others as fallbacks.
+   *
+   * @typedef {import("./IPProtectionServerlist.sys.mjs").Server} Server
+   * @param {string} authToken - a bearer token for the proxy server.
+   * @param {Server} server - the server to connect to.
+   * @returns {nsIProxyInfo}
+   */
+  static serverToProxyInfo(authToken, server) {
+    const isolationKey = IPPChannelFilter.makeIsolationKey();
+    return server.protocols.reduceRight((fallBackInfo, protocol) => {
+      return IPPChannelFilter.constructProxyInfo(
+        authToken,
+        isolationKey,
+        protocol,
+        fallBackInfo
+      );
+    }, null);
+  }
+
+  /**
+   * Initialize a IPPChannelFilter object. After this step, the filter, if
+   * active, will process the new and the pending channels.
+   *
+   * @typedef {import("./IPProtectionServerlist.sys.mjs").Server} Server
+   * @param {string} authToken - a bearer token for the proxy server.
+   * @param {Server} server - the server to connect to.
+   */
+  initialize(authToken = "", server) {
+    if (this.proxyInfo) {
+      throw new Error("Double initialization?!?");
+    }
+    const proxyInfo = IPPChannelFilter.serverToProxyInfo(authToken, server);
     Object.freeze(proxyInfo);
     this.proxyInfo = proxyInfo;
 
+    this.#processPendingChannels();
+  }
+
+  /**
+   * @param {Array<string>} [excludedPages]
+   */
+  constructor(excludedPages = []) {
     // Normalize and store excluded origins (scheme://host[:port])
     this.#excludedOrigins = new Set();
     excludedPages.forEach(url => {
       this.addPageExclusion(url);
     });
+
     DEFAULT_EXCLUDED_URL_PREFS.forEach(pref => {
       const prefValue = Services.prefs.getStringPref(pref, "");
       if (prefValue) {
         this.addPageExclusion(prefValue);
       }
     });
+
+    // Get origins essential to starting the proxy and exclude
+    // them prior to connecting
+    this.#essentialOrigins = new Set();
+    ESSENTIAL_URL_PREFS.forEach(pref => {
+      const prefValue = Services.prefs.getStringPref(pref, "");
+      if (prefValue) {
+        this.addEssentialExclusion(prefValue);
+      }
+    });
+
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "mode",
+      MODE_PREF,
+      IPPMode.MODE_FULL
+    );
   }
 
   /**
@@ -95,11 +203,17 @@ export class IPPChannelFilter {
    *     would be used by default for the given URI. This may be null.
    * @param {nsIProxyProtocolFilterResult} proxyFilter
    */
-  async applyFilter(channel, _defaultProxyInfo, proxyFilter) {
+  applyFilter(channel, _defaultProxyInfo, proxyFilter) {
     // If this channel should be excluded (origin match), do nothing
-    if (this.shouldExclude(channel)) {
+    if (!this.#matchMode(channel) || this.shouldExclude(channel)) {
       // Calling this with "null" will enforce a non-proxy connection
       proxyFilter.onProxyFilterResult(null);
+      return;
+    }
+
+    if (!this.proxyInfo) {
+      // We are not initialized yet!
+      this.#pendingChannels.push({ channel, proxyFilter });
       return;
     }
 
@@ -109,6 +223,23 @@ export class IPPChannelFilter {
     this.#observers.forEach(observer => {
       observer(channel);
     });
+  }
+
+  #matchMode(channel) {
+    switch (this.mode) {
+      case IPPMode.MODE_PB:
+        return !!channel.loadInfo.originAttributes.privateBrowsingId;
+
+      case IPPMode.MODE_TRACKER:
+        return (
+          TRACKING_FLAGS &
+          channel.loadInfo.triggeringThirdPartyClassificationFlags
+        );
+
+      case IPPMode.MODE_FULL:
+      default:
+        return true;
+    }
   }
 
   /**
@@ -121,12 +252,22 @@ export class IPPChannelFilter {
     try {
       const uri = channel.URI; // nsIURI
       if (!uri) {
-        return false;
+        return true;
       }
+
+      if (!["http", "https"].includes(uri.scheme)) {
+        return true;
+      }
+
       const origin = uri.prePath; // scheme://host[:port]
+
+      if (!this.proxyInfo && this.#essentialOrigins.has(origin)) {
+        return true;
+      }
+
       return this.#excludedOrigins.has(origin);
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -134,15 +275,25 @@ export class IPPChannelFilter {
    * Adds a page URL to the exclusion list.
    *
    * @param {string} url - The URL to exclude.
+   * @param {Set<string>} [list] - The exclusion list to add the URL to.
    */
-  addPageExclusion(url) {
+  addPageExclusion(url, list = this.#excludedOrigins) {
     try {
       const uri = Services.io.newURI(url);
       // prePath is scheme://host[:port]
-      this.#excludedOrigins.add(uri.prePath);
+      list.add(uri.prePath);
     } catch (_) {
       // ignore bad entries
     }
+  }
+
+  /**
+   * Adds a URL to the essential exclusion list.
+   *
+   * @param {string} url - The URL to exclude.
+   */
+  addEssentialExclusion(url) {
+    this.addPageExclusion(url, this.#essentialOrigins);
   }
 
   /**
@@ -163,7 +314,11 @@ export class IPPChannelFilter {
     if (!this.#active) {
       return;
     }
+
     lazy.ProxyService.unregisterChannelFilter(this);
+
+    this.#abortPendingChannels();
+
     this.#active = false;
     this.#abort.abort();
   }
@@ -174,6 +329,10 @@ export class IPPChannelFilter {
    */
   get isolationKey() {
     return this.proxyInfo.connectionIsolationKey;
+  }
+
+  get hasPendingChannels() {
+    return !!this.#pendingChannels.length;
   }
 
   /**
@@ -204,6 +363,8 @@ export class IPPChannelFilter {
    * to measure usage, or catch proxy errors.
    *
    * @returns {AsyncGenerator<nsIChannel>} An async generator that yields proxied channels.
+   * @yields {object}
+   *   Proxied channels.
    */
   async *proxiedChannels() {
     const stop = Promise.withResolvers();
@@ -237,10 +398,30 @@ export class IPPChannelFilter {
     return this.#active;
   }
 
+  #processPendingChannels() {
+    if (this.#pendingChannels.length) {
+      this.#pendingChannels.forEach(data =>
+        this.applyFilter(data.channel, null, data.proxyFilter)
+      );
+      this.#pendingChannels = [];
+    }
+  }
+
+  #abortPendingChannels() {
+    if (this.#pendingChannels.length) {
+      this.#pendingChannels.forEach(data =>
+        data.channel.cancel(Cr.NS_BINDING_ABORTED)
+      );
+      this.#pendingChannels = [];
+    }
+  }
+
   #abort = new AbortController();
   #observers = [];
   #active = false;
   #excludedOrigins = new Set();
+  #essentialOrigins = new Set();
+  #pendingChannels = [];
 
   static makeIsolationKey() {
     return Math.random().toString(36).slice(2, 18).padEnd(16, "0");

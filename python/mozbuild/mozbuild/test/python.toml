@@ -93,6 +93,8 @@ subsuite = "mozbuild"
 
 ["test_jarmaker.py"]
 
+["test_legacy_test.py"]
+
 ["test_licenses.py"]
 
 ["test_line_endings.py"]
@@ -110,6 +112,8 @@ subsuite = "mozbuild"
 ["test_pythonutil.py"]
 
 ["test_rewrite_mozbuild.py"]
+
+["test_site_dependency_extractor.py"]
 
 ["test_telemetry.py"]
 

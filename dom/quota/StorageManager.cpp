@@ -8,7 +8,6 @@
 
 #include <cstdint>
 #include <cstdlib>
-#include <utility>
 
 #include "ErrorList.h"
 #include "MainThreadUtils.h"
@@ -17,7 +16,6 @@
 #include "js/TypeDecls.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/MacroForEach.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"

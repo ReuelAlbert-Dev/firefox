@@ -239,16 +239,7 @@
                class="subview-subheader"
                data-l10n-id="appmenu-other-profiles" />
       <vbox id="profiles-list"></vbox>
-      <toolbarbutton id="profiles-create-profile-button"
-                     class="subviewbutton subviewbutton-iconic"
-                     data-l10n-id="appmenu-create-profile"
-                     />
     </vbox>
-    <toolbarseparator/>
-    <toolbarbutton id="profiles-manage-profiles-button"
-                    class="subviewbutton panel-subview-footer-button"
-                    data-l10n-id="appmenu-manage-profiles"
-                    />
   </panelview>
 
   <panelview id="appMenu-library-recentlyClosedTabs"/>
@@ -639,16 +630,17 @@
                       data-l10n-id="fxa-menu-connect-another-device"
                       disabled="true"
                       />
-      <toolbarbutton id="PanelUI-fxa-menu-sendtab-button"
-                      class="subviewbutton subviewbutton-nav"
-                      data-l10n-id="fxa-menu-send-tab-to-device"
-                      data-l10n-args='{"tabCount":1}'
-                      closemenu="none"
-                      />
       <toolbarbutton id="PanelUI-fxa-menu-sync-prefs-button"
                       class="subviewbutton"
                       data-l10n-id="fxa-menu-sync-settings"
                       hidden="true"
+                      />
+      <toolbarseparator id="PanelUI-fxa-menu-sendtab-separator" />
+      <toolbarbutton id="PanelUI-fxa-menu-sendtab-button"
+                      class="subviewbutton subviewbutton-nav"
+                      data-l10n-id="fxa-menu-send-to-device"
+                      data-l10n-args='{"tabCount":1}'
+                      closemenu="none"
                       />
       <toolbarseparator id="PanelUI-sign-out-separator" />
       <toolbarbutton id="PanelUI-fxa-menu-account-signout-button"
@@ -686,7 +678,7 @@
       <!-- updateCTAPanel will control if we show this panel -->
       <vbox id="PanelUI-fxa-cta-menu" hidden="true">
         <toolbarseparator id="PanelUI-products-separator" />
-        <label id="fxa-menu-other-protection-tools-header" crop="end" class="PanelUI-fxa-menu-section-title" data-l10n-id="appmenu-other-protection-header" />
+        <label id="fxa-menu-other-protection-tools-header" crop="end" class="PanelUI-fxa-menu-section-title" data-l10n-id="appmenu-other-protection-header2" />
         <toolbarbutton id="PanelUI-fxa-menu-monitor-button" class="fxa-cta-button subviewbutton subviewbutton-iconic">
           <vbox flex="1">
             <hbox align="center">
@@ -832,9 +824,11 @@
              has-custom-header="true">
   </panelview>
 
-  <panelview id="PanelUI-ipprotection-settings"
+  <panelview id="PanelUI-ipprotection-site-settings"
              class="PanelUI-subView"
-             mainview-with-header="true">
+             data-l10n-id="ipprotection-site-settings-title"
+             data-l10n-attrs="title">
+    <vbox id="PanelUI-ipprotection-site-settings-content" class="panel-subview-body"/>
   </panelview>
 
 #include ../../components/reportbrokensite/content/reportBrokenSitePanel.inc.xhtml

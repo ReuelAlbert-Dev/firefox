@@ -55,6 +55,7 @@ class OutOfLineCallPostWriteElementBarrier;
 class CodeGenerator final : public CodeGeneratorSpecific {
   // Warp snapshot. This is nullptr for Wasm compilations.
   const WarpSnapshot* snapshot_ = nullptr;
+  IonScriptCounts* counts_ = nullptr;
 
   [[nodiscard]] bool generateBody();
 
@@ -99,7 +100,10 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                                   wasm::FuncOffsets* offsets,
                                   wasm::StackMaps* stackMaps,
                                   wasm::Decoder* decoder);
+  [[nodiscard]] bool generateBlock(LBlock* current, size_t blockNumber,
+                                   IonScriptCounts* counts, bool compilingWasm);
 
+  [[nodiscard]] bool generateOutOfLineBlocks();
   [[nodiscard]] bool link(JSContext* cx);
 
   void emitOOLTestObject(Register objreg, Label* ifTruthy, Label* ifFalsy,
@@ -176,9 +180,13 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void emitApplyGeneric(T* apply);
   template <typename T>
   void emitCallInvokeFunction(T* apply);
-  void emitAllocateSpaceForApply(Register argcreg, Register scratch);
+  template <typename T>
+  void emitAllocateSpaceForApply(T* apply, Register calleeReg, Register argcreg,
+                                 Register scratch);
+  template <typename T>
   void emitAllocateSpaceForConstructAndPushNewTarget(
-      Register argcreg, Register newTargetAndScratch);
+      T* apply, Register calleeReg, Register argcreg,
+      Register newTargetAndScratch);
   void emitCopyValuesForApply(Register argvSrcBase, Register argvIndex,
                               Register copyreg, size_t argvSrcOffset,
                               size_t argvDstOffset);

@@ -59,17 +59,15 @@ using ::webrtc::TimeDelta;
 
 using NiceMockIceController = NiceMock<MockIceController>;
 
-static const Connection* kConnection =
-    reinterpret_cast<const Connection*>(0xabcd);
-static const Connection* kConnectionTwo =
-    reinterpret_cast<const Connection*>(0xbcde);
-static const Connection* kConnectionThree =
+const Connection* kConnection = reinterpret_cast<const Connection*>(0xabcd);
+const Connection* kConnectionTwo = reinterpret_cast<const Connection*>(0xbcde);
+const Connection* kConnectionThree =
     reinterpret_cast<const Connection*>(0xcdef);
 
-static const std::vector<const Connection*> kEmptyConnsList =
+const std::vector<const Connection*> kEmptyConnsList =
     std::vector<const Connection*>();
 
-static const TimeDelta kTick = TimeDelta::Millis(1);
+constexpr TimeDelta kTick = TimeDelta::Millis(1);
 
 TEST(WrappingActiveIceControllerTest, CreateLegacyIceControllerFromFactory) {
   AutoThread main;
@@ -84,8 +82,7 @@ TEST(WrappingActiveIceControllerTest, CreateLegacyIceControllerFromFactory) {
 TEST(WrappingActiveIceControllerTest, PassthroughIceControllerInterface) {
   AutoThread main;
   MockIceAgent agent;
-  std::unique_ptr<MockIceController> will_move =
-      std::make_unique<MockIceController>(IceControllerFactoryArgs{});
+  auto will_move = std::make_unique<MockIceController>();
   MockIceController* wrapped = will_move.get();
   WrappingActiveIceController controller(&agent, std::move(will_move));
 
@@ -121,8 +118,7 @@ TEST(WrappingActiveIceControllerTest, HandlesImmediateSwitchRequest) {
   AutoThread main;
   ScopedFakeClock clock;
   NiceMock<MockIceAgent> agent;
-  std::unique_ptr<NiceMockIceController> will_move =
-      std::make_unique<NiceMockIceController>(IceControllerFactoryArgs{});
+  auto will_move = std::make_unique<NiceMockIceController>();
   NiceMockIceController* wrapped = will_move.get();
   WrappingActiveIceController controller(&agent, std::move(will_move));
 
@@ -130,10 +126,10 @@ TEST(WrappingActiveIceControllerTest, HandlesImmediateSwitchRequest) {
   std::vector<const Connection*> conns_to_forget{kConnectionTwo};
   int recheck_delay_ms = 10;
   IceControllerInterface::SwitchResult switch_result{
-      kConnection,
-      IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
-                      recheck_delay_ms),
-      conns_to_forget};
+      .connection = kConnection,
+      .recheck_event = IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
+                                       recheck_delay_ms),
+      .connections_to_forget_state_on = conns_to_forget};
 
   // ICE controller should switch to given connection immediately.
   Sequence check_then_switch;
@@ -166,8 +162,7 @@ TEST(WrappingActiveIceControllerTest, HandlesImmediateSortAndSwitchRequest) {
   AutoThread main;
   ScopedFakeClock clock;
   NiceMock<MockIceAgent> agent;
-  std::unique_ptr<NiceMockIceController> will_move =
-      std::make_unique<NiceMockIceController>(IceControllerFactoryArgs{});
+  auto will_move = std::make_unique<NiceMockIceController>();
   NiceMockIceController* wrapped = will_move.get();
   WrappingActiveIceController controller(&agent, std::move(will_move));
 
@@ -176,10 +171,10 @@ TEST(WrappingActiveIceControllerTest, HandlesImmediateSortAndSwitchRequest) {
   std::vector<const Connection*> conns_to_prune{kConnectionThree};
   int recheck_delay_ms = 10;
   IceControllerInterface::SwitchResult switch_result{
-      kConnection,
-      IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
-                      recheck_delay_ms),
-      conns_to_forget};
+      .connection = kConnection,
+      .recheck_event = IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
+                                       recheck_delay_ms),
+      .connections_to_forget_state_on = conns_to_forget};
 
   Sequence sort_and_switch;
   EXPECT_CALL(agent, UpdateConnectionStates()).InSequence(sort_and_switch);
@@ -224,8 +219,7 @@ TEST(WrappingActiveIceControllerTest, HandlesSortAndSwitchRequest) {
   main.PostTask([&init, &init_delay] { init.Wait(init_delay); });
 
   NiceMock<MockIceAgent> agent;
-  std::unique_ptr<NiceMockIceController> will_move =
-      std::make_unique<NiceMockIceController>(IceControllerFactoryArgs{});
+  auto will_move = std::make_unique<NiceMockIceController>();
   NiceMockIceController* wrapped = will_move.get();
   WrappingActiveIceController controller(&agent, std::move(will_move));
 
@@ -241,10 +235,10 @@ TEST(WrappingActiveIceControllerTest, HandlesSortAndSwitchRequest) {
   std::vector<const Connection*> conns_to_forget{kConnectionTwo};
   int recheck_delay_ms = 10;
   IceControllerInterface::SwitchResult switch_result{
-      kConnection,
-      IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
-                      recheck_delay_ms),
-      conns_to_forget};
+      .connection = kConnection,
+      .recheck_event = IceRecheckEvent(IceSwitchReason::ICE_CONTROLLER_RECHECK,
+                                       recheck_delay_ms),
+      .connections_to_forget_state_on = conns_to_forget};
 
   // Sort and switch should take place as the subsequent task.
   Sequence sort_and_switch;
@@ -269,8 +263,7 @@ TEST(WrappingActiveIceControllerTest, StartPingingAfterSortAndSwitch) {
   main.PostTask([&init, &init_delay] { init.Wait(init_delay); });
 
   NiceMock<MockIceAgent> agent;
-  std::unique_ptr<NiceMockIceController> will_move =
-      std::make_unique<NiceMockIceController>(IceControllerFactoryArgs{});
+  auto will_move = std::make_unique<NiceMockIceController>();
   NiceMockIceController* wrapped = will_move.get();
   WrappingActiveIceController controller(&agent, std::move(will_move));
 

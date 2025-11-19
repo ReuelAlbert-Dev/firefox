@@ -4,9 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Predictor.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/Components.h"
-#include "mozilla/EndianUtils.h"
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/glean/NetwerkMetrics.h"

@@ -114,14 +114,6 @@ gmp-6.1.0:
         strip-components: 1
         add-prefix: gmp-source/
 
-go-1.14.4:
-    description: Golang 1.14.4 build tools
-    fetch:
-        type: static-url
-        url: https://dl.google.com/go/go1.14.4.linux-amd64.tar.gz
-        sha256: aed845e4185a0b2a3c3d5e1d0a35491702c55889192bb9c30e67a3de6849c067
-        size: 123711003
-
 isl-0.16.1:
     description: ISL 0.16.1 source code
     fetch:
@@ -169,13 +161,13 @@ nasm-2.14.02:
         sha256: e24ade3e928f7253aa8c14aa44726d1edf3f98643f87c9d72ec1df44b26be8f5
         size: 827620
 
-nasm-2.16.03:
-    description: nasm 2.16.03 source code
+nasm-3.01:
+    description: nasm 3.01 source code
     fetch:
         type: static-url
-        url: https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz
-        sha256: 1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148
-        size: 1032388
+        url: https://www.nasm.us/pub/nasm/releasebuilds/3.01/nasm-3.01.tar.xz
+        sha256: b7324cbe86e767b65f26f467ed8b12ad80e124e3ccb89076855c98e43a9eddd4
+        size: 1499136
 
 wix-3.14.0:
     description: wix 3.14.0 binary release
@@ -230,9 +222,9 @@ wine:
     description: wine source code
     fetch:
         type: static-url
-        url: https://dl.winehq.org/wine/source/8.0/wine-8.0.2.tar.xz
-        sha256: 6ec8fb6f2c72d576cb11f52b2f8d59af64404802154651d122b98466d91dc847
-        size: 29060452
+        url: https://dl.winehq.org/wine/source/10.x/wine-10.18.tar.xz
+        sha256: 51fb7273d65d09dea032c4a5e2197b12724b27ca360e1a622b2373d1ee50ad7b
+        size: 32970828
         gpg-signature:
             sig-url: "{url}.sign"
             key-path: build/unix/build-gcc/DA23579A74D4AD9AF9D3F945CEFAC8EAAF17519D.key
@@ -240,33 +232,34 @@ wine:
         strip-components: 1
         add-prefix: wine-source/
 
-cbindgen-0.27.0:
-    description: cbindgen 0.27 source code
+cbindgen-0.29.1:
+    description: cbindgen 0.29.1 source code
     fetch:
         type: git
         repo: https://github.com/mozilla/cbindgen
-        revision: 58c6156b0d91e82abb03c26187b8d18fa4345ce0
-
-cbindgen:
-    description: cbindgen 0.28 source code
-    fetch:
-        type: git
-        repo: https://github.com/mozilla/cbindgen
-        revision: bd78bbe59b10eda6ef1255e4acda95c56c6d0279
+        revision: eef17769e2739ebb425fee0bbd88e6a52ac2a4e1
+    fetch-alias: cbindgen
 
 cctools-port:
     description: cctools-port source code
     fetch:
         type: git
         repo: https://github.com/tpoechtrager/cctools-port
-        revision: 30518813875aed656aa7f18b6d485feee25f8f87
+        revision: 55943b0c68c0eaf8b8ad2f51f63738bbc7b0c86b
 
 libtapi:
     description: libtapi source code
     fetch:
         type: git
         repo: https://github.com/tpoechtrager/apple-libtapi
-        revision: b4f141a16c7c82f75973429c92242a8c7de3ddb1
+        revision: aed9334283e3e290bba622ee980bde2322e4d516
+
+libdispatch:
+    description: libdispatch source code
+    fetch:
+        type: git
+        repo: https://github.com/tpoechtrager/apple-libdispatch
+        revision: 323b9b4e0ca05d6c56a0c2f2d7d8d47363e612b7
 
 ldid:
     description: ldid source code
@@ -331,8 +324,8 @@ sccache:
     fetch:
         type: git
         repo: https://github.com/mozilla/sccache
-        # 0.9.1 release
-        revision: 77f67d73445a383ffd8af095fb7a8e41f258e80f
+        # 0.11.0 release
+        revision: 5709f069514a775ddb6604a6e9f5f5c91c0e9821
 
 fxc2:
     description: fxc2 source code
@@ -346,7 +339,7 @@ mingw-w64:
     fetch:
         type: git
         repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
-        revision: 849a151baf187f32eb57b34c00365cbc7d2353a7
+        revision: 287a0d4d478e3575d082ba37ce4dcba86524fc9e
 
 mingw-w64-trunk:
     description: mingw-w64 master branch source code
@@ -434,13 +427,6 @@ rust-nightly:
         repo: https://github.com/rust-lang/rust/
         branch: master
 
-wasi-sdk-11:
-    description: wasi-sdk-11 source code
-    fetch:
-        type: git
-        repo: https://github.com/WebAssembly/wasi-sdk
-        revision: ceabbfe181599bca83d81e087a229797e472c09c
-
 wasi-sdk:
     description: wasi-sdk-20 source code
     fetch:
@@ -449,43 +435,43 @@ wasi-sdk:
         revision: 935fe1acd2fcd7ea4aed2d5ee4527482862b6344
 
 macosx64-ninja:
-    description: ninja 1.12.1
+    description: ninja 1.13.1
     fetch:
         type: static-url
-        url: https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-mac.zip
-        sha256: 89a287444b5b3e98f88a945afa50ce937b8ffd1dcc59c555ad9b1baf855298c9
-        size: 281130
+        url: https://github.com/ninja-build/ninja/releases/download/v1.13.1/ninja-mac.zip
+        sha256: da7797794153629aca5570ef7c813342d0be214ba84632af886856e8f0063dd9
+        size: 314009
         artifact-name: ninja.tar.zst
         add-prefix: ninja/bin/
 
 win64-ninja:
-    description: ninja 1.12.1
+    description: ninja 1.13.1
     fetch:
         type: static-url
-        url: https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip
-        sha256: f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a
-        size: 275425
+        url: https://github.com/ninja-build/ninja/releases/download/v1.13.1/ninja-win.zip
+        sha256: 26a40fa8595694dec2fad4911e62d29e10525d2133c9a4230b66397774ae25bf
+        size: 289808
         artifact-name: ninja.tar.zst
         add-prefix: ninja/bin/
 
 macosx64-cmake:
-    description: cmake 3.25.1
+    description: cmake 4.1.2
     fetch:
         type: static-url
-        url: https://github.com/Kitware/CMake/releases/download/v3.25.1/cmake-3.25.1-macos-universal.tar.gz
-        sha256: e95e75ea506189785355a7e8dd86b059780a5613b9e62ab6e7419d6bfba3510b
-        size: 74418897
+        url: https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz
+        sha256: 3be85f5b999e327b1ac7d804cbc9acd767059e9f603c42ec2765f6ab68fbd367
+        size: 80750689
         artifact-name: cmake.tar.zst
         strip-components: 3
         add-prefix: cmake/
 
 cmake:
-    description: cmake 3.25.1 source code
+    description: cmake 4.1.2 source code
     fetch:
         type: static-url
-        url: https://github.com/Kitware/CMake/releases/download/v3.25.1/cmake-3.25.1.tar.gz
-        sha256: 1c511d09516af493694ed9baf13c55947a36389674d657a2d5e0ccedc6b291d8
-        size: 10561054
+        url: https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2.tar.gz
+        sha256: 643f04182b7ba323ab31f526f785134fb79cba3188a852206ef0473fee282a15
+        size: 12048810
         artifact-name: cmake.tar.zst
         strip-components: 1
         add-prefix: cmake/
@@ -512,12 +498,12 @@ fix-stacks:
         revision: 1fb1bcc8cb4dd65fbe342853954651563a0a88e7
 
 7zz:
-    description: 7-zip 24.09 source code
+    description: 7-zip 25.01 source code
     fetch:
         type: static-url
-        url: https://downloads.sourceforge.net/sevenzip/7-Zip/24.09/7z2409-src.tar.xz
-        sha256: 49c05169f49572c1128453579af1632a952409ced028259381dac30726b6133a
-        size: 1511288
+        url: https://downloads.sourceforge.net/sevenzip/7-Zip/25.01/7z2501-src.tar.xz
+        sha256: ed087f83ee789c1ea5f39c464c55a5c9d4008deb0efe900814f2df262b82c36e
+        size: 1533240
         artifact-name: 7z-src.tar.zst
         add-prefix: 7zz/
 
@@ -543,9 +529,10 @@ sonatype-nexus:
     description: Sonatype Nexus Maven repository service
     fetch:
         type: static-url
-        url: https://download.sonatype.com/nexus/oss/nexus-2.14.18-01-bundle.tar.gz
-        sha256: 350af8b270bec7fda5861a15b8a5b7870fd8903d0b9a210754113d5a966ce6a6
-        size: 83493896
+        # https://download.sonatype.com/nexus/oss/nexus-2.15.2-03-bundle.tar.gz
+        url: https://tooltool.mozilla-releng.net/sha512/8d0cd58839f95b8fa02eba82fd532b15795b59e93968bcfcf179383849cf3a09f3c2a76480c5583ebf4ee1b1528bfccbda5ad6d92f175817ebc6179d85a93b5b
+        sha256: cec1d80dad0be8a34a902aa00e666da547f51e83dc3a4a28b50b3ec36fe433a8
+        size: 89526162
         artifact-name: sonatype-nexus.tar.zst
         strip-components: 1
         add-prefix: sonatype-nexus/
@@ -554,9 +541,9 @@ jdk-8-linux64:
     description: Java 8 JDK
     fetch:
         type: static-url
-        url: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u462-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u462b08.tar.gz
-        sha256: 5d64ae542b59a962b3caadadd346f4b1c3010879a28bb02d928326993de16e79
-        size: 103087414
+        url: https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u472-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u472b08.tar.gz
+        sha256: 5becaa4ac660e844c5a39e2ebc39ff5ac824c37ff1b625af8c8b111dc13c3592
+        size: 103123206
         artifact-name: jdk-8.tar.zst
         strip-components: 1
         add-prefix: jdk-8/
@@ -671,12 +658,12 @@ msix-packaging:
         revision: 8164b7ac5a67688e18fa2497fb31ba13ce9bfb15
 
 pkgconf:
-    description: pkgconf 1.8.0
+    description: pkgconf 2.5.1
     fetch:
         type: static-url
-        url: https://distfiles.dereferenced.org/pkgconf/pkgconf-1.8.0.tar.xz
-        sha256: ef9c7e61822b7cb8356e6e9e1dca58d9556f3200d78acab35e4347e9d4c2bbaf
-        size: 296304
+        url: https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
+        sha256: cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243
+        size: 328064
         artifact-name: pkgconf.tar.zst
         strip-components: 1
         add-prefix: pkgconf/
@@ -702,13 +689,13 @@ symbol-scrapers:
         repo: https://github.com/mozilla/symbol-scrapers
         revision: 4a589bc872995b76fa18b5f8746715e5c86fa4bb
 
-xz-5.4.4:
-    description: xz 5.4.4 source code
+xz-5.8.1:
+    description: xz 5.8.1 source code
     fetch:
         type: static-url
-        url: https://tukaani.org/xz/xz-5.4.4.tar.gz
-        sha256: aae39544e254cfd27e942d35a048d592959bd7a79f9a624afb0498bb5613bdf8
-        size: 2874706
+        url: https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
+        sha256: 0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e
+        size: 1461872
         artifact-name: xz-source.tar.zst
         strip-components: 1
         add-prefix: xz-source/
@@ -759,23 +746,19 @@ windows-rs:
         local-fetch: true
     fetch:
         type: static-url
-        url: https://crates.io/api/v1/crates/windows/0.58.0/download
-        sha256: dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6
-        size: 9744521
+        url: https://crates.io/api/v1/crates/windows/0.62.2/download
+        sha256: 527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580
+        size: 9360572
         artifact-name: windows-rs.tar.zst
         strip-components: 1
         add-prefix: windows-rs/
 
 libxml2:
-    description: Source of the libxml2 library
+    description: libxml2 2.15.1 source code
     fetch:
-        type: static-url
-        url: https://gitlab.gnome.org/GNOME/libxml2/-/archive/v2.9.12/libxml2-v2.9.12.tar.gz
-        sha256: 98bfa7a9a5e2a75638422050740448ee9f02bf4dc2075c9822d7747d5ff9e617
-        size: 5233674
-        artifact-name: libxml2.tar.zst
-        strip-components: 1
-        add-prefix: libxml2/
+        type: git
+        repo: https://gitlab.gnome.org/GNOME/libxml2
+        revision: b7fa62cbe8ef0df5869e000d5b690bdedd07f33e
 
 mozilla-pdf.js:
     description: Mozilla pdf.js Github repo
@@ -792,15 +775,6 @@ xmlstarlet-1.6.1:
         sha256: d1d7f55f7887d2d1c3283e1b06a68675b5bead2eebf14939f9cdd84b849ced19
         size: 267112
         artifact-name: xmlstarlet.deb
-
-chromium-depot-tools:
-    description: Chromium depot tools for managing Chromium repository
-    fetch:
-        type: git
-        repo: https://chromium.googlesource.com/chromium/tools/depot_tools.git
-        revision: 5304f2bbb31bad413e029a660097d1da1552e6f4
-        artifact-name: chromium-depot-tools.tar.zst
-        include-dot-git: true
 
 uv:
     description: uv 0.7.2 source code
@@ -822,3 +796,20 @@ jj:
         type: git
         repo: https://github.com/jj-vcs/jj
         revision: 94269d2e7228ff502b2116258e5ae6b3b07ec434
+
+firefox-profiler:
+    description: firefox profiler source code
+    fetch:
+        type: git
+        repo: https://github.com/firefox-devtools/profiler
+        revision: 26904094839504de2b8f9193971a37086e305c27
+
+# See https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/downloads
+windowsappsdk-redist:
+    description: Windows App SDK Redistributable
+    fetch:
+        type: static-url
+        url: https://aka.ms/windowsappsdk/1.8/1.8.250916003/Microsoft.WindowsAppRuntime.Redist.1.8.zip
+        sha256: a2dccd1d4d3b47857e1f4c36a140b976ff2da61fff8dc9fcf029cd8e829a61fc
+        size: 463549393
+        artifact-name: Microsoft.WindowsAppRuntime.Redist.tar.zst

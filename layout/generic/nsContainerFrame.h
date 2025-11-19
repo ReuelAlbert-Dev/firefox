@@ -21,6 +21,7 @@ class nsOverflowContinuationTracker;
 
 namespace mozilla {
 class PresShell;
+struct StylePositionArea;
 }  // namespace mozilla
 
 // Some macros for container classes to do sanity checking on
@@ -46,8 +47,6 @@ class nsContainerFrame : public nsSplittableFrame {
   NS_DECL_QUERYFRAME
 
   // nsIFrame overrides
-  void Init(nsIContent* aContent, nsContainerFrame* aParent,
-            nsIFrame* aPrevInFlow) override;
   nsContainerFrame* GetContentInsertionFrame() override { return this; }
 
   const nsFrameList& GetChildList(ChildListID aList) const override;
@@ -150,17 +149,6 @@ class nsContainerFrame : public nsSplittableFrame {
   virtual void DeleteNextInFlowChild(DestroyContext&, nsIFrame* aNextInFlow,
                                      bool aDeletingEmptyFrames);
 
-  // Positions the frame's view based on the frame's origin
-  static void PositionFrameView(nsIFrame* aKidFrame);
-
-  static void ReparentFrameView(nsIFrame* aChildFrame,
-                                nsIFrame* aOldParentFrame,
-                                nsIFrame* aNewParentFrame);
-
-  static void ReparentFrameViewList(const nsFrameList& aChildFrameList,
-                                    nsIFrame* aOldParentFrame,
-                                    nsIFrame* aNewParentFrame);
-
   /**
    * Reparent aFrame from aOldParent to aNewParent.
    */
@@ -178,12 +166,6 @@ class nsContainerFrame : public nsSplittableFrame {
   static void ReparentFrames(nsFrameList& aFrameList,
                              nsContainerFrame* aOldParent,
                              nsContainerFrame* aNewParent);
-
-  // Set the view's size and position after its frame has been reflowed.
-  static void SyncFrameViewAfterReflow(
-      nsPresContext* aPresContext, nsIFrame* aFrame, nsView* aView,
-      const nsRect& aInkOverflowArea,
-      ReflowChildFlags aFlags = ReflowChildFlags::Default);
 
   /**
    * Converts the minimum and maximum sizes given in inner window app units to
@@ -289,7 +271,26 @@ class nsContainerFrame : public nsSplittableFrame {
                                 const ReflowInput* aReflowInput, nscoord aX,
                                 nscoord aY, ReflowChildFlags aFlags);
 
-  static void PositionChildViews(nsIFrame* aFrame);
+  /**
+   * Let the absolutely positioned containing block reflow any absolutely
+   * positioned child frames that need to be reflowed.
+   *
+   * @param aStatus The reflow statuses of any reflowed absolute children will
+   * be merged into aStatus; aside from that, this method won't modify aStatus.
+   */
+  void ReflowAbsoluteFrames(nsPresContext* aPresContext,
+                            ReflowOutput& aDesiredSize,
+                            const ReflowInput& aReflowInput,
+                            nsReflowStatus& aStatus);
+
+  /**
+   * A convenience method to call ReflowAbsoluteFrames() and
+   * FinishAndStoreOverflow().
+   */
+  void FinishReflowWithAbsoluteFrames(nsPresContext* aPresContext,
+                                      ReflowOutput& aDesiredSize,
+                                      const ReflowInput& aReflowInput,
+                                      nsReflowStatus& aStatus);
 
   // ==========================================================================
   /* Overflow containers are continuation frames that hold overflow. They
@@ -447,14 +448,6 @@ class nsContainerFrame : public nsSplittableFrame {
   virtual void BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                 const nsDisplayListSet& aLists) override;
 
-  static void PlaceFrameView(nsIFrame* aFrame) {
-    if (aFrame->HasView()) {
-      nsContainerFrame::PositionFrameView(aFrame);
-    } else {
-      nsContainerFrame::PositionChildViews(aFrame);
-    }
-  }
-
   /**
    * Returns a CSS Box Alignment constant which the caller can use to align
    * the absolutely-positioned child (whose ReflowInput is aChildRI) within
@@ -479,7 +472,9 @@ class nsContainerFrame : public nsSplittableFrame {
    * on its type (By overriding `CSSAlignmentForAbsPosChild`).
    */
   mozilla::StyleAlignFlags CSSAlignmentForAbsPosChildWithinContainingBlock(
-      const ReflowInput& aChildRI, mozilla::LogicalAxis aLogicalAxis) const;
+      const ReflowInput& aChildRI, mozilla::LogicalAxis aLogicalAxis,
+      const mozilla::StylePositionArea& aResolvedPositionArea,
+      const mozilla::LogicalSize& aContainingBlockSize) const;
 
 #define NS_DECLARE_FRAME_PROPERTY_FRAMELIST(prop) \
   NS_DECLARE_FRAME_PROPERTY_WITH_DTOR_NEVER_CALLED(prop, nsFrameList)

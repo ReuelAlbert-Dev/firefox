@@ -71,6 +71,7 @@ export var Policy = {
 
 /**
  * Get the ping type based on the payload.
+ *
  * @param {Object} aPayload The ping payload.
  * @return {String} A string representing the ping type.
  */
@@ -161,6 +162,7 @@ export var TelemetrySession = Object.freeze({
   },
   /**
    * Returns the current telemetry payload.
+   *
    * @param reason Optional, the reason to trigger the payload.
    * @param clearSubsession Optional, whether to clear subsession specific data.
    * @returns Object
@@ -254,6 +256,7 @@ export var TelemetrySession = Object.freeze({
   /**
    * Does the "heavy" Telemetry initialization later on, so we
    * don't impact startup performance.
+   *
    * @return {Promise} Resolved when the initialization completes.
    */
   delayedInit() {
@@ -267,6 +270,7 @@ export var TelemetrySession = Object.freeze({
   },
   /**
    * Marks the "new-profile" ping as sent in the telemetry state file.
+   *
    * @return {Promise} A promise resolved when the new telemetry state is saved to disk.
    */
   markNewProfilePingSent() {
@@ -340,6 +344,8 @@ var Impl = {
   _newProfilePingSent: false,
   // Keep track of the active observers
   _observedTopics: new Set(),
+  _earlyObserversRegistered: false,
+  _delayedObserversRegistered: false,
 
   addObserver(aTopic) {
     Services.obs.addObserver(this, aTopic);
@@ -364,6 +370,7 @@ var Impl = {
   /**
    * Gets a series of simple measurements (counters). At the moment, this
    * only returns startup data from nsIAppStartup.getStartupInfo().
+   *
    * @param {Boolean} isSubsession True if this is a subsession, false otherwise.
    * @param {Boolean} clearSubsession True if a new subsession is being started, false otherwise.
    *
@@ -473,6 +480,7 @@ var Impl = {
 
   /**
    * Get a snapshot of the scalars and clear them.
+   *
    * @param {subsession} If true, then we collect the data for a subsession.
    * @param {clearSubsession} If true, we  need to clear the subsession.
    * @param {keyed} Take a snapshot of keyed or non keyed scalars.
@@ -804,15 +812,18 @@ var Impl = {
    * chrome process.
    */
   attachEarlyObservers() {
-    this.addObserver("sessionstore-windows-restored");
-    if (AppConstants.platform === "android") {
-      this.addObserver("application-background");
-    }
-    this.addObserver("xul-window-visible");
+    if (!this._earlyObserversRegistered) {
+      this.addObserver("sessionstore-windows-restored");
+      if (AppConstants.platform === "android") {
+        this.addObserver("application-background");
+      }
+      this.addObserver("xul-window-visible");
 
-    // Attach the active-ticks related observers.
-    this.addObserver("user-interaction-active");
-    this.addObserver("user-interaction-inactive");
+      // Attach the active-ticks related observers.
+      this.addObserver("user-interaction-active");
+      this.addObserver("user-interaction-inactive");
+      this._earlyObserversRegistered = true;
+    }
   },
 
   /**
@@ -872,6 +883,7 @@ var Impl = {
   /**
    * Does the "heavy" Telemetry initialization later on, so we
    * don't impact startup performance.
+   *
    * @return {Promise} Resolved when the initialization completes.
    */
   delayedInit() {
@@ -888,7 +900,10 @@ var Impl = {
           this._getSessionDataObject()
         );
 
-        this.addObserver("idle-daily");
+        if (!this._delayedObserversRegistered) {
+          this.addObserver("idle-daily");
+          this._delayedObserversRegistered = true;
+        }
         await Services.telemetry.gatherMemory();
 
         Services.telemetry.asyncFetchTelemetryData(function () {});
@@ -1063,6 +1078,8 @@ var Impl = {
         this._log.warn("uninstall - Failed to remove " + topic, e);
       }
     }
+    this._earlyObserversRegistered = false;
+    this._delayedObserversRegistered = false;
   },
 
   getPayload: function getPayload(reason, clearSubsession) {
@@ -1111,11 +1128,6 @@ var Impl = {
     if (needsUpdate) {
       this._sessionActiveTicks++;
       Glean.browserEngagement.activeTicks.add(1);
-      // GLAM EXPERIMENT
-      // This metric is temporary, disabled by default, and will be enabled only
-      // for the purpose of experimenting with client-side sampling of data for
-      // GLAM use. See Bug 1947604 for more information.
-      Glean.glamExperiment.activeTicks.add(1);
     }
   },
 
@@ -1138,7 +1150,7 @@ var Impl = {
           Glean.startupIo.write.windowVisible.set(counters[1]);
         }
         break;
-      case "sessionstore-windows-restored":
+      case "sessionstore-windows-restored": {
         this.removeObserver("sessionstore-windows-restored");
         // Check whether debugger was attached during startup
         let debugService = Cc["@mozilla.org/xpcom/debug;1"].getService(
@@ -1147,6 +1159,7 @@ var Impl = {
         gWasDebuggerAttached = debugService.isDebuggerAttached;
         this.gatherStartup();
         break;
+      }
       case "idle-daily":
         // Enqueue to main-thread, otherwise components may be inited by the
         // idle-daily category and miss the gather-telemetry notification.
@@ -1158,7 +1171,7 @@ var Impl = {
         });
         break;
 
-      case "application-background":
+      case "application-background": {
         if (AppConstants.platform !== "android") {
           break;
         }
@@ -1189,6 +1202,7 @@ var Impl = {
           options
         );
         break;
+      }
       case "user-interaction-active":
         this._onActiveTick(true);
         break;
@@ -1253,6 +1267,7 @@ var Impl = {
 
   /**
    * Gather and send a daily ping.
+   *
    * @return {Promise} Resolved when the ping is sent.
    */
   _sendDailyPing() {
@@ -1284,7 +1299,9 @@ var Impl = {
     return promise;
   },
 
-  /** Loads session data from the session data file.
+  /**
+   * Loads session data from the session data file.
+   *
    * @return {Promise<object>} A promise which is resolved with an object when
    *                            loading has completed, with null otherwise.
    */
@@ -1383,6 +1400,7 @@ var Impl = {
 
   /**
    * Saves the aborted session ping to disk.
+   *
    * @param {Object} [aProvidedPayload=null] A payload object to be used as an aborted
    *                 session ping. The reason of this payload is changed to aborted-session.
    *                 If not provided, a new payload is gathered.

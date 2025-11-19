@@ -184,6 +184,7 @@ class AccessibilityProxy {
   /**
    * Look up accessibility fronts (get an existing one or create a new one) for
    * all existing target fronts and run a task with each one of them.
+   *
    * @param {Function} task
    *        Function to execute with each accessiblity front.
    */
@@ -210,6 +211,7 @@ class AccessibilityProxy {
    * Look up accessibility walker fronts (get an existing one or create a new
    * one using accessibility front) for all existing target fronts and run a
    * task with each one of them.
+   *
    * @param {Function} task
    *        Function to execute with each accessiblity walker front.
    */
@@ -242,6 +244,7 @@ class AccessibilityProxy {
 
   /**
    * Start picking and add walker listeners.
+   *
    * @param  {Boolean} doFocus
    *         If true, move keyboard focus into content.
    */
@@ -549,6 +552,15 @@ class AccessibilityProxy {
     this.simulatorFront = this.accessibilityFront.simulatorFront;
     if (this.simulatorFront) {
       this.simulate = types => this.simulatorFront.simulate({ types });
+
+      // Re-apply a potential existing simulation
+      const { simulation } = this.#panel.panelWin.view.store.getState();
+      const simulationType = Object.keys(simulation).find(
+        name => simulation[name]
+      );
+      if (simulationType) {
+        await this.simulate([simulationType]);
+      }
     } else {
       this.simulate = null;
     }

@@ -32,6 +32,13 @@
       data-lazy-l10n-id="tab-context-ungroup-tab"
       data-l10n-args='{"groupCount": 1}'
       hidden="true"/>
+    <menuitem id="context_moveTabToSplitView"
+      class="badge-new"
+      hidden="true"/>
+    <menuitem id="context_separateSplitView"
+      class="badge-new"
+      data-lazy-l10n-id="tab-context-separate-split-view"
+      hidden="true"/>
     <menuseparator/>
     <menuitem id="context_reloadTab" data-lazy-l10n-id="reload-tab"/>
     <menuitem id="context_reloadSelectedTabs" data-lazy-l10n-id="reload-tabs" hidden="true"/>
@@ -68,13 +75,8 @@
                   tbattr="tabbrowser-multiple-visible"/>
         <menuitem id="context_openTabInWindow" data-lazy-l10n-id="move-to-new-window"
                   tbattr="tabbrowser-multiple-visible"/>
+        <menuseparator id="moveTabSeparator" hidden="true"/>
       </menupopup>
-    </menu>
-    <menu id="context_sendTabToDevice"
-          class="sync-ui-item"
-          data-lazy-l10n-id="tab-context-send-tabs-to-device"
-          data-l10n-args='{"tabCount": 1}'>
-      <menupopup id="context_sendTabToDevicePopupMenu"/>
     </menu>
     <menu id="context_reopenInContainer"
           data-lazy-l10n-id="tab-context-open-in-new-container-tab"
@@ -83,6 +85,13 @@
     </menu>
     <menuitem id="context_selectAllTabs" data-lazy-l10n-id="select-all-tabs"/>
     <menuseparator/>
+    <menu id="context_sendTabToDevice"
+          class="sync-ui-item"
+          data-lazy-l10n-id="tab-context-send-to-device"
+          data-l10n-args='{"tabCount": 1}'>
+      <menupopup id="context_sendTabToDevicePopupMenu" class="sync-ui-item"/>
+    </menu>
+    <menuseparator id="context_sendTabToDeviceSeparator"/>
     <menuitem id="context_closeTab"
               data-lazy-l10n-id="tab-context-close-n-tabs"
               data-l10n-args='{"tabCount": 1}'/>
@@ -268,7 +277,8 @@
            noautofocus="true"
            noautohide="true"
            flip="none"
-           consumeoutsideclicks="false">
+           consumeoutsideclicks="false"
+           level="top">
       <box id="UITourHighlight"></box>
     </panel>
   </html:template>
@@ -535,10 +545,23 @@
     <html:div class="tab-preview-thumbnail-container"></html:div>
   </panel>
 
-  <menupopup id="tabgroup-preview-panel"
-             class="toolbar-menupopup"
-             consumeoutsideclicks="never">
-  </menupopup>
+  <panel id="tabgroup-preview-panel"
+         role="menu"
+         data-l10n-id="tab-group-preview-name"
+         type="arrow"
+         class="toolbar-menupopup animatable-menupopup"
+         noautofocus="true"
+         norolluponanchor="true"
+         consumeoutsideclicks="false">
+        <arrowscrollbox id="tabgroup-panel-content"
+                        class="menupopup-arrowscrollbox"
+                        flex="1"
+                        orient="vertical"
+                        smoothscroll="false">
+        </arrowscrollbox>
+  </panel>
+
+
 
   <html:template id="pageActionPanelTemplate">
     <panel id="pageActionPanel"

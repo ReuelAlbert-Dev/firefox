@@ -7,7 +7,6 @@
 #ifndef mozilla_dom_TypedArray_h
 #define mozilla_dom_TypedArray_h
 
-#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -23,7 +22,6 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Buffer.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/Result.h"
 #include "mozilla/Vector.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/ScriptSettings.h"

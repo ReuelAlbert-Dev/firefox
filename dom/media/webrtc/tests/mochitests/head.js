@@ -636,8 +636,10 @@ var timeout = (promise, time, msg) =>
     wait(time).then(() => Promise.reject(new Error(msg))),
   ]);
 
-/** Adds a |finally| function to a promise whose argument is invoked whether the
- * promise is resolved or rejected, and that does not interfere with chaining.*/
+/**
+ * Adds a |finally| function to a promise whose argument is invoked whether the
+ * promise is resolved or rejected, and that does not interfere with chaining.
+ */
 var addFinallyToPromise = promise => {
   promise.finally = func => {
     return promise.then(
@@ -1086,6 +1088,7 @@ CommandChain.prototype = {
 
   /**
    * Returns the index of the specified command in the chain.
+   *
    * @param {occurrence} Optional param specifying which occurrence to match,
    * with 0 representing the first occurrence.
    */

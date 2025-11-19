@@ -12,7 +12,7 @@ import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 const lazy = {};
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
-  idleService: ["@mozilla.org/widget/useridleservice;1", "nsIUserIdleService"],
+  idleService: ["@mozilla.org/widget/useridleservice;1", Ci.nsIUserIdleService],
 });
 
 const MIN_SUBSESSION_LENGTH_MS =
@@ -85,6 +85,7 @@ export var TelemetryScheduler = {
   _schedulerInterval: 0,
   _shuttingDown: true,
   _isUserIdle: false,
+  _observerRegistered: false,
 
   /**
    * Initialises the scheduler and schedules the first daily/aborted session pings.
@@ -107,7 +108,10 @@ export var TelemetryScheduler = {
     this._rescheduleTimeout();
 
     lazy.idleService.addIdleObserver(this, IDLE_TIMEOUT_SECONDS);
-    Services.obs.addObserver(this, "wake_notification");
+    if (!this._observerRegistered) {
+      Services.obs.addObserver(this, "wake_notification");
+      this._observerRegistered = true;
+    }
   },
 
   /**
@@ -130,7 +134,10 @@ export var TelemetryScheduler = {
     }
 
     lazy.idleService.removeIdleObserver(this, IDLE_TIMEOUT_SECONDS);
-    Services.obs.removeObserver(this, "wake_notification");
+    if (this._observerRegistered) {
+      Services.obs.removeObserver(this, "wake_notification");
+      this._observerRegistered = false;
+    }
 
     this._shuttingDown = true;
   },
@@ -191,6 +198,7 @@ export var TelemetryScheduler = {
 
   /**
    * Checks if we can send a daily ping or not.
+   *
    * @param {Object} nowDate A date object.
    * @return {Boolean} True if we can send the daily ping, false otherwise.
    */
@@ -216,6 +224,7 @@ export var TelemetryScheduler = {
 
   /**
    * Checks if we can send a regular ping or not.
+   *
    * @param {Object} nowDate A date object.
    * @return {Boolean} True if we can send the regular pings, false otherwise.
    */
@@ -232,6 +241,7 @@ export var TelemetryScheduler = {
 
   /**
    * An helper function to save an aborted-session ping.
+   *
    * @param {Number} now The current time, in milliseconds.
    * @param {Object} [competingPayload=null] If we are coalescing the daily and the
    *                 aborted-session pings, this is the payload for the former. Note
@@ -296,6 +306,7 @@ export var TelemetryScheduler = {
 
   /**
    * Performs a scheduler tick. This function manages Telemetry recurring operations.
+   *
    * @param {Boolean} [dispatchOnIdle=false] If true, the tick is dispatched in the
    *                  next idle cycle of the main thread.
    * @return {Promise} A promise, only used when testing, resolved when the scheduled
@@ -347,6 +358,7 @@ export var TelemetryScheduler = {
 
   /**
    * Implements the scheduler logic.
+   *
    * @return {Promise} Resolved when the scheduled task completes. Only used in tests.
    */
   _schedulerTickLogic() {

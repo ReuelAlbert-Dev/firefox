@@ -31,7 +31,7 @@ function queryAll(el, selector) {
 /**
  * MozLitElement provides extensions to the lit-provided LitElement class.
  *
- *******
+ * ---------
  *
  * `@query` support (define a getter for a querySelector):
  *
@@ -52,14 +52,14 @@ function queryAll(el, selector) {
  * get anotherName() {
  *   return this.renderRoot?.querySelectorAll(".selectorFor .querySelectorAll");
  * }
- *******
+ * ---------
  *
  * Automatic Fluent support for shadow DOM.
  *
  * Fluent requires that a shadowRoot be connected before it can use Fluent.
  * Shadow roots will get connected automatically.
  *
- *******
+ * ---------
  *
  * Automatic Fluent support for localized Reactive Properties
  *
@@ -67,7 +67,7 @@ function queryAll(el, selector) {
  * property definition and it will automatically be added to the data-l10n-attrs
  * attribute so that fluent will allow setting the attribute.
  *
- *******
+ * ---------
  *
  * Mapped properties support (moving a standard attribute to rendered content)
  *
@@ -77,7 +77,7 @@ function queryAll(el, selector) {
  * definition and the attribute will be removed from the host when it is set.
  * Note that the attribute can not be unset once it is set.
  *
- *******
+ * ---------
  *
  * Test helper for sending events after a change: `dispatchOnUpdateComplete`
  *
@@ -242,10 +242,11 @@ export class MozLitElement extends LitElement {
  * @property {boolean} parentDisabled - When this element is nested under another input and that
  *     input is disabled or unchecked/unpressed the parent will set this property to true so this
  *     element can be disabled.
- * @property {string} ariaLabel
- *  The aria-label text for cases where there is no visible label.
+ * @property {string} ariaLabel - The aria-label text when there is no visible label.
+ * @property {string} ariaDescription - The aria-description text when there is no visible description.
  */
 export class MozBaseInputElement extends MozLitElement {
+  static formAssociated = true;
   #internals;
   #hasSlottedContent = new Map();
 
@@ -260,8 +261,12 @@ export class MozBaseInputElement extends MozLitElement {
     accessKey: { type: String, mapped: true, fluent: true },
     parentDisabled: { type: Boolean, state: true },
     ariaLabel: { type: String, mapped: true },
+    ariaDescription: { type: String, mapped: true },
   };
+  /** @type {"inline" | "block"} */
   static inputLayout = "inline";
+  /** @type {keyof MozBaseInputElement} */
+  static activatedProperty = null;
 
   constructor() {
     super();
@@ -269,9 +274,29 @@ export class MozBaseInputElement extends MozLitElement {
     this.#internals = this.attachInternals();
   }
 
+  get form() {
+    return this.#internals.form;
+  }
+
+  /**
+   * @param {string} value The current value of the element.
+   */
+  setFormValue(value) {
+    this.#internals.setFormValue(value);
+  }
+
+  formResetCallback() {
+    this.value = this.defaultValue;
+  }
+
   connectedCallback() {
     super.connectedCallback();
     this.setAttribute("inputlayout", this.constructor.inputLayout);
+    /** @type {string} val */
+    let val = this.getAttribute("value") || this.value;
+    this.defaultValue = val;
+    this.value = val;
+    this.#internals.setFormValue(this.value || null);
   }
 
   willUpdate(changedProperties) {
@@ -280,7 +305,12 @@ export class MozBaseInputElement extends MozLitElement {
     this.#updateInternalState(this.supportPage, "support-link");
     this.#updateInternalState(this.label, "label");
 
-    let activatedProperty = this.constructor.activatedProperty;
+    if (changedProperties.has("value")) {
+      this.setFormValue(this.value);
+    }
+    let activatedProperty = /** @type {typeof MozBaseInputElement} */ (
+      this.constructor
+    ).activatedProperty;
     if (
       (activatedProperty && changedProperties.has(activatedProperty)) ||
       changedProperties.has("disabled") ||

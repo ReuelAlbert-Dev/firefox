@@ -185,7 +185,14 @@ function generateOp(op) {
   }
 }
 
-function generateConditionalStatement(statement, condition, op) {
+const kStatementKinds = ['if', 'for', 'while', 'switch', 'break-if'];
+
+
+function generateConditionalStatement(
+statement,
+condition,
+op)
+{
   const code = ``;
   switch (statement) {
     case 'if':{
@@ -215,8 +222,19 @@ function generateConditionalStatement(statement, condition, op) {
       }
       `;
       }
-    default:{
-        unreachable(`Unhandled statement`);
+    case 'break-if':{
+        // The initial 'if' prevents the loop from being infinite.  Its condition
+        // is uniform, to ensure the first iteration of the the body executes
+        // uniformly. The uniformity of the second iteration depends entirely on
+        // the uniformity of the break-if condition.
+        return `loop {
+        if ${generateCondition('uniform_storage_ro')} { break; }
+        ${generateOp(op)}
+        continuing {
+          break if ${generateCondition(condition)};
+        }
+      }
+      `;
       }
   }
 
@@ -227,7 +245,7 @@ g.test('basics').
 desc(`Test collective operations in simple uniform or non-uniform control flow.`).
 params((u) =>
 u.
-combine('statement', ['if', 'for', 'while', 'switch']).
+combine('statement', kStatementKinds).
 beginSubcases().
 combineWithParams(kConditions).
 combineWithParams(kCollectiveOps)
@@ -315,7 +333,7 @@ g.test('basics,subgroups').
 desc(`Test subgroup operations in simple uniform or non-uniform control flow.`).
 params((u) =>
 u.
-combine('statement', ['if', 'for', 'while', 'switch']).
+combine('statement', kStatementKinds).
 beginSubcases().
 combineWithParams(kConditions).
 combine('op', kSubgroupOps).
@@ -491,12 +509,27 @@ const kComputeBuiltinValues = [
   builtin: `subgroup_size`,
   type: `u32`,
   uniform: true
+},
+{
+  builtin: `subgroup_id`,
+  type: `u32`,
+  uniform: false
+},
+{
+  builtin: `num_subgroups`,
+  type: `u32`,
+  uniform: true
 }];
 
 
 g.test('compute_builtin_values').
 desc(`Test uniformity of compute built-in values`).
 params((u) => u.combineWithParams(kComputeBuiltinValues).beginSubcases()).
+beforeAllSubcases((t) => {
+  if (t.params.builtin === `subgroup_id` || t.params.builtin === `num_subgroups`) {
+    t.skipIfLanguageFeatureNotSupported('subgroup_id');
+  }
+}).
 fn((t) => {
   let cond = ``;
   switch (t.params.type) {

@@ -87,14 +87,8 @@ if CONFIG["OS_ARCH"] == "WINNT":
     OS_LIBS += [
         "bcrypt",
         "ntdll",
+        "synchronization",
     ]
-    # Version string comparison is generally wrong, but by the time it would
-    # actually matter, either bug 1489995 would be fixed, or the build would
-    # require version >= 1.78.
-    if CONFIG["RUSTC_VERSION"] and CONFIG["RUSTC_VERSION"] >= "1.78.0":
-        OS_LIBS += [
-            "synchronization",
-        ]
 
 OS_LIBS += CONFIG["LIBATOMIC_LIBS"]
 
@@ -121,4 +115,13 @@ if CONFIG["ENABLE_TESTS"] or CONFIG["JS_STANDALONE"]:
             "/config/check_macroassembler_style.py",
             "/config/check_js_opcode.py",
         ],
+    )
+
+if CONFIG["NM"]:
+    # check_vanilla_allocations.py is tailored to Linux, so only run it there.
+    # That should be enough to catch any problems.
+    LegacyTest(
+        f"%{CONFIG['PYTHON3']}",
+        "/config/check_vanilla_allocations.py",
+        f"!lib{STATIC_LIBRARY_NAME}.a",
     )

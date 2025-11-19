@@ -84,6 +84,7 @@ const gLoggingPresets = {
       label: "about-logging-preset-networking-cookie-label",
       description: "about-logging-preset-networking-cookie-description",
     },
+    profilerPreset: "networking",
   },
   websocket: {
     modules:
@@ -92,6 +93,7 @@ const gLoggingPresets = {
       label: "about-logging-preset-networking-websocket-label",
       description: "about-logging-preset-networking-websocket-description",
     },
+    profilerPreset: "networking",
   },
   http3: {
     modules:
@@ -100,6 +102,7 @@ const gLoggingPresets = {
       label: "about-logging-preset-networking-http3-label",
       description: "about-logging-preset-networking-http3-description",
     },
+    profilerPreset: "networking",
   },
   "http3-upload-speed": {
     modules: "timestamp,neqo_transport::*:3",
@@ -108,6 +111,7 @@ const gLoggingPresets = {
       description:
         "about-logging-preset-networking-http3-upload-speed-description",
     },
+    profilerPreset: "networking",
   },
   "media-playback": {
     modules:
@@ -124,7 +128,7 @@ const gLoggingPresets = {
   */
   webrtc: {
     modules:
-      "jsep:5,sdp:5,signaling:5,mtransport:5,nicer:5,RTCRtpReceiver:5,RTCRtpSender:5,RTCDMTFSender:5,WebrtcTCPSocket:5,CamerasChild:5,CamerasParent:5,VideoEngine:5,ShmemPool:5,TabShare:5,MediaChild:5,MediaParent:5,MediaManager:5,MediaTrackGraph:5,cubeb:5,MediaStream:5,MediaStreamTrack:5,DriftCompensator:5,ForwardInputTrack:5,MediaRecorder:5,MediaEncoder:5,TrackEncoder:5,VP8TrackEncoder:5,Muxer:5,GetUserMedia:5,MediaPipeline:5,WebAudioAPI:5,webrtc_trace:5,RTCRtpTransceiver:5,ForwardedInputTrack:5,HTMLMediaElement:5,HTMLMediaElementEvents:5",
+      "jsep:5,sdp:5,signaling:5,mtransport:5,nicer:5,usrsctp:5,RTCRtpReceiver:5,RTCRtpSender:5,RTCDMTFSender:5,DataChannel:5,WebrtcTCPSocket:5,CamerasChild:5,CamerasParent:5,VideoEngine:5,ShmemPool:5,TabShare:5,MediaChild:5,MediaParent:5,MediaManager:5,MediaTrackGraph:5,cubeb:5,MediaStream:5,MediaStreamTrack:5,DriftCompensator:5,ForwardInputTrack:5,MediaRecorder:5,MediaEncoder:5,TrackEncoder:5,VP8TrackEncoder:5,Muxer:5,GetUserMedia:5,MediaPipeline:5,WebAudioAPI:5,webrtc_trace:5,RTCRtpTransceiver:5,ForwardedInputTrack:5,HTMLMediaElement:5,HTMLMediaElementEvents:5",
     l10nIds: {
       label: "about-logging-preset-webrtc-label",
       description: "about-logging-preset-webrtc-description",

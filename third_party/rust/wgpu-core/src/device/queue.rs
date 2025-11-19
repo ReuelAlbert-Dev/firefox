@@ -15,14 +15,14 @@ use wgt::{
 
 use super::{life::LifetimeTracker, Device};
 #[cfg(feature = "trace")]
-use crate::device::trace::Action;
+use crate::device::trace::{Action, IntoTrace};
 use crate::{
     api_log,
     command::{
         extract_texture_selector, validate_linear_texture_data, validate_texture_buffer_copy,
         validate_texture_copy_dst_format, validate_texture_copy_range, ClearError,
         CommandAllocator, CommandBuffer, CommandEncoder, CommandEncoderError, CopySide,
-        TexelCopyTextureInfo, TransferError,
+        TransferError,
     },
     device::{DeviceError, WaitIdleError},
     get_lowest_common_denom,
@@ -183,9 +183,9 @@ impl Drop for Queue {
                     fence.as_ref(),
                     last_successful_submission_index,
                     #[cfg(not(target_arch = "wasm32"))]
-                    timeout_ms,
+                    Some(core::time::Duration::from_millis(timeout_ms)),
                     #[cfg(target_arch = "wasm32")]
-                    0, // WebKit and Chromium don't support a non-0 timeout
+                    Some(core::time::Duration::ZERO), // WebKit and Chromium don't support a non-0 timeout
                 )
             };
             // Note: If we don't panic below we are in UB land (destroying resources while they are still in use by the GPU).
@@ -406,6 +406,7 @@ impl PendingWrites {
                     list: vec![cmd_buf],
                     device: device.clone(),
                     is_open: false,
+                    api: crate::command::EncodingApi::InternalUse,
                     label: "(wgpu internal) PendingWrites command encoder".into(),
                 },
                 trackers: Tracker::new(),
@@ -520,7 +521,7 @@ impl WebGpuError for QueueSubmitError {
 impl Queue {
     pub fn write_buffer(
         &self,
-        buffer: Fallible<Buffer>,
+        buffer: Arc<Buffer>,
         buffer_offset: wgt::BufferAddress,
         data: &[u8],
     ) -> Result<(), QueueWriteError> {
@@ -528,8 +529,6 @@ impl Queue {
         api_log!("Queue::write_buffer");
 
         self.device.check_is_valid()?;
-
-        let buffer = buffer.get()?;
 
         let data_size = data.len() as wgt::BufferAddress;
 
@@ -727,7 +726,7 @@ impl Queue {
 
     pub fn write_texture(
         &self,
-        destination: wgt::TexelCopyTextureInfo<Fallible<Texture>>,
+        destination: wgt::TexelCopyTextureInfo<Arc<Texture>>,
         data: &[u8],
         data_layout: &wgt::TexelCopyBufferLayout,
         size: &wgt::Extent3d,
@@ -737,7 +736,7 @@ impl Queue {
 
         self.device.check_is_valid()?;
 
-        let dst = destination.texture.get()?;
+        let dst = destination.texture;
         let destination = wgt::TexelCopyTextureInfo {
             texture: (),
             mip_level: destination.mip_level,
@@ -763,21 +762,21 @@ impl Queue {
             &destination,
             dst_base.aspect,
             &dst.desc,
-            data_layout.offset,
-            false, // alignment not required for buffer offset
+            data_layout,
+            false, // alignment not required for buffer offset or bytes per row
         )?;
 
         // Note: `_source_bytes_per_array_layer` is ignored since we
         // have a staging copy, and it can have a different value.
-        let (required_bytes_in_copy, _source_bytes_per_array_layer) = validate_linear_texture_data(
-            data_layout,
-            dst.desc.format,
-            destination.aspect,
-            data.len() as wgt::BufferAddress,
-            CopySide::Source,
-            size,
-            false,
-        )?;
+        let (required_bytes_in_copy, _source_bytes_per_array_layer, _) =
+            validate_linear_texture_data(
+                data_layout,
+                dst.desc.format,
+                destination.aspect,
+                data.len() as wgt::BufferAddress,
+                CopySide::Source,
+                size,
+            )?;
 
         if dst.desc.format.is_depth_stencil_format() {
             self.device
@@ -1206,7 +1205,7 @@ impl Queue {
                             if let Ok(ref mut cmd_buf_data) = cmd_buf_data {
                                 trace.add(Action::Submit(
                                     submit_index,
-                                    cmd_buf_data.commands.take().unwrap(),
+                                    cmd_buf_data.trace_commands.take().unwrap(),
                                 ));
                             }
                         }
@@ -1558,19 +1557,19 @@ impl Global {
         data: &[u8],
     ) -> Result<(), QueueWriteError> {
         let queue = self.hub.queues.get(queue_id);
+        let buffer = self.hub.buffers.get(buffer_id).get()?;
 
         #[cfg(feature = "trace")]
         if let Some(ref mut trace) = *queue.device.trace.lock() {
             let data_path = trace.make_binary("bin", data);
             trace.add(Action::WriteBuffer {
-                id: buffer_id,
+                id: buffer.to_trace(),
                 data: data_path,
                 range: buffer_offset..buffer_offset + data.len() as u64,
                 queued: true,
             });
         }
 
-        let buffer = self.hub.buffers.get(buffer_id);
         queue.write_buffer(buffer, buffer_offset, data)
     }
 
@@ -1617,30 +1616,31 @@ impl Global {
     pub fn queue_write_texture(
         &self,
         queue_id: QueueId,
-        destination: &TexelCopyTextureInfo,
+        destination: &wgt::TexelCopyTextureInfo<id::TextureId>,
         data: &[u8],
         data_layout: &wgt::TexelCopyBufferLayout,
         size: &wgt::Extent3d,
     ) -> Result<(), QueueWriteError> {
         let queue = self.hub.queues.get(queue_id);
+        let texture = self.hub.textures.get(destination.texture).get()?;
+        let destination = wgt::TexelCopyTextureInfo {
+            texture,
+            mip_level: destination.mip_level,
+            origin: destination.origin,
+            aspect: destination.aspect,
+        };
 
         #[cfg(feature = "trace")]
         if let Some(ref mut trace) = *queue.device.trace.lock() {
             let data_path = trace.make_binary("bin", data);
             trace.add(Action::WriteTexture {
-                to: *destination,
+                to: destination.to_trace(),
                 data: data_path,
                 layout: *data_layout,
                 size: *size,
             });
         }
 
-        let destination = wgt::TexelCopyTextureInfo {
-            texture: self.hub.textures.get(destination.texture),
-            mip_level: destination.mip_level,
-            origin: destination.origin,
-            aspect: destination.aspect,
-        };
         queue.write_texture(destination, data, data_layout, size)
     }
 
@@ -1796,6 +1796,16 @@ fn validate_command_buffer(
                             .unwrap();
                     };
                 }
+            }
+        }
+        // WebGPU requires that we check every bind group referenced during
+        // encoding, even ones that may have been replaced before being used.
+        // TODO(<https://github.com/gfx-rs/wgpu/issues/8510>): Optimize this.
+        {
+            profiling::scope!("bind groups");
+            for bind_group in &cmd_buf_data.trackers.bind_groups {
+                // This checks the bind group and all resources it references.
+                bind_group.try_raw(snatch_guard)?;
             }
         }
 

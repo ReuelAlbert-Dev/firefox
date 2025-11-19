@@ -182,7 +182,7 @@ function transformConsoleAPICallResource(
       ];
       break;
     case "count":
-    case "countReset":
+    case "countReset": {
       // Chrome RDP doesn't have a special type for count.
       type = MESSAGE_TYPE.LOG;
       const { counter } = consoleMessageResource;
@@ -202,6 +202,7 @@ function transformConsoleAPICallResource(
         parameters = null;
       }
       break;
+    }
     case "timeStamp":
       type = MESSAGE_TYPE.NULL_MESSAGE;
       break;
@@ -276,6 +277,7 @@ function transformConsoleAPICallResource(
     ? {
         source: consoleMessageResource.filename,
         sourceId: consoleMessageResource.sourceId,
+        // Both line and column are 1-based
         line: consoleMessageResource.lineNumber,
         column: consoleMessageResource.columnNumber,
       }
@@ -344,6 +346,7 @@ function transformPageErrorResource(pageErrorResource, override = {}) {
     ? {
         source: pageError.sourceName,
         sourceId: pageError.sourceId,
+        // Both line and column are 1-based
         line: pageError.lineNumber,
         column: pageError.columnNumber,
       }
@@ -925,6 +928,7 @@ function replaceURL(text, replacementText = "") {
 
 /**
  * Get the warningGroup type in which the message could be in.
+ *
  * @param {ConsoleMessage} message
  * @returns {String|null} null if the message can't be part of a warningGroup.
  */
@@ -985,6 +989,7 @@ function getParentWarningGroupMessageId(message) {
 
 /**
  * Returns true if the message is a warningGroup message (i.e. the "Header").
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */
@@ -1001,6 +1006,7 @@ function isWarningGroup(message) {
 
 /**
  * Returns true if the message is an Enhanced Tracking Protection message.
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */
@@ -1016,6 +1022,7 @@ function isEnhancedTrackingProtectionMessage(message) {
 
 /**
  * Returns true if the message is a storage isolation message.
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */
@@ -1026,6 +1033,7 @@ function isStorageIsolationMessage(message) {
 
 /**
  * Returns true if the message is a tracking protection message.
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */
@@ -1036,6 +1044,7 @@ function isTrackingProtectionMessage(message) {
 
 /**
  * Returns true if the message is a cookie message.
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */
@@ -1051,6 +1060,7 @@ function isCookieMessage(message) {
 
 /**
  * Returns true if the message is a Content Security Policy (CSP) message.
+ *
  * @param {ConsoleMessage} message
  * @returns {Boolean}
  */

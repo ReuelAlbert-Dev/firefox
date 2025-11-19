@@ -17,23 +17,26 @@ const {
   toPathString,
 } = require("resource://devtools/client/inspector/animation/utils/graph-helper.js");
 
-/*
+/**
  * This class is an abstraction for computed style path of keyframes.
  * Subclass of this should implement the following methods:
  *
  * getPropertyName()
  *   Returns property name which will be animated.
+ *
  *   @return {String}
  *           e.g. opacity
  *
  * getPropertyValue(keyframe)
  *   Returns value which uses as animated keyframe value from given parameter.
+ *
  *   @param {Object} keyframe
  *   @return {String||Number}
  *           e.g. 0
  *
  * toSegmentValue(computedStyle)
  *   Convert computed style to segment value of graph.
+ *
  *   @param {String||Number}
  *          e.g. 0
  *   @return {Number}

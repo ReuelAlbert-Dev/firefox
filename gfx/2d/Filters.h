@@ -9,11 +9,9 @@
 
 #include "Types.h"
 #include "mozilla/RefCounted.h"
-#include "mozilla/RefPtr.h"
 
 #include "Point.h"
 #include "Matrix.h"
-#include <vector>
 
 namespace mozilla {
 namespace gfx {
@@ -22,7 +20,6 @@ class SourceSurface;
 
 enum FilterBackend {
   FILTER_BACKEND_SOFTWARE = 0,
-  FILTER_BACKEND_DIRECT2D1_1,
   FILTER_BACKEND_WEBGL,
   FILTER_BACKEND_RECORDING,
   FILTER_BACKEND_CAPTURE

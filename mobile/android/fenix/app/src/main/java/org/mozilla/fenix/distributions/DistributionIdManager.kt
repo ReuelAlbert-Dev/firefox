@@ -4,11 +4,11 @@
 
 package org.mozilla.fenix.distributions
 
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.annotation.VisibleForTesting
 import mozilla.components.support.base.log.logger.Logger
+import mozilla.components.support.utils.ext.PackageManagerWrapper
 import org.mozilla.fenix.GleanMetrics.Metrics
 import org.mozilla.fenix.GleanMetrics.Partnerships
 import org.mozilla.fenix.components.metrics.UTMParams
@@ -37,7 +37,7 @@ private val logger = Logger(DistributionIdManager::class.simpleName)
 /**
  * Class used to manage distribution Ids for distribution deals with third parties
  *
- * @param context application context
+ * @param packageManager device package manager for checking installed packages
  * @param browserStoreProvider used to update and fetch the stored distribution Id
  * @param distributionProviderChecker used for checking content providers for a distribution provider
  * @param legacyDistributionProviderChecker used for checking content providers for a distribution provider
@@ -47,15 +47,17 @@ private val logger = Logger(DistributionIdManager::class.simpleName)
  * @param isDtUsaInstalled checks if one of the DT USA carrier apps is installed on the device
  */
 class DistributionIdManager(
-    private val context: Context,
+    private val packageManager: PackageManagerWrapper,
     private val browserStoreProvider: DistributionBrowserStoreProvider,
     private val distributionProviderChecker: DistributionProviderChecker,
     private val legacyDistributionProviderChecker: DistributionProviderChecker,
     private val distributionSettings: DistributionSettings,
     private val appPreinstalledOnVivoDevice: () -> Boolean = { wasAppPreinstalledOnVivoDevice() },
-    private val isDtTelefonicaInstalled: () -> Boolean = { isDtTelefonicaInstalled(context) },
-    private val isDtUsaInstalled: () -> Boolean = { isDtUsaInstalled(context) },
+    private val isDtTelefonicaInstalled: () -> Boolean = { isDtTelefonicaInstalled(packageManager) },
+    private val isDtUsaInstalled: () -> Boolean = { isDtUsaInstalled(packageManager) },
 ) {
+
+    private var distribution: Distribution? = null
 
     /**
      * Gets the distribution Id that is used to specify which distribution deal this install
@@ -64,7 +66,7 @@ class DistributionIdManager(
      * @return the distribution ID if one exists.
      */
     fun getDistributionId(): String {
-        browserStoreProvider.getDistributionId()?.let { return it }
+        distribution?.let { return it.id }
 
         val provider = distributionProviderChecker.queryProvider()
         val providerLegacy = legacyDistributionProviderChecker.queryProvider()
@@ -73,14 +75,14 @@ class DistributionIdManager(
 
         val savedId = distributionSettings.getDistributionId()
 
-        val distributionId = when {
-            savedId.isNotBlank() -> savedId
-            isProviderDigitalTurbine && isDtTelefonicaInstalled() -> Distribution.DT_001.id
-            isProviderDigitalTurbine && isDtUsaInstalled() -> Distribution.DT_002.id
-            isProviderDigitalTurbine -> Distribution.DT_003.id
-            isProviderAura(provider) -> Distribution.AURA_001.id
-            isDeviceVivo() && appPreinstalledOnVivoDevice() -> Distribution.VIVO_001.id
-            else -> Distribution.DEFAULT.id
+        val distribution = when {
+            savedId.isNotBlank() -> Distribution.fromId(savedId)
+            isProviderDigitalTurbine && isDtTelefonicaInstalled() -> Distribution.DT_001
+            isProviderDigitalTurbine && isDtUsaInstalled() -> Distribution.DT_002
+            isProviderDigitalTurbine -> Distribution.DT_003
+            isProviderAura(provider) -> Distribution.AURA_001
+            isDeviceVivo() && appPreinstalledOnVivoDevice() -> Distribution.VIVO_001
+            else -> Distribution.DEFAULT
         }
 
         recordProviderCheckerEvents(
@@ -89,10 +91,9 @@ class DistributionIdManager(
             distributionMetricsProvider = DefaultDistributionMetricsProvider(),
         )
 
-        browserStoreProvider.updateDistributionId(distributionId)
-        distributionSettings.saveDistributionId(distributionId)
+        setDistribution(distribution)
 
-        return distributionId
+        return distribution.id
     }
 
     @VisibleForTesting
@@ -130,17 +131,34 @@ class DistributionIdManager(
      * @param utmParams the UTM parameters from the google play install referrer response
      */
     fun updateDistributionIdFromUtmParams(utmParams: UTMParams) {
-        when (utmParams.campaign) {
-            VIVO_INDIA_UTM_CAMPAIGN -> {
-                browserStoreProvider.updateDistributionId(Distribution.VIVO_002.id)
-                distributionSettings.saveDistributionId(Distribution.VIVO_002.id)
-                Metrics.distributionId.set(Distribution.VIVO_002.id)
+        when {
+            utmParams.campaign.contains(VIVO_INDIA_UTM_CAMPAIGN) -> {
+                setDistribution(Distribution.VIVO_001)
+                Metrics.distributionId.set(Distribution.VIVO_001.id)
             }
-            Distribution.XIAOMI_001.id -> {
-                browserStoreProvider.updateDistributionId(Distribution.XIAOMI_001.id)
-                distributionSettings.saveDistributionId(Distribution.XIAOMI_001.id)
+            utmParams.campaign.contains(Distribution.XIAOMI_001.id) -> {
+                setDistribution(Distribution.XIAOMI_001)
                 Metrics.distributionId.set(Distribution.XIAOMI_001.id)
             }
+        }
+    }
+
+    /**
+     * Check if we can skip the marketing consent screen during onboarding based on the distribution
+     *
+     * @return true if the marketing consent screen can be skipped during onboarding
+     */
+    fun shouldSkipMarketingConsentScreen(): Boolean {
+        val id = Distribution.fromId(getDistributionId())
+
+        return when (id) {
+            Distribution.DEFAULT -> false
+            Distribution.VIVO_001 -> true
+            Distribution.DT_001 -> false
+            Distribution.DT_002 -> false
+            Distribution.DT_003 -> false
+            Distribution.AURA_001 -> false
+            Distribution.XIAOMI_001 -> false
         }
     }
 
@@ -155,7 +173,6 @@ class DistributionIdManager(
         return when (id) {
             Distribution.DEFAULT -> false
             Distribution.VIVO_001 -> true
-            Distribution.VIVO_002 -> true
             Distribution.DT_001 -> true
             Distribution.DT_002 -> true
             Distribution.DT_003 -> true
@@ -179,7 +196,6 @@ class DistributionIdManager(
     internal enum class Distribution(val id: String) {
         DEFAULT(id = "Mozilla"),
         VIVO_001(id = "vivo-001"),
-        VIVO_002(id = "vivo-002"),
         DT_001(id = "dt-001"),
         DT_002(id = "dt-002"),
         DT_003(id = "dt-003"),
@@ -192,6 +208,13 @@ class DistributionIdManager(
                 return entries.find { it.id == id } ?: DEFAULT
             }
         }
+    }
+
+    @VisibleForTesting
+    internal fun setDistribution(distribution: Distribution) {
+        this.distribution = distribution
+        browserStoreProvider.updateDistributionId(distribution.id)
+        distributionSettings.saveDistributionId(distribution.id)
     }
 }
 
@@ -211,16 +234,16 @@ private fun wasAppPreinstalledOnVivoDevice(): Boolean {
 /**
  * Checks if the Digital Turbine Telefonica app exists on the device
  */
-private fun isDtTelefonicaInstalled(context: Context): Boolean {
-    val packages = context.packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
+private fun isDtTelefonicaInstalled(packageManager: PackageManagerWrapper): Boolean {
+    val packages = packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
     return packages.any { it.packageName == DT_TELEFONICA_PACKAGE }
 }
 
 /**
  * Checks if one of the Digital Turbine USA apps exist on the device
  */
-private fun isDtUsaInstalled(context: Context): Boolean {
-    val packages = context.packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
+private fun isDtUsaInstalled(packageManager: PackageManagerWrapper): Boolean {
+    val packages = packageManager.getInstalledPackages(PackageManager.GET_META_DATA)
     return packages.any {
         val packageName = it.packageName.lowercase()
         packageName == DT_VERIZON_PACKAGE ||

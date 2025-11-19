@@ -8,7 +8,6 @@
 #include "mozilla/net/DocumentChannel.h"
 
 #include <inttypes.h>
-#include <utility>
 #include "mozIDOMWindow.h"
 #include "mozilla/AlreadyAddRefed.h"
 #include "mozilla/Assertions.h"
@@ -16,7 +15,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/net/DocumentChannelChild.h"
 #include "mozilla/net/ParentProcessDocumentChannel.h"
@@ -173,7 +171,11 @@ static bool URIUsesDocChannel(nsIURI* aURI) {
   }
 
   nsCString spec = aURI->GetSpecOrDefault();
-  return !spec.EqualsLiteral("about:crashcontent");
+  return
+#ifdef MOZ_WIDGET_ANDROID
+      !spec.EqualsLiteral("about:crashcontentjava") &&
+#endif
+      !spec.EqualsLiteral("about:crashcontent");
 }
 
 bool DocumentChannel::CanUseDocumentChannel(nsIURI* aURI) {

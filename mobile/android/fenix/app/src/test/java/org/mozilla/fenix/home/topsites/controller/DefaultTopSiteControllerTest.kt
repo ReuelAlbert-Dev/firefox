@@ -33,6 +33,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.GleanMetrics.Pings
+import org.mozilla.fenix.GleanMetrics.ShortcutsLibrary
 import org.mozilla.fenix.GleanMetrics.TopSites
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
@@ -405,7 +406,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -443,7 +444,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -530,7 +531,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -568,7 +569,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -606,7 +607,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("US", "US")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -644,7 +645,7 @@ class DefaultTopSiteControllerTest {
 
         every { controller.getAvailableSearchEngines() } returns listOf(searchEngine)
 
-        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR"))).joinBlocking()
+        store.dispatch(SearchAction.SetRegionAction(RegionState("DE", "FR")))
 
         controller.handleSelectTopSite(topSite, position = 0)
 
@@ -1045,6 +1046,13 @@ class DefaultTopSiteControllerTest {
         for (event in TopSites.openInPrivateTab.testGetValue()!!) {
             assertNull(event.extra)
         }
+    }
+
+    fun `WHEN screen is shown THEN impression is logged`() {
+        assertNull(ShortcutsLibrary.viewed.testGetValue())
+        val controller = createController()
+        controller.handleShortcutsLibraryViewed()
+        assertNotNull(ShortcutsLibrary.viewed.testGetValue())
     }
 
     private fun createController(): DefaultTopSiteController =

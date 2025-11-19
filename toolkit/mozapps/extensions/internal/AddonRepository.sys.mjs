@@ -406,8 +406,9 @@ export var AddonRepository = {
     return addon;
   },
 
-  /*
+  /**
    * Clear and delete the AddonRepository database
+   *
    * @return Promise{null} resolves when the database is deleted
    */
   _clearCache() {
@@ -416,8 +417,9 @@ export var AddonRepository = {
     );
   },
 
-  /*
+  /**
    * Create a ServiceRequest instance.
+   *
    * @return ServiceRequest returns a ServiceRequest instance.
    */
   _createServiceRequest() {
@@ -700,7 +702,7 @@ export var AddonRepository = {
     lazy.AddonManager.beforeShutdown.removeBlocker(shutter);
   },
 
-  /*
+  /**
    * Creates an AddonSearchResult by parsing an entry from the AMO API.
    *
    * @param  aEntry
@@ -1026,6 +1028,7 @@ var AddonDatabase = {
 
   /**
    * Flush any pending I/O on the addons.json file
+   *
    * @return: Promise{null}
    *          Resolves when the pending I/O (writing out or deleting
    *          addons.json) completes
@@ -1099,7 +1102,7 @@ var AddonDatabase = {
     this.save();
   },
 
-  /*
+  /**
    * Creates an AddonSearchResult by parsing an object structure
    * retrieved from the DB JSON representation.
    *

@@ -13,6 +13,7 @@
 #include "nsSize.h"
 
 class nsICanvasRenderingContextInternal;
+class nsICookieJarSettings;
 class nsIGlobalObject;
 
 namespace mozilla {
@@ -75,6 +76,8 @@ class CanvasRenderingContextHelper {
       CanvasUtils::ImageExtraction aExtractionBehavior, int32_t* aOutFormat,
       gfx::IntSize* aOutImageSize);
 
+  nsICookieJarSettings* GetCookieJarSettings() const;
+
   already_AddRefed<nsISupports> GetOrCreateContext(
       JSContext* aCx, const nsAString& aContextId,
       JS::Handle<JS::Value> aContextOptions, ErrorResult& aRv);
@@ -95,8 +98,9 @@ class CanvasRenderingContextHelper {
   nsCOMPtr<nsICanvasRenderingContextInternal> mCurrentContext;
 };
 
-Maybe<layers::SurfaceDescriptor> ValidSurfaceDescriptorForRemoteCanvas2d(
-    const layers::SurfaceDescriptor&);
+bool ValidSurfaceDescriptorForRemoteCanvas2d(
+    const layers::SurfaceDescriptor& aSd,
+    Maybe<layers::SurfaceDescriptor>* aResultSd = nullptr);
 
 }  // namespace dom
 namespace CanvasUtils {

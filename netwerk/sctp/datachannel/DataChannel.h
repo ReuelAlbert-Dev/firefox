@@ -16,7 +16,6 @@
 #include "nsCOMPtr.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/StopGapEventTarget.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"
 #include "nsString.h"
@@ -199,7 +198,7 @@ class DataChannelConnection : public net::NeckoTargetHolder {
   // Called when the base class receives a packet from the transport
   virtual void OnSctpPacketReceived(const MediaPacket& packet) = 0;
   // Called when the base class is closing streams
-  virtual void ResetStreams(nsTArray<uint16_t>& aStreams) = 0;
+  virtual bool ResetStreams(nsTArray<uint16_t>& aStreams) = 0;
   // Called when the SCTP connection is being shut down
   virtual void Destroy();
 
@@ -210,6 +209,7 @@ class DataChannelConnection : public net::NeckoTargetHolder {
   void HandleDCEPMessage(IncomingMsg&& aMsg);
   void ProcessQueuedOpens();
   void OnStreamsReset(std::vector<uint16_t>&& aStreams);
+  void OnStreamsResetComplete(std::vector<uint16_t>&& aStreams);
 
   typedef DataChannelStatsPromise::AllPromiseType StatsPromise;
   RefPtr<StatsPromise> GetStats(const DOMHighResTimeStamp aTimestamp) const;
@@ -226,26 +226,13 @@ class DataChannelConnection : public net::NeckoTargetHolder {
       DataChannelReliabilityPolicy prPolicy, bool inOrder, uint32_t prValue,
       bool aExternalNegotiated, uint16_t aStream);
 
-  void FinishClose(DataChannel* aChannel);
-  void FinishClose_s(DataChannel* aChannel);
+  void EndOfStream(const RefPtr<DataChannel>& aChannel);
+  void FinishClose_s(const RefPtr<DataChannel>& aChannel);
   void CloseAll();
   void CloseAll_s();
+  void MarkStreamAvailable(uint16_t aStream);
 
-  // Returns a POSIX error code.
-  int SendMessage(uint16_t stream, nsACString&& aMsg) {
-    return SendDataMessage(stream, std::move(aMsg), false);
-  }
-
-  // Returns a POSIX error code.
-  int SendBinaryMessage(uint16_t stream, nsACString&& aMsg) {
-    return SendDataMessage(stream, std::move(aMsg), true);
-  }
-
-  // Returns a POSIX error code.
-  int SendBlob(uint16_t stream, nsIInputStream* aBlob);
-
-  void ReadBlob(already_AddRefed<DataChannelConnection> aThis, uint16_t aStream,
-                nsIInputStream* aBlob);
+  nsISerialEventTarget* GetIOThread();
 
   bool InShutdown() const {
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -292,7 +279,7 @@ class DataChannelConnection : public net::NeckoTargetHolder {
                         nsISerialEventTarget* aTarget,
                         MediaTransportHandler* aHandler);
 
-  int SendDataMessage(uint16_t aStream, nsACString&& aMsg, bool aIsBinary);
+  void SendDataMessage(uint16_t aStream, nsACString&& aMsg, bool aIsBinary);
 
   DataChannelConnectionState GetState() const {
     MOZ_ASSERT(mSTS->IsOnCurrentThread());
@@ -314,8 +301,6 @@ class DataChannelConnection : public net::NeckoTargetHolder {
 
   void OpenFinish(RefPtr<DataChannel> aChannel);
 
-  void ClearResets();
-  void MarkStreamForReset(DataChannel& aChannel);
   void HandleUnknownMessage(uint32_t ppid, uint32_t length, uint16_t stream);
   void HandleOpenRequestMessage(
       const struct rtcweb_datachannel_open_request* req, uint32_t length,
@@ -336,23 +321,14 @@ class DataChannelConnection : public net::NeckoTargetHolder {
   /***********************************************************/
 
   /*********************** STS only **************************/
-  bool mSendInterleaved = false;
-  uint32_t mCurrentStream = 0;
   std::set<RefPtr<DataChannel>> mPending;
   uint16_t mNegotiatedIdLimit = 0;
   PendingType mPendingType = PendingType::None;
-  // holds outgoing control messages
-  nsTArray<OutgoingMsg> mBufferedControl;
-  // For partial DCEP messages (should be _really_ rare, since they're small)
-  Maybe<IncomingMsg> mRecvBuffer;
-  bool mSctpConfigured = false;
   std::string mTransportId;
   bool mConnectedToTransportHandler = false;
   RefPtr<MediaTransportHandler> mTransportHandler;
   MediaEventListener mPacketReceivedListener;
   MediaEventListener mStateChangeListener;
-  // Streams pending reset.
-  AutoTArray<uint16_t, 4> mStreamsResetting;
   DataChannelConnectionState mState = DataChannelConnectionState::Closed;
   /***********************************************************/
 
@@ -431,13 +407,13 @@ class DataChannel {
                                      ErrorResult& aRv);
 
   // Send a string
-  int SendMsg(nsACString&& aMsg);
+  void SendMsg(nsCString&& aMsg);
 
   // Send a binary message (TypedArray)
-  int SendBinaryMsg(nsACString&& aMsg);
+  void SendBinaryMsg(nsCString&& aMsg);
 
   // Send a binary blob
-  int SendBinaryBlob(nsIInputStream* aBlob);
+  void SendBinaryBlob(nsIInputStream* aBlob);
 
   void DecrementBufferedAmount(size_t aSize);
   void AnnounceOpen();
@@ -461,7 +437,8 @@ class DataChannel {
   RefPtr<DataChannelStatsPromise> GetStats(
       const DOMHighResTimeStamp aTimestamp);
 
-  void FinishClose();
+  // Called when there will be no more data sent
+  void EndOfStream();
 
   dom::RTCDataChannel* GetDomDataChannel() const {
     MOZ_ASSERT(mDomEventTarget->IsOnCurrentThread());
@@ -473,6 +450,8 @@ class DataChannel {
 
  private:
   nsresult AddDataToBinaryMsg(const char* data, uint32_t size);
+  void SendBuffer(nsCString&& aMsg, bool aBinary);
+  void UnsetMessagesSentPromiseWhenSettled();
 
   const nsCString mLabel;
   const nsCString mProtocol;
@@ -481,20 +460,22 @@ class DataChannel {
   const bool mNegotiated;
   const bool mOrdered;
 
-  // Mainthread only. Once we have transferrable datachannels, this could be
-  // worker only instead; wherever the RTCDataChannel lives. Once this can be
-  // on a worker thread, we'll need a ref to that thread for state updates and
-  // such. This will be nulled out when the RTCDataChannel tears down.
+  // DOM Thread only; wherever the RTCDataChannel lives.
   dom::RTCDataChannel* mMainthreadDomDataChannel = nullptr;
   bool mHasWorkerDomDataChannel = false;
   bool mEverOpened = false;
+  bool mAnnouncedClosed = false;
   uint16_t mStream;
+  RefPtr<GenericNonExclusivePromise> mMessagesSentPromise;
   RefPtr<DataChannelConnection> mConnection;
 
   // STS only
   // The channel has been opened, but the peer has not yet acked - ensures that
   // the messages are sent ordered until this is cleared.
   bool mWaitingForAck = false;
+  bool mSendStreamNeedsReset = false;
+  bool mRecvStreamNeedsReset = false;
+  bool mEndOfStreamCalled = false;
   nsTArray<OutgoingMsg> mBufferedData;
   std::map<uint16_t, IncomingMsg> mRecvBuffers;
 

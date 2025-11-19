@@ -10,11 +10,12 @@ import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
 import mozilla.components.browser.state.action.EngineAction
+import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.createTab
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.EngineSession
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.rule.MainCoroutineRule
 import mozilla.components.support.test.rule.runTestOnMain
@@ -85,7 +86,6 @@ class SaveToPDFMiddlewareTest {
             browserStore.dispatch(
                 EngineAction.SaveToPdfExceptionAction("14", exceptionToThrow),
             )
-            browserStore.waitUntilIdle()
             testScheduler.advanceUntilIdle()
             val response = Events.saveToPdfFailure.testGetValue()?.firstOrNull()
             assertNotNull(response)
@@ -128,7 +128,6 @@ class SaveToPDFMiddlewareTest {
                 ),
             )
             browserStore.dispatch(EngineAction.SaveToPdfExceptionAction("14", exceptionToThrow))
-            browserStore.waitUntilIdle()
             testScheduler.advanceUntilIdle()
             val response = Events.saveToPdfFailure.testGetValue()?.firstOrNull()
             assertNotNull(response)
@@ -171,7 +170,6 @@ class SaveToPDFMiddlewareTest {
                 ),
             )
             browserStore.dispatch(EngineAction.SaveToPdfExceptionAction("14", exceptionToThrow))
-            browserStore.waitUntilIdle()
             testScheduler.advanceUntilIdle()
             val response = Events.saveToPdfFailure.testGetValue()?.firstOrNull()
             assertNotNull(response)
@@ -213,7 +211,6 @@ class SaveToPDFMiddlewareTest {
                 ),
             )
             browserStore.dispatch(EngineAction.SaveToPdfCompleteAction("14"))
-            browserStore.waitUntilIdle()
             testScheduler.advanceUntilIdle()
             val response = Events.saveToPdfCompleted.testGetValue()
             assertNotNull(response)
@@ -231,8 +228,12 @@ class SaveToPDFMiddlewareTest {
                     firstArg<(Boolean) -> Unit>().invoke(false)
                 }
             }
+            val engineMiddleware = EngineMiddleware.create(
+                mockk<Engine>(),
+                mainCoroutineTestRule.scope,
+            )
             val browserStore = BrowserStore(
-                middleware = listOf(middleware),
+                middleware = listOf(middleware) + engineMiddleware,
                 initialState = BrowserState(
                     tabs = listOf(
                         createTab(
@@ -244,7 +245,6 @@ class SaveToPDFMiddlewareTest {
                 ),
             )
             browserStore.dispatch(EngineAction.SaveToPdfAction("14"))
-            browserStore.waitUntilIdle()
             testScheduler.advanceUntilIdle()
             val response = Events.saveToPdfTapped.testGetValue()
             assertNotNull(response)
@@ -294,7 +294,6 @@ class SaveToPDFMiddlewareTest {
         browserStore.dispatch(
             EngineAction.PrintContentExceptionAction("14", true, exceptionToThrow),
         )
-        browserStore.waitUntilIdle()
         testScheduler.advanceUntilIdle()
         val response = Events.printFailure.testGetValue()?.firstOrNull()
         assertNotNull(response)
@@ -336,7 +335,6 @@ class SaveToPDFMiddlewareTest {
             ),
         )
         browserStore.dispatch(EngineAction.PrintContentExceptionAction("14", true, exceptionToThrow))
-        browserStore.waitUntilIdle()
         testScheduler.advanceUntilIdle()
         val response = Events.printFailure.testGetValue()?.firstOrNull()
         assertNotNull(response)
@@ -377,7 +375,6 @@ class SaveToPDFMiddlewareTest {
             ),
         )
         browserStore.dispatch(EngineAction.PrintContentCompletedAction("14"))
-        browserStore.waitUntilIdle()
         testScheduler.advanceUntilIdle()
         val response = Events.printCompleted.testGetValue()
         assertNotNull(response)
@@ -394,8 +391,12 @@ class SaveToPDFMiddlewareTest {
                 firstArg<(Boolean) -> Unit>().invoke(false)
             }
         }
+        val engineMiddleware = EngineMiddleware.create(
+            mockk<Engine>(),
+            mainCoroutineTestRule.scope,
+        )
         val browserStore = BrowserStore(
-            middleware = listOf(middleware),
+            middleware = listOf(middleware) + engineMiddleware,
             initialState = BrowserState(
                 tabs = listOf(
                     createTab(
@@ -407,7 +408,6 @@ class SaveToPDFMiddlewareTest {
             ),
         )
         browserStore.dispatch(EngineAction.PrintContentAction("14"))
-        browserStore.waitUntilIdle()
         testScheduler.advanceUntilIdle()
         val response = Events.printTapped.testGetValue()
         assertNotNull(response)

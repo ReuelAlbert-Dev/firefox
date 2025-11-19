@@ -37,7 +37,7 @@ import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import mozilla.components.compose.base.button.PrimaryButton
+import mozilla.components.compose.base.button.FilledButton
 import org.mozilla.fenix.theme.FirefoxTheme
 import mozilla.components.ui.icons.R as iconsR
 
@@ -52,7 +52,7 @@ import mozilla.components.ui.icons.R as iconsR
  * @param offset Offset to be added to the position of the menu.
  * @param onDismissRequest Invoked when user dismisses the menu or on orientation changes.
  */
-@Suppress("LongMethod")
+@Suppress("LongMethod", "CognitiveComplexMethod")
 @Composable
 private fun Menu(
     menuItems: List<MenuItem>,
@@ -207,7 +207,7 @@ private fun ContextualMenuPreview() {
     var showMenu by remember { mutableStateOf(false) }
     FirefoxTheme {
         Box(modifier = Modifier.size(400.dp)) {
-            PrimaryButton(
+            FilledButton(
                 text = "Show menu",
                 modifier = Modifier.fillMaxWidth(),
             ) {

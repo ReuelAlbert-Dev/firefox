@@ -43,6 +43,10 @@ class Logic {
     return regex.test(element.labels?.[0]?.textContent);
   }
 
+  static hasTextContentMatchingRegex(element, regex) {
+    return regex.test(element.textContent);
+  }
+
   /**
    * Get the parts of the URL we want for identification.
    * Strip out things like the userPass portion and handle javascript:.
@@ -253,6 +257,7 @@ class Logic {
   /**
    * Transforms the parsed rules returned from PasswordRulesParser into a Map for easier access.
    * The returned Map could have the following keys: "allowed", "required", "maxlength", "minlength", and "max-consecutive"
+   *
    * @example
    * // Returns a Map with a key-value pair of "allowed": "ascii-printable"
    * transformRulesToMap([{ _name: "allowed", value: [{ _name: "ascii-printable" }] }])

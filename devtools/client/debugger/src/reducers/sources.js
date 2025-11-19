@@ -4,6 +4,7 @@
 
 /**
  * Sources reducer
+ *
  * @module reducers/sources
  */
 
@@ -174,6 +175,16 @@ function update(state = initialSourcesState(), action) {
       return {
         ...state,
         selectedOriginalLocation: action.originalLocation,
+      };
+    }
+
+    case "SET_GENERATED_SELECTED_LOCATION": {
+      if (action.location != state.selectedLocation) {
+        return state;
+      }
+      return {
+        ...state,
+        selectedGeneratedLocation: action.generatedLocation,
       };
     }
 

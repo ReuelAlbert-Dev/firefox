@@ -660,11 +660,11 @@ static CSSTransition* GetCurrentTransitionAt(const Element* aElement,
   return collection->mAnimations.SafeElementAt(aIndex);
 }
 
-nsCSSPropertyID Gecko_ElementTransitions_PropertyAt(const Element* aElement,
-                                                    size_t aIndex) {
+NonCustomCSSPropertyId Gecko_ElementTransitions_PropertyAt(
+    const Element* aElement, size_t aIndex) {
   CSSTransition* transition = GetCurrentTransitionAt(aElement, aIndex);
-  return transition ? transition->TransitionProperty().mID
-                    : nsCSSPropertyID::eCSSProperty_UNKNOWN;
+  return transition ? transition->TransitionProperty().mId
+                    : NonCustomCSSPropertyId::eCSSProperty_UNKNOWN;
 }
 
 const StyleAnimationValue* Gecko_ElementTransitions_EndValueAt(
@@ -694,9 +694,9 @@ double Gecko_GetPositionInSegment(const AnimationPropertySegment* aSegment,
 
 const StyleAnimationValue* Gecko_AnimationGetBaseStyle(
     const RawServoAnimationValueTable* aBaseStyles,
-    const mozilla::AnimatedPropertyID* aProperty) {
+    const mozilla::CSSPropertyId* aProperty) {
   const auto* base = reinterpret_cast<const nsRefPtrHashtable<
-      nsGenericHashKey<AnimatedPropertyID>, StyleAnimationValue>*>(aBaseStyles);
+      nsGenericHashKey<CSSPropertyId>, StyleAnimationValue>*>(aBaseStyles);
   return base->GetWeak(*aProperty);
 }
 
@@ -1394,11 +1394,9 @@ static already_AddRefed<StyleSheet> LoadImportSheet(
     if (!uri) {
       NS_NewURI(getter_AddRefs(uri), "about:invalid"_ns);
     }
-    emptySheet->SetURIs(uri, uri, uri);
-    emptySheet->SetPrincipal(aURL.ExtraData().Principal());
     nsCOMPtr<nsIReferrerInfo> referrerInfo =
-        ReferrerInfo::CreateForExternalCSSResources(emptySheet);
-    emptySheet->SetReferrerInfo(referrerInfo);
+        ReferrerInfo::CreateForExternalCSSResources(emptySheet, uri);
+    emptySheet->SetURIs(uri, uri, referrerInfo, aURL.ExtraData().Principal());
     emptySheet->SetComplete();
     aParent->AppendStyleSheet(*emptySheet);
     return emptySheet.forget();
@@ -1445,7 +1443,7 @@ void Gecko_LoadStyleSheetAsync(SheetLoadDataHolder* aParentData,
 }
 
 void Gecko_AddPropertyToSet(nsCSSPropertyIDSet* aPropertySet,
-                            nsCSSPropertyID aProperty) {
+                            NonCustomCSSPropertyId aProperty) {
   aPropertySet->AddProperty(aProperty);
 }
 
@@ -1801,6 +1799,8 @@ void StyleSingleFontFamily::AppendToString(nsACString& aName,
       return aName.AppendLiteral("cursive");
     case StyleGenericFontFamily::Fantasy:
       return aName.AppendLiteral("fantasy");
+    case StyleGenericFontFamily::Math:
+      return aName.AppendLiteral("math");
     case StyleGenericFontFamily::SystemUi:
       return aName.AppendLiteral("system-ui");
   }
@@ -1845,69 +1845,6 @@ static bool AnchorSideUsesCBWM(
   return false;
 }
 
-static const nsAtom* GetUsedAnchorName(const nsIFrame* aPositioned,
-                                       const nsAtom* aAnchorName) {
-  if (aAnchorName && !aAnchorName->IsEmpty()) {
-    return aAnchorName;
-  }
-  const auto* stylePos = aPositioned->StylePosition();
-  if (!stylePos->mPositionAnchor.IsIdent()) {
-    // No valid anchor specified, bail.
-    // TODO(dshin): Implicit anchor should be looked at here.
-    return nullptr;
-  }
-  return stylePos->mPositionAnchor.AsIdent().AsAtom();
-}
-
-static nsIFrame* GetAnchorOf(const nsIFrame* aPositioned,
-                             const nsAtom* aAnchorName) {
-  const auto* presShell = aPositioned->PresShell();
-  MOZ_ASSERT(presShell, "No PresShell for frame?");
-  return presShell->GetAnchorPosAnchor(aAnchorName, aPositioned);
-}
-
-static Maybe<AnchorPosInfo> GetAnchorPosRect(
-    const nsIFrame* aPositioned, const nsAtom* aAnchorName, bool aCBRectIsvalid,
-    AnchorPosReferencedAnchors* aReferencedAnchors) {
-  if (!aPositioned) {
-    return Nothing{};
-  }
-
-  const auto* anchorName = GetUsedAnchorName(aPositioned, aAnchorName);
-  if (!anchorName) {
-    return Nothing{};
-  }
-
-  MOZ_ASSERT(aPositioned->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW),
-             "Calling GetAnchorPoseRect on non-abspos frame?");
-  const auto* containingBlock = aPositioned->GetParent();
-
-  Maybe<AnchorPosResolutionData>* entry = nullptr;
-  if (aReferencedAnchors) {
-    const auto result = aReferencedAnchors->InsertOrModify(anchorName, true);
-    if (result.mAlreadyResolved) {
-      MOZ_ASSERT(result.mEntry, "Entry exists but null?");
-      return result.mEntry->map([&](const AnchorPosResolutionData& aData) {
-        MOZ_ASSERT(aData.mOrigin, "Missing anchor offset resolution.");
-        return AnchorPosInfo{nsRect{aData.mOrigin.ref(), aData.mSize},
-                             containingBlock};
-      });
-    }
-    entry = result.mEntry;
-  }
-
-  const auto* anchor = GetAnchorOf(aPositioned, anchorName);
-  if (!anchor) {
-    // If we have a cached entry, just check that it resolved to nothing last
-    // time as well.
-    MOZ_ASSERT_IF(entry, entry->isNothing());
-    return Nothing{};
-  }
-
-  return AnchorPositioningUtils::GetAnchorPosRect(containingBlock, anchor,
-                                                  aCBRectIsvalid, entry);
-}
-
 bool Gecko_GetAnchorPosOffset(const AnchorPosOffsetResolutionParams* aParams,
                               const nsAtom* aAnchorName,
                               StylePhysicalSide aPropSide,
@@ -1916,16 +1853,36 @@ bool Gecko_GetAnchorPosOffset(const AnchorPosOffsetResolutionParams* aParams,
   if (!aParams || !aParams->mBaseParams.mFrame) {
     return false;
   }
-  const auto info = GetAnchorPosRect(aParams->mBaseParams.mFrame, aAnchorName,
-                                     !aParams->mCBSize,
-                                     aParams->mBaseParams.mReferencedAnchors);
-  if (info.isNothing()) {
+  const auto* positioned = aParams->mBaseParams.mFrame;
+  const auto* containingBlock = positioned->GetParent();
+  const auto info = AnchorPositioningUtils::ResolveAnchorPosRect(
+      positioned, containingBlock, aAnchorName, !aParams->mCBSize,
+      aParams->mBaseParams.mCache);
+  if (!info) {
     return false;
+  }
+  if (info->mCompensatesForScroll && aParams->mBaseParams.mCache) {
+    // Without cache (Containing information on default anchor) being available,
+    // we woudln't be able to determine scroll compensation status.
+    const auto axis = [aPropSide]() {
+      switch (aPropSide) {
+        case StylePhysicalSide::Left:
+        case StylePhysicalSide::Right:
+          return PhysicalAxis::Horizontal;
+        case StylePhysicalSide::Top:
+        case StylePhysicalSide::Bottom:
+          break;
+        default:
+          MOZ_ASSERT_UNREACHABLE("Unhandled side?");
+      }
+      return PhysicalAxis::Vertical;
+    }();
+    aParams->mBaseParams.mCache->mReferenceData->AdjustCompensatingForScroll(
+        axis);
   }
   // Compute the offset here in C++, where translating between physical/logical
   // coordinates is easier.
-  const auto& rect = info.ref().mRect;
-  const auto* containingBlock = info.ref().mContainingBlock;
+  const auto& rect = info->mRect;
   const auto usesCBWM = AnchorSideUsesCBWM(aAnchorSideKeyword);
   const auto cbwm = containingBlock->GetWritingMode();
   const auto wm =
@@ -1950,8 +1907,9 @@ bool Gecko_GetAnchorPosOffset(const AnchorPosOffsetResolutionParams* aParams,
       case StyleAnchorSideKeyword::Bottom:
         return GetEdge(wm.LogicalSideForPhysicalSide(eSideBottom));
       case StyleAnchorSideKeyword::Inside:
-      case StyleAnchorSideKeyword::Outside:
         return propEdge;
+      case StyleAnchorSideKeyword::Outside:
+        return GetOppositeEdge(propEdge);
       case StyleAnchorSideKeyword::Start:
       case StyleAnchorSideKeyword::SelfStart:
       case StyleAnchorSideKeyword::Center:
@@ -2001,33 +1959,8 @@ bool Gecko_GetAnchorPosSize(const AnchorPosResolutionParams* aParams,
     return false;
   }
   const auto* positioned = aParams->mFrame;
-
-  const auto* anchorName = GetUsedAnchorName(positioned, aAnchorName);
-  if (!anchorName) {
-    return false;
-  }
-  const auto size = [&]() -> Maybe<nsSize> {
-    Maybe<AnchorPosResolutionData>* entry = nullptr;
-    if (aParams->mReferencedAnchors) {
-      const auto result =
-          aParams->mReferencedAnchors->InsertOrModify(anchorName, false);
-      if (result.mAlreadyResolved) {
-        MOZ_ASSERT(result.mEntry, "Entry exists but null?");
-        return result.mEntry->map(
-            [](const AnchorPosResolutionData& aData) { return aData.mSize; });
-      }
-      entry = result.mEntry;
-    }
-    const auto* anchor = GetAnchorOf(positioned, anchorName);
-    if (!anchor) {
-      return Nothing{};
-    }
-    const auto size = anchor->GetSize();
-    if (entry) {
-      *entry = Some(AnchorPosResolutionData{size, Nothing{}});
-    }
-    return Some(size);
-  }();
+  const auto size = AnchorPositioningUtils::ResolveAnchorPosSize(
+      positioned, aAnchorName, aParams->mCache);
   if (!size) {
     return false;
   }

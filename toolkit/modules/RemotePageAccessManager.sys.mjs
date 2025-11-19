@@ -74,6 +74,18 @@ export let RemotePageAccessManager = {
     "about:certificate": {
       RPMSendQuery: ["getCertificates"],
     },
+    "about:keyboard": {
+      RPMAddMessageListener: ["CustomKeys:CapturedKey"],
+      RPMSendAsyncMessage: ["CustomKeys:CaptureKey"],
+      RPMSendQuery: [
+        "CustomKeys:ChangeKey",
+        "CustomKeys:ClearKey",
+        "CustomKeys:GetDefaultKey",
+        "CustomKeys:GetKeys",
+        "CustomKeys:ResetAll",
+        "CustomKeys:ResetKey",
+      ],
+    },
     "about:neterror": {
       RPMSendAsyncMessage: [
         "Browser:EnableOnlineMode",
@@ -143,6 +155,7 @@ export let RemotePageAccessManager = {
         "Profiles:GetEditProfileContent",
         "Profiles:UpdateProfileTheme",
         "Profiles:UpdateProfileAvatar",
+        "Profiles:SetDesktopShortcut",
       ],
       RPMSendAsyncMessage: [
         "Profiles:UpdateProfileName",
@@ -234,6 +247,10 @@ export let RemotePageAccessManager = {
         "browser.contentblocking.report.cryptominer.url",
       ],
       RPMRecordGleanEvent: ["securityUiProtections"],
+    },
+    "about:restricted": {
+      RPMSendAsyncMessage: ["goBack"],
+      RPMGetBoolPref: ["security.restrict_to_adults.always"],
     },
     "about:tabcrashed": {
       RPMSendAsyncMessage: ["Load", "closeTab", "restoreTab", "restoreAll"],

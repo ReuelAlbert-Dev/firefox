@@ -915,11 +915,14 @@ bitflags_array! {
         ///
         /// This is a native only feature.
         const CLEAR_TEXTURE = 1 << 23;
-        /// Enables multiview render passes and `builtin(view_index)` in vertex shaders.
+        /// Enables multiview render passes and `builtin(view_index)` in vertex/mesh shaders.
         ///
         /// Supported platforms:
         /// - Vulkan
+        /// - Metal
         /// - OpenGL (web only)
+        ///
+        /// DX12 support is a WIP.
         ///
         /// This is a native only feature.
         const MULTIVIEW = 1 << 26;
@@ -1058,7 +1061,8 @@ bitflags_array! {
         ///
         /// This is a native only feature.
         const SHADER_INT64 = 1 << 37;
-        /// Allows compute and fragment shaders to use the subgroup operation built-ins
+        /// Allows compute and fragment shaders to use the subgroup operation
+        /// built-ins and perform subgroup operations (except barriers).
         ///
         /// Supported Platforms:
         /// - Vulkan
@@ -1067,14 +1071,17 @@ bitflags_array! {
         ///
         /// This is a native only feature.
         const SUBGROUP = 1 << 38;
-        /// Allows vertex shaders to use the subgroup operation built-ins
+        /// Allows vertex shaders to use the subgroup operation built-ins and
+        /// perform subgroup operations (except barriers).
         ///
         /// Supported Platforms:
         /// - Vulkan
         ///
         /// This is a native only feature.
         const SUBGROUP_VERTEX = 1 << 39;
-        /// Allows shaders to use the subgroup barrier
+        /// Allows compute shaders to use the subgroup barrier.
+        ///
+        /// Requires [`Features::SUBGROUP`]. Without it, enables nothing.
         ///
         /// Supported Platforms:
         /// - Vulkan
@@ -1227,6 +1234,27 @@ bitflags_array! {
         ///
         /// [`Device::create_shader_module_passthrough`]: https://docs.rs/wgpu/latest/wgpu/struct.Device.html#method.create_shader_module_passthrough
         const EXPERIMENTAL_PASSTHROUGH_SHADERS = 1 << 52;
+
+        /// Enables shader barycentric coordinates.
+        ///
+        /// Supported platforms:
+        /// - Vulkan (with VK_KHR_fragment_shader_barycentric)
+        /// - DX12 (with SM 6.1+)
+        /// - Metal (with MSL 2.2+)
+        ///
+        /// This is a native only feature.
+        const SHADER_BARYCENTRICS = 1 << 53;
+
+        /// Enables using multiview where not all texture array layers are rendered to in a single render pass/render pipeline. Making
+        /// use of this feature also requires enabling `Features::MULTIVIEW`.
+        ///
+        /// Supported platforms
+        /// - Vulkan
+        ///
+        /// DX12 will support this when it supports multiview in general.
+        ///
+        /// While metal supports this in theory, the behavior of `view_index` differs from vulkan and dx12 so the feature isn't exposed.
+        const SELECTIVE_MULTIVIEW = 1 << 54;
     }
 
     /// Features that are not guaranteed to be supported.

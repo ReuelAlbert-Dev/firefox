@@ -7,11 +7,12 @@ package org.mozilla.fenix.downloads.listscreen.store
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.content.DownloadState
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.feature.downloads.DownloadsUseCases
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
+import mozilla.components.feature.downloads.fake.FakeDateTimeProvider
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.rule.MainCoroutineRule
@@ -22,7 +23,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.mozilla.fenix.downloads.fake.FakeDateTimeProvider
 import org.mozilla.fenix.downloads.listscreen.middleware.DownloadDeleteMiddleware
 import org.mozilla.fenix.downloads.listscreen.middleware.DownloadUIMapperMiddleware
 import org.mozilla.fenix.downloads.listscreen.middleware.FakeFileItemDescriptionProvider
@@ -329,7 +329,7 @@ class DownloadUIStoreTest {
         assertEquals(store.state.pendingDeletionIds, deleteItemSet)
         assertEquals(expectedUIStateAfterDeleteAction, store.state)
 
-        dispatcher.scheduler.advanceTimeBy(UNDO_DELAY_PASSED.milliseconds)
+        dispatcher.scheduler.advanceTimeBy(testContext.getUndoDelay().milliseconds)
         assertEquals(store.state.pendingDeletionIds, deleteItemSet)
         assertEquals(expectedUIStateAfterDeleteAction, store.state)
     }
@@ -364,6 +364,7 @@ class DownloadUIStoreTest {
         assertEquals(expectedUIStateBeforeDeleteAction, store.state)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test
     fun deleteOneElementAndCancelAfterDelayExpired() {
         val store = provideDownloadUIStore(
@@ -375,22 +376,28 @@ class DownloadUIStoreTest {
             mode = DownloadUIState.Mode.Normal,
             pendingDeletionIds = emptySet(),
         )
-        val expectedUIStateAfterDeleteAction = DownloadUIState(
+        val expectedUIStateAfterDeleteActionWithPendingDelete = DownloadUIState(
             items = listOf(fileItem1),
             mode = DownloadUIState.Mode.Normal,
             pendingDeletionIds = setOf("1"),
         )
 
+        val expectedUIStateAfterDeleteActionAfterPendingDeleteTimeout = DownloadUIState(
+            items = listOf(fileItem1),
+            mode = DownloadUIState.Mode.Normal,
+            pendingDeletionIds = emptySet(),
+        )
+
         assertEquals(expectedUIStateBeforeDeleteAction, store.state)
 
         store.dispatch(DownloadUIAction.AddPendingDeletionSet(setOf("1")))
-        assertEquals(expectedUIStateAfterDeleteAction, store.state)
+        assertEquals(expectedUIStateAfterDeleteActionWithPendingDelete, store.state)
 
-        dispatcher.scheduler.advanceTimeBy(UNDO_DELAY_PASSED.milliseconds)
+        dispatcher.scheduler.advanceTimeBy(testContext.getUndoDelay())
         store.dispatch(DownloadUIAction.UndoPendingDeletion)
         dispatcher.scheduler.advanceUntilIdle()
 
-        assertEquals(expectedUIStateAfterDeleteAction, store.state)
+        assertEquals(expectedUIStateAfterDeleteActionAfterPendingDeleteTimeout, store.state)
     }
 
     @Test
@@ -635,8 +642,6 @@ class DownloadUIStoreTest {
                 ),
             ),
         )
-        downloadsStore.waitUntilIdle()
-
         val expectedList = DownloadUIState.ItemsState.Items(
             listOf(
                 HeaderItem(TimeCategory.IN_PROGRESS),
@@ -695,8 +700,6 @@ class DownloadUIStoreTest {
                 ),
             ),
         )
-        downloadsStore.waitUntilIdle()
-
         val expectedList = DownloadUIState.ItemsState.Items(
             listOf(
                 HeaderItem(TimeCategory.OLDER),
@@ -755,8 +758,6 @@ class DownloadUIStoreTest {
                 ),
             ),
         )
-        downloadsStore.waitUntilIdle()
-
         val expectedList = DownloadUIState.ItemsState.Items(
             listOf(
                 HeaderItem(TimeCategory.IN_PROGRESS),

@@ -10,7 +10,6 @@ import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.rule.MainCoroutineRule
 import org.junit.Before
 import org.junit.Rule
@@ -48,9 +47,41 @@ class SecureTabManagerBindingTest {
 
         secureTabManagerBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify { fragment.secure() }
+    }
+
+    @Test
+    fun `WHEN tab selected page switches to private and allowScreenshotsInPrivateMode true THEN set fragment to un-secure`() {
+        val tabsTrayStore = TabsTrayStore(TabsTrayState())
+        val secureTabManagerBinding = SecureTabManagerBinding(
+            store = tabsTrayStore,
+            settings = settings,
+            fragment = fragment,
+        )
+        every { settings.allowScreenshotsInPrivateMode } returns true
+
+        secureTabManagerBinding.start()
+        tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
+
+        verify { fragment.removeSecure() }
+    }
+
+    @Test
+    fun `WHEN tab selected page switches to private and allowScreenshotsInPrivateMode false and shouldSecureModeBeOverridden true THEN set fragment to un-secure`() {
+        val tabsTrayStore = TabsTrayStore(TabsTrayState())
+        val secureTabManagerBinding = SecureTabManagerBinding(
+            store = tabsTrayStore,
+            settings = settings,
+            fragment = fragment,
+        )
+        every { settings.allowScreenshotsInPrivateMode } returns false
+        every { settings.shouldSecureModeBeOverridden } returns true
+
+        secureTabManagerBinding.start()
+        tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
+
+        verify { fragment.removeSecure() }
     }
 
     @Test
@@ -65,7 +96,6 @@ class SecureTabManagerBindingTest {
 
         secureTabManagerBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.NormalTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify { fragment.removeSecure() }
     }
@@ -82,7 +112,6 @@ class SecureTabManagerBindingTest {
 
         secureTabManagerBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.NormalTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify(exactly = 0) { fragment.removeSecure() }
     }
@@ -99,7 +128,6 @@ class SecureTabManagerBindingTest {
 
         secureTabManagerBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.NormalTabs))
-        tabsTrayStore.waitUntilIdle()
         secureTabManagerBinding.stop()
 
         verify { fragment.removeSecure() }

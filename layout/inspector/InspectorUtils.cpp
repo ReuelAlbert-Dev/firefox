@@ -7,9 +7,9 @@
 #include "mozilla/dom/InspectorUtils.h"
 
 #include "ChildIterator.h"
+#include "Units.h"
 #include "gfxTextRun.h"
 #include "inLayoutUtils.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/DeclarationBlock.h"
 #include "mozilla/EventStateManager.h"
 #include "mozilla/PresShell.h"
@@ -52,6 +52,7 @@
 #include "nsContentList.h"
 #include "nsFieldSetFrame.h"
 #include "nsGlobalWindowInner.h"
+#include "nsGridContainerFrame.h"
 #include "nsIContentInlines.h"
 #include "nsLayoutUtils.h"
 #include "nsNameSpaceManager.h"
@@ -285,8 +286,8 @@ class ReadOnlyInspectorDeclaration final : public nsDOMCSSDeclaration {
   void GetPropertyValue(const nsACString& aPropName, nsACString& aValue) final {
     Servo_DeclarationBlock_GetPropertyValue(mRaw, &aPropName, &aValue);
   }
-  void GetPropertyValue(nsCSSPropertyID aId, nsACString& aValue) final {
-    Servo_DeclarationBlock_GetPropertyValueById(mRaw, aId, &aValue);
+  void GetPropertyValue(NonCustomCSSPropertyId aId, nsACString& aValue) final {
+    Servo_DeclarationBlock_GetPropertyValueByNonCustomId(mRaw, aId, &aValue);
   }
   void IndexedGetter(uint32_t aIndex, bool& aFound,
                      nsACString& aPropName) final {
@@ -301,7 +302,7 @@ class ReadOnlyInspectorDeclaration final : public nsDOMCSSDeclaration {
                    ErrorResult& aRv) final {
     aRv.ThrowInvalidModificationError("Can't mutate this declaration");
   }
-  void SetPropertyValue(nsCSSPropertyID aId, const nsACString& aValue,
+  void SetPropertyValue(NonCustomCSSPropertyId aId, const nsACString& aValue,
                         nsIPrincipal* aSubjectPrincipal,
                         ErrorResult& aRv) final {
     aRv.ThrowInvalidModificationError("Can't mutate this declaration");
@@ -422,6 +423,8 @@ static void GetCSSRulesFromComputedValues(
             return DeclarationOrigin::User;
           case StyleMatchingDeclarationBlockOrigin::UserAgent:
             return DeclarationOrigin::User_agent;
+          case StyleMatchingDeclarationBlockOrigin::PositionFallback:
+            return DeclarationOrigin::Position_fallback;
           case StyleMatchingDeclarationBlockOrigin::Animations:
             return DeclarationOrigin::Animations;
           case StyleMatchingDeclarationBlockOrigin::Transitions:
@@ -567,9 +570,10 @@ static uint32_t CollectAtRules(ServoCSSRuleList& aRuleList,
       case StyleCssRuleType::LayerBlock:
       case StyleCssRuleType::Property:
       case StyleCssRuleType::Container: {
-        Unused << aResult.AppendElement(OwningNonNull(*rule), fallible);
+        (void)aResult.AppendElement(OwningNonNull(*rule), fallible);
         break;
       }
+      case StyleCssRuleType::CustomMedia:
       case StyleCssRuleType::Style:
       case StyleCssRuleType::Import:
       case StyleCssRuleType::Document:
@@ -622,7 +626,7 @@ void InspectorUtils::GetCSSPropertyNames(GlobalObject& aGlobalObject,
                                      : CSSEnabledState::ForAllContent;
 
   auto appendProperty = [enabledState, &aResult](uint32_t prop) {
-    nsCSSPropertyID cssProp = nsCSSPropertyID(prop);
+    NonCustomCSSPropertyId cssProp = NonCustomCSSPropertyId(prop);
     if (nsCSSProps::IsEnabled(cssProp, enabledState)) {
       aResult.AppendElement(
           NS_ConvertASCIItoUTF16(nsCSSProps::GetStringValue(cssProp)));
@@ -631,7 +635,7 @@ void InspectorUtils::GetCSSPropertyNames(GlobalObject& aGlobalObject,
 
   uint32_t prop = 0;
   for (; prop < eCSSProperty_COUNT_no_shorthands; ++prop) {
-    if (!nsCSSProps::PropHasFlags(nsCSSPropertyID(prop),
+    if (!nsCSSProps::PropHasFlags(NonCustomCSSPropertyId(prop),
                                   CSSPropFlags::Inaccessible)) {
       appendProperty(prop);
     }
@@ -655,10 +659,10 @@ void InspectorUtils::GetCSSPropertyNames(GlobalObject& aGlobalObject,
 void InspectorUtils::GetCSSPropertyPrefs(GlobalObject& aGlobalObject,
                                          nsTArray<PropertyPref>& aResult) {
   for (const auto* src = nsCSSProps::kPropertyPrefTable;
-       src->mPropID != eCSSProperty_UNKNOWN; src++) {
+       src->mPropId != eCSSProperty_UNKNOWN; src++) {
     PropertyPref& dest = *aResult.AppendElement();
     dest.mName.Assign(
-        NS_ConvertASCIItoUTF16(nsCSSProps::GetStringValue(src->mPropID)));
+        NS_ConvertASCIItoUTF16(nsCSSProps::GetStringValue(src->mPropId)));
     dest.mPref.AssignASCII(src->mPref);
   }
 }
@@ -668,26 +672,26 @@ void InspectorUtils::GetSubpropertiesForCSSProperty(GlobalObject& aGlobal,
                                                     const nsACString& aProperty,
                                                     nsTArray<nsString>& aResult,
                                                     ErrorResult& aRv) {
-  nsCSSPropertyID propertyID = nsCSSProps::LookupProperty(aProperty);
+  NonCustomCSSPropertyId propertyId = nsCSSProps::LookupProperty(aProperty);
 
-  if (propertyID == eCSSProperty_UNKNOWN) {
+  if (propertyId == eCSSProperty_UNKNOWN) {
     aRv.Throw(NS_ERROR_FAILURE);
     return;
   }
 
-  if (propertyID == eCSSPropertyExtra_variable) {
+  if (propertyId == eCSSPropertyExtra_variable) {
     aResult.AppendElement(NS_ConvertUTF8toUTF16(aProperty));
     return;
   }
 
-  if (!nsCSSProps::IsShorthand(propertyID)) {
+  if (!nsCSSProps::IsShorthand(propertyId)) {
     nsString* name = aResult.AppendElement();
-    CopyASCIItoUTF16(nsCSSProps::GetStringValue(propertyID), *name);
+    CopyASCIItoUTF16(nsCSSProps::GetStringValue(propertyId), *name);
     return;
   }
 
-  for (const nsCSSPropertyID* props =
-           nsCSSProps::SubpropertyEntryFor(propertyID);
+  for (const NonCustomCSSPropertyId* props =
+           nsCSSProps::SubpropertyEntryFor(propertyId);
        *props != eCSSProperty_UNKNOWN; ++props) {
     nsString* name = aResult.AppendElement();
     CopyASCIItoUTF16(nsCSSProps::GetStringValue(*props), *name);
@@ -1307,7 +1311,7 @@ void InspectorUtils::ReplaceBlockRuleBodyTextInStylesheet(
 
 void InspectorUtils::SetVerticalClipping(GlobalObject&,
                                          BrowsingContext* aContext,
-                                         mozilla::ScreenIntCoord aOffset) {
+                                         mozilla::CSSCoord aOffset) {
   MOZ_ASSERT(XRE_IsParentProcess());
   if (!aContext) {
     return;
@@ -1322,17 +1326,23 @@ void InspectorUtils::SetVerticalClipping(GlobalObject&,
   if (!parent) {
     return;
   }
-  parent->DynamicToolbarOffsetChanged(aOffset);
+  const LayoutDeviceToCSSScale scale = parent->GetLayoutDeviceToCSSScale();
+  const mozilla::LayoutDeviceCoord layoutOffset = aOffset / scale;
+  const mozilla::ScreenCoord screenOffset = ViewAs<ScreenPixel>(
+      layoutOffset, PixelCastJustification::LayoutDeviceIsScreenForBounds);
+  const mozilla::ScreenIntCoord offset = screenOffset.Rounded();
+  parent->DynamicToolbarOffsetChanged(offset);
 
   RefPtr<nsIWidget> widget = canonical->GetParentProcessWidgetContaining();
   if (!widget) {
     return;
   }
-  widget->DynamicToolbarOffsetChanged(aOffset);
+  widget->DynamicToolbarOffsetChanged(offset);
 }
 
-void InspectorUtils::SetDynamicToolbarMaxHeight(
-    GlobalObject&, BrowsingContext* aContext, mozilla::ScreenIntCoord aHeight) {
+void InspectorUtils::SetDynamicToolbarMaxHeight(GlobalObject&,
+                                                BrowsingContext* aContext,
+                                                mozilla::CSSCoord aHeight) {
   MOZ_ASSERT(XRE_IsParentProcess());
   if (!aContext) {
     return;
@@ -1348,6 +1358,29 @@ void InspectorUtils::SetDynamicToolbarMaxHeight(
     return;
   }
 
-  parent->DynamicToolbarMaxHeightChanged(aHeight);
+  const LayoutDeviceToCSSScale scale = parent->GetLayoutDeviceToCSSScale();
+  const mozilla::LayoutDeviceCoord layoutOffset = aHeight / scale;
+  const mozilla::ScreenCoord screenOffset = ViewAs<ScreenPixel>(
+      layoutOffset, PixelCastJustification::LayoutDeviceIsScreenForBounds);
+  const mozilla::ScreenIntCoord height = screenOffset.Rounded();
+  parent->DynamicToolbarMaxHeightChanged(height);
 }
+
+uint16_t InspectorUtils::GetGridContainerType(GlobalObject&,
+                                              Element& aElement) {
+  auto* f = nsGridContainerFrame::GetGridContainerFrame(
+      aElement.GetPrimaryFrame(FlushType::Frames));
+  if (!f) {
+    return InspectorUtils_Binding::GRID_NONE;
+  }
+  uint16_t result = InspectorUtils_Binding::GRID_CONTAINER;
+  if (f->IsRowSubgrid()) {
+    result |= InspectorUtils_Binding::GRID_SUBGRID_ROW;
+  }
+  if (f->IsColSubgrid()) {
+    result |= InspectorUtils_Binding::GRID_SUBGRID_COL;
+  }
+  return result;
+}
+
 }  // namespace mozilla::dom

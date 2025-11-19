@@ -6,13 +6,12 @@
 
 <%namespace name="helpers" file="/helpers.mako.rs" />
 
-use app_units::Au;
 use servo_arc::{Arc, UniqueArc};
 use std::{ops, ptr};
 use std::{fmt, mem};
 
 #[cfg(feature = "servo")] use euclid::SideOffsets2D;
-#[cfg(feature = "gecko")] use crate::gecko_bindings::structs::{self, nsCSSPropertyID};
+#[cfg(feature = "gecko")] use crate::gecko_bindings::structs::{self, NonCustomCSSPropertyId};
 #[cfg(feature = "servo")] use crate::logical_geometry::LogicalMargin;
 #[cfg(feature = "servo")] use crate::computed_values;
 use crate::logical_geometry::WritingMode;
@@ -23,12 +22,11 @@ use crate::media_queries::Device;
 use crate::parser::ParserContext;
 use crate::selector_parser::PseudoElement;
 use crate::stylist::Stylist;
-use style_traits::{CssWriter, KeywordsCollectFn, ParseError, SpecifiedValueInfo, StyleParseErrorKind, ToCss};
+use style_traits::{CssStringWriter, CssWriter, KeywordsCollectFn, ParseError, SpecifiedValueInfo, StyleParseErrorKind, ToCss, TypedValue, ToTyped};
 use crate::stylesheets::{CssRuleType, CssRuleTypes, Origin};
 use crate::logical_geometry::{LogicalAxis, LogicalCorner, LogicalSide};
 use crate::use_counters::UseCounters;
 use crate::rule_tree::StrongRuleNode;
-use crate::str::CssStringWriter;
 use crate::values::{
     computed,
     resolved,
@@ -409,6 +407,19 @@ impl PropertyDeclaration {
         }
     }
 
+    /// Like the method on ToTyped.
+    pub fn to_typed(&self) -> Option<TypedValue> {
+        use self::PropertyDeclaration::*;
+
+        match *self {
+            % for ty, vs in groupby(variants, key=lambda x: x["type"]):
+            ${" | ".join("{}(ref value)".format(v["name"]) for v in vs)} => {
+                value.to_typed()
+            }
+            % endfor
+        }
+    }
+
     /// Returns the color value of a given property, for high-contrast-mode tweaks.
     pub(super) fn color_value(&self) -> Option<&crate::values::specified::Color> {
         ${static_longhand_id_set("COLOR_PROPERTIES", lambda p: p.predefined_type == "Color")}
@@ -464,9 +475,9 @@ pub mod property_counts {
 
 % if engine == "gecko":
 #[allow(dead_code)]
-unsafe fn static_assert_nscsspropertyid() {
+unsafe fn static_assert_noncustomcsspropertyid() {
     % for i, property in enumerate(data.longhands + data.shorthands + data.all_aliases()):
-    std::mem::transmute::<[u8; ${i}], [u8; ${property.nscsspropertyid()} as usize]>([0; ${i}]); // ${property.name}
+    std::mem::transmute::<[u8; ${i}], [u8; ${property.noncustomcsspropertyid()} as usize]>([0; ${i}]); // ${property.name}
     % endfor
 }
 % endif
@@ -1289,7 +1300,7 @@ impl PropertyId {
 impl PropertyDeclaration {
     /// Given a property declaration, return the property declaration id.
     #[inline]
-    pub fn id(&self) -> PropertyDeclarationId {
+    pub fn id(&self) -> PropertyDeclarationId<'_> {
         match *self {
             PropertyDeclaration::Custom(ref declaration) => {
                 return PropertyDeclarationId::Custom(&declaration.name)
@@ -1578,7 +1589,7 @@ pub mod style_structs {
                 /// Iterate over the values of ${longhand.name}.
                 #[allow(non_snake_case)]
                 #[inline]
-                pub fn ${longhand.ident}_iter(&self) -> ${longhand.camel_case}Iter {
+                pub fn ${longhand.ident}_iter(&self) -> ${longhand.camel_case}Iter<'_> {
                     ${longhand.camel_case}Iter {
                         style_struct: self,
                         current: 0,
@@ -1808,7 +1819,7 @@ impl ComputedValues {
     pub fn computed_or_resolved_value(
         &self,
         property_id: LonghandId,
-        context: Option<&resolved::Context>,
+        context: Option<&mut resolved::Context>,
         dest: &mut CssStringWriter,
     ) -> fmt::Result {
         use crate::values::resolved::ToResolvedValue;
@@ -1827,6 +1838,7 @@ impl ComputedValues {
                     _ => unsafe { debug_unreachable!() },
                 };
                 if let Some(c) = context {
+                    c.current_longhand = Some(property_id);
                     value.to_resolved_value(c).to_css(&mut dest)
                 } else {
                     value.to_css(&mut dest)
@@ -1836,11 +1848,36 @@ impl ComputedValues {
         }
     }
 
+    /// Returns the computed value of the given longhand as a strongly-typed
+    /// `TypedValue`, if supported.
+    pub fn computed_typed_value(
+        &self,
+        property_id: LonghandId,
+    ) -> Option<TypedValue> {
+        let property_id = property_id.to_physical(self.writing_mode);
+        match property_id {
+            % for specified_type, props in groupby(data.longhands, key=lambda x: x.specified_type()):
+            <% props = list(props) %>
+            ${" |\n".join("LonghandId::{}".format(p.camel_case) for p in props)} => {
+                let value = match property_id {
+                    % for prop in props:
+                    % if not prop.logical:
+                    LonghandId::${prop.camel_case} => self.clone_${prop.ident}(),
+                    % endif
+                    % endfor
+                    _ => unsafe { debug_unreachable!() },
+                };
+                value.to_typed()
+            }
+            % endfor
+        }
+    }
+
     /// Returns the given longhand's resolved value as a property declaration.
     pub fn computed_or_resolved_declaration(
         &self,
         property_id: LonghandId,
-        context: Option<&resolved::Context>,
+        context: Option<&mut resolved::Context>,
     ) -> PropertyDeclaration {
         use crate::values::resolved::ToResolvedValue;
         use crate::values::computed::ToComputedValue;
@@ -1858,6 +1895,7 @@ impl ComputedValues {
                     _ => unsafe { debug_unreachable!() },
                 };
                 if let Some(c) = context {
+                    c.current_longhand = Some(physical_property_id);
                     let resolved = computed_value.to_resolved_value(c);
                     computed_value = ToResolvedValue::from_resolved_value(resolved);
                 }
@@ -2004,6 +2042,8 @@ impl ComputedValues {
             PropertyDeclarationId::Longhand(id) => {
                 let context = resolved::Context {
                     style: self,
+                    for_property: id.into(),
+                    current_longhand: Some(id),
                 };
                 let mut s = String::new();
                 self.computed_or_resolved_value(
@@ -2838,17 +2878,6 @@ pub static CASCADE_PROPERTY: [CascadePropertyFn; ${len(data.longhands)}] = [
         longhands::${property.ident}::cascade_property,
     % endfor
 ];
-
-/// See StyleAdjuster::adjust_for_border_width.
-pub fn adjust_border_width(style: &mut StyleBuilder) {
-    % for side in ["top", "right", "bottom", "left"]:
-        // Like calling to_computed_value, which wouldn't type check.
-        if style.get_border().clone_border_${side}_style().none_or_hidden() &&
-           style.get_border().border_${side}_has_nonzero_width() {
-            style.set_border_${side}_width(Au(0));
-        }
-    % endfor
-}
 
 /// An identifier for a given alias property.
 #[derive(Clone, Copy, Eq, PartialEq, MallocSizeOf)]

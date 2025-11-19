@@ -37,6 +37,7 @@ function MarkupContainer() {}
 
 /**
  * Unique identifier used to set markup container node id.
+ *
  * @type {Number}
  */
 let markupContainerID = 0;
@@ -48,7 +49,7 @@ MarkupContainer.prototype = {
     return this.markup.undo;
   },
 
-  /*
+  /**
    * Initialize the MarkupContainer.  Should be called while one
    * of the other contain classes is instantiated.
    *
@@ -465,7 +466,7 @@ MarkupContainer.prototype = {
 
     return (
       !this.node.isPseudoElement &&
-      !this.node.isAnonymous &&
+      !this.node.isNativeAnonymous &&
       !this.node.isDocumentElement &&
       tagName !== "body" &&
       tagName !== "head" &&

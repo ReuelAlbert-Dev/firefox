@@ -1,8 +1,12 @@
 #!/usr/bin/env lucicfg
 
-# Copyright (c) 2019 The WebRTC project authors. All rights reserved.
-# Use of this source code is governed by a BSD-style license that can be
-# found in the LICENSE file.
+#  Copyright (c) 2019 The WebRTC project authors. All Rights Reserved.
+#
+#  Use of this source code is governed by a BSD-style license
+#  that can be found in the LICENSE file in the root of the source
+#  tree. An additional intellectual property rights grant can be found
+#  in the file PATENTS.  All contributing project authors may
+#  be found in the AUTHORS file in the root of the source tree.
 
 # https://chromium.googlesource.com/infra/luci/luci-go/+/main/lucicfg/doc/
 
@@ -13,7 +17,7 @@ lucicfg.check_version("1.30.9")
 WEBRTC_GIT = "https://webrtc.googlesource.com/src"
 WEBRTC_GERRIT = "https://webrtc-review.googlesource.com/src"
 WEBRTC_TROOPER_EMAIL = "webrtc-troopers-robots@google.com"
-WEBRTC_XCODE = "15f31d"
+WEBRTC_XCODE = "17a5305f"
 DEFAULT_CPU = "x86-64"
 
 # Helpers:
@@ -458,7 +462,6 @@ def recipe(recipe, pkg = "infra/recipe_bundles/chromium.googlesource.com/chromiu
         cipd_package = pkg,
         cipd_version = "refs/heads/main",
         recipe = recipe,
-        use_python3 = True,
     )
 
 recipe("chromium_trybot")
@@ -781,7 +784,7 @@ ci_builder("Linux64 Release", "Linux|x64|rel")
 try_builder("linux_rel")
 ci_builder("Linux64 Builder", "Linux|x64|size", perf_cat = "Linux|x64|Builder|", prioritized = True)
 try_builder("linux_compile_rel")
-perf_builder("Perf Linux Bionic", "Linux|x64|Tester|Bionic", triggered_by = ["Linux64 Builder"])
+perf_builder("Perf Linux", "Linux|x64|Tester", triggered_by = ["Linux64 Builder"])
 ci_builder("Linux32 Debug (ARM)", "Linux|arm|dbg")
 try_builder("linux_compile_arm_dbg")
 ci_builder("Linux32 Release (ARM)", "Linux|arm|rel")
@@ -829,7 +832,9 @@ try_builder("mac_asan")
 ci_builder("MacARM64 M1 Release", "Mac|arm64M1|rel", cpu = "arm64-64-Apple_M1")
 try_builder("mac_rel_m1")
 try_builder("mac_dbg_m1")
-chromium_try_builder("mac_chromium_compile")
+
+# TODO b/427073823 - Re-enable once the slow compilation issue is fixed.
+chromium_try_builder("mac_chromium_compile", cq = None)
 
 ci_builder("Win32 Debug (Clang)", "Win Clang|x86|dbg")
 try_builder("win_x86_clang_dbg", cq = None)
@@ -896,10 +901,8 @@ lkgr_config = {
             # bucket alias: luci.chromium.webrtc.fyi
             "builders": [
                 "WebRTC Chromium FYI Android Builder (dbg)",
-                "WebRTC Chromium FYI Android Builder ARM64 (dbg)",
                 "WebRTC Chromium FYI Android Builder",
-                "WebRTC Chromium FYI Android Tests (dbg)",
-                "WebRTC Chromium FYI Android Tests ARM64 (dbg)",
+                "WebRTC Chromium FYI Android Tester",
                 "WebRTC Chromium FYI Linux Builder (dbg)",
                 "WebRTC Chromium FYI Linux Builder",
                 "WebRTC Chromium FYI Linux Tester",
@@ -909,8 +912,9 @@ lkgr_config = {
                 "WebRTC Chromium FYI Win Builder (dbg)",
                 "WebRTC Chromium FYI Win Builder",
                 "WebRTC Chromium FYI Win10 Tester",
-                "WebRTC Chromium FYI ios-device",
-                "WebRTC Chromium FYI ios-simulator",
+                # TODO: b/441273941 - Re-enable once the ios infra issue is resolved
+                #"WebRTC Chromium FYI ios-device",
+                #"WebRTC Chromium FYI ios-simulator",
             ],
         },
     },

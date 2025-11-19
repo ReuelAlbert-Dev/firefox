@@ -369,6 +369,32 @@ void PublicKeyCredential::ToJSON(JSContext* aCx,
         json.mClientExtensionResults.mPrf.Value().mEnabled.Construct(
             mClientExtensionOutputs.mPrf.Value().mEnabled.Value());
       }
+      if (mPrfResultsFirst.isSome()) {
+        AuthenticationExtensionsPRFValuesJSON& dest =
+            json.mClientExtensionResults.mPrf.Value().mResults.Construct();
+        nsCString prfFirst;
+        nsresult rv = mozilla::Base64URLEncode(
+            mPrfResultsFirst->Length(), mPrfResultsFirst->Elements(),
+            Base64URLEncodePaddingPolicy::Omit, prfFirst);
+        if (NS_FAILED(rv)) {
+          aError.ThrowEncodingError(
+              "could not encode first prf output as urlsafe base64");
+          return;
+        }
+        dest.mFirst.Assign(NS_ConvertUTF8toUTF16(prfFirst));
+        if (mPrfResultsSecond.isSome()) {
+          nsCString prfSecond;
+          nsresult rv = mozilla::Base64URLEncode(
+              mPrfResultsSecond->Length(), mPrfResultsSecond->Elements(),
+              Base64URLEncodePaddingPolicy::Omit, prfSecond);
+          if (NS_FAILED(rv)) {
+            aError.ThrowEncodingError(
+                "could not encode second prf output as urlsafe base64");
+            return;
+          }
+          dest.mSecond.Construct(NS_ConvertUTF8toUTF16(prfSecond));
+        }
+      }
     }
     if (mClientExtensionOutputs.mLargeBlob.WasPassed()) {
       const AuthenticationExtensionsLargeBlobOutputs& src =
@@ -660,6 +686,8 @@ void PublicKeyCredential::ParseCreationOptionsFromJSON(
     aResult.mAuthenticatorSelection = aOptions.mAuthenticatorSelection.Value();
   }
 
+  aResult.mHints = aOptions.mHints;
+
   aResult.mAttestation = aOptions.mAttestation;
 
   if (aOptions.mExtensions.WasPassed()) {
@@ -752,6 +780,8 @@ void PublicKeyCredential::ParseRequestOptionsFromJSON(
   }
 
   aResult.mUserVerification = aOptions.mUserVerification;
+
+  aResult.mHints = aOptions.mHints;
 
   if (aOptions.mExtensions.WasPassed()) {
     if (aOptions.mExtensions.Value().mAppid.WasPassed()) {

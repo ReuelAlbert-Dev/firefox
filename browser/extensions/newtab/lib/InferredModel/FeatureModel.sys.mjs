@@ -19,6 +19,7 @@ const MAX_INT_32 = 2 ** 32;
 /**
  * Divides numerator fields by the denominator. Value is set to 0 if denominator is missing or 0.
  * Adds 0 value for all situations where there is a denominator but no numerator value.
+ *
  * @param {Object.<string, number>} numerator
  * @param {Object.<string, number>} denominator
  * returns {Object.<string, number>}
@@ -37,27 +38,9 @@ export function divideDict(numerator, denominator) {
 }
 
 /**
- * Returns a secure random value between 0 and 1
- */
-function secureRandomNumber() {
-  const array = new Uint32Array(1);
-  crypto.getRandomValues(array);
-  return array[0] / MAX_INT_32;
-}
-
-/**
- * Applies laplace noise at a given scale
- * @param {number} scale value
- * @returns noisy value
- */
-function laplaceNoise(scale) {
-  const u = secureRandomNumber() - 0.5;
-  return -scale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
-}
-
-/**
  * Unary encoding with randomized response for differential privacy.
  * The output must be decoded to back to an integer when aggregating a historgram on a server
+ *
  * @param {number} x - Integer input (0 <= x < N)
  * @param {number} N - Number of values (see ablove)
  * @param {number} p - Probability of keeping a 1-bit as 1 (after one-hot encoding the output)
@@ -82,6 +65,7 @@ export function unaryEncodeDiffPrivacy(x, N, p, q) {
 
 /**
  * Adds value to all a particular key in a dictionary. If the key is missing it sets the value.
+ *
  * @param {Object} dict - The dictionary to modify.
  * @param {string} key - The key whose value should be added or set.
  * @param {number} value - The value to add to the key.
@@ -96,6 +80,7 @@ export function dictAdd(dict, key, value) {
 
 /**
  * Apply function to all keys in dictionary, returning new dictionary.
+ *
  * @param {Object} obj - The object whose values should be transformed.
  * @param {Function} fn - The function to apply to each value.
  * @returns {Object} A new object with the transformed values.
@@ -112,6 +97,7 @@ export function dictApply(obj, fn) {
 export class DayTimeWeighting {
   /**
    * Instantiate class based on a series of day periods in the past.
+   *
    * @param {int[]} pastDays Series of number of days, indicating days ago intervals in reverse chonological order.
    * Intervals are added: If the first value is 1 and the second is 5, then the first inteval is 0-1 and second interval is between 1 and 6.
    * @param {number[]} relativeWeight Relative weight of each period. Must be same length as pastDays
@@ -127,6 +113,7 @@ export class DayTimeWeighting {
 
   /**
    * Get a series of interval pairs in the past based on the pastDays.
+   *
    * @param {number} curTimeMs Base time time in MS. Usually current time.
    * @returns
    */
@@ -145,6 +132,7 @@ export class DayTimeWeighting {
 
   /**
    * Get relative weight of current index.
+   *
    * @param {int} weightIndex Index
    * @returns {number} Weight at index, or 0 if index out of range.
    */
@@ -187,6 +175,7 @@ export class InterestFeatures {
 
   /**
    * Quantize a feature value based on the thresholds specified in the class.
+   *
    * @param {number} inValue Value computed by model for the feature.
    * @returns Quantized value. A value between 0 and number of thresholds specified (inclusive)
    */
@@ -206,6 +195,7 @@ export class InterestFeatures {
    * Applies Differential Privacy Unary Encoding method, outputting a one-hot encoded vector with randomizaiton.
    * Accurate historgrams of values can be computed with reasonable accuracy.
    * If the class has no or 0 p/q values set for differential privacy, then response is original number non-encoded.
+   *
    * @param {number} inValue Value to randomize
    * @returns Bitfield as a string, that is the same as the thresholds length + 1
    */
@@ -264,12 +254,11 @@ export class FeatureModel {
     interestVectorModel,
     tileImportance,
     modelType,
-    rescale = true,
+    rescale = false,
     logScale = false,
-    noiseScale = 0,
-    laplaceNoiseFn = laplaceNoise,
-    clipZero = true,
-    maxVal = 0.04,
+    normalize = false,
+    normalizeL1 = false,
+    privateFeatures = [],
   }) {
     this.modelId = modelId;
     this.tileImportance = tileImportance;
@@ -277,11 +266,10 @@ export class FeatureModel {
     this.interestVectorModel = interestVectorModel;
     this.rescale = rescale;
     this.logScale = logScale;
+    this.normalize = normalize;
+    this.normalizeL1 = normalizeL1;
     this.modelType = modelType;
-    this.noiseScale = noiseScale;
-    this.laplaceNoiseFn = laplaceNoiseFn;
-    this.clipZero = clipZero;
-    this.maxVal = maxVal;
+    this.privateFeatures = privateFeatures;
   }
 
   static fromJSON(json) {
@@ -298,13 +286,12 @@ export class FeatureModel {
       tileImportance,
       interestVectorModel,
       normalize: json.normalize,
+      normalizeL1: json.normalize_l1,
       rescale: json.rescale,
       logScale: json.log_scale,
       clickScale: json.clickScale,
       modelType: json.model_type,
-      noiseScale: json.noise_scale,
-      clipZero: json.clipZero ?? true,
-      maxVal: json.maxVal ?? 0.04,
+      privateFeatures: json.private_features ?? null,
     });
   }
 
@@ -333,6 +320,7 @@ export class FeatureModel {
 
   /**
    * Computes an interest vector or aggregate based on the model and raw sql inout.
+   *
    * @param {Object} config
    * @param {Array.<Array.<string|number>>} config.dataForIntervals Raw aggregate output from SQL query. Could be clicks or impressions
    * @param {Object.<string, number>} config.indexSchema Map of keys to indices in each sub-array in dataForIntervals
@@ -343,6 +331,7 @@ export class FeatureModel {
   computeInterestVector({
     dataForIntervals,
     indexSchema,
+    applyPostProcessing = false,
     applyThresholding = false,
     applyDifferentialPrivacy = false,
   }) {
@@ -392,16 +381,8 @@ export class FeatureModel {
       delete totalResults[SPECIAL_FEATURE_CLICK];
     }
 
-    if (this.logScale) {
-      totalResults = dictApply(totalResults, x => Math.log(x + 1));
-    }
-
-    if (this.rescale) {
-      let divisor = Math.max(...Object.values(totalResults));
-      if (divisor <= 0.001) {
-        divisor = 0.001;
-      }
-      totalResults = dictApply(totalResults, x => x / divisor);
+    if (applyPostProcessing) {
+      totalResults = this.applyPostProcessing(totalResults);
     }
 
     if (this.clickScale && numClicks > 0) {
@@ -449,6 +430,40 @@ export class FeatureModel {
     }
   }
 
+  applyPostProcessing(valueDict) {
+    let res = valueDict;
+    if (this.logScale) {
+      res = dictApply(valueDict, x => Math.log(x + 1));
+    }
+
+    if (this.rescale) {
+      let divisor = Math.max(...Object.values(res));
+      if (divisor <= 1e-6) {
+        divisor = 1e-6;
+      }
+      res = dictApply(res, x => x / divisor);
+    }
+
+    if (this.normalizeL1) {
+      let magnitude = Object.values(res).reduce((sum, c) => sum + c, 0);
+      if (magnitude <= 1e-6) {
+        magnitude = 1e-6;
+      }
+      res = dictApply(res, x => x / magnitude);
+    }
+
+    if (this.normalize) {
+      let magnitude = Math.sqrt(
+        Object.values(res).reduce((sum, c) => sum + c ** 2, 0)
+      );
+      if (magnitude <= 1e-6) {
+        magnitude = 1e-6;
+      }
+      res = dictApply(res, x => x / magnitude);
+    }
+    return res;
+  }
+
   /**
    * Computes interest vectors based on click-through rate (CTR) by dividing the click dictionary
    * by the impression dictionary. Applies differential privacy using Laplace noise, and optionally
@@ -473,22 +488,34 @@ export class FeatureModel {
     model_id = "unknown",
     condensePrivateValues = true,
   }) {
-    const inferredInterests = divideDict(clicks, impressions);
+    let inferredInterests = divideDict(clicks, impressions);
+
     const originalInterestValues = { ...inferredInterests };
 
-    this.applyLaplaceNoise(inferredInterests, this.clipZero);
     const resultObject = {
       inferredInterests: { ...inferredInterests, model_id },
     };
 
     if (this.supportsCoarseInterests()) {
-      const coarseValues = { ...originalInterestValues };
+      // always true
+      const coarseValues = this.applyPostProcessing({
+        ...originalInterestValues,
+      });
       this.applyThresholding(coarseValues, false);
       resultObject.coarseInferredInterests = { ...coarseValues, model_id };
     }
 
     if (this.supportsCoarsePrivateInterests()) {
-      const coarsePrivateValues = { ...originalInterestValues };
+      let coarsePrivateValues = { ...originalInterestValues };
+      if (this.privateFeatures) {
+        // filter here for private features
+        coarsePrivateValues = Object.fromEntries(
+          Object.entries(coarsePrivateValues).filter(([key]) =>
+            this.privateFeatures.includes(key)
+          )
+        );
+        this.applyPostProcessing({ ...originalInterestValues });
+      }
       this.applyThresholding(coarsePrivateValues, true);
 
       if (condensePrivateValues) {
@@ -505,31 +532,6 @@ export class FeatureModel {
       }
     }
     return resultObject;
-  }
-
-  /**
-   * Applies laplace noise to values in a dictionary if specified in the model
-   * @param {Object} inputDict key-value pairs
-   * @param {boolean} clipZero If true clip less than zero values to zero
-   * @returns
-   */
-  applyLaplaceNoise(inputDict, clipZero = true) {
-    if (!this.noiseScale) {
-      return;
-    }
-    for (const key in inputDict) {
-      if (typeof inputDict[key] === "number") {
-        const noise = this.laplaceNoiseFn(this.noiseScale);
-        if (clipZero) {
-          inputDict[key] = Math.min(
-            Math.max(inputDict[key] + noise, 0),
-            this.maxVal
-          );
-        } else {
-          inputDict[key] += noise;
-        }
-      }
-    }
   }
 
   /**
@@ -564,9 +566,7 @@ export class FeatureModel {
       dataForIntervals,
       indexSchema,
     });
-    const updatedFuzzyInterests = { ...inferredInterests };
-    this.applyLaplaceNoise(updatedFuzzyInterests, this.clipZero);
-    result.inferredInterests = { ...updatedFuzzyInterests, model_id };
+    result.inferredInterests = { ...inferredInterests };
 
     if (this.supportsCoarseInterests()) {
       coarseInferredInterests = this.computeInterestVector({

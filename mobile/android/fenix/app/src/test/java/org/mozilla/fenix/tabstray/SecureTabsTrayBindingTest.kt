@@ -12,8 +12,6 @@ import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.verify
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.rule.MainCoroutineRule
 import org.junit.Before
 import org.junit.Rule
@@ -24,7 +22,6 @@ import org.mozilla.fenix.utils.Settings
 
 class SecureTabsTrayBindingTest {
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     @get:Rule
     val coroutinesTestRule = MainCoroutineRule()
 
@@ -54,10 +51,46 @@ class SecureTabsTrayBindingTest {
 
         secureTabsTrayBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify { fragment.secure() }
         verify { window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+    }
+
+    @Test
+    fun `WHEN tab selected page switches to private and allowScreenshotsInPrivateMode true THEN set fragment to un-secure`() {
+        val tabsTrayStore = TabsTrayStore(TabsTrayState())
+        val secureTabsTrayBinding = SecureTabsTrayBinding(
+            store = tabsTrayStore,
+            settings = settings,
+            fragment = fragment,
+            dialog = dialog,
+        )
+        every { settings.allowScreenshotsInPrivateMode } returns true
+
+        secureTabsTrayBinding.start()
+        tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
+
+        verify { fragment.removeSecure() }
+        verify { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+    }
+
+    @Test
+    fun `WHEN tab selected page switches to private and allowScreenshotsInPrivateMode false and shouldSecureModeBeOverridden true THEN set fragment to un-secure`() {
+        val tabsTrayStore = TabsTrayStore(TabsTrayState())
+        val secureTabsTrayBinding = SecureTabsTrayBinding(
+            store = tabsTrayStore,
+            settings = settings,
+            fragment = fragment,
+            dialog = dialog,
+        )
+        every { settings.allowScreenshotsInPrivateMode } returns false
+        every { settings.allowScreenCaptureInSecureScreens } returns false
+
+        secureTabsTrayBinding.start()
+        tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.PrivateTabs))
+
+        verify { fragment.removeSecure() }
+        verify { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 
     @Test
@@ -73,7 +106,6 @@ class SecureTabsTrayBindingTest {
 
         secureTabsTrayBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.NormalTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify { fragment.removeSecure() }
         verify { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
@@ -92,7 +124,6 @@ class SecureTabsTrayBindingTest {
 
         secureTabsTrayBinding.start()
         tabsTrayStore.dispatch(TabsTrayAction.PageSelected(Page.NormalTabs))
-        tabsTrayStore.waitUntilIdle()
 
         verify(exactly = 0) { fragment.removeSecure() }
         verify(exactly = 0) { window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }

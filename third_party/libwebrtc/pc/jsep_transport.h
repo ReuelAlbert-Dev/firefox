@@ -115,14 +115,12 @@ class JsepTransport {
   }
 
   RTCError SetLocalJsepTransportDescription(
-      const JsepTransportDescription& jsep_description,
-      SdpType type);
+      const JsepTransportDescription& jsep_description, SdpType type);
 
   // Set the remote TransportDescription to be used by DTLS and ICE channels
   // that are part of this Transport.
   RTCError SetRemoteJsepTransportDescription(
-      const JsepTransportDescription& jsep_description,
-      SdpType type);
+      const JsepTransportDescription& jsep_description, SdpType type);
   RTCError AddRemoteCandidates(const Candidates& candidates);
 
   // Set the "needs-ice-restart" flag as described in JSEP. After the flag is
@@ -204,7 +202,9 @@ class JsepTransport {
     return rtp_dtls_transport_;
   }
 
-  scoped_refptr<SctpTransport> SctpTransport() const { return sctp_transport_; }
+  scoped_refptr<::webrtc::SctpTransport> SctpTransport() const {
+    return sctp_transport_;
+  }
 
   // TODO(bugs.webrtc.org/9719): Delete method, update callers to use
   // SctpTransport() instead.
@@ -328,14 +328,5 @@ class JsepTransport {
 };
 
 }  //  namespace webrtc
-
-// Re-export symbols from the webrtc namespace for backwards compatibility.
-// TODO(bugs.webrtc.org/4222596): Remove once all references are updated.
-#ifdef WEBRTC_ALLOW_DEPRECATED_NAMESPACES
-namespace cricket {
-using ::webrtc::JsepTransport;
-using ::webrtc::JsepTransportDescription;
-}  // namespace cricket
-#endif  // WEBRTC_ALLOW_DEPRECATED_NAMESPACES
 
 #endif  // PC_JSEP_TRANSPORT_H_

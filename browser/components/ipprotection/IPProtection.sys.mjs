@@ -15,20 +15,16 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource:///modules/ipprotection/IPProtectionPanel.sys.mjs",
   IPProtectionService:
     "resource:///modules/ipprotection/IPProtectionService.sys.mjs",
+  IPProtectionStates:
+    "resource:///modules/ipprotection/IPProtectionService.sys.mjs",
+  IPPProxyManager: "resource:///modules/ipprotection/IPPProxyManager.sys.mjs",
+  IPPProxyStates: "resource:///modules/ipprotection/IPPProxyManager.sys.mjs",
   requestIdleCallback: "resource://gre/modules/Timer.sys.mjs",
   cancelIdleCallback: "resource://gre/modules/Timer.sys.mjs",
 });
 
 const FXA_WIDGET_ID = "fxa-toolbar-menu-button";
 const EXT_WIDGET_ID = "unified-extensions-button";
-
-const REGISTERED_EVENTS = [
-  "IPProtectionService:Started",
-  "IPProtectionService:Stopped",
-  "IPProtectionService:Error",
-  "IPProtectionService:SignedIn",
-  "IPProtectionService:SignedOut",
-];
 
 /**
  * IPProtectionWidget is the class for the singleton IPProtection.
@@ -45,9 +41,10 @@ class IPProtectionWidget {
 
   static ENABLED_PREF = "browser.ipProtection.enabled";
   static VARIANT_PREF = "browser.ipProtection.variant";
+  static ADDED_PREF = "browser.ipProtection.added";
 
   #inited = false;
-  #created = false;
+  created = false;
   #panels = new WeakMap();
 
   constructor() {
@@ -62,14 +59,13 @@ class IPProtectionWidget {
     if (this.#inited) {
       return;
     }
+    this.#inited = true;
 
-    if (!this.#created) {
+    if (!this.created) {
       this.#createWidget();
     }
 
     lazy.CustomizableUI.addListener(this);
-
-    this.#inited = true;
   }
 
   /**
@@ -92,22 +88,6 @@ class IPProtectionWidget {
    */
   get isInitialized() {
     return this.#inited;
-  }
-
-  /**
-   * Opens the panel in the given window.
-   *
-   * @param {Window} window - which window to open the panel in.
-   * @returns {Promise<void>}
-   */
-  async openPanel(window) {
-    if (!this.#created || !window?.PanelUI) {
-      return;
-    }
-
-    let widget = lazy.CustomizableUI.getWidget(IPProtectionWidget.WIDGET_ID);
-    let anchor = widget.forWindow(window).anchor;
-    await window.PanelUI.showSubView(IPProtectionWidget.PANEL_ID, anchor);
   }
 
   /**
@@ -144,7 +124,7 @@ class IPProtectionWidget {
     const onBeforeCreated = this.#onBeforeCreated.bind(this);
     const onCreated = this.#onCreated.bind(this);
     const onDestroyed = this.#onDestroyed.bind(this);
-    lazy.CustomizableUI.createWidget({
+    const item = {
       id: IPProtectionWidget.WIDGET_ID,
       l10nId: "ipprotection-button",
       type: "view",
@@ -154,23 +134,28 @@ class IPProtectionWidget {
       onBeforeCreated,
       onCreated,
       onDestroyed,
-    });
+    };
+    lazy.CustomizableUI.createWidget(item);
 
     this.#placeWidget();
 
-    this.#created = true;
+    this.created = true;
   }
 
   /**
    * Places the widget in the nav bar, next to the FxA widget.
    */
   #placeWidget() {
+    let wasAddedToToolbar = Services.prefs.getBoolPref(
+      IPProtectionWidget.ADDED_PREF,
+      false
+    );
     let alreadyPlaced = lazy.CustomizableUI.getPlacementOfWidget(
       IPProtectionWidget.WIDGET_ID,
       false,
       true
     );
-    if (alreadyPlaced) {
+    if (wasAddedToToolbar || alreadyPlaced) {
       return;
     }
 
@@ -184,6 +169,7 @@ class IPProtectionWidget {
       lazy.CustomizableUI.AREA_NAVBAR,
       pos
     );
+    Services.prefs.setBoolPref(IPProtectionWidget.ADDED_PREF, true);
   }
 
   /**
@@ -193,12 +179,12 @@ class IPProtectionWidget {
    * can be recreated later.
    */
   #destroyWidget() {
-    if (!this.#created) {
+    if (!this.created) {
       return;
     }
     this.#destroyPanels();
     lazy.CustomizableUI.destroyWidget(IPProtectionWidget.WIDGET_ID);
-    this.#created = false;
+    this.created = false;
     if (this.readyTriggerIdleCallback) {
       lazy.cancelIdleCallback(this.readyTriggerIdleCallback);
     }
@@ -211,7 +197,7 @@ class IPProtectionWidget {
    * @returns {IPProtectionPanel}
    */
   getPanel(window) {
-    if (!this.#created || !window?.PanelUI) {
+    if (!this.created || !window?.PanelUI) {
       return null;
     }
 
@@ -248,8 +234,6 @@ class IPProtectionWidget {
    * @param {Event} event - the panel shown.
    */
   #onViewShowing(event) {
-    lazy.IPProtectionService.maybeEnroll();
-
     let { ownerGlobal } = event.target;
     if (this.#panels.has(ownerGlobal)) {
       let panel = this.#panels.get(ownerGlobal);
@@ -290,10 +274,10 @@ class IPProtectionWidget {
    * @param {XULElement} toolbaritem - the widget toolbaritem.
    */
   #onCreated(toolbaritem) {
-    let isActive = lazy.IPProtectionService.isActive;
+    let isActive = lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVE;
     let isError =
-      lazy.IPProtectionService.hasError &&
-      lazy.IPProtectionService.errors.includes(ERRORS.GENERIC);
+      lazy.IPPProxyManager.state === lazy.IPPProxyStates.ERROR &&
+      lazy.IPPProxyManager.errors.includes(ERRORS.GENERIC);
     this.updateIconStatus(toolbaritem, {
       isActive,
       isError,
@@ -303,15 +287,25 @@ class IPProtectionWidget {
       this.sendReadyTrigger
     );
 
-    for (const evt of REGISTERED_EVENTS) {
-      lazy.IPProtectionService.addEventListener(evt, this.handleEvent);
-    }
+    lazy.IPProtectionService.addEventListener(
+      "IPProtectionService:StateChanged",
+      this.handleEvent
+    );
+    lazy.IPPProxyManager.addEventListener(
+      "IPPProxyManager:StateChanged",
+      this.handleEvent
+    );
   }
 
   #onDestroyed() {
-    for (const evt of REGISTERED_EVENTS) {
-      lazy.IPProtectionService.removeEventListener(evt, this.handleEvent);
-    }
+    lazy.IPPProxyManager.removeEventListener(
+      "IPPProxyManager:StateChanged",
+      this.handleEvent
+    );
+    lazy.IPProtectionService.removeEventListener(
+      "IPProtectionService:StateChanged",
+      this.handleEvent
+    );
   }
 
   async onWidgetRemoved(widgetId) {
@@ -324,7 +318,7 @@ class IPProtectionWidget {
     await Promise.resolve();
     let moved = !!lazy.CustomizableUI.getPlacementOfWidget(widgetId);
     if (!moved) {
-      lazy.IPProtectionService.stop();
+      lazy.IPPProxyManager.stop();
     }
   }
 
@@ -340,19 +334,21 @@ class IPProtectionWidget {
 
   #handleEvent(event) {
     if (
-      event.type == "IPProtectionService:Started" ||
-      event.type == "IPProtectionService:Stopped" ||
-      event.type == "IPProtectionService:Error" ||
-      event.type == "IPProtectionService:SignedIn" ||
-      event.type == "IPProtectionService:SignedOut"
+      event.type == "IPProtectionService:StateChanged" ||
+      event.type == "IPPProxyManager:StateChanged"
     ) {
+      if (
+        lazy.IPProtectionService.state === lazy.IPProtectionStates.OPTED_OUT
+      ) {
+        lazy.CustomizableUI.removeWidgetFromArea(IPProtectionWidget.WIDGET_ID);
+        return;
+      }
+
       let status = {
-        isActive:
-          lazy.IPProtectionService.isSignedIn &&
-          lazy.IPProtectionService.isActive,
+        isActive: lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVE,
         isError:
-          lazy.IPProtectionService.hasError &&
-          lazy.IPProtectionService.errors.includes(ERRORS.GENERIC),
+          lazy.IPPProxyManager.state === lazy.IPPProxyStates.ERROR &&
+          lazy.IPPProxyManager.errors.includes(ERRORS.GENERIC),
       };
 
       let widget = lazy.CustomizableUI.getWidget(IPProtectionWidget.WIDGET_ID);

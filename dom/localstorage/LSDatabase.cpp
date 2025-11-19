@@ -14,10 +14,8 @@
 // Global includes
 #include <cstring>
 #include <new>
-#include <utility>
 
 #include "MainThreadUtils.h"
-#include "mozilla/MacroForEach.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"

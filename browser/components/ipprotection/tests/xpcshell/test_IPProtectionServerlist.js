@@ -3,7 +3,7 @@ https://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-const { getDefaultLocation, selectServer } = ChromeUtils.importESModule(
+const { IPProtectionServerlist } = ChromeUtils.importESModule(
   "resource:///modules/ipprotection/IPProtectionServerlist.sys.mjs"
 );
 
@@ -13,16 +13,40 @@ const TEST_SERVER_1 = {
   hostname: "test1.example.com",
   port: 443,
   quarantined: false,
+  protocols: [
+    {
+      name: "connect",
+      host: "test1.example.com",
+      port: 8443,
+      scheme: "https",
+    },
+  ],
 };
 const TEST_SERVER_2 = {
   hostname: "test2.example.com",
   port: 443,
   quarantined: false,
+  protocols: [
+    {
+      name: "connect",
+      host: "test2.example.com",
+      port: 8443,
+      scheme: "https",
+    },
+  ],
 };
 const TEST_SERVER_QUARANTINED = {
   hostname: "quarantined.example.com",
   port: 443,
   quarantined: true,
+  protocols: [
+    {
+      name: "connect",
+      host: "quarantined.example.com",
+      port: 8443,
+      scheme: "https",
+    },
+  ],
 };
 
 const TEST_US_CITY = {
@@ -59,17 +83,20 @@ add_setup(async function () {
     await client.db.create(country);
   }
   await client.db.importChanges({}, Date.now());
+
+  await IPProtectionServerlist.maybeFetchList();
+  await IPProtectionServerlist.initOnStartupCompleted();
 });
 
 add_task(async function test_getDefaultLocation() {
-  const { country, city } = await getDefaultLocation();
+  const { country, city } = IPProtectionServerlist.getDefaultLocation();
   Assert.equal(country.code, "US", "The default country should be US");
-  Assert.deepEqual(city, TEST_US_CITY, "The correct city should be returned");
+  Assert.deepEqual(city, TEST_US_CITY, "The default city should be returned");
 });
 
 add_task(async function test_selectServer() {
   // Test with a city with multiple non-quarantined servers
-  let selected = await selectServer(TEST_US_CITY);
+  let selected = IPProtectionServerlist.selectServer(TEST_US_CITY);
   Assert.ok(
     [TEST_SERVER_1, TEST_SERVER_2].some(s => s.hostname === selected.hostname),
     "A valid server should be selected"
@@ -81,7 +108,7 @@ add_task(async function test_selectServer() {
     code: "OSC",
     servers: [TEST_SERVER_1],
   };
-  selected = await selectServer(cityWithOneServer);
+  selected = IPProtectionServerlist.selectServer(cityWithOneServer);
   Assert.deepEqual(
     selected,
     TEST_SERVER_1,
@@ -94,7 +121,7 @@ add_task(async function test_selectServer() {
     code: "MSC",
     servers: [TEST_SERVER_1, TEST_SERVER_QUARANTINED],
   };
-  selected = await selectServer(cityWithMixedServers);
+  selected = IPProtectionServerlist.selectServer(cityWithMixedServers);
   Assert.deepEqual(
     selected,
     TEST_SERVER_1,
@@ -107,7 +134,7 @@ add_task(async function test_selectServer() {
     code: "QC",
     servers: [TEST_SERVER_QUARANTINED],
   };
-  selected = await selectServer(cityWithQuarantinedServers);
+  selected = IPProtectionServerlist.selectServer(cityWithQuarantinedServers);
   Assert.equal(selected, null, "No server should be selected");
 
   // Test with a city with no servers
@@ -116,6 +143,37 @@ add_task(async function test_selectServer() {
     code: "NSC",
     servers: [],
   };
-  selected = await selectServer(cityWithNoServers);
+  selected = IPProtectionServerlist.selectServer(cityWithNoServers);
   Assert.equal(selected, null, "No server should be selected");
+});
+
+add_task(async function test_syncRespected() {
+  let { country, city } = IPProtectionServerlist.getDefaultLocation();
+  Assert.equal(country.code, "US", "The default country should be US");
+  Assert.deepEqual(city, TEST_US_CITY, "The correct city should be returned");
+
+  // Now, update the server list to remove the US entry
+  const updated_server = {
+    ...TEST_SERVER_1,
+    hostname: "updated.example.com",
+  };
+  const updated_city = {
+    ...TEST_US_CITY,
+    servers: [updated_server],
+  };
+  const updated_country = {
+    ...TEST_COUNTRIES[0],
+    cities: [updated_city],
+  };
+
+  await client.db.clear();
+  await client.db.create(updated_country);
+  await client.db.importChanges({}, Date.now());
+  await client.emit("sync", { data: {} });
+
+  await IPProtectionServerlist.maybeFetchList();
+
+  ({ country, city } = IPProtectionServerlist.getDefaultLocation());
+  Assert.equal(country.code, "US", "The default country should be US");
+  Assert.deepEqual(city, updated_city, "The updated city should be returned");
 });

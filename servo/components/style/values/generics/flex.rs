@@ -12,7 +12,6 @@
     Copy,
     Debug,
     MallocSizeOf,
-    Parse,
     PartialEq,
     SpecifiedValueInfo,
     ToAnimatedValue,
@@ -21,6 +20,7 @@
     ToCss,
     ToResolvedValue,
     ToShmem,
+    ToTyped,
 )]
 #[repr(C)]
 pub enum GenericFlexBasis<S> {

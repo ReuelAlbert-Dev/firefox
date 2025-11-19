@@ -35,7 +35,6 @@
 #include "libwebrtcglue/MediaConduitInterface.h"
 #include "libwebrtcglue/WebrtcImageBuffer.h"
 #include "modules/rtp_rtcp/include/rtp_header_extension_map.h"
-#include "modules/rtp_rtcp/include/rtp_rtcp.h"
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
 #include "mozilla/Logging.h"
 #include "mozilla/NullPrincipal.h"
@@ -46,7 +45,6 @@
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/TaskQueue.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"
 #include "mozilla/gfx/Point.h"
@@ -224,7 +222,7 @@ class AudioProxyThread {
           self->InternalProcessAudioChunk(aRate, aChunk, aEnabled);
         }));
     MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
-    Unused << rv;
+    (void)rv;
   }
 
  protected:

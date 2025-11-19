@@ -13,17 +13,14 @@ from taskgraph.util.attributes import keymatch
 from taskgraph.util.keyed_by import evaluate_keyed_by
 from taskgraph.util.readonlydict import ReadOnlyDict
 from taskgraph.util.schema import Schema, resolve_keyed_by
-from taskgraph.util.taskcluster import (
-    get_artifact_path,
-    get_artifact_url,
-    get_index_url,
-)
+from taskgraph.util.taskcluster import get_artifact_path
 from taskgraph.util.templates import merge
 from voluptuous import Any, Optional, Required
 
 from gecko_taskgraph.transforms.test.variant import TEST_VARIANTS
 from gecko_taskgraph.util.perftest import is_external_browser
 from gecko_taskgraph.util.platforms import platform_family
+from gecko_taskgraph.util.taskcluster import get_index_url
 
 transforms = TransformSequence()
 
@@ -112,11 +109,6 @@ def setup_talos(config, tasks):
         )
         extra_options.append("--use-talos-json")
 
-        # win7 needs to test skip
-        if task["build-platform"].startswith("win32"):
-            extra_options.append("--add-option")
-            extra_options.append("--setpref,gfx.direct2d.disabled=true")
-
         if config.params.get("project", None):
             extra_options.append("--project=%s" % config.params["project"])
 
@@ -203,10 +195,8 @@ def set_treeherder_machine_platform(config, tasks):
         if "android" in task["test-platform"] and "pgo/opt" in task["test-platform"]:
             platform_new = task["test-platform"].replace("-pgo/opt", "/pgo")
             task["treeherder-machine-platform"] = platform_new
-        elif "android-em-7.0-x86" in task["test-platform"]:
-            task["treeherder-machine-platform"] = task["test-platform"].replace(
-                ".", "-"
-            )
+        elif "android-em-" in task["test-platform"]:
+            task["treeherder-machine-platform"] = task["test-platform"]
         elif "android-hw" in task["test-platform"]:
             task["treeherder-machine-platform"] = task["test-platform"]
 
@@ -323,9 +313,9 @@ def set_target(config, tasks):
                 )
                 task["mozharness"]["installer-url"] = installer_url
             else:
-                task["mozharness"]["installer-url"] = get_artifact_url(
-                    f'<{target["upstream-task"]}>', target["name"]
-                )
+                task["mozharness"][
+                    "installer-url"
+                ] = f"<{target['upstream-task']}/{target['name']}>"
         else:
             task["mozharness"]["build-artifact-name"] = get_artifact_path(task, target)
 
@@ -732,21 +722,6 @@ def handle_tier(config, tasks):
                 "macosx1400-64-qr/debug",
                 "macosx1500-64-shippable/opt",
                 "macosx1500-64/debug",
-                "android-em-7.0-x86_64-shippable/opt",
-                "android-em-7.0-x86_64-shippable-lite/opt",
-                "android-em-7.0-x86_64/debug",
-                "android-em-7.0-x86_64/debug-isolated-process",
-                "android-em-7.0-x86_64/opt",
-                "android-em-7.0-x86_64-lite/opt",
-                "android-em-7.0-x86-shippable/opt",
-                "android-em-7.0-x86-shippable-lite/opt",
-                "android-em-7.0-x86_64-shippable-qr/opt",
-                "android-em-7.0-x86_64-qr/debug",
-                "android-em-7.0-x86_64-qr/debug-isolated-process",
-                "android-em-7.0-x86_64-qr/opt",
-                "android-em-7.0-x86_64-shippable-lite-qr/opt",
-                "android-em-7.0-x86_64-lite-qr/debug",
-                "android-em-7.0-x86_64-lite-qr/opt",
                 "android-em-14-x86_64-shippable/opt",
                 "android-em-14-x86_64/opt",
                 "android-em-14-x86_64-shippable-lite/opt",
@@ -1091,6 +1066,54 @@ def set_profile(config, tasks):
                         # Other platforms keep things as separate values,
                         # rather than joining with spaces.
                         extras.append("--" + setting + "=" + str(value))
+
+        yield task
+
+
+@transforms.add
+def add_gecko_profile_symbolication_deps(config, tasks):
+    """Add symbolication dependencies when profiling raptor, talos, or mochitest tests"""
+
+    try_task_config = config.params.get("try_task_config", {})
+    gecko_profile = try_task_config.get("gecko-profile", False)
+    env = try_task_config.get("env", {})
+    startup_profile = env.get("MOZ_PROFILER_STARTUP") == "1"
+
+    for task in tasks:
+
+        if (gecko_profile and task["suite"] in ["talos", "raptor"]) or (
+            startup_profile and "mochitest" in task["suite"]
+        ):
+
+            fetches = task.setdefault("fetches", {})
+            fetch_toolchains = fetches.setdefault("toolchain", [])
+            fetch_toolchains.append("symbolicator-cli")
+
+            test_platform = task["test-platform"]
+
+            if "macosx" in test_platform and "aarch64" in test_platform:
+                fetch_toolchains.append("macosx64-aarch64-samply")
+            elif "macosx" in test_platform:
+                fetch_toolchains.append("macosx64-samply")
+            elif "win" in test_platform:
+                fetch_toolchains.append("win64-samply")
+            else:
+                fetch_toolchains.append("linux64-samply")
+
+            # Add node as a dependency for talos and mochitest tasks if needed.
+            # node is used to run symbolicator-cli, our profile symbolication tool
+            if task["suite"] == "talos" or "mochitest" in task["suite"]:
+                if "macosx" in test_platform and "aarch64" in test_platform:
+                    node_toolchain = "macosx64-aarch64-node"
+                elif "macosx" in test_platform:
+                    node_toolchain = "macosx64-node"
+                elif "win" in test_platform:
+                    node_toolchain = "win64-node"
+                else:
+                    node_toolchain = "linux64-node"
+
+                if node_toolchain not in fetch_toolchains:
+                    fetch_toolchains.append(node_toolchain)
 
         yield task
 

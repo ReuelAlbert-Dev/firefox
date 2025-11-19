@@ -10,7 +10,6 @@
 
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/WritingModes.h"
 #include "nsLayoutUtils.h"
 #include "nsLineLayout.h"
@@ -147,7 +146,6 @@ void nsRubyTextContainerFrame::Reflow(nsPresContext* aPresContext,
       // Relative positioning hasn't happened yet.
       // So MovePositionBy should not be used here.
       child->SetPosition(rtcWM, pos, containerSize);
-      nsContainerFrame::PlaceFrameView(child);
     }
     aDesiredSize.SetSize(rtcWM, size);
   } else {

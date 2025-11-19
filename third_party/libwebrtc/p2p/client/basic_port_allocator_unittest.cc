@@ -23,6 +23,7 @@
 #include "api/candidate.h"
 #include "api/environment/environment.h"
 #include "api/environment/environment_factory.h"
+#include "api/field_trials.h"
 #include "api/test/rtc_error_matchers.h"
 #include "api/transport/enums.h"
 #include "api/units/time_delta.h"
@@ -56,9 +57,9 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/virtual_socket_server.h"
 #include "system_wrappers/include/metrics.h"
+#include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
-#include "test/scoped_key_value_config.h"
 #include "test/wait_until.h"
 
 using ::testing::Contains;
@@ -144,7 +145,7 @@ void CheckStunKeepaliveIntervalOfAllReadyPorts(
          port->GetProtocol() == webrtc::PROTO_UDP)) {
       EXPECT_EQ(
           static_cast<const webrtc::UDPPort*>(port)->stun_keepalive_delay(),
-          expected);
+          webrtc::TimeDelta::Millis(expected));
     }
   }
 }
@@ -448,17 +449,12 @@ class BasicPortAllocatorTestBase : public ::testing::Test,
 
   void OnCandidatesRemoved(PortAllocatorSession* session,
                            const std::vector<Candidate>& removed_candidates) {
-    auto new_end = std::remove_if(
-        candidates_.begin(), candidates_.end(),
-        [removed_candidates](Candidate& candidate) {
-          for (const Candidate& removed_candidate : removed_candidates) {
-            if (candidate.MatchesForRemoval(removed_candidate)) {
-              return true;
-            }
-          }
-          return false;
-        });
-    candidates_.erase(new_end, candidates_.end());
+    std::erase_if(candidates_, [removed_candidates](Candidate& candidate) {
+      return absl::c_any_of(
+          removed_candidates, [&candidate](const Candidate& removed_candidate) {
+            return candidate.MatchesForRemoval(removed_candidate);
+          });
+    });
   }
 
   bool HasRelayAddress(const ProtocolAddress& proto_addr) {
@@ -1272,7 +1268,7 @@ TEST_F(BasicPortAllocatorTest, TestGetAllPortsWithOneSecondStepDelay) {
 
 TEST_F(BasicPortAllocatorTest, TestSetupVideoRtpPortsWithNormalSendBuffers) {
   AddInterface(kClientAddr);
-  ASSERT_TRUE(CreateSession(ICE_CANDIDATE_COMPONENT_RTP, CN_VIDEO));
+  ASSERT_TRUE(CreateSession(ICE_CANDIDATE_COMPONENT_RTP, "video"));
   session_->StartGettingPorts();
   ASSERT_THAT(
       WaitUntil([&] { return candidate_allocation_done_; }, IsTrue(),
@@ -1597,7 +1593,7 @@ TEST_F(BasicPortAllocatorTest, TestGetAllPortsNoUdpAllowed) {
   EXPECT_TRUE(
       HasCandidate(candidates_, IceCandidateType::kHost, "tcp", kClientAddr));
   // We wait at least for a full STUN timeout, which
-  // webrtc::STUN_TOTAL_TIMEOUT seconds.
+  // STUN_TOTAL_TIMEOUT seconds.
   EXPECT_THAT(WaitUntil([&] { return candidate_allocation_done_; }, IsTrue(),
                         {.timeout = TimeDelta::Millis(STUN_TOTAL_TIMEOUT),
                          .clock = &fake_clock}),
@@ -2524,7 +2520,7 @@ TEST_F(
                  .clock = &fake_clock}),
       IsRtcOk());
   EXPECT_TRUE(candidates_.back().is_local());
-  // We use a shared socket and webrtc::UDPPort handles the srflx candidate.
+  // We use a shared socket and UDPPort handles the srflx candidate.
   EXPECT_EQ(2u, ports_.size());
 }
 
@@ -2727,8 +2723,8 @@ TEST_F(BasicPortAllocatorTest, TestUseTurnServerAsStunSever) {
 }
 
 TEST_F(BasicPortAllocatorTest, TestDoNotUseTurnServerAsStunSever) {
-  test::ScopedKeyValueConfig field_trials(
-      "WebRTC-UseTurnServerAsStunServer/Disabled/");
+  FieldTrials field_trials =
+      CreateTestFieldTrials("WebRTC-UseTurnServerAsStunServer/Disabled/");
   ServerAddresses stun_servers;
   stun_servers.insert(kStunAddr);
   PortConfiguration port_config(stun_servers, "" /* user_name */,

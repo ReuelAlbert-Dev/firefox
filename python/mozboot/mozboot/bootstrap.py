@@ -119,6 +119,7 @@ DEBIAN_DISTROS = (
     "pureos",
     "deepin",
     "tuxedo",
+    "zorin",
 )
 
 FEDORA_DISTROS = (
@@ -256,9 +257,8 @@ class Bootstrapper:
         if sys.platform.startswith("linux"):
             # distro package provides reliable ids for popular distributions so
             # we use those instead of the full distribution name
-            dist_id, version, codename = distro.linux_distribution(
-                full_distribution_name=False
-            )
+            dist_id = distro.id()
+            version = distro.version()
 
             if dist_id in FEDORA_DISTROS:
                 cls = CentOSFedoraBootstrapper
@@ -266,7 +266,6 @@ class Bootstrapper:
             elif dist_id in DEBIAN_DISTROS:
                 cls = DebianBootstrapper
                 args["distro"] = dist_id
-                args["codename"] = codename
             elif dist_id in ("gentoo", "funtoo"):
                 cls = GentooBootstrapper
             elif dist_id in ("solus"):

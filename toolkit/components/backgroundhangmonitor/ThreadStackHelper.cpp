@@ -17,13 +17,10 @@
 #include <utility>
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/HangTypes.h"
 #include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/MemoryChecking.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/UniquePtr.h"
 #include "nsThread.h"
 
 #ifdef __GNUC__
@@ -36,7 +33,6 @@
 #endif
 
 #include <string.h>
-#include <vector>
 #include <cstdlib>
 
 #ifdef XP_LINUX

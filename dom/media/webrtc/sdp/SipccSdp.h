@@ -7,10 +7,8 @@
 #ifndef _SIPCCSDP_H_
 #define _SIPCCSDP_H_
 
-#include <map>
 #include <vector>
 
-#include "mozilla/Attributes.h"
 #include "sdp/Sdp.h"
 #include "sdp/SdpParser.h"
 #include "sdp/SipccSdpAttributeList.h"

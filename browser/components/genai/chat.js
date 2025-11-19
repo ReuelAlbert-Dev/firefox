@@ -417,45 +417,6 @@ function showOnboarding(length) {
       if (primary) {
         primary.disabled = true;
       }
-
-      // Specially handle links to open out of the sidebar
-      const handleLink = ev => {
-        const { href } = ev.target;
-        if (href) {
-          ev.preventDefault();
-          openLink(href);
-        }
-      };
-      const links = document.querySelector(".link-paragraph");
-      links?.addEventListener("click", handleLink);
-
-      [...document.querySelectorAll("fieldset label")].forEach(label => {
-        // Add content that is hidden with 0 height until selected
-        const div = label
-          .querySelector(".text")
-          .appendChild(document.createElement("div"));
-        div.style.maxHeight = 0;
-        div.tabIndex = -1;
-        const ul = div.appendChild(document.createElement("ul"));
-        const config = providerConfigs.get(label.querySelector("input").value);
-        config.choiceIds?.forEach(id => {
-          const li = ul.appendChild(document.createElement("li"));
-          document.l10n.setAttributes(li, id);
-        });
-        if (config.learnLink && config.learnId) {
-          const a = div.appendChild(document.createElement("a"));
-          a.href = config.learnLink;
-          a.tabIndex = -1;
-          a.addEventListener("click", ev => {
-            handleLink(ev);
-            Glean.genaiChatbot.onboardingProviderLearn.record({
-              provider: config.id,
-              step: 1,
-            });
-          });
-          document.l10n.setAttributes(a, config.learnId);
-        }
-      });
     },
     AWSendEventTelemetry({ event, event_context: { source } }) {
       const { provider } = window.AWSendEventTelemetry;
@@ -579,6 +540,9 @@ function clearWarningMessage() {
  * @param {number} length context length for a request
  */
 async function showSummarizeWarning(length) {
+  // if previous request showed the message clear previous message
+  clearWarningMessage();
+
   const messageContainer = document.getElementById("message-container");
   const warningEl = lazy.GenAI.createWarningEl(document, null, true);
 
@@ -610,7 +574,8 @@ async function showSummarizeWarning(length) {
   });
 }
 
-/** Expose Sidebar entry for new prompt
+/**
+ * Expose Sidebar entry for new prompt
  *
  * @param {object} opt for new prompt
  * @param {boolean} [opt.show]

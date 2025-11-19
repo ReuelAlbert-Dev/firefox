@@ -16,10 +16,15 @@
 #endif
 
 #include <algorithm>
+#include <cstddef>
+#include <string>
+#include <vector>
 
 #include "absl/strings/string_view.h"
+#include "api/scoped_refptr.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/synchronization/mutex.h"
 
 namespace webrtc {
 
@@ -60,9 +65,7 @@ void SharedXDisplay::RemoveEventHandler(int type, XEventHandler* handler) {
   if (handlers == event_handlers_.end())
     return;
 
-  std::vector<XEventHandler*>::iterator new_end =
-      std::remove(handlers->second.begin(), handlers->second.end(), handler);
-  handlers->second.erase(new_end, handlers->second.end());
+  std::erase(handlers->second, handler);
 
   // Check if no handlers left for this event.
   if (handlers->second.empty())

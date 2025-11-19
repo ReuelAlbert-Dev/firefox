@@ -122,6 +122,7 @@
                 data-l10n-id="main-context-menu-copy-clean-link"
                 hidden="true"
                 />
+      <menuseparator id="context-sep-copylink"/>
       <menu id="context-sendlinktodevice"
             class="sync-ui-item"
             data-l10n-id="main-context-menu-link-send-to-device"
@@ -130,7 +131,6 @@
       </menu>
       <menuseparator id="context-sep-sendlinktodevice" class="sync-ui-item"
                 hidden="true"/>
-      <menuseparator id="context-sep-copylink"/>
       <menuitem id="context-media-play"
                 data-l10n-id="main-context-menu-media-play"
                 />
@@ -263,12 +263,6 @@
       <menuitem id="context-savepage"
                 data-l10n-id="main-context-menu-page-save"
                 />
-      <menu id="context-sendpagetodevice"
-            class="sync-ui-item"
-            data-l10n-id="main-context-menu-send-to-device"
-            hidden="true">
-        <menupopup id="context-sendpagetodevice-popup"/>
-      </menu>
       <menu id="fill-login" hidden="true">
         <menupopup id="fill-login-popup" />
       </menu>
@@ -311,7 +305,7 @@
                 data-l10n-id="text-action-select-all"
                 command="cmd_selectAll"/>
       <menuitem id="context-pdfjs-comment-selection"
-                data-l10n-id="text-action-comment-selection"/>
+                data-l10n-id="text-action-comment-selection-1"/>
       <menuitem id="context-pdfjs-highlight-selection"
                 data-l10n-id="text-action-highlight-selection"/>
       <menuitem id="context-reveal-password"
@@ -351,8 +345,6 @@
       <menuitem id="context-take-screenshot"
                 data-l10n-id="main-context-menu-take-screenshot"/>
       <menuseparator id="context-sep-screenshots"/>
-      <menuitem id="context-keywordfield"
-                data-l10n-id="main-context-menu-keyword"/>
       <menuitem id="context-add-engine"
                 data-l10n-id="main-context-menu-add-engine"/>
       <menuitem id="context-searchselect"/>
@@ -441,6 +433,15 @@
                 hidden="true"
                 data-l10n-id="main-context-menu-inspect"
                 />
+      <menuseparator id="context-sep-sendpagetodevice"
+            class="sync-ui-item"
+            hidden="true"/>
+      <menu id="context-sendpagetodevice"
+            class="sync-ui-item"
+            data-l10n-id="main-context-menu-send-to-device-2"
+            hidden="true">
+        <menupopup id="context-sendpagetodevice-popup"/>
+      </menu>
       <menuseparator id="context-media-eme-separator" hidden="true"/>
       <menuitem id="context-media-eme-learnmore"
                 class="menuitem-iconic"

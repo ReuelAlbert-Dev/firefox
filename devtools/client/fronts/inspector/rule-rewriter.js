@@ -310,6 +310,7 @@ class RuleRewriter {
    * backward in |string|.  Return the index of the first
    * non-whitespace character, or -1 if the entire string was
    * whitespace.
+   *
    * @param {String} string the input string
    * @param {Number} index the index at which to start
    * @return {Number} index of the first non-whitespace character, or -1
@@ -510,11 +511,22 @@ class RuleRewriter {
       );
       return "  ";
     }
-    const { str: source } = await styleSheetsFront.getText(
-      this.rule.parentStyleSheet.resourceId
-    );
-    const { indentUnit, indentWithTabs } = getIndentationFromString(source);
-    return indentWithTabs ? "\t" : " ".repeat(indentUnit);
+
+    const styleSheetResourceId = this.rule.parentStyleSheet.resourceId;
+
+    // @backward-compat { version 146 } getStyleSheetIndent was added in 146. The whole
+    // if block can be removed once 146 is in release.
+    const { hasGetStyleSheetIndentation } = await styleSheetsFront.getTraits();
+    if (!hasGetStyleSheetIndentation) {
+      const { str: source, initial } =
+        await styleSheetsFront.getText(styleSheetResourceId);
+      const { indentUnit, indentWithTabs } = getIndentationFromString(
+        source ?? initial ?? ""
+      );
+      return indentWithTabs ? "\t" : " ".repeat(indentUnit);
+    }
+
+    return styleSheetsFront.getStyleSheetIndentation(styleSheetResourceId);
   }
 
   /**

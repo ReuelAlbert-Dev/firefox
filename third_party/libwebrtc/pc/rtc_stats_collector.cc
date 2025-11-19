@@ -10,11 +10,9 @@
 
 #include "pc/rtc_stats_collector.h"
 
-#include <stdint.h>
-#include <stdio.h>
-
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <optional>
@@ -86,10 +84,10 @@ namespace webrtc {
 
 namespace {
 
-const char kDirectionInbound = 'I';
-const char kDirectionOutbound = 'O';
+constexpr char kDirectionInbound = 'I';
+constexpr char kDirectionOutbound = 'O';
 
-static constexpr char kAudioPlayoutSingletonId[] = "AP";
+constexpr char kAudioPlayoutSingletonId[] = "AP";
 
 // TODO(https://crbug.com/webrtc/10656): Consider making IDs less predictable.
 std::string RTCCertificateIDFromFingerprint(const std::string& fingerprint) {
@@ -399,6 +397,10 @@ void SetInboundRTPStreamStatsFromMediaReceiverInfo(
   inbound_stats->ssrc = media_receiver_info.ssrc();
   inbound_stats->packets_received =
       static_cast<uint32_t>(media_receiver_info.packets_received);
+  inbound_stats->packets_received_with_ect1 =
+      media_receiver_info.packets_received_with_ect1;
+  inbound_stats->packets_received_with_ce =
+      media_receiver_info.packets_received_with_ce;
   inbound_stats->bytes_received =
       static_cast<uint64_t>(media_receiver_info.payload_bytes_received);
   inbound_stats->header_bytes_received = static_cast<uint64_t>(
@@ -732,6 +734,8 @@ void SetOutboundRTPStreamStatsFromMediaSenderInfo(
   if (media_sender_info.active.has_value()) {
     outbound_stats->active = *media_sender_info.active;
   }
+  outbound_stats->packets_sent_with_ect1 =
+      media_sender_info.packets_sent_with_ect1;
 }
 
 std::unique_ptr<RTCOutboundRtpStreamStats>
@@ -800,8 +804,21 @@ CreateOutboundRTPStreamStatsFromVideoSenderInfo(
       static_cast<uint32_t>(video_sender_info.firs_received);
   outbound_video->pli_count =
       static_cast<uint32_t>(video_sender_info.plis_received);
-  if (video_sender_info.qp_sum.has_value())
+  if (video_sender_info.qp_sum.has_value()) {
     outbound_video->qp_sum = *video_sender_info.qp_sum;
+  }
+  // psnrSum is gated on psnrMeasurements > 0.
+  if (video_sender_info.psnr_measurements > 0) {
+    outbound_video->psnr_measurements = video_sender_info.psnr_measurements;
+    outbound_video->psnr_sum = {
+        {"y", video_sender_info.psnr_sum.y},
+        {"u", video_sender_info.psnr_sum.u},
+        {"v", video_sender_info.psnr_sum.v},
+    };
+  }
+  if (video_sender_info.psnr_measurements > 0) {
+    outbound_video->psnr_measurements = video_sender_info.psnr_measurements;
+  }
   if (video_sender_info.target_bitrate.has_value()) {
     outbound_video->target_bitrate = video_sender_info.target_bitrate->bps();
   }
@@ -1157,6 +1174,7 @@ RTCStatsCollector::RTCStatsCollector(PeerConnectionInternal* pc,
                                      const Environment& env,
                                      int64_t cache_lifetime_us)
     : pc_(pc),
+      is_unified_plan_(pc->IsUnifiedPlan()),
       env_(env),
       stats_timestamp_with_environment_clock_(
           pc->GetConfiguration().stats_timestamp_with_environment_clock()),
@@ -1203,7 +1221,7 @@ void RTCStatsCollector::GetStatsReportInternal(
   requests_.push_back(std::move(request));
 
   // "Now" using a monotonically increasing timer.
-  int64_t cache_now_us = TimeMicros();
+  int64_t cache_now_us = env_.clock().TimeInMicroseconds();
   if (cached_report_ &&
       cache_now_us - cache_timestamp_us_ <= cache_lifetime_us_) {
     // We have a fresh cached report to deliver. Deliver asynchronously, since
@@ -1346,7 +1364,7 @@ void RTCStatsCollector::ProducePartialResultsOnNetworkThreadImpl(
   ProduceIceCandidateAndPairStats_n(timestamp, transport_stats_by_name,
                                     call_stats_, partial_report);
   ProduceTransportStats_n(timestamp, transport_stats_by_name,
-                          transport_cert_stats, partial_report);
+                          transport_cert_stats, call_stats_, partial_report);
   ProduceRTPStreamStats_n(timestamp, transceiver_stats_infos_, partial_report);
 }
 
@@ -1431,11 +1449,11 @@ void RTCStatsCollector::ProduceCertificateStats_n(
   for (const auto& transport_cert_stats_pair : transport_cert_stats) {
     if (transport_cert_stats_pair.second.local) {
       ProduceCertificateStatsFromSSLCertificateStats(
-          timestamp, *transport_cert_stats_pair.second.local.get(), report);
+          timestamp, *transport_cert_stats_pair.second.local, report);
     }
     if (transport_cert_stats_pair.second.remote) {
       ProduceCertificateStatsFromSSLCertificateStats(
-          timestamp, *transport_cert_stats_pair.second.remote.get(), report);
+          timestamp, *transport_cert_stats_pair.second.remote, report);
     }
   }
 }
@@ -1624,7 +1642,7 @@ void RTCStatsCollector::ProduceMediaSourceStats_s(
         // Audio processor may be attached to either the track or the send
         // stream, so look in both places.
         auto audio_processor(audio_track->GetAudioProcessor());
-        if (audio_processor.get()) {
+        if (audio_processor) {
           // The `has_remote_tracks` argument is obsolete; makes no difference
           // if it's set to true or false.
           AudioProcessorInterface::AudioProcessorStatistics ap_stats =
@@ -1700,11 +1718,13 @@ void RTCStatsCollector::ProduceRTPStreamStats_n(
   RTC_DCHECK_RUN_ON(network_thread_);
   Thread::ScopedDisallowBlockingCalls no_blocking_calls;
 
+  bool spec_lifetime = is_unified_plan_ &&
+                       !env_.field_trials().IsDisabled("WebRTC-RTP-Lifetime");
   for (const RtpTransceiverStatsInfo& stats : transceiver_stats_infos) {
     if (stats.media_type == MediaType::AUDIO) {
-      ProduceAudioRTPStreamStats_n(timestamp, stats, report);
+      ProduceAudioRTPStreamStats_n(timestamp, stats, spec_lifetime, report);
     } else if (stats.media_type == MediaType::VIDEO) {
-      ProduceVideoRTPStreamStats_n(timestamp, stats, report);
+      ProduceVideoRTPStreamStats_n(timestamp, stats, spec_lifetime, report);
     } else {
       RTC_DCHECK_NOTREACHED();
     }
@@ -1714,6 +1734,7 @@ void RTCStatsCollector::ProduceRTPStreamStats_n(
 void RTCStatsCollector::ProduceAudioRTPStreamStats_n(
     Timestamp timestamp,
     const RtpTransceiverStatsInfo& stats,
+    bool spec_lifetime,
     RTCStatsReport* report) const {
   RTC_DCHECK_RUN_ON(network_thread_);
   Thread::ScopedDisallowBlockingCalls no_blocking_calls;
@@ -1730,8 +1751,17 @@ void RTCStatsCollector::ProduceAudioRTPStreamStats_n(
   // remote endpoint providing metrics about the remote outbound streams.
   for (const VoiceReceiverInfo& voice_receiver_info :
        stats.track_media_info_map.voice_media_info()->receivers) {
-    if (!voice_receiver_info.connected())
+    if (!voice_receiver_info.connected()) {
+      continue;  // The SSRC is not known yet.
+    }
+    // Check both packets received and samples received to handle the Insertable
+    // Streams use case of receiving media without receiving packets.
+    if (spec_lifetime && voice_receiver_info.packets_received == 0 &&
+        voice_receiver_info.total_samples_received == 0) {
+      // The SSRC is known despite not receiving any packets. This happens if
+      // SSRC is signalled in the SDP which we should not rely on for getStats.
       continue;
+    }
     // Inbound.
     auto inbound_audio = CreateInboundAudioStreamStats(
         *stats.track_media_info_map.voice_media_info(), voice_receiver_info,
@@ -1776,8 +1806,12 @@ void RTCStatsCollector::ProduceAudioRTPStreamStats_n(
   std::map<std::string, RTCOutboundRtpStreamStats*> audio_outbound_rtps;
   for (const VoiceSenderInfo& voice_sender_info :
        stats.track_media_info_map.voice_media_info()->senders) {
-    if (!voice_sender_info.connected())
-      continue;
+    if (!voice_sender_info.connected()) {
+      continue;  // The SSRC is not known yet.
+    }
+    if (spec_lifetime && !stats.current_direction.has_value()) {
+      continue;  // The SSRC is known but the O/A has not completed.
+    }
     auto outbound_audio = CreateOutboundRTPStreamStatsFromVoiceSenderInfo(
         transport_id, mid, *stats.track_media_info_map.voice_media_info(),
         voice_sender_info, timestamp, report);
@@ -1819,6 +1853,7 @@ void RTCStatsCollector::ProduceAudioRTPStreamStats_n(
 void RTCStatsCollector::ProduceVideoRTPStreamStats_n(
     Timestamp timestamp,
     const RtpTransceiverStatsInfo& stats,
+    bool spec_lifetime,
     RTCStatsReport* report) const {
   RTC_DCHECK_RUN_ON(network_thread_);
   Thread::ScopedDisallowBlockingCalls no_blocking_calls;
@@ -1833,8 +1868,17 @@ void RTCStatsCollector::ProduceVideoRTPStreamStats_n(
   // Inbound and remote-outbound.
   for (const VideoReceiverInfo& video_receiver_info :
        stats.track_media_info_map.video_media_info()->receivers) {
-    if (!video_receiver_info.connected())
+    if (!video_receiver_info.connected()) {
+      continue;  // The SSRC is not known yet.
+    }
+    // Check both packets received and frames received to handle the Insertable
+    // Streams use case of receiving media without receiving packets.
+    if (spec_lifetime && video_receiver_info.packets_received == 0 &&
+        video_receiver_info.frames_received == 0) {
+      // The SSRC is known despite not receiving any packets. This happens if
+      // SSRC is signalled in the SDP which we should not rely on for getStats.
       continue;
+    }
     auto inbound_video = CreateInboundRTPStreamStatsFromVideoReceiverInfo(
         transport_id, mid, *stats.track_media_info_map.video_media_info(),
         video_receiver_info, timestamp, report);
@@ -1871,8 +1915,12 @@ void RTCStatsCollector::ProduceVideoRTPStreamStats_n(
   std::map<std::string, RTCOutboundRtpStreamStats*> video_outbound_rtps;
   for (const VideoSenderInfo& video_sender_info :
        stats.track_media_info_map.video_media_info()->senders) {
-    if (!video_sender_info.connected())
-      continue;
+    if (!video_sender_info.connected()) {
+      continue;  // The SSRC is not known yet.
+    }
+    if (spec_lifetime && !stats.current_direction.has_value()) {
+      continue;  // The SSRC is known but the O/A has not completed.
+    }
     auto outbound_video = CreateOutboundRTPStreamStatsFromVideoSenderInfo(
         transport_id, mid, *stats.track_media_info_map.video_media_info(),
         video_sender_info, timestamp, report);
@@ -1915,6 +1963,7 @@ void RTCStatsCollector::ProduceTransportStats_n(
     Timestamp timestamp,
     const std::map<std::string, TransportStats>& transport_stats_by_name,
     const std::map<std::string, CertificateStatsPair>& transport_cert_stats,
+    const Call::Stats& call_stats,
     RTCStatsReport* report) const {
   RTC_DCHECK_RUN_ON(network_thread_);
   Thread::ScopedDisallowBlockingCalls no_blocking_calls;
@@ -1972,8 +2021,11 @@ void RTCStatsCollector::ProduceTransportStats_n(
           channel_stats.ice_transport_stats.selected_candidate_pair_changes;
       channel_transport_stats->ice_role =
           IceRoleToRTCIceRole(channel_stats.ice_transport_stats.ice_role);
-      channel_transport_stats->ice_local_username_fragment =
-          channel_stats.ice_transport_stats.ice_local_username_fragment;
+      if (!channel_stats.ice_transport_stats.ice_local_username_fragment
+               .empty()) {
+        channel_transport_stats->ice_local_username_fragment =
+            channel_stats.ice_transport_stats.ice_local_username_fragment;
+      }
       channel_transport_stats->ice_state =
           IceTransportStateToRTCIceTransportState(
               channel_stats.ice_transport_stats.ice_state);
@@ -2010,10 +2062,12 @@ void RTCStatsCollector::ProduceTransportStats_n(
       channel_transport_stats->dtls_cipher =
           channel_stats.tls_cipher_suite_name;
       if (channel_stats.srtp_crypto_suite != kSrtpInvalidCryptoSuite &&
-          SrtpCryptoSuiteToName(channel_stats.srtp_crypto_suite).length()) {
+          !SrtpCryptoSuiteToName(channel_stats.srtp_crypto_suite).empty()) {
         channel_transport_stats->srtp_cipher =
             SrtpCryptoSuiteToName(channel_stats.srtp_crypto_suite);
       }
+      channel_transport_stats->ccfb_messages_received =
+          call_stats_.ccfb_messages_received;
       report->AddStats(std::move(channel_transport_stats));
     }
   }

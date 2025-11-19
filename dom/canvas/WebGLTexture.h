@@ -7,8 +7,6 @@
 #define WEBGL_TEXTURE_H_
 
 #include <algorithm>
-#include <map>
-#include <set>
 #include <vector>
 
 #include "CacheInvalidator.h"
@@ -16,8 +14,6 @@
 #include "WebGLStrongTypes.h"
 #include "WebGLTypes.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/Casting.h"
-#include "mozilla/CheckedInt.h"
 #include "mozilla/dom/TypedArray.h"
 
 namespace mozilla {

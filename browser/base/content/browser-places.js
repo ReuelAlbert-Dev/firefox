@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This file is loaded into the browser window scope.
-/* eslint-env mozilla/browser-window */
-
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "NEWTAB_ENABLED",
@@ -465,6 +462,7 @@ var PlacesCommandHook = {
 
   /**
    * Adds a bookmark to the page targeted by a link.
+   *
    * @param url (string)
    *        the address of the link target
    * @param title
@@ -500,6 +498,7 @@ var PlacesCommandHook = {
 
   /**
    * Bookmarks the given tabs loaded in the current browser.
+   *
    * @param {Array} tabs
    *        If no given tabs, bookmark all current tabs.
    */
@@ -536,6 +535,7 @@ var PlacesCommandHook = {
 
   /**
    * Opens the Places Organizer.
+   *
    * @param {String} item The item to select in the organizer window,
    *                      options are (case sensitive):
    *                      BookmarksMenu, BookmarksToolbar, UnfiledBookmarks,
@@ -738,6 +738,7 @@ var BookmarksEventHandler = {
    * Left-click is handled in the onCommand function.
    * When items are middle-clicked (or clicked with modifier), open in tabs.
    * If the click came through a menu, close the menu.
+   *
    * @param aEvent
    *        DOMEvent for the click
    * @param aView
@@ -820,6 +821,7 @@ var BookmarksEventHandler = {
    * Handler for command event for an item in the bookmarks toolbar.
    * Menus and submenus from the folder buttons bubble up to this handler.
    * Opens the item.
+   *
    * @param aEvent
    *        DOMEvent for the command
    */
@@ -908,6 +910,7 @@ var PlacesMenuDNDHandler = {
 
   /**
    * Called when the user enters the <menu> element during a drag.
+   *
    * @param   event
    *          The DragEnter event that spawned the opening.
    */
@@ -998,6 +1001,7 @@ var PlacesMenuDNDHandler = {
 
   /**
    * Determines if a XUL element represents a static container.
+   *
    * @returns true if the element is a container element (menu or
    *`         menu-toolbarbutton), false otherwise.
    */
@@ -1016,6 +1020,7 @@ var PlacesMenuDNDHandler = {
 
   /**
    * Called when the user drags over the <menu> element.
+   *
    * @param   event
    *          The DragOver event.
    */
@@ -1033,6 +1038,7 @@ var PlacesMenuDNDHandler = {
 
   /**
    * Called when the user drops on the <menu> element.
+   *
    * @param   event
    *          The Drop event.
    */
@@ -1258,7 +1264,7 @@ var PlacesToolbarHelper = {
         menuitem.setAttribute("label", entry.name);
         menuitem.setAttribute(
           "image",
-          "page-icon:" + encodeURI(preferredURI.spec)
+          "page-icon:" + ChromeUtils.encodeURIForSrcset(preferredURI.spec)
         );
         menuitem.classList.add(
           "menuitem-iconic",
@@ -1840,6 +1846,7 @@ var BookmarkingUI = {
   /**
    * Update the "Bookmark Page…" menuitems on the menubar, panels, context
    * menu and page actions.
+   *
    * @param {boolean} [forceReset] passed when we're destroyed and the label
    * should go back to the default (Bookmark Page), for MacOS.
    */

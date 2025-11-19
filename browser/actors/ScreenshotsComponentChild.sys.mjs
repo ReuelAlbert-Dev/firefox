@@ -1,7 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* eslint-env mozilla/browser-window */
 
 const lazy = {};
 
@@ -177,6 +176,7 @@ export class ScreenshotsComponentChild extends JSWindowActorChild {
 
   /**
    * Send a request to copy the screenshots
+   *
    * @param {Object} region The region dimensions of the screenshot to be copied
    */
   requestCopyScreenshot(region) {
@@ -187,6 +187,7 @@ export class ScreenshotsComponentChild extends JSWindowActorChild {
 
   /**
    * Send a request to download the screenshots
+   *
    * @param {Object} region The region dimensions of the screenshot to be downloaded
    */
   requestDownloadScreenshot(region) {

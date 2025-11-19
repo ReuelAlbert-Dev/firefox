@@ -117,9 +117,6 @@ bool TraceEdgeInternal(JSTracer* trc, wasm::AnyRef* thingp, const char* name);
 
 template <typename T>
 void TraceRangeInternal(JSTracer* trc, size_t len, T* vec, const char* name);
-template <typename T>
-bool TraceWeakMapKeyInternal(JSTracer* trc, Zone* zone, T* thingp,
-                             const char* name);
 
 #ifdef DEBUG
 void AssertRootMarkingPhase(JSTracer* trc);
@@ -240,6 +237,7 @@ template <typename T>
 void BufferHolder<T>::trace(JSTracer* trc) {
   if (buffer) {
     TraceBufferRoot(trc, zone, &buffer, "BufferHolder buffer");
+    JS::GCPolicy<T>::trace(trc, buffer, "BufferHolder data");
   }
 }
 

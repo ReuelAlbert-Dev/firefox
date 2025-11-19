@@ -10,7 +10,7 @@
 import {
   UrlbarProvider,
   UrlbarUtils,
-} from "resource:///modules/UrlbarUtils.sys.mjs";
+} from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs";
 
 const lazy = {};
 
@@ -32,13 +32,13 @@ const TIMES_TO_SHOW_PREF = "quickactions.timesToShowOnboardingLabel";
 const TIMES_SHOWN_PREF = "quickactions.timesShownOnboardingLabel";
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
-  UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
+  UrlbarPrefs: "moz-src:///browser/components/urlbar/UrlbarPrefs.sys.mjs",
+  UrlbarResult: "moz-src:///browser/components/urlbar/UrlbarResult.sys.mjs",
 });
 
-import { ActionsProviderQuickActions } from "resource:///modules/ActionsProviderQuickActions.sys.mjs";
-import { ActionsProviderContextualSearch } from "resource:///modules/ActionsProviderContextualSearch.sys.mjs";
-import { ActionsProviderTabGroups } from "resource:///modules/ActionsProviderTabGroups.sys.mjs";
+import { ActionsProviderQuickActions } from "moz-src:///browser/components/urlbar/ActionsProviderQuickActions.sys.mjs";
+import { ActionsProviderContextualSearch } from "moz-src:///browser/components/urlbar/ActionsProviderContextualSearch.sys.mjs";
+import { ActionsProviderTabGroups } from "moz-src:///browser/components/urlbar/ActionsProviderTabGroups.sys.mjs";
 
 let globalActionsProviders = [
   ActionsProviderContextualSearch,
@@ -57,7 +57,7 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
   }
 
-  async isActive() {
+  async isActive(_queryContext) {
     return (
       (lazy.UrlbarPrefs.get(SCOTCH_BONNET_PREF) ||
         lazy.UrlbarPrefs.get(ACTIONS_PREF)) &&
@@ -65,6 +65,13 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
     );
   }
 
+  /**
+   * Starts querying.
+   *
+   * @param {UrlbarQueryContext} queryContext
+   * @param {(provider: UrlbarProvider, result: UrlbarResult) => void} addCallback
+   *   Callback invoked by the provider to add a new result.
+   */
   async startQuery(queryContext, addCallback) {
     let actionsResults = [];
     let searchModeEngine = "";
@@ -114,15 +121,15 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
       payload.engine = searchModeEngine;
     }
 
-    let result = new lazy.UrlbarResult(
-      UrlbarUtils.RESULT_TYPE.DYNAMIC,
-      UrlbarUtils.RESULT_SOURCE.ACTIONS,
-      payload
-    );
-    result.suggestedIndex =
-      queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.TABS
-        ? SUGGESTED_INDEX_TABS_MODE
-        : SUGGESTED_INDEX;
+    let result = new lazy.UrlbarResult({
+      type: UrlbarUtils.RESULT_TYPE.DYNAMIC,
+      source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
+      suggestedIndex:
+        queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.TABS
+          ? SUGGESTED_INDEX_TABS_MODE
+          : SUGGESTED_INDEX,
+      payload,
+    });
     addCallback(this, result);
   }
 
@@ -213,12 +220,12 @@ export class UrlbarProviderGlobalActions extends UrlbarProvider {
     let viewUpdate = {};
     if (result.payload.showOnboardingLabel) {
       viewUpdate["press-tab-label"] = {
-        l10n: { id: "press-tab-label", cacheable: true },
+        l10n: { id: "press-tab-label" },
       };
     }
     result.payload.actionsResults.forEach((action, i) => {
       viewUpdate[`label-${i}`] = {
-        l10n: { id: action.l10nId, args: action.l10nArgs, cacheable: true },
+        l10n: { id: action.l10nId, args: action.l10nArgs },
       };
     });
     return viewUpdate;

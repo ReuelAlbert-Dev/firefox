@@ -23,6 +23,7 @@ import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.compose.content
 import org.mozilla.fenix.R
+import org.mozilla.fenix.theme.FirefoxTheme
 
 /**
  * Dialog fragment for stopping profiling sessions. The dialog uses the [ProfilerViewModel]
@@ -54,24 +55,24 @@ class ProfilerStopDialogFragment : DialogFragment() {
         val uiState by viewModel.uiState.collectAsState()
         val context = LocalContext.current
 
+        val toastMessage: String? = when (val state = uiState) {
+            is ProfilerUiState.ShowToast ->
+                stringResource(state.messageResId) + state.extra
+            is ProfilerUiState.Error ->
+                stringResource(state.messageResId) + state.errorDetails
+            else -> null
+        }
+
         LaunchedEffect(uiState) {
-            when (val state = uiState) {
+            when (uiState) {
                 is ProfilerUiState.ShowToast -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(state.messageResId) + state.extra,
-                        Toast.LENGTH_LONG,
-                        ).show()
+                    Toast.makeText(context, toastMessage.orEmpty(), Toast.LENGTH_LONG).show()
                 }
                 is ProfilerUiState.Finished -> {
                     dismissAllowingStateLoss()
                 }
                 is ProfilerUiState.Error -> {
-                    Toast.makeText(
-                        context,
-                        context.getString(state.messageResId) + state.errorDetails,
-                        Toast.LENGTH_LONG,
-                        ).show()
+                    Toast.makeText(context, toastMessage.orEmpty(), Toast.LENGTH_LONG).show()
                     dismissAllowingStateLoss()
                 }
                 else -> {}
@@ -120,6 +121,7 @@ class ProfilerStopDialogFragment : DialogFragment() {
         ) {
             Text(
                 text = stringResource(R.string.profiler_url_warning_explained),
+                color = FirefoxTheme.colors.textPrimary,
                 fontWeight = FontWeight.Medium,
                 fontSize = 15.sp,
             )

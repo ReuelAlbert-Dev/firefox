@@ -473,6 +473,7 @@ class AccessibleWalkerActor extends Actor {
 
   /**
    * Get an accessible actor for a domnode actor.
+   *
    * @param  {Object} domNode
    *         domnode actor for which accessible actor is being created.
    * @return {Promse}
@@ -496,6 +497,7 @@ class AccessibleWalkerActor extends Actor {
 
   /**
    * Get a raw accessible object for a raw node.
+   *
    * @param  {DOMNode} rawNode
    *         Raw node for which accessible object is being retrieved.
    * @return {nsIAccessible}
@@ -639,12 +641,12 @@ class AccessibleWalkerActor extends Actor {
         this.clearRefs();
         // If it's a top level document notify listeners about the document
         // being ready.
-        events.emit(this, "document-ready", rawAccessible);
+        this.emit("document-ready", rawAccessible);
       }
     }
 
     switch (event.eventType) {
-      case EVENT_STATE_CHANGE:
+      case EVENT_STATE_CHANGE: {
         const { state, isEnabled } = event.QueryInterface(
           Ci.nsIAccessibleStateChangeEvent
         );
@@ -658,14 +660,14 @@ class AccessibleWalkerActor extends Actor {
             }
             return;
           }
-          events.emit(accessible, "states-change", accessible.states);
+          accessible.emit("states-change", accessible.states);
         }
 
         break;
+      }
       case EVENT_NAME_CHANGE:
         if (accessible) {
-          events.emit(
-            accessible,
+          accessible.emit(
             "name-change",
             rawAccessible.name,
             event.DOMNode == this.rootDoc
@@ -676,16 +678,12 @@ class AccessibleWalkerActor extends Actor {
         break;
       case EVENT_VALUE_CHANGE:
         if (accessible) {
-          events.emit(accessible, "value-change", rawAccessible.value);
+          accessible.emit("value-change", rawAccessible.value);
         }
         break;
       case EVENT_DESCRIPTION_CHANGE:
         if (accessible) {
-          events.emit(
-            accessible,
-            "description-change",
-            rawAccessible.description
-          );
+          accessible.emit("description-change", rawAccessible.description);
         }
         break;
       case EVENT_REORDER:
@@ -693,9 +691,9 @@ class AccessibleWalkerActor extends Actor {
           accessible
             .children()
             .forEach(child =>
-              events.emit(child, "index-in-parent-change", child.indexInParent)
+              child.emit("index-in-parent-change", child.indexInParent)
             );
-          events.emit(accessible, "reorder", rawAccessible.childCount);
+          accessible.emit("reorder", rawAccessible.childCount);
         }
         break;
       case EVENT_HIDE:
@@ -708,17 +706,16 @@ class AccessibleWalkerActor extends Actor {
       case EVENT_DEFACTION_CHANGE:
       case EVENT_ACTION_CHANGE:
         if (accessible) {
-          events.emit(accessible, "actions-change", accessible.actions);
+          accessible.emit("actions-change", accessible.actions);
         }
         break;
       case EVENT_TEXT_CHANGED:
       case EVENT_TEXT_INSERTED:
       case EVENT_TEXT_REMOVED:
         if (accessible) {
-          events.emit(accessible, "text-change");
+          accessible.emit("text-change");
           if (NAME_FROM_SUBTREE_RULE_ROLES.has(rawAccessible.role)) {
-            events.emit(
-              accessible,
+            accessible.emit(
               "name-change",
               rawAccessible.name,
               event.DOMNode == this.rootDoc
@@ -732,17 +729,13 @@ class AccessibleWalkerActor extends Actor {
       case EVENT_OBJECT_ATTRIBUTE_CHANGED:
       case EVENT_TEXT_ATTRIBUTE_CHANGED:
         if (accessible) {
-          events.emit(accessible, "attributes-change", accessible.attributes);
+          accessible.emit("attributes-change", accessible.attributes);
         }
         break;
       // EVENT_ACCELERATOR_CHANGE is currently not fired by gecko accessibility.
       case EVENT_ACCELERATOR_CHANGE:
         if (accessible) {
-          events.emit(
-            accessible,
-            "shortcut-change",
-            accessible.keyboardShortcut
-          );
+          accessible.emit("shortcut-change", accessible.keyboardShortcut);
         }
         break;
       default:
@@ -755,6 +748,7 @@ class AccessibleWalkerActor extends Actor {
    * (CSS, overlays) by load accessibility highlighter style sheet used for
    * preventing transitions and applying transparency when calculating colour
    * contrast as well as temporarily hiding accessible highlighter overlay.
+   *
    * @param  {Object} win
    *         Window where highlighting happens.
    */
@@ -779,6 +773,7 @@ class AccessibleWalkerActor extends Actor {
    * accessible object by unloading accessibility highlighter style sheet used
    * for preventing transitions and applying transparency when calculating
    * colour contrast and potentially restoring accessible highlighter overlay.
+   *
    * @param  {Object} win
    *         Window where highlighting was happenning.
    */
@@ -895,6 +890,7 @@ class AccessibleWalkerActor extends Actor {
 
   /**
    * Check if the DOM event received when picking shold be ignored.
+   *
    * @param {Event} event
    */
   _ignoreEventWhenPicking(event) {
@@ -960,7 +956,7 @@ class AccessibleWalkerActor extends Actor {
       if (!this._currentAccessible) {
         this._currentAccessible = this._findAndAttachAccessible(event);
       }
-      events.emit(this, "picker-accessible-previewed", this._currentAccessible);
+      this.emit("picker-accessible-previewed", this._currentAccessible);
       return;
     }
 
@@ -969,7 +965,7 @@ class AccessibleWalkerActor extends Actor {
     if (!this._currentAccessible) {
       this._currentAccessible = this._findAndAttachAccessible(event);
     }
-    events.emit(this, "picker-accessible-picked", this._currentAccessible);
+    this.emit("picker-accessible-picked", this._currentAccessible);
   }
 
   /**
@@ -999,7 +995,7 @@ class AccessibleWalkerActor extends Actor {
     // the most current accessible again.
     const shown = await this.highlightAccessible(accessible);
     if (this._isPicking && shown && accessible === this._currentAccessible) {
-      events.emit(this, "picker-accessible-hovered", accessible);
+      this.emit("picker-accessible-hovered", accessible);
     }
   }
 
@@ -1032,7 +1028,7 @@ class AccessibleWalkerActor extends Actor {
       // Cancel pick mode.
       case event.DOM_VK_ESCAPE:
         this.cancelPick();
-        events.emit(this, "picker-accessible-canceled");
+        this.emit("picker-accessible-canceled");
         break;
       case event.DOM_VK_C:
         if (
@@ -1040,7 +1036,7 @@ class AccessibleWalkerActor extends Actor {
           (!IS_OSX && event.ctrlKey && event.shiftKey)
         ) {
           this.cancelPick();
-          events.emit(this, "picker-accessible-canceled");
+          this.emit("picker-accessible-canceled");
         }
         break;
       default:

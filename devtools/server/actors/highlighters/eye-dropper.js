@@ -391,7 +391,7 @@ class EyeDropper {
 
   handleEvent(e) {
     switch (e.type) {
-      case "mousemove":
+      case "mousemove": {
         // We might be getting an event from a child frame, so account for the offset.
         const [xOffset, yOffset] = getFrameOffsets(this.win, e.target);
         const x = xOffset + e.pageX - this.win.scrollX;
@@ -404,6 +404,7 @@ class EyeDropper {
         // And move the eye-dropper's UI so it follows the mouse.
         this.moveTo(x, y);
         break;
+      }
       // Note: when events are suppressed we will only get mousedown/mouseup and
       // not any click events.
       case "click":
@@ -537,6 +538,7 @@ class EyeDropper {
 
   /**
    * Copy the currently inspected color to the clipboard.
+   *
    * @return {Promise} Resolves when the copy has been done (after a delay that is used to
    * let users know that something was copied).
    */
@@ -562,6 +564,7 @@ exports.EyeDropper = EyeDropper;
 
 /**
  * Draw the visible portion of the window on a canvas and get the resulting ImageData.
+ *
  * @param {Window} win
  * @return {ImageData} The image data for the window.
  */
@@ -587,6 +590,7 @@ function getWindowAsImageData(win) {
 
 /**
  * Get a formatted CSS color string from a color value.
+ *
  * @param {array} rgb Rgb values of a color to format.
  * @param {string} format Format of string. One of "hex", "rgb", "hsl", "name".
  * @return {string} Formatted color value, e.g. "#FFF" or "hsl(20, 10%, 10%)".
@@ -599,12 +603,12 @@ function toColorString(rgb, format) {
       return hexString(rgb);
     case "rgb":
       return "rgb(" + r + ", " + g + ", " + b + ")";
-    case "hsl":
+    case "hsl": {
       const [h, s, l] = rgbToHsl(rgb);
       return "hsl(" + h + ", " + s + "%, " + l + "%)";
+    }
     case "name":
-      const str = InspectorUtils.rgbToColorName(r, g, b) || hexString(rgb);
-      return str;
+      return InspectorUtils.rgbToColorName(r, g, b) || hexString(rgb);
     default:
       return hexString(rgb);
   }
@@ -612,6 +616,7 @@ function toColorString(rgb, format) {
 
 /**
  * Produce a hex-formatted color string from rgb values.
+ *
  * @param {array} rgb Rgb values of color to stringify.
  * @return {string} Hex formatted string for color, e.g. "#FFEE00".
  */

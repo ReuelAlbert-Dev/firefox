@@ -34,12 +34,17 @@ default-profile-name = Profile { $number }
 # The word 'original' is used in the sense that it is the initial or starting profile when you install Firefox.
 original-profile-name = Original profile
 
+default-desktop-shortcut-name = { -brand-short-name }
+
 edit-profile-page-title = Edit profile
 edit-profile-page-header = Edit your profile
 edit-profile-page-profile-name-label = Profile name
 edit-profile-page-theme-header-2 =
     .label = Theme
 edit-profile-page-explore-themes = Explore more themes
+edit-profile-page-desktop-shortcut-header = Create desktop shortcut
+edit-profile-page-desktop-shortcut-toggle =
+    .aria-label = Create desktop shortcut
 edit-profile-page-avatar-header-2 =
     .label = Avatar
 edit-profile-page-delete-button =
@@ -70,6 +75,11 @@ new-profile-page-input-placeholder =
     .placeholder = Pick a name like “Work” or “Personal”
 new-profile-page-done-button =
     .label = Done editing
+
+# Variables
+#   $profilename (String) - The name of the copied profile.
+copied-profile-page-header = Your copy of { $profilename } is ready to customize
+copied-profile-page-header-description = We copied your data and settings into a new profile. Now give it a name, pick a look, and make it your own.
 
 ## Delete profile dialogue that allows users to review what they will lose if they choose to delete their profile. Each item (open windows, etc.) is displayed in a table, followed by a column with the number of items.
 
@@ -323,3 +333,8 @@ custom-avatar-crop-area =
   .aria-label = Adjust crop area
 custom-avatar-drag-handle =
   .aria-label = Resize crop area
+
+profiles-appmenu-callout-tour-title = Your new profile is good to go
+# "Spin up another" means creating another profile, “Hop between your digital lives" is referring to switching between different profiles such as work, personal, etc.
+profiles-appmenu-callout-tour-subtitle = In the ☰ menu, tap your profile name to spin up another, edit this one, or hop between your digital lives.
+profiles-appmenu-callout-tour-primary-button = Show me how

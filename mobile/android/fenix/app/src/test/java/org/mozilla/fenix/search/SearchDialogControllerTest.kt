@@ -4,9 +4,9 @@
 
 package org.mozilla.fenix.search
 
-import androidx.appcompat.app.AlertDialog
 import androidx.navigation.NavController
 import androidx.navigation.NavDirections
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.mockk.MockKAnnotations
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
@@ -23,7 +23,6 @@ import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.store.BrowserStore
 import mozilla.components.concept.engine.EngineSession
 import mozilla.components.feature.tabs.TabsUseCases
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.middleware.CaptureActionsMiddleware
 import mozilla.components.support.test.robolectric.testContext
 import org.junit.Assert.assertEquals
@@ -37,7 +36,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.BrowserDirection
 import org.mozilla.fenix.GleanMetrics.Events
-import org.mozilla.fenix.GleanMetrics.UnifiedSearch
+import org.mozilla.fenix.GleanMetrics.Toolbar
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
@@ -54,6 +53,8 @@ import org.mozilla.fenix.search.SearchDialogFragmentDirections.Companion.actionG
 import org.mozilla.fenix.search.SearchDialogFragmentDirections.Companion.actionGlobalSearchEngineFragment
 import org.mozilla.fenix.search.toolbar.SearchSelectorMenu
 import org.mozilla.fenix.settings.SupportUtils
+import org.mozilla.fenix.telemetry.ACTION_SEARCH_ENGINE_SELECTED
+import org.mozilla.fenix.telemetry.SOURCE_ADDRESS_BAR
 import org.mozilla.fenix.utils.Settings
 import org.robolectric.RobolectricTestRunner
 
@@ -111,8 +112,6 @@ class SearchDialogControllerTest {
 
         createController().handleUrlCommitted(url)
 
-        browserStore.waitUntilIdle()
-
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
 
@@ -146,8 +145,6 @@ class SearchDialogControllerTest {
 
         createController().handleUrlCommitted(url)
 
-        browserStore.waitUntilIdle()
-
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
 
@@ -178,8 +175,6 @@ class SearchDialogControllerTest {
         every { store.state.defaultEngine } returns mockk(relaxed = true)
 
         createController().handleUrlCommitted(url)
-
-        browserStore.waitUntilIdle()
 
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
@@ -214,8 +209,6 @@ class SearchDialogControllerTest {
             },
         ).handleUrlCommitted(url)
 
-        browserStore.waitUntilIdle()
-
         assertTrue(dismissDialogInvoked)
 
         middleware.assertLastAction(AwesomeBarAction.EngagementFinished::class) { action ->
@@ -228,8 +221,6 @@ class SearchDialogControllerTest {
         val searchTerm = "Firefox"
 
         createController().handleUrlCommitted(searchTerm)
-
-        browserStore.waitUntilIdle()
 
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
@@ -256,8 +247,6 @@ class SearchDialogControllerTest {
         every { store.state.tabId } returns null
 
         createController().handleUrlCommitted(searchTerm)
-
-        browserStore.waitUntilIdle()
 
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
@@ -289,8 +278,6 @@ class SearchDialogControllerTest {
             },
         ).handleUrlCommitted(searchTerm)
 
-        browserStore.waitUntilIdle()
-
         verify(exactly = 0) {
             activity.openToBrowserAndLoad(
                 searchTermOrURL = any(),
@@ -312,8 +299,6 @@ class SearchDialogControllerTest {
 
         createController().handleUrlCommitted(url)
 
-        browserStore.waitUntilIdle()
-
         verify { navController.navigate(directions) }
     }
 
@@ -323,8 +308,6 @@ class SearchDialogControllerTest {
         val directions = actionGlobalAddonsManagementFragment()
 
         createController().handleUrlCommitted(url)
-
-        browserStore.waitUntilIdle()
 
         verify { navController.navigate(directions) }
 
@@ -340,8 +323,6 @@ class SearchDialogControllerTest {
 
         createController().handleUrlCommitted(url)
 
-        browserStore.waitUntilIdle()
-
         verify { navController.navigate(directions) }
     }
 
@@ -353,8 +334,6 @@ class SearchDialogControllerTest {
         every { store.state.defaultEngine } returns searchEngine
 
         createController().handleUrlCommitted(url)
-
-        browserStore.waitUntilIdle()
 
         verifyOrder {
             navController.navigate(actionGlobalBrowser())
@@ -405,8 +384,6 @@ class SearchDialogControllerTest {
 
         createController().handleTextChanged(text)
 
-        browserStore.waitUntilIdle()
-
         verify { store.dispatch(SearchFragmentAction.UpdateQuery(text)) }
 
         val actionSlot = mutableListOf<SearchFragmentAction>()
@@ -422,8 +399,6 @@ class SearchDialogControllerTest {
 
         createController().handleTextChanged(text)
 
-        browserStore.waitUntilIdle()
-
         verify { store.dispatch(SearchFragmentAction.UpdateQuery(text)) }
 
         middleware.assertNotDispatched(AwesomeBarAction.EngagementFinished::class)
@@ -437,8 +412,6 @@ class SearchDialogControllerTest {
 
         createController().handleUrlTapped(url, flags)
         createController().handleUrlTapped(url)
-
-        browserStore.waitUntilIdle()
 
         verify {
             activity.openToBrowserAndLoad(
@@ -473,8 +446,6 @@ class SearchDialogControllerTest {
         createController().handleUrlTapped(url, flags)
         createController().handleUrlTapped(url)
 
-        browserStore.waitUntilIdle()
-
         verify {
             activity.openToBrowserAndLoad(
                 searchTermOrURL = url,
@@ -504,8 +475,6 @@ class SearchDialogControllerTest {
 
         createController().handleSearchTermsTapped(searchTerms)
 
-        browserStore.waitUntilIdle()
-
         verify {
             activity.openToBrowserAndLoad(
                 searchTermOrURL = searchTerms,
@@ -526,8 +495,6 @@ class SearchDialogControllerTest {
         val searchTerms = "fenix"
 
         createController().handleSearchTermsTapped(searchTerms)
-
-        browserStore.waitUntilIdle()
 
         verify {
             activity.openToBrowserAndLoad(
@@ -557,20 +524,11 @@ class SearchDialogControllerTest {
             },
         ).handleSearchShortcutEngineSelected(searchEngine)
 
-        browserStore.waitUntilIdle()
-
         assertTrue(focusToolbarInvoked)
         verify { store.dispatch(SearchFragmentAction.SearchShortcutEngineSelected(searchEngine, browsingMode, settings)) }
 
         middleware.assertNotDispatched(AwesomeBarAction.EngagementFinished::class)
-
-        assertNotNull(UnifiedSearch.engineSelected.testGetValue())
-        val recordedEvents = UnifiedSearch.engineSelected.testGetValue()!!
-        assertEquals(1, recordedEvents.size)
-        val eventExtra = recordedEvents.single().extra
-        assertNotNull(eventExtra)
-        assertTrue(eventExtra!!.containsKey("engine"))
-        assertEquals(searchEngine.name, eventExtra["engine"])
+        assertSearchEngineSelectedTelemetryRecorded(searchEngine.name)
     }
 
     @Test
@@ -579,7 +537,7 @@ class SearchDialogControllerTest {
         every { searchEngine.type } returns SearchEngine.Type.APPLICATION
         every { searchEngine.id } returns HISTORY_SEARCH_ENGINE_ID
 
-        assertNull(UnifiedSearch.engineSelected.testGetValue())
+        assertNull(Toolbar.buttonTapped.testGetValue())
 
         var focusToolbarInvoked = false
         createController(
@@ -588,20 +546,12 @@ class SearchDialogControllerTest {
             },
         ).handleSearchShortcutEngineSelected(searchEngine)
 
-        browserStore.waitUntilIdle()
-
         assertTrue(focusToolbarInvoked)
         verify { store.dispatch(SearchFragmentAction.SearchHistoryEngineSelected(searchEngine)) }
 
         middleware.assertNotDispatched(AwesomeBarAction.EngagementFinished::class)
 
-        assertNotNull(UnifiedSearch.engineSelected.testGetValue())
-        val recordedEvents = UnifiedSearch.engineSelected.testGetValue()!!
-        assertEquals(1, recordedEvents.size)
-        val eventExtra = recordedEvents.single().extra
-        assertNotNull(eventExtra)
-        assertTrue(eventExtra!!.containsKey("engine"))
-        assertEquals("history", eventExtra["engine"])
+        assertSearchEngineSelectedTelemetryRecorded("history")
     }
 
     @Test
@@ -610,7 +560,7 @@ class SearchDialogControllerTest {
         every { searchEngine.type } returns SearchEngine.Type.APPLICATION
         every { searchEngine.id } returns BOOKMARKS_SEARCH_ENGINE_ID
 
-        assertNull(UnifiedSearch.engineSelected.testGetValue())
+        assertNull(Toolbar.buttonTapped.testGetValue())
 
         var focusToolbarInvoked = false
         createController(
@@ -619,20 +569,12 @@ class SearchDialogControllerTest {
             },
         ).handleSearchShortcutEngineSelected(searchEngine)
 
-        browserStore.waitUntilIdle()
-
         assertTrue(focusToolbarInvoked)
         verify { store.dispatch(SearchFragmentAction.SearchBookmarksEngineSelected(searchEngine)) }
 
         middleware.assertNotDispatched(AwesomeBarAction.EngagementFinished::class)
 
-        assertNotNull(UnifiedSearch.engineSelected.testGetValue())
-        val recordedEvents = UnifiedSearch.engineSelected.testGetValue()!!
-        assertEquals(1, recordedEvents.size)
-        val eventExtra = recordedEvents.single().extra
-        assertNotNull(eventExtra)
-        assertTrue(eventExtra!!.containsKey("engine"))
-        assertEquals("bookmarks", eventExtra["engine"])
+        assertSearchEngineSelectedTelemetryRecorded("bookmarks")
     }
 
     @Test
@@ -641,7 +583,7 @@ class SearchDialogControllerTest {
         every { searchEngine.type } returns SearchEngine.Type.APPLICATION
         every { searchEngine.id } returns TABS_SEARCH_ENGINE_ID
 
-        assertNull(UnifiedSearch.engineSelected.testGetValue())
+        assertNull(Toolbar.buttonTapped.testGetValue())
 
         var focusToolbarInvoked = false
         createController(
@@ -650,20 +592,12 @@ class SearchDialogControllerTest {
             },
         ).handleSearchShortcutEngineSelected(searchEngine)
 
-        browserStore.waitUntilIdle()
-
         assertTrue(focusToolbarInvoked)
         verify { store.dispatch(SearchFragmentAction.SearchTabsEngineSelected(searchEngine)) }
 
         middleware.assertNotDispatched(AwesomeBarAction.EngagementFinished::class)
 
-        assertNotNull(UnifiedSearch.engineSelected.testGetValue())
-        val recordedEvents = UnifiedSearch.engineSelected.testGetValue()!!
-        assertEquals(1, recordedEvents.size)
-        val eventExtra = recordedEvents.single().extra
-        assertNotNull(eventExtra)
-        assertTrue(eventExtra!!.containsKey("engine"))
-        assertEquals("tabs", eventExtra["engine"])
+        assertSearchEngineSelectedTelemetryRecorded("tabs")
     }
 
     @Test
@@ -671,8 +605,6 @@ class SearchDialogControllerTest {
         val directions: NavDirections = actionGlobalSearchEngineFragment()
 
         createController().handleClickSearchEngineSettings()
-
-        browserStore.waitUntilIdle()
 
         verify { navController.navigate(directions) }
 
@@ -684,8 +616,6 @@ class SearchDialogControllerTest {
     @Test
     fun handleExistingSessionSelected() {
         createController().handleExistingSessionSelected("selected")
-
-        browserStore.waitUntilIdle()
 
         middleware.assertFirstAction(TabListAction.SelectTabAction::class) { action ->
             assertEquals("selected", action.tabId)
@@ -702,8 +632,6 @@ class SearchDialogControllerTest {
     fun handleExistingSessionSelected_tabId() {
         createController().handleExistingSessionSelected("tab-id")
 
-        browserStore.waitUntilIdle()
-
         middleware.assertFirstAction(TabListAction.SelectTabAction::class) { action ->
             assertEquals("tab-id", action.tabId)
         }
@@ -716,7 +644,7 @@ class SearchDialogControllerTest {
 
     @Test
     fun `show camera permissions needed dialog`() {
-        val dialogBuilder: AlertDialog.Builder = mockk(relaxed = true)
+        val dialogBuilder: MaterialAlertDialogBuilder = mockk(relaxed = true)
 
         val spyController = spyk(createController())
         every { spyController.buildDialog() } returns dialogBuilder
@@ -756,5 +684,16 @@ class SearchDialogControllerTest {
             clearToolbar = clearToolbar,
             dismissDialogAndGoBack = dismissDialogAndGoBack,
         )
+    }
+
+    private fun assertSearchEngineSelectedTelemetryRecorded(
+        extra: String,
+    ) {
+        val values = Toolbar.buttonTapped.testGetValue()
+        assertNotNull(values)
+        val last = values!!.last()
+        assertEquals(ACTION_SEARCH_ENGINE_SELECTED, last.extra?.get("item"))
+        assertEquals(SOURCE_ADDRESS_BAR, last.extra?.get("source"))
+        assertEquals(extra, last.extra?.get("extra"))
     }
 }

@@ -10,15 +10,15 @@ use crate::color::mix::ColorInterpolationMethod;
 use crate::custom_properties;
 use crate::values::generics::{color::GenericLightDark, position::PositionComponent, Optional};
 use crate::values::serialize_atom_identifier;
-use crate::Atom;
-use crate::Zero;
+use crate::values::generics::NonNegative;
+use crate::{Atom, Zero};
 use servo_arc::Arc;
 use std::fmt::{self, Write};
 use style_traits::{CssWriter, ToCss};
 /// An `<image> | none` value.
 ///
 /// https://drafts.csswg.org/css-images/#image-values
-#[derive(Clone, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToResolvedValue, ToShmem)]
+#[derive(Clone, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToResolvedValue, ToShmem, ToTyped)]
 #[repr(C, u8)]
 pub enum GenericImage<G, ImageUrl, Color, Percentage, Resolution> {
     /// `none` variant.
@@ -185,9 +185,8 @@ bitflags! {
 #[repr(C)]
 pub enum GenericGradient<
     LineDirection,
+    Length,
     LengthPercentage,
-    NonNegativeLength,
-    NonNegativeLengthPercentage,
     Position,
     Angle,
     AngleOrPercentage,
@@ -209,7 +208,7 @@ pub enum GenericGradient<
     /// A radial gradient.
     Radial {
         /// Shape of gradient
-        shape: GenericEndingShape<NonNegativeLength, NonNegativeLengthPercentage>,
+        shape: GenericEndingShape<NonNegative<Length>, NonNegative<LengthPercentage>>,
         /// Center of gradient
         position: Position,
         /// Method to use for color interpolation.
@@ -446,12 +445,11 @@ where
     }
 }
 
-impl<D, LP, NL, NLP, P, A: Zero, AoP, C> ToCss for Gradient<D, LP, NL, NLP, P, A, AoP, C>
+impl<D, L, LP, P, A: Zero, AoP, C> ToCss for Gradient<D, L, LP, P, A, AoP, C>
 where
     D: LineDirection,
+    L: ToCss,
     LP: ToCss,
-    NL: ToCss,
-    NLP: ToCss,
     P: PositionComponent + ToCss,
     A: ToCss,
     AoP: ToCss,

@@ -44,6 +44,7 @@ function getDefaultProps() {
     defaultSelectFirstNode: true,
     active: null,
     expandableStrings: true,
+    bucketLargeArrays: false,
     maxStringLength: 50,
     columns: [],
   };
@@ -133,6 +134,8 @@ class TreeView extends Component {
       onFilter: PropTypes.func,
       // Custom sorting callback
       onSort: PropTypes.func,
+      // Enable bucketing for large arrays
+      bucketLargeArrays: PropTypes.bool,
       // Custom row click callback
       onClickRow: PropTypes.func,
       // Row context menu event handler
@@ -167,6 +170,7 @@ class TreeView extends Component {
   /**
    * Creates a set with the paths of the nodes that should be expanded by default
    * according to the passed options.
+   *
    * @param {Object} The root node of the tree.
    * @param {Object} [optional] An object with the following optional parameters:
    *   - maxLevel: nodes nested deeper than this level won't be expanded.
@@ -393,31 +397,35 @@ class TreeView extends Component {
           }
         }
         break;
-      case "ArrowDown":
+      case "ArrowDown": {
         const nextRow = rows[index + 1];
         if (nextRow) {
           this.selectRow(nextRow, { alignTo: "bottom" });
         }
         break;
-      case "ArrowUp":
+      }
+      case "ArrowUp": {
         const previousRow = rows[index - 1];
         if (previousRow) {
           this.selectRow(previousRow, { alignTo: "top" });
         }
         break;
-      case "Home":
+      }
+      case "Home": {
         const firstRow = rows[0];
 
         if (firstRow) {
           this.selectRow(firstRow, { alignTo: "top" });
         }
         break;
-      case "End":
+      }
+      case "End": {
         const lastRow = rows[rows.length - 1];
         if (lastRow) {
           this.selectRow(lastRow, { alignTo: "bottom" });
         }
         break;
+      }
       case "Enter":
       case " ":
         // On space or enter make selected row active. This means keyboard
@@ -562,6 +570,7 @@ class TreeView extends Component {
 
   /**
    * Filter out nodes that don't correspond to the current filter.
+   *
    * @return {Boolean} true if the node should be visible otherwise false.
    */
   onFilter(object) {
@@ -588,8 +597,9 @@ class TreeView extends Component {
       return [];
     }
 
-    const { expandableStrings, provider, maxStringLength } = this.props;
-    let children = provider.getChildren(parent) || [];
+    const { expandableStrings, provider, bucketLargeArrays, maxStringLength } =
+      this.props;
+    let children = provider.getChildren(parent, { bucketLargeArrays }) || [];
 
     // If the return value is non-array, the children
     // are being loaded asynchronously.

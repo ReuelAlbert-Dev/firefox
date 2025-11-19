@@ -6,20 +6,16 @@
 #define SANDBOX_PROFILER_H
 
 #include <thread>
-#include <utility>
 #include <linux/limits.h>
 #include <semaphore.h>
 
 #include "base/trace_event/common/trace_event_common.h"
 
-#include "mozilla/UniquePtr.h"
 #include "ProfilerNativeStack.h"
 #include "MicroGeckoProfiler.h"
 
 #include "mozilla/ProfileChunkedBuffer.h"
 #include "mozilla/ProfilerState.h"
-
-#include "mozilla/ArrayUtils.h"
 
 #include "mozilla/BoundedMPSCQueue.h"
 
@@ -53,7 +49,7 @@ using SandboxProfilerPayload = struct {
   SandboxProfilerPayloadType mType;
 };
 
-using SandboxProfilerQueue = BoundedMPSCQueue<SandboxProfilerPayload>;
+using SandboxProfilerQueue = BoundedMPSCQueue<SandboxProfilerPayload, 15>;
 
 extern struct UprofilerFuncPtrs uprofiler;
 extern bool uprofiler_initted;

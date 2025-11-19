@@ -13,8 +13,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/GetUserMediaRequest.h"
 #include "mozilla/dom/MediaStreamBinding.h"
 #include "mozilla/dom/MediaStreamError.h"
@@ -150,6 +148,11 @@ class LocalMediaDevice final : public nsIMediaDevice {
   nsresult Stop();
   nsresult Deallocate();
 
+  /**
+   * Clones the LocalMediaDevice and sets a cloned source.
+   */
+  already_AddRefed<LocalMediaDevice> Clone() const;
+
   void GetSettings(dom::MediaTrackSettings& aOutSettings);
   void GetCapabilities(dom::MediaTrackCapabilities& aOutCapabilities);
   MediaEngineSource* Source();
@@ -164,6 +167,7 @@ class LocalMediaDevice final : public nsIMediaDevice {
   dom::MediaDeviceKind Kind() const { return mRawDevice->mKind; }
   bool IsFake() const { return mRawDevice->mIsFake; }
   const nsString& RawID() { return mRawDevice->mRawID; }
+  const dom::MediaTrackConstraints& Constraints() const;
 
  private:
   virtual ~LocalMediaDevice() = default;
@@ -186,6 +190,8 @@ class LocalMediaDevice final : public nsIMediaDevice {
 
  private:
   RefPtr<MediaEngineSource> mSource;
+  // Currently applied constraints. Media thread only.
+  dom::MediaTrackConstraints mConstraints;
 };
 
 typedef nsRefPtrHashtable<nsUint64HashKey, GetUserMediaWindowListener>

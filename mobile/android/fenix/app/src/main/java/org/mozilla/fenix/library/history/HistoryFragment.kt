@@ -18,7 +18,6 @@ import android.view.ViewGroup
 import android.widget.RadioGroup
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -58,14 +57,22 @@ import androidx.navigation.fragment.findNavController
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mozilla.components.browser.state.action.AwesomeBarAction
 import mozilla.components.browser.state.action.AwesomeBarAction.EngagementFinished
 import mozilla.components.browser.state.action.EngineAction
+import mozilla.components.browser.state.action.HistoryMetadataAction
 import mozilla.components.browser.state.action.RecentlyClosedAction
 import mozilla.components.browser.state.state.searchEngines
+import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.browser.storage.sync.PlacesHistoryStorage
 import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.compose.base.utils.BackInvokedHandler
 import mozilla.components.compose.browser.awesomebar.AwesomeBar
@@ -78,6 +85,7 @@ import mozilla.components.compose.browser.toolbar.store.BrowserToolbarStore
 import mozilla.components.compose.browser.toolbar.store.EnvironmentCleared
 import mozilla.components.compose.browser.toolbar.store.EnvironmentRehydrated
 import mozilla.components.compose.browser.toolbar.store.Mode
+import mozilla.components.compose.browser.toolbar.ui.BrowserToolbarQuery
 import mozilla.components.concept.engine.prompt.ShareData
 import mozilla.components.lib.state.ext.consumeFrom
 import mozilla.components.lib.state.ext.flowScoped
@@ -85,6 +93,7 @@ import mozilla.components.lib.state.ext.observeAsComposableState
 import mozilla.components.support.base.feature.UserInteractionHandler
 import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
 import mozilla.components.support.ktx.android.view.hideKeyboard
+import mozilla.components.support.ktx.kotlin.toShortUrl
 import mozilla.components.ui.widgets.withCenterAlignedButtons
 import mozilla.telemetry.glean.private.NoExtras
 import org.mozilla.fenix.HomeActivity
@@ -92,6 +101,7 @@ import org.mozilla.fenix.NavHostActivity
 import org.mozilla.fenix.R
 import org.mozilla.fenix.addons.showSnackBar
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
+import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.QrScanFenixFeature
 import org.mozilla.fenix.components.StoreProvider
 import org.mozilla.fenix.components.VoiceSearchFeature
@@ -102,6 +112,7 @@ import org.mozilla.fenix.components.search.HISTORY_SEARCH_ENGINE_ID
 import org.mozilla.fenix.components.toolbar.BrowserToolbarEnvironment
 import org.mozilla.fenix.databinding.FragmentHistoryBinding
 import org.mozilla.fenix.ext.components
+import org.mozilla.fenix.ext.getRootView
 import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.ext.pixelSizeFor
 import org.mozilla.fenix.ext.requireComponents
@@ -128,6 +139,7 @@ import org.mozilla.fenix.search.SearchFragmentStore
 import org.mozilla.fenix.search.createInitialSearchFragmentState
 import org.mozilla.fenix.tabstray.Page
 import org.mozilla.fenix.theme.FirefoxTheme
+import org.mozilla.fenix.utils.allowUndo
 import org.mozilla.fenix.GleanMetrics.History as GleanHistory
 
 private const val MATERIAL_DESIGN_SCRIM = "#52000000"
@@ -162,21 +174,17 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
 
     private var verificationResultLauncher: ActivityResultLauncher<Intent> =
         registerForVerification(onVerified = ::openHistoryInPrivate)
-
-    private val qrScanFenixFeature by lazy(LazyThreadSafetyMode.NONE) {
+    private var qrScanFenixFeature: ViewBoundFeatureWrapper<QrScanFenixFeature>? =
         ViewBoundFeatureWrapper<QrScanFenixFeature>()
-    }
-    private val qrScannerLauncher: ActivityResultLauncher<Intent> =
+    private val qrScanLauncher: ActivityResultLauncher<Intent> =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            qrScanFenixFeature.get()?.handleToolbarQrScanResults(result.resultCode, result.data)
+            qrScanFenixFeature?.get()?.handleToolbarQrScanResults(result.resultCode, result.data)
         }
-
-    private val voiceSearchFeature by lazy(LazyThreadSafetyMode.NONE) {
+    private var voiceSearchFeature: ViewBoundFeatureWrapper<VoiceSearchFeature>? =
         ViewBoundFeatureWrapper<VoiceSearchFeature>()
-    }
     private val voiceSearchLauncher: ActivityResultLauncher<Intent> =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            voiceSearchFeature.get()?.handleVoiceSearchResult(result.resultCode, result.data)
+            voiceSearchFeature?.get()?.handleVoiceSearchResult(result.resultCode, result.data)
         }
 
     private val menuBinding by lazy {
@@ -246,6 +254,33 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         GleanHistory.opened.record(NoExtras())
     }
 
+    private fun showDeleteSnackbar(
+        items: Set<History>,
+    ) {
+        val appStore = requireComponents.appStore
+        val browserStore = requireComponents.core.store
+        val historyStorage = requireComponents.core.historyStorage
+
+        GleanHistory.deleteSnackbarShown.record(NoExtras())
+
+        CoroutineScope(Dispatchers.Main).allowUndo(
+            view = requireActivity().getRootView()!!,
+            message = getMultiSelectSnackBarMessage(items),
+            undoActionTitle = getString(R.string.snackbar_deleted_undo),
+            onCancel = {
+                undo(appStore = appStore, items = items)
+                GleanHistory.deleteSnackbarUndoClicked.record(NoExtras())
+            },
+            operation = {
+                delete(
+                    browserStore = browserStore,
+                    historyStorage = historyStorage,
+                    items = items,
+                )
+            },
+        )
+    }
+
     private fun onTimeFrameDeleted() {
         runIfFragmentIsAttached {
             historyView.historyAdapter.refresh()
@@ -262,24 +297,8 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
 
         if (requireContext().settings().shouldUseComposableToolbar) {
             toolbarStore = buildToolbarStore()
-            qrScanFenixFeature.set(
-                feature = QrScanFenixFeature(
-                    context = requireContext(),
-                    appStore = requireContext().components.appStore,
-                    qrScanActivityLauncher = qrScannerLauncher,
-                ),
-                owner = viewLifecycleOwner,
-                view = view,
-            )
-            voiceSearchFeature.set(
-                feature = VoiceSearchFeature(
-                    context = requireContext(),
-                    appStore = requireContext().components.appStore,
-                    voiceSearchLauncher = voiceSearchLauncher,
-                ),
-                owner = viewLifecycleOwner,
-                view = view,
-            )
+            qrScanFenixFeature = QrScanFenixFeature.register(this, qrScanLauncher)
+            voiceSearchFeature = VoiceSearchFeature.register(this, voiceSearchLauncher)
         }
 
         consumeFrom(historyStore) {
@@ -427,7 +446,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         else -> false
     }
 
-    @Suppress("LongMethod")
+    @Suppress("LongMethod", "CognitiveComplexMethod")
     @OptIn(ExperimentalLayoutApi::class) // for WindowInsets.isImeVisible
     private fun handleShowingSearchUX() {
         if (searchLayout == null) {
@@ -549,7 +568,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         }
         searchLayout?.isVisible = false
         requireComponents.appStore.dispatch(AppAction.SearchAction.SearchEnded)
-        toolbarStore.dispatch(BrowserEditToolbarAction.SearchQueryUpdated(""))
+        toolbarStore.dispatch(BrowserEditToolbarAction.SearchQueryUpdated(BrowserToolbarQuery("")))
         requireComponents.core.store.dispatch(EngagementFinished(abandoned = true))
     }
 
@@ -607,6 +626,23 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         }
     }
 
+    private fun getMultiSelectSnackBarMessage(historyItems: Set<History>): String {
+        return if (historyItems.size > 1) {
+            getString(R.string.history_delete_multiple_items_snackbar)
+        } else {
+            val historyItem = historyItems.first()
+
+            String.format(
+                requireContext().getString(R.string.history_delete_single_item_snackbar),
+                if (historyItem is History.Regular) {
+                    historyItem.url.toShortUrl(requireComponents.publicSuffixList)
+                } else {
+                    historyItem.title
+                },
+            )
+        }
+    }
+
     override fun onBackPressed(): Boolean {
         // The state needs to be updated accordingly if Edit mode is active
         return if (historyStore.state.mode is HistoryFragmentState.Mode.Editing) {
@@ -655,6 +691,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         val appStore = requireContext().components.appStore
 
         appStore.dispatch(AppAction.AddPendingDeletionSet(items.toPendingDeletionHistory()))
+        showDeleteSnackbar(items)
     }
 
     private fun share(data: List<ShareData>) {
@@ -679,6 +716,34 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         )
     }
 
+    private suspend fun undo(appStore: AppStore, items: Set<History>) = withContext(IO) {
+        val pendingDeletionItems = items.map { it.toPendingDeletionHistory() }.toSet()
+        appStore.dispatch(AppAction.UndoPendingDeletionSet(pendingDeletionItems))
+    }
+
+    private suspend fun delete(
+        browserStore: BrowserStore,
+        historyStorage: PlacesHistoryStorage,
+        items: Set<History>,
+    ) = withContext(IO) {
+        historyStore.dispatch(HistoryFragmentAction.EnterDeletionMode)
+        for (item in items) {
+            when (item) {
+                is History.Regular -> historyStorage.deleteVisitsFor(item.url)
+                is History.Group -> {
+                    // NB: If we have non-search groups, this logic needs to be updated.
+                    historyProvider.deleteMetadataSearchGroup(item)
+                    browserStore.dispatch(
+                        HistoryMetadataAction.DisbandSearchGroupAction(searchTerm = item.title),
+                    )
+                }
+                // We won't encounter individual metadata entries outside of groups.
+                is History.Metadata -> {}
+            }
+        }
+        historyStore.dispatch(HistoryFragmentAction.ExitDeletionMode)
+    }
+
     private fun onDeleteTimeRange(selectedTimeFrame: RemoveTimeFrame?) {
         historyStore.dispatch(HistoryFragmentAction.DeleteTimeRange(selectedTimeFrame))
         historyStore.dispatch(HistoryFragmentAction.EnterDeletionMode)
@@ -696,7 +761,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
                 )
             }
             browserStore.dispatch(RecentlyClosedAction.RemoveAllClosedTabAction)
-            browserStore.dispatch(EngineAction.PurgeHistoryAction).join()
+            browserStore.dispatch(EngineAction.PurgeHistoryAction)
 
             historyStore.dispatch(HistoryFragmentAction.ExitDeletionMode)
 
@@ -708,7 +773,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
         private val onDeleteTimeRange: (selectedTimeFrame: RemoveTimeFrame?) -> Unit,
     ) : DialogFragment() {
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
-            AlertDialog.Builder(requireContext()).apply {
+            MaterialAlertDialogBuilder(requireContext()).apply {
                 val layout = getLayoutInflater().inflate(R.layout.delete_history_time_range_dialog, null)
                 val radioGroup = layout.findViewById<RadioGroup>(R.id.radio_group)
                 radioGroup.check(R.id.last_hour_button)
@@ -752,7 +817,7 @@ class HistoryFragment : LibraryPageFragment<History>(), UserInteractionHandler, 
             EnvironmentRehydrated(
                 BrowserToolbarEnvironment(
                     context = requireContext(),
-                    viewLifecycleOwner = viewLifecycleOwner,
+                    fragment = this,
                     navController = findNavController(),
                     browsingModeManager = (requireActivity() as HomeActivity).browsingModeManager,
                 ),

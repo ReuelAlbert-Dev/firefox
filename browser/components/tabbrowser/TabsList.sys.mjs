@@ -513,6 +513,7 @@ export class TabsPanel extends TabsListBase {
     /**
      * Setting a new property `XulToolbarItem._tab` on the row elements
      * for internal use by this module only.
+     *
      * @see getTabFromRow
      */
     row._tab = tab;
@@ -529,6 +530,7 @@ export class TabsPanel extends TabsListBase {
     /**
      * Setting a new property `MozToolbarbutton.tab` on the buttons
      * to support tab context menu integration.
+     *
      * @see TabContextMenu.updateContextMenu
      */
     button.tab = tab;
@@ -587,6 +589,7 @@ export class TabsPanel extends TabsListBase {
     /**
      * Setting a new property `XulToolbarItem._tabGroup` on the row elements
      * for internal use by this module only.
+     *
      * @see getTabGroupFromRow
      */
     row._tabGroup = group;
@@ -706,9 +709,13 @@ export class TabsPanel extends TabsListBase {
         ? getTabGroupFromRow(row).labelElement
         : getTabFromRow(row);
 
-    this.gBrowser.tabContainer.startTabDrag(event, elementToDrag, {
-      fromTabList: true,
-    });
+    this.gBrowser.tabContainer.tabDragAndDrop.startTabDrag(
+      event,
+      elementToDrag,
+      {
+        fromTabList: true,
+      }
+    );
   }
 
   /**
@@ -724,7 +731,8 @@ export class TabsPanel extends TabsListBase {
    * @returns {boolean}
    */
   _isMovingTabs(event) {
-    var effects = this.gBrowser.tabContainer.getDropEffectForTabDrag(event);
+    var effects =
+      this.gBrowser.tabContainer.tabDragAndDrop.getDropEffectForTabDrag(event);
     return effects == "move";
   }
 

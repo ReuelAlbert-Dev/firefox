@@ -10,7 +10,6 @@ import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import mozilla.components.concept.storage.BookmarkNode
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.middleware.CaptureActionsMiddleware
 import mozilla.components.support.test.rule.MainCoroutineRule
 import mozilla.components.support.test.rule.runTestOnMain
@@ -23,7 +22,6 @@ import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.appstate.AppState
 import org.mozilla.fenix.components.bookmarks.BookmarksUseCase
 
-@OptIn(ExperimentalCoroutinesApi::class)
 class BookmarksFeatureTest {
 
     private val middleware = CaptureActionsMiddleware<AppState, AppAction>()
@@ -45,6 +43,7 @@ class BookmarksFeatureTest {
         coEvery { bookmarksUseCases.retrieveRecentBookmarks() }.coAnswers { listOf(bookmark) }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class) // advanceUntilIdle
     @Test
     fun `GIVEN no bookmarks WHEN feature starts THEN fetch bookmarks and notify store`() =
         runTestOnMain {
@@ -60,7 +59,6 @@ class BookmarksFeatureTest {
             feature.start()
 
             advanceUntilIdle()
-            appStore.waitUntilIdle()
 
             coVerify {
                 bookmarksUseCases.retrieveRecentBookmarks()

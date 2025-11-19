@@ -5,7 +5,6 @@
 #ifndef _JSEPSESSION_H_
 #define _JSEPSESSION_H_
 
-#include <map>
 #include <string>
 #include <vector>
 
@@ -13,7 +12,6 @@
 #include "jsep/JsepTransport.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/dom/PeerConnectionObserverEnumsBinding.h"
 #include "nsError.h"

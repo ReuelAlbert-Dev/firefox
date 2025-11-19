@@ -97,6 +97,7 @@ ipc/chromium/src/third_party/
 js/src/ctypes/libffi/
 js/src/dtoa.c
 js/src/editline/
+js/src/irregexp/imported/
 js/src/jit/arm64/vixl/
 js/src/octane/
 js/src/tests/test262/
@@ -148,7 +149,6 @@ modules/zlib/
 mozglue/misc/decimal/
 mozglue/static/lz4/.*
 mozglue/tests/glibc_printf_tests/
-netwerk/dns/nsIDNKitInterface.h
 netwerk/sctp/src/
 netwerk/srtp/src/
 nsprpub/
@@ -199,7 +199,7 @@ toolkit/components/utils/mozjexl.sys.mjs
 toolkit/components/viaduct/fetch_msg_types.pb.cc
 toolkit/components/viaduct/fetch_msg_types.pb.h
 toolkit/content/vendor/react/
-toolkit/content/widgets/vendor/lit.all.mjs
+toolkit/content/widgets/vendor/
 toolkit/crashreporter/breakpad-client/
 toolkit/crashreporter/google-breakpad/
 toolkit/modules/third_party/

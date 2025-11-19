@@ -5,7 +5,9 @@
 package org.mozilla.fenix.home.toolbar
 
 import android.content.Context
+import android.content.res.Configuration
 import android.os.Looper
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -13,7 +15,7 @@ import androidx.navigation.NavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.mockkStatic
+import io.mockk.spyk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import mozilla.components.browser.state.action.SearchAction.ApplicationSearchEnginesLoaded
@@ -46,7 +48,6 @@ import mozilla.components.compose.browser.toolbar.store.BrowserToolbarMenuItem.B
 import mozilla.components.compose.browser.toolbar.store.BrowserToolbarStore
 import mozilla.components.compose.browser.toolbar.store.EnvironmentCleared
 import mozilla.components.compose.browser.toolbar.store.EnvironmentRehydrated
-import mozilla.components.support.test.ext.joinBlocking
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.rule.MainLooperTestRule
@@ -59,6 +60,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.NavGraphDirections
 import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.BrowserFragmentDirections
@@ -74,6 +76,7 @@ import org.mozilla.fenix.components.appstate.AppAction.SearchAction.SearchStarte
 import org.mozilla.fenix.components.appstate.AppState
 import org.mozilla.fenix.components.appstate.OrientationMode.Landscape
 import org.mozilla.fenix.components.appstate.OrientationMode.Portrait
+import org.mozilla.fenix.components.appstate.SupportedMenuNotifications
 import org.mozilla.fenix.components.appstate.search.SearchState
 import org.mozilla.fenix.components.appstate.search.SelectedSearchEngine
 import org.mozilla.fenix.components.menu.MenuAccessPoint
@@ -81,6 +84,8 @@ import org.mozilla.fenix.components.toolbar.BrowserToolbarEnvironment
 import org.mozilla.fenix.components.usecases.FenixBrowserUseCases
 import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.ext.settings
+import org.mozilla.fenix.helpers.FenixGleanTestRule
+import org.mozilla.fenix.home.toolbar.BrowserToolbarMiddleware.Companion.toHomeToolbarAction
 import org.mozilla.fenix.home.toolbar.BrowserToolbarMiddleware.HomeToolbarAction
 import org.mozilla.fenix.home.toolbar.DisplayActions.FakeClicked
 import org.mozilla.fenix.home.toolbar.DisplayActions.MenuClicked
@@ -91,6 +96,7 @@ import org.mozilla.fenix.home.toolbar.TabCounterInteractions.TabCounterClicked
 import org.mozilla.fenix.home.toolbar.TabCounterInteractions.TabCounterLongClicked
 import org.mozilla.fenix.search.fixtures.assertSearchSelectorEquals
 import org.mozilla.fenix.search.fixtures.buildExpectedSearchSelector
+import org.mozilla.fenix.settings.ShortcutType
 import org.mozilla.fenix.tabstray.Page
 import org.robolectric.Shadows.shadowOf
 import mozilla.components.ui.icons.R as iconsR
@@ -101,21 +107,35 @@ class BrowserToolbarMiddlewareTest {
     @get:Rule
     val mainLooperRule = MainLooperTestRule()
 
-    private val appState: AppState = mockk(relaxed = true) {
-        every { orientation } returns Portrait
-    }
-    private val appStore: AppStore = mockk(relaxed = true) {
-        every { state } returns appState
-    }
+    @get:Rule
+    val gleanRule = FenixGleanTestRule(testContext)
+
     private val browserStore = BrowserStore()
     private val lifecycleOwner = FakeLifecycleOwner(Lifecycle.State.RESUMED)
     private val browsingModeManager = SimpleBrowsingModeManager(Normal)
+    private val mockContext: Context = mockk(relaxed = true)
+    private lateinit var appStore: AppStore
+    private lateinit var fragment: Fragment
+    private lateinit var configuration: Configuration
 
     @Before
     fun setup() = runTest {
+        appStore = spyk(AppStore())
         every { testContext.settings().shouldUseExpandedToolbar } returns false
         every { testContext.settings().isTabStripEnabled } returns false
         every { testContext.settings().tabManagerEnhancementsEnabled } returns false
+        every { testContext.settings().shouldShowToolbarCustomization } returns false
+        every { testContext.settings().toolbarExpandedShortcutKey } returns ShortcutType.BOOKMARK.value
+
+        fragment = spyk(Fragment()).apply {
+            every { context } returns mockContext
+        }
+        every { fragment.viewLifecycleOwner } returns lifecycleOwner
+        configuration = Configuration().apply {
+            screenHeightDp = 700
+            screenWidthDp = 400
+        }
+        every { mockContext.resources.configuration } returns configuration
     }
 
     @Test
@@ -138,56 +158,90 @@ class BrowserToolbarMiddlewareTest {
     }
 
     @Test
-    fun `WHEN initializing the toolbar AND should use expanded toolbar THEN add browser end actions`() = runTest {
+    fun `WHEN initializing the toolbar AND should use expanded toolbar THEN don't add browser end actions`() = runTest {
         every { testContext.settings().shouldUseExpandedToolbar } returns true
-        mockkStatic(Context::isTallWindow) {
-            every { any<Context>().isTallWindow() } returns true
-            val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
 
-            val toolbarStore = buildStore(middleware)
+        val toolbarStore = buildStore(middleware)
 
-            val toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
-            assertEquals(0, toolbarBrowserActions.size)
-        }
+        val toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(0, toolbarBrowserActions.size)
     }
 
     @Test
     fun `WHEN initializing the navigation bar AND should use expanded toolbar THEN add navigation bar actions`() = runTest {
         every { testContext.settings().shouldUseExpandedToolbar } returns true
-        mockkStatic(Context::isTallWindow) {
-            every { any<Context>().isTallWindow() } returns true
-            val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
 
-            val toolbarStore = buildStore(middleware)
+        val toolbarStore = buildStore(middleware)
 
-            val navigationActions = toolbarStore.state.displayState.navigationActions
-            assertEquals(5, navigationActions.size)
-            val bookmarkButton = navigationActions[0] as ActionButtonRes
-            val shareButton = navigationActions[1] as ActionButtonRes
-            val newTabButton = navigationActions[2] as ActionButtonRes
-            val tabCounterButton = navigationActions[3] as TabCounterAction
-            val menuButton = navigationActions[4] as ActionButtonRes
-            assertEquals(expectedBookmarkButton, bookmarkButton)
-            assertEquals(expectedShareButton, shareButton)
-            assertEquals(expectedNewTabButton(Source.NavigationBar), newTabButton)
-            assertEqualsToolbarButton(
-                expectedToolbarButton(source = Source.NavigationBar),
-                tabCounterButton,
-            )
-            assertEquals(expectedMenuButton(Source.NavigationBar), menuButton)
-        }
+        val navigationActions = toolbarStore.state.displayState.navigationActions
+        assertEquals(5, navigationActions.size)
+        val bookmarkButton = navigationActions[0] as ActionButtonRes
+        val shareButton = navigationActions[1] as ActionButtonRes
+        val newTabButton = navigationActions[2] as ActionButtonRes
+        val tabCounterButton = navigationActions[3] as TabCounterAction
+        val menuButton = navigationActions[4] as ActionButtonRes
+        assertEquals(expectedBookmarkButton, bookmarkButton)
+        assertEquals(expectedShareButton, shareButton)
+        assertEquals(expectedNewTabButton(Source.NavigationBar), newTabButton)
+        assertEqualsToolbarButton(
+            expectedToolbarButton(source = Source.NavigationBar),
+            tabCounterButton,
+        )
+        assertEquals(expectedMenuButton(source = Source.NavigationBar), menuButton)
     }
 
     @Test
-    fun `WHEN initializing the navigation bar AND should use expanded toolbar AND orientation is landscape THEN add no navigation bar actions`() = runTest {
+    fun `WHEN initializing the navigation bar AND should use expanded toolbar AND window is short THEN add no navigation bar actions`() = runTest {
+        configuration = Configuration().apply {
+            screenHeightDp = 400
+            screenWidthDp = 700
+        }
+        every { mockContext.resources.configuration } returns configuration
         every { testContext.settings().shouldUseExpandedToolbar } returns true
-        every { appState.orientation } returns Landscape
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
 
         val toolbarStore = buildStore(middleware)
 
         val navigationActions = toolbarStore.state.displayState.navigationActions
         assertEquals(0, navigationActions.size)
+
+        val toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(2, toolbarBrowserActions.size)
+    }
+
+    @Test
+    fun `WHEN should use expanded toolbar AND window is changing to short window THEN add no navigation bar actions`() = runTest {
+        val appStore = AppStore(
+            initialState = AppState(
+                orientation = Portrait,
+            ),
+        )
+        every { testContext.settings().shouldUseExpandedToolbar } returns true
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+
+        val toolbarStore = buildStore(middleware)
+
+        var navigationActions = toolbarStore.state.displayState.navigationActions
+        assertEquals(5, navigationActions.size)
+
+        var toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(0, toolbarBrowserActions.size)
+
+        configuration = Configuration().apply {
+            screenHeightDp = 400
+            screenWidthDp = 700
+        }
+        every { mockContext.resources.configuration } returns configuration
+        appStore.dispatch(AppAction.OrientationChange(Landscape))
+        mainLooperRule.idle()
+
+        navigationActions = toolbarStore.state.displayState.navigationActions
+        assertEquals(0, navigationActions.size)
+
+        toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(2, toolbarBrowserActions.size)
     }
 
     @Test
@@ -251,6 +305,16 @@ class BrowserToolbarMiddlewareTest {
     }
 
     @Test
+    fun `WHEN clicking on the URL THEN record telemetry`() {
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val toolbarStore = buildStore(middleware)
+
+        toolbarStore.dispatch(toolbarStore.state.displayState.pageOrigin.onClick as BrowserToolbarAction)
+
+        assertEquals("HOME", Events.searchBarTapped.testGetValue()?.last()?.extra?.get("source"))
+    }
+
+    @Test
     fun `GIVEN an environment was already set WHEN it is cleared THEN reset it to null`() {
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
         val store = buildStore(middleware)
@@ -265,19 +329,19 @@ class BrowserToolbarMiddlewareTest {
     // Testing updated configuration
 
     @Test
-    fun `GIVEN in portrait WHEN changing to landscape THEN show browser end actions`() = runTest {
-        val appStore = AppStore(
-            initialState = AppState(
-                orientation = Portrait,
-            ),
-        )
+    fun `GIVEN tall window WHEN changing to short window THEN show browser end actions`() = runTest {
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
         val toolbarStore = buildStore(middleware)
         mainLooperRule.idle()
         var toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
         assertEquals(2, toolbarBrowserActions.size)
 
-        appStore.dispatch(AppAction.OrientationChange(Landscape)).joinBlocking()
+        configuration = Configuration().apply {
+            screenHeightDp = 400
+            screenWidthDp = 700
+        }
+        every { mockContext.resources.configuration } returns configuration
+        appStore.dispatch(AppAction.OrientationChange(Landscape))
         mainLooperRule.idle()
 
         toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
@@ -289,28 +353,65 @@ class BrowserToolbarMiddlewareTest {
     }
 
     @Test
-    fun `GIVEN in landscape WHEN changing to portrait THEN show all browser end actions`() = runTest {
-        val appStore = AppStore(
-            initialState = AppState(
-                orientation = Landscape,
-            ),
-        )
-
+    fun `GIVEN short window WHEN changing to tall window THEN show all browser end actions`() = runTest {
+        configuration = Configuration().apply {
+            screenHeightDp = 400
+            screenWidthDp = 700
+        }
+        every { mockContext.resources.configuration } returns configuration
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
         val toolbarStore = buildStore(middleware)
         mainLooperRule.idle()
         var toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
         assertEquals(2, toolbarBrowserActions.size)
-        val tabCounterButton = toolbarBrowserActions[0] as TabCounterAction
-        val menuButton = toolbarBrowserActions[1] as ActionButtonRes
-        assertEqualsToolbarButton(expectedToolbarButton(), tabCounterButton)
-        assertEquals(expectedMenuButton(), menuButton)
 
-        appStore.dispatch(AppAction.OrientationChange(Portrait)).joinBlocking()
+        configuration = Configuration().apply {
+            screenHeightDp = 700
+            screenWidthDp = 400
+        }
+        every { mockContext.resources.configuration } returns configuration
+        appStore.dispatch(AppAction.OrientationChange(Portrait))
         mainLooperRule.idle()
 
         toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
         assertEquals(2, toolbarBrowserActions.size)
+        val tabCounterButton = toolbarBrowserActions[0] as TabCounterAction
+        val menuButton = toolbarBrowserActions[1] as ActionButtonRes
+        assertEqualsToolbarButton(expectedToolbarButton(), tabCounterButton)
+        assertEquals(expectedMenuButton(), menuButton)
+    }
+
+    @Test
+    fun `GIVEN expanded toolbar with tabstrip and tall window WHEN changing to short window THEN show menu`() = runTest {
+        every { testContext.settings().shouldUseExpandedToolbar } returns true
+        every { testContext.settings().isTabStripEnabled } returns true
+        configuration = Configuration().apply {
+            screenHeightDp = 700
+            screenWidthDp = 400
+        }
+        every { mockContext.resources.configuration } returns configuration
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val toolbarStore = buildStore(middleware)
+        mainLooperRule.idle()
+        var navigationActions = toolbarStore.state.displayState.navigationActions
+        assertEquals(5, navigationActions.size)
+        var toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(0, toolbarBrowserActions.size)
+
+        configuration = Configuration().apply {
+            screenHeightDp = 400
+            screenWidthDp = 700
+        }
+        every { mockContext.resources.configuration } returns configuration
+        appStore.dispatch(AppAction.OrientationChange(Portrait))
+        mainLooperRule.idle()
+
+        navigationActions = toolbarStore.state.displayState.navigationActions
+        assertEquals(0, navigationActions.size)
+        toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
+        assertEquals(1, toolbarBrowserActions.size)
+        val menuButton = toolbarBrowserActions[0] as ActionButtonRes
+        assertEquals(expectedMenuButton(), menuButton)
     }
 
     @Test
@@ -330,8 +431,8 @@ class BrowserToolbarMiddlewareTest {
 
         val newNormalTab = createTab("test.com", private = false)
         val newPrivateTab = createTab("test.com", private = true)
-        browserStore.dispatch(AddTabAction(newNormalTab)).joinBlocking()
-        browserStore.dispatch(AddTabAction(newPrivateTab)).joinBlocking()
+        browserStore.dispatch(AddTabAction(newNormalTab))
+        browserStore.dispatch(AddTabAction(newPrivateTab))
         mainLooperRule.idle()
 
         toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
@@ -361,7 +462,7 @@ class BrowserToolbarMiddlewareTest {
         var tabCounterButton = toolbarBrowserActions[0] as TabCounterAction
         assertEqualsToolbarButton(expectedToolbarButton(1, true), tabCounterButton)
 
-        browserStore.dispatch(RemoveTabAction(initialPrivateTab.id)).joinBlocking()
+        browserStore.dispatch(RemoveTabAction(initialPrivateTab.id))
         mainLooperRule.idle()
 
         toolbarBrowserActions = toolbarStore.state.displayState.browserActionsEnd
@@ -455,7 +556,7 @@ class BrowserToolbarMiddlewareTest {
         toolbarStore.dispatch((tabCounterMenuItems[0] as BrowserToolbarMenuButton).onClick!!)
 
         assertEquals(Private, browsingModeManager.mode)
-        assertEquals("", toolbarStore.state.editState.query)
+        assertEquals("", toolbarStore.state.editState.query.current)
         verify { appStore.dispatch(SearchStarted()) }
     }
 
@@ -476,7 +577,7 @@ class BrowserToolbarMiddlewareTest {
         toolbarStore.dispatch((tabCounterMenuItems[0] as BrowserToolbarMenuButton).onClick!!)
 
         assertEquals(Normal, browsingModeManager.mode)
-        assertEquals("", toolbarStore.state.editState.query)
+        assertEquals("", toolbarStore.state.editState.query.current)
         verify { appStore.dispatch(SearchStarted()) }
     }
 
@@ -527,7 +628,7 @@ class BrowserToolbarMiddlewareTest {
 
         toolbarStore.dispatch(PasteFromClipboardClicked)
 
-        assertEquals(clipboard.text, toolbarStore.state.editState.query)
+        assertEquals(clipboard.text, toolbarStore.state.editState.query.current)
         verify { appStore.dispatch(SearchStarted()) }
     }
 
@@ -572,7 +673,7 @@ class BrowserToolbarMiddlewareTest {
         val toolbarStore = buildStore(middleware)
         val newSearchEngine = SearchEngine("test", "Test", mock(), type = APPLICATION)
 
-        appStore.dispatch(SearchEngineSelected(newSearchEngine, true)).joinBlocking()
+        appStore.dispatch(SearchEngineSelected(newSearchEngine, true))
         shadowOf(Looper.getMainLooper()).idle() // wait for observing and processing the search engine update
 
         assertSearchSelectorEquals(
@@ -595,14 +696,14 @@ class BrowserToolbarMiddlewareTest {
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
         val toolbarStore = buildStore(middleware)
 
-        browserStore.dispatch(ApplicationSearchEnginesLoaded(listOf(otherSearchEngine))).joinBlocking()
+        browserStore.dispatch(ApplicationSearchEnginesLoaded(listOf(otherSearchEngine)))
 
         assertNotEquals(
             appStore.state.searchState.selectedSearchEngine?.searchEngine,
             browserStore.state.search.selectedOrDefaultSearchEngine,
         )
         assertSearchSelectorEquals(
-            expectedSearchSelector(selectedSearchEngine),
+            expectedSearchSelector(selectedSearchEngine, listOf(otherSearchEngine)),
             toolbarStore.state.displayState.pageActionsStart[0] as SearchSelectorAction,
         )
     }
@@ -620,7 +721,7 @@ class BrowserToolbarMiddlewareTest {
         )
 
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
-        val store = buildStore(middleware)
+        buildStore(middleware)
 
         val action = middleware.buildHomeAction(
             action = HomeToolbarAction.TabCounter,
@@ -642,7 +743,7 @@ class BrowserToolbarMiddlewareTest {
     @Test
     fun `WHEN building Menu action THEN returns Menu ActionButton`() {
         val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
-        val store = buildStore(middleware)
+        buildStore(middleware)
 
         val action = middleware.buildHomeAction(
             action = HomeToolbarAction.Menu,
@@ -655,10 +756,150 @@ class BrowserToolbarMiddlewareTest {
         assertNull(action.onLongClick)
     }
 
+    @Test
+    fun `GIVEN the menu button is not highlighted WHEN a menu item is highlighted THEN highlight menu button`() = runTest {
+        val appStore = AppStore()
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val toolbarStore = buildStore(middleware)
+
+        mainLooperRule.idle()
+        val initialMenuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+        assertEquals(expectedMenuButton(), initialMenuButton)
+
+        appStore.dispatch(
+            AppAction.MenuNotification.AddMenuNotification(
+                SupportedMenuNotifications.Downloads,
+            ),
+        )
+        mainLooperRule.idle()
+        val updatedMenuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+        assertEquals(expectedMenuButton(true), updatedMenuButton)
+    }
+
+    @Test
+    fun `GIVEN the menu button is highlighted WHEN no menu item is highlighted THEN remove highlight from menu button`() = runTest {
+        val appStore = AppStore(
+            initialState = AppState(
+                supportedMenuNotifications = setOf(SupportedMenuNotifications.Downloads),
+            ),
+        )
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val toolbarStore = buildStore(middleware)
+
+        mainLooperRule.idle()
+        val initialMenuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+        assertEquals(expectedMenuButton(true), initialMenuButton)
+
+        appStore.dispatch(
+            AppAction.MenuNotification.RemoveMenuNotification(
+                SupportedMenuNotifications.Downloads,
+            ),
+        )
+        mainLooperRule.idle()
+        val updatedMenuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+        assertEquals(expectedMenuButton(), updatedMenuButton)
+    }
+
+    @Test
+    fun `GIVEN the open in app is highlighted THEN menu button is not highlighted`() = runTest {
+        val appStore = AppStore(
+            initialState = AppState(
+                supportedMenuNotifications = setOf(SupportedMenuNotifications.OpenInApp),
+            ),
+        )
+        val middleware = BrowserToolbarMiddleware(appStore, browserStore, mockk(), mockk())
+        val toolbarStore = buildStore(middleware)
+
+        mainLooperRule.idle()
+        val menuButton = toolbarStore.state.displayState.browserActionsEnd[1] as ActionButtonRes
+        assertEquals(expectedMenuButton(false), menuButton)
+    }
+
+    @Test
+    fun `GIVEN expanded toolbar use translate shortcut WHEN initializing toolbar THEN show DISABLED Translate in navigation actions`() = runTest {
+        every { testContext.settings().shouldShowToolbarCustomization } returns true
+        every { testContext.settings().shouldUseExpandedToolbar } returns true
+        every { testContext.settings().toolbarExpandedShortcutKey } returns ShortcutType.TRANSLATE.value
+
+        val middleware = BrowserToolbarMiddleware(
+            appStore,
+            browserStore,
+            mockk(),
+            mockk(),
+        )
+        val toolbarStore = buildStore(middleware)
+
+        val translateButton = toolbarStore.state.displayState.navigationActions.first() as ActionButtonRes
+        assertEquals(expectedTranslateButton, translateButton)
+    }
+
+    @Test
+    fun `GIVEN expanded toolbar use homepage shortcut WHEN initializing toolbar THEN show DISABLED Homepage in navigation actions`() = runTest {
+        every { testContext.settings().shouldShowToolbarCustomization } returns true
+        every { testContext.settings().shouldUseExpandedToolbar } returns true
+        every { testContext.settings().toolbarExpandedShortcutKey } returns ShortcutType.HOMEPAGE.value
+
+        val middleware = BrowserToolbarMiddleware(
+            appStore,
+            browserStore,
+            mockk(),
+            mockk(),
+        )
+        val toolbarStore = buildStore(middleware)
+
+        val homepageButton = toolbarStore.state.displayState.navigationActions.first() as ActionButtonRes
+        assertEquals(expectedHomepageButton, homepageButton)
+    }
+
+    @Test
+    fun `GIVEN expanded toolbar use back shortcut WHEN initializing toolbar THEN show DISABLED Back in navigation actions`() = runTest {
+        every { testContext.settings().shouldShowToolbarCustomization } returns true
+        every { testContext.settings().shouldUseExpandedToolbar } returns true
+        every { testContext.settings().toolbarExpandedShortcutKey } returns ShortcutType.BACK.value
+
+        val middleware = BrowserToolbarMiddleware(
+            appStore,
+            browserStore,
+            mockk(),
+            mockk(),
+        )
+        val toolbarStore = buildStore(middleware)
+
+        val backButton = toolbarStore.state.displayState.navigationActions.first() as ActionButtonRes
+        assertEquals(expectedBackButton, backButton)
+    }
+
+    @Test
+    fun `toHomeToolbarAction maps ShortcutType to HomeToolbarAction`() {
+        assertEquals(
+            HomeToolbarAction.NewTab,
+            ShortcutType.NEW_TAB.toHomeToolbarAction(),
+        )
+        assertEquals(
+            HomeToolbarAction.FakeShare,
+            ShortcutType.SHARE.toHomeToolbarAction(),
+        )
+        assertEquals(
+            HomeToolbarAction.FakeBookmark,
+            ShortcutType.BOOKMARK.toHomeToolbarAction(),
+        )
+        assertEquals(
+            HomeToolbarAction.FakeTranslate,
+            ShortcutType.TRANSLATE.toHomeToolbarAction(),
+        )
+        assertEquals(
+            HomeToolbarAction.FakeHomepage,
+            ShortcutType.HOMEPAGE.toHomeToolbarAction(),
+        )
+        assertEquals(
+            HomeToolbarAction.FakeBack,
+            ShortcutType.BACK.toHomeToolbarAction(),
+        )
+    }
+
     private fun buildStore(
         middleware: BrowserToolbarMiddleware,
         context: Context = testContext,
-        lifecycleOwner: LifecycleOwner = this.lifecycleOwner,
         navController: NavController = mockk(),
         browsingModeManager: BrowsingModeManager = this.browsingModeManager,
     ) = BrowserToolbarStore(
@@ -668,7 +909,7 @@ class BrowserToolbarMiddlewareTest {
             EnvironmentRehydrated(
                 BrowserToolbarEnvironment(
                     context = context,
-                    viewLifecycleOwner = lifecycleOwner,
+                    fragment = fragment,
                     navController = navController,
                     browsingModeManager = browsingModeManager,
                 ),
@@ -752,9 +993,13 @@ class BrowserToolbarMiddlewareTest {
         },
     )
 
-    private fun expectedMenuButton(source: Source = Source.AddressBar) = ActionButtonRes(
+    private fun expectedMenuButton(
+        highlighted: Boolean = false,
+        source: Source = Source.AddressBar,
+    ) = ActionButtonRes(
         drawableResId = iconsR.drawable.mozac_ic_ellipsis_vertical_24,
         contentDescription = R.string.content_description_menu,
+        highlighted = highlighted,
         onClick = MenuClicked(source),
     )
 
@@ -776,6 +1021,27 @@ class BrowserToolbarMiddlewareTest {
         drawableResId = iconsR.drawable.mozac_ic_plus_24,
         contentDescription = R.string.home_screen_shortcut_open_new_tab_2,
         onClick = AddNewTab(source),
+    )
+
+    private val expectedTranslateButton = ActionButtonRes(
+        drawableResId = iconsR.drawable.mozac_ic_translate_24,
+        contentDescription = R.string.browser_toolbar_translate,
+        state = ActionButton.State.DISABLED,
+        onClick = FakeClicked,
+    )
+
+    private val expectedHomepageButton = ActionButtonRes(
+        drawableResId = iconsR.drawable.mozac_ic_home_24,
+        contentDescription = R.string.browser_menu_homepage,
+        state = ActionButton.State.DISABLED,
+        onClick = FakeClicked,
+    )
+
+    private val expectedBackButton = ActionButtonRes(
+        drawableResId = iconsR.drawable.mozac_ic_back_24,
+        contentDescription = R.string.browser_menu_back,
+        state = ActionButton.State.DISABLED,
+        onClick = FakeClicked,
     )
 
     private class FakeLifecycleOwner(initialState: Lifecycle.State) : LifecycleOwner {

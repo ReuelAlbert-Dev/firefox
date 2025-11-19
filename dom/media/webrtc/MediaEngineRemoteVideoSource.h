@@ -68,7 +68,8 @@ class MediaEngineRemoteVideoSource : public MediaEngineSource,
   bool ChooseCapability(const NormalizedConstraints& aConstraints,
                         const MediaEnginePrefs& aPrefs,
                         webrtc::CaptureCapability& aCapability,
-                        const DistanceCalculation aCalculate);
+                        const DistanceCalculation aCalculate,
+                        const char** aOutBadConstraint);
 
   uint32_t GetDistance(const webrtc::CaptureCapability& aCandidate,
                        const NormalizedConstraintSet& aConstraints,
@@ -86,6 +87,10 @@ class MediaEngineRemoteVideoSource : public MediaEngineSource,
 
  public:
   explicit MediaEngineRemoteVideoSource(const MediaDevice* aMediaDevice);
+
+  static already_AddRefed<MediaEngineRemoteVideoSource> CreateFrom(
+      const MediaEngineRemoteVideoSource* aSource,
+      const MediaDevice* aMediaDevice);
 
   // ExternalRenderer
   /**
@@ -160,7 +165,7 @@ class MediaEngineRemoteVideoSource : public MediaEngineSource,
 
   // mMutex protects certain members on 3 threads:
   // MediaManager, Cameras IPC and MediaTrackGraph.
-  Mutex mMutex MOZ_UNANNOTATED;
+  mutable Mutex mMutex MOZ_UNANNOTATED;
 
   // Current state of this source.
   // Set under mMutex on the owning thread. Accessed under one of the two.

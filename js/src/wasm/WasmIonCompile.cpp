@@ -5862,7 +5862,12 @@ class FunctionCompiler {
 
     // Use branch hinting information if any.
     if (pendingBlocks_[absolute].hint != BranchHint::Invalid) {
-      join->setBranchHinting(pendingBlocks_[absolute].hint);
+      BranchHint hint = pendingBlocks_[absolute].hint;
+      if (hint == BranchHint::Likely) {
+        join->setFrequency(Frequency::Likely);
+      } else if (hint == BranchHint::Unlikely) {
+        join->setFrequency(Frequency::Unlikely);
+      }
     }
 
     pred->mark();
@@ -6186,7 +6191,11 @@ bool FunctionCompiler::emitIf() {
 
   // Store the branch hint in the basic block.
   if (!inDeadCode() && branchHint != BranchHint::Invalid) {
-    getCurBlock()->setBranchHinting(branchHint);
+    if (branchHint == BranchHint::Likely) {
+      getCurBlock()->setFrequency(Frequency::Likely);
+    } else if (branchHint == BranchHint::Unlikely) {
+      getCurBlock()->setFrequency(Frequency::Unlikely);
+    }
   }
 
   iter().controlItem().block = elseBlock;
@@ -10864,6 +10873,7 @@ bool wasm::IonDumpFunction(const CompilerEnvironment& compilerEnv,
   MIRGenerator& mirGen = rootCompiler.mirGen();
   GraphSpewer graphSpewer(out, &codeMeta);
 
+  graphSpewer.begin();
   mirGen.setGraphSpewer(&graphSpewer);
   mirGen.spewBeginWasmFunction(func.index);
 
@@ -10873,6 +10883,7 @@ bool wasm::IonDumpFunction(const CompilerEnvironment& compilerEnv,
   }
 
   mirGen.spewEndFunction();
+  graphSpewer.end();
 
 #else
   out.printf("cannot dump Ion without --enable-jitspew");

@@ -3,16 +3,16 @@ https://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-const { UIState } = ChromeUtils.importESModule(
-  "resource://services-sync/UIState.sys.mjs"
-);
 const { IPProtectionPanel } = ChromeUtils.importESModule(
   "resource:///modules/ipprotection/IPProtectionPanel.sys.mjs"
 );
-const { IPProtectionService } = ChromeUtils.importESModule(
-  "resource:///modules/ipprotection/IPProtectionService.sys.mjs"
+const { IPPEnrollAndEntitleManager } = ChromeUtils.importESModule(
+  "resource:///modules/ipprotection/IPPEnrollAndEntitleManager.sys.mjs"
 );
 
+/**
+ * A class that mocks the IP Protection panel.
+ */
 class FakeIPProtectionPanelElement {
   constructor() {
     this.state = {
@@ -39,7 +39,7 @@ add_setup(async function () {
   do_get_profile();
   await putServerInRemoteSettings();
 
-  IPProtectionService.init();
+  await IPProtectionService.init();
 
   registerCleanupFunction(async () => {
     IPProtectionService.uninit();
@@ -124,21 +124,24 @@ add_task(async function test_updateState() {
 });
 
 /**
- * Tests that IPProtectionService signed-in status events updates the state.
+ * Tests that IPProtectionService ready state event updates the state.
  */
 add_task(async function test_IPProtectionPanel_signedIn() {
   let sandbox = sinon.createSandbox();
-  sandbox.stub(UIState, "get").returns({
-    status: UIState.STATUS_SIGNED_IN,
-  });
+  sandbox.stub(IPPSignInWatcher, "isSignedIn").get(() => true);
+  sandbox
+    .stub(IPPEnrollAndEntitleManager, "isEnrolledAndEntitled")
+    .get(() => true);
   sandbox
     .stub(IPProtectionService.guardian, "isLinkedToGuardian")
-    .returns(false);
-  sandbox.stub(IPProtectionService.guardian, "fetchProxyPass").returns({
+    .resolves(true);
+  sandbox.stub(IPProtectionService.guardian, "fetchUserInfo").resolves({
     status: 200,
-    error: undefined,
-    pass: {
-      isValid: () => true,
+    error: null,
+    entitlement: {
+      subscribed: true,
+      uid: 42,
+      created_at: "2023-01-01T12:00:00.000Z",
     },
   });
 
@@ -149,10 +152,10 @@ add_task(async function test_IPProtectionPanel_signedIn() {
 
   let signedInEventPromise = waitForEvent(
     IPProtectionService,
-    "IPProtectionService:SignedIn"
+    "IPProtectionService:StateChanged",
+    () => IPProtectionService.state === IPProtectionStates.READY
   );
-
-  IPProtectionService.updateSignInStatus();
+  IPProtectionService.updateState();
 
   await signedInEventPromise;
 
@@ -172,31 +175,24 @@ add_task(async function test_IPProtectionPanel_signedIn() {
 });
 
 /**
- * Tests that IPProtectionService signed-out status events updates the state.
+ * Tests that IPProtectionService unavailable state event updates the state.
  */
 add_task(async function test_IPProtectionPanel_signedOut() {
   let sandbox = sinon.createSandbox();
-  sandbox.stub(UIState, "get").returns({
-    status: UIState.STATUS_NOT_CONFIGURED,
-  });
+  sandbox.stub(IPPSignInWatcher, "isSignedIn").get(() => false);
 
   let ipProtectionPanel = new IPProtectionPanel();
   let fakeElement = new FakeIPProtectionPanelElement();
   ipProtectionPanel.panel = fakeElement;
   fakeElement.isConnected = true;
 
-  IPProtectionService.isSignedIn = true;
-  ipProtectionPanel.setState({
-    isSignedOut: false,
-  });
-  ipProtectionPanel.updateState();
-
+  IPProtectionService.setState(IPProtectionStates.READY);
   let signedOutEventPromise = waitForEvent(
     IPProtectionService,
-    "IPProtectionService:SignedOut"
+    "IPProtectionService:StateChanged",
+    () => IPProtectionService.state === IPProtectionStates.UNAVAILABLE
   );
-
-  IPProtectionService.updateSignInStatus();
+  IPProtectionService.updateState();
 
   await signedOutEventPromise;
 
@@ -225,7 +221,23 @@ add_task(async function test_IPProtectionPanel_started_stopped() {
   fakeElement.isConnected = true;
 
   let sandbox = sinon.createSandbox();
-  sandbox.stub(IPProtectionService.guardian, "fetchProxyPass").returns({
+  sandbox.stub(IPPSignInWatcher, "isSignedIn").get(() => true);
+  sandbox
+    .stub(IPPEnrollAndEntitleManager, "isEnrolledAndEntitled")
+    .get(() => true);
+  sandbox
+    .stub(IPProtectionService.guardian, "isLinkedToGuardian")
+    .resolves(true);
+  sandbox.stub(IPProtectionService.guardian, "fetchUserInfo").resolves({
+    status: 200,
+    error: null,
+    entitlement: {
+      subscribed: true,
+      uid: 42,
+      created_at: "2023-01-01T12:00:00.000Z",
+    },
+  });
+  sandbox.stub(IPProtectionService.guardian, "fetchProxyPass").resolves({
     status: 200,
     error: undefined,
     pass: {
@@ -234,22 +246,15 @@ add_task(async function test_IPProtectionPanel_started_stopped() {
     },
   });
 
-  // Set to signed in
-  ipProtectionPanel.setState({
-    isSignedOut: false,
-  });
-  ipProtectionPanel.updateState();
+  IPProtectionService.updateState();
 
   let startedEventPromise = waitForEvent(
-    IPProtectionService,
-    "IPProtectionService:Started"
+    IPPProxyManager,
+    "IPPProxyManager:StateChanged",
+    () => IPPProxyManager.state === IPPProxyStates.ACTIVE
   );
 
-  IPProtectionService.isSignedIn = true;
-  IPProtectionService.isEnrolled = true;
-  IPProtectionService.isEntitled = true;
-
-  IPProtectionService.start();
+  IPPProxyManager.start();
 
   await startedEventPromise;
 
@@ -266,11 +271,12 @@ add_task(async function test_IPProtectionPanel_started_stopped() {
   );
 
   let stoppedEventPromise = waitForEvent(
-    IPProtectionService,
-    "IPProtectionService:Stopped"
+    IPPProxyManager,
+    "IPPProxyManager:StateChanged",
+    () => IPPProxyManager.state !== IPPProxyStates.ACTIVE
   );
 
-  IPProtectionService.stop();
+  await IPPProxyManager.stop();
 
   await stoppedEventPromise;
 
@@ -289,25 +295,63 @@ add_task(async function test_IPProtectionPanel_started_stopped() {
 });
 
 /**
- * Tests that the variant argument is set in the state.
+ * Tests that IPProtectionPanel state isAlpha property is correct
+ * when IPPEnrollAndEntitleManager.isAlpha is true.
  */
-add_task(async function test_IPProtectionPanel_variant() {
-  let ipProtectionPanel = new IPProtectionPanel(null, "alpha");
+add_task(async function test_IPProtectionPanel_isAlpha_true() {
+  let sandbox = sinon.createSandbox();
+
+  sandbox
+    .stub(IPPEnrollAndEntitleManager, "isEnrolledAndEntitled")
+    .get(() => true);
+  sandbox.stub(IPPEnrollAndEntitleManager, "isAlpha").get(() => true);
+  sandbox
+    .stub(IPProtectionService.guardian, "isLinkedToGuardian")
+    .resolves(true);
+
+  let ipProtectionPanel = new IPProtectionPanel();
   let fakeElement = new FakeIPProtectionPanelElement();
   ipProtectionPanel.panel = fakeElement;
-
-  Assert.equal(
-    ipProtectionPanel.state.variant,
-    "alpha",
-    "variant should be set in the IPProtectionPanel state"
-  );
-
   fakeElement.isConnected = true;
-  ipProtectionPanel.updateState();
+
+  IPProtectionService.updateState();
 
   Assert.equal(
-    fakeElement.state.variant,
-    "alpha",
-    "variant should be set in the fake elements state"
+    ipProtectionPanel.state.isAlpha,
+    true,
+    "isAlpha should be true in the IPProtectionPanel state"
   );
+
+  sandbox.restore();
+});
+
+/**
+ * Tests that IPProtectionPanel state isAlpha property is correct
+ * when IPPEnrollAndEntitleManager.isAlpha is false.
+ */
+add_task(async function test_IPProtectionPanel_isAlpha_false() {
+  let sandbox = sinon.createSandbox();
+
+  sandbox
+    .stub(IPPEnrollAndEntitleManager, "isEnrolledAndEntitled")
+    .get(() => true);
+  sandbox.stub(IPPEnrollAndEntitleManager, "isAlpha").get(() => false);
+  sandbox
+    .stub(IPProtectionService.guardian, "isLinkedToGuardian")
+    .resolves(true);
+
+  let ipProtectionPanel = new IPProtectionPanel();
+  let fakeElement = new FakeIPProtectionPanelElement();
+  ipProtectionPanel.panel = fakeElement;
+  fakeElement.isConnected = true;
+
+  IPProtectionService.updateState();
+
+  Assert.equal(
+    ipProtectionPanel.state.isAlpha,
+    false,
+    "isAlpha should be false in the IPProtectionPanel state"
+  );
+
+  sandbox.restore();
 });

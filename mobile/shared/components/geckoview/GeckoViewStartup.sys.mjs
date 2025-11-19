@@ -68,6 +68,7 @@ const JSWINDOWACTORS = {
         "mozshowdropdown-sourcetouch": {},
         MozOpenDateTimePicker: {},
         DOMPopupBlocked: { capture: false, mozSystemGroup: true },
+        DOMRedirectBlocked: { capture: false, mozSystemGroup: true },
       },
     },
     allFrames: true,
@@ -220,6 +221,11 @@ export class GeckoViewStartup {
           ],
         });
 
+        GeckoViewUtils.addLazyGetter(this, "GeckoViewAutofillRuntime", {
+          module: "resource://gre/modules/GeckoViewAutofill.sys.mjs",
+          ged: ["GeckoView:Autofill:GetAddressStructure"],
+        });
+
         GeckoViewUtils.addLazyGetter(this, "GeckoViewPreferences", {
           module: "resource://gre/modules/GeckoViewPreferences.sys.mjs",
           ged: [
@@ -247,29 +253,6 @@ export class GeckoViewStartup {
           },
           {
             handler: _ => this.GeckoViewRemoteDebugger,
-          }
-        );
-
-        GeckoViewUtils.addLazyPrefObserver(
-          {
-            name: "network.android_doh.autoselect_enabled",
-            default: false,
-          },
-          {
-            handler: _ => {
-              if (
-                Services.prefs.getBoolPref(
-                  "network.android_doh.autoselect_enabled"
-                )
-              ) {
-                lazy.DoHController.init();
-              } else {
-                // When the autoselect isn't enabled, these prefs should be
-                // cleared. Otherwise doh-rollout.mode will override
-                // network.trr.mode forever as DoHController isn't running.
-                lazy.DoHController.cleanupPrefs();
-              }
-            },
           }
         );
 
@@ -330,6 +313,24 @@ export class GeckoViewStartup {
         // moved into the foreground later. That is because "application-foreground"
         // is only going to be notified when the application was first paused.
         Services.obs.notifyObservers(null, "geckoview-initial-foreground");
+
+        // This pref is set when during GeckoEngine initialization
+        // and holds the value of FxNimbus.doh.autoselect-enabled (see nimbus.fml.yaml)
+        // We check it here insead of using GeckoViewUtils.addLazyPrefObserver
+        // because GeckoView:ResetUserPrefs also clears it during startup.
+        if (
+          Services.prefs.getBoolPref("network.android_doh.autoselect_enabled")
+        ) {
+          debug`init DoH controller`;
+          lazy.DoHController.init();
+        } else {
+          // When the autoselect isn't enabled, these prefs should be
+          // cleared. Otherwise doh-rollout.mode will override
+          // network.trr.mode forever as DoHController isn't running.
+          debug`cleanup DoH prefs`;
+          lazy.DoHController.cleanupPrefs();
+        }
+
         break;
       }
       case "GeckoView:ResetUserPrefs": {
@@ -363,7 +364,7 @@ export class GeckoViewStartup {
         }
         break;
       }
-      case "GeckoView:SetLocale":
+      case "GeckoView:SetLocale": {
         if (aData.requestedLocales) {
           Services.locale.requestedLocales = aData.requestedLocales;
         }
@@ -377,6 +378,7 @@ export class GeckoViewStartup {
           pls
         );
         break;
+      }
 
       case "GeckoView:StorageDelegate:Attached":
         InitLater(() => {

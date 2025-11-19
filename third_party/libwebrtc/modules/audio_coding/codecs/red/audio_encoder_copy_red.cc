@@ -10,10 +10,9 @@
 
 #include "modules/audio_coding/codecs/red/audio_encoder_copy_red.h"
 
-#include <string.h>
-
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -230,10 +229,8 @@ void AudioEncoderCopyRed::SetMaxPlaybackRate(int frequency_hz) {
   speech_encoder_->SetMaxPlaybackRate(frequency_hz);
 }
 
-bool AudioEncoderCopyRed::EnableAudioNetworkAdaptor(
-    const std::string& config_string,
-    RtcEventLog* event_log) {
-  return speech_encoder_->EnableAudioNetworkAdaptor(config_string, event_log);
+bool AudioEncoderCopyRed::EnableAudioNetworkAdaptor(absl::string_view config) {
+  return speech_encoder_->EnableAudioNetworkAdaptor(config);
 }
 
 void AudioEncoderCopyRed::DisableAudioNetworkAdaptor() {

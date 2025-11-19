@@ -50,6 +50,7 @@ legacy.telemetry:
       - 'third-party-modules'
       - 'temp-fog-initial-state'
       - 'captcha-detection'
+      - 'health'
 
   profile_group_id:
     type: uuid
@@ -1265,7 +1266,7 @@ termsofuse:
       - metrics
     notification_emails:
       - mviar@mozilla.com
-      - omc@mozilla.com
+      - omc-core@mozilla.com
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1971184
     data_reviews:
@@ -1282,7 +1283,7 @@ termsofuse:
       - metrics
     notification_emails:
       - mviar@mozilla.com
-      - omc@mozilla.com
+      - omc-core@mozilla.com
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1971184
     data_reviews:

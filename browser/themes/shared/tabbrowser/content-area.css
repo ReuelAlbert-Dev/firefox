@@ -23,6 +23,7 @@
       --tabpanel-background-color: linear-gradient(45deg, #722291 0%, #45278d 50%, #393473 100%) !important;
     }
   }
+  --dialog-backdrop-color: rgba(28, 27, 34, 0.45);
 }
 
 #navigator-toolbox {
@@ -70,26 +71,6 @@
   position: relative;
   z-index: var(--browser-area-z-index-tabbox);
   margin: 0;
-
-  /* stylelint-disable-next-line media-query-no-invalid */
-  @media -moz-pref("sidebar.revamp") {
-    outline: 0.01px solid var(--chrome-content-separator-color);
-    box-shadow: var(--content-area-shadow);
-
-    /* stylelint-disable-next-line media-query-no-invalid */
-    @media -moz-pref("sidebar.revamp.round-content-area") {
-      :root:not([inDOMFullscreen]) &[sidebar-shown] {
-        overflow: clip;
-        border-start-end-radius: var(--border-radius-medium);
-
-        /* stylelint-disable-next-line media-query-no-invalid */
-        @media -moz-pref("sidebar.position_start") {
-          border-start-start-radius: var(--border-radius-medium);
-          border-start-end-radius: 0;
-        }
-      }
-    }
-  }
 }
 
 /* We set large flex on both containers to allow the devtools toolbox to
@@ -107,6 +88,36 @@
 
   /* .browserContainer only contains the devtools when docked horizontally */
   min-height: 0;
+
+  /* We want to be able to show the frame color behind the clipped radiused corner */
+  background: var(--tabpanel-background-color);
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media -moz-pref("sidebar.revamp") {
+    outline: 0.01px solid var(--chrome-content-separator-color);
+    box-shadow: var(--content-area-shadow);
+  }
+
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media -moz-pref("sidebar.revamp") and -moz-pref("sidebar.revamp.round-content-area") {
+    overflow: clip;
+
+    :root:not([inDOMFullscreen]) #tabbrowser-tabbox[sidebar-shown] & {
+      /* stylelint-disable-next-line media-query-no-invalid */
+      @media -moz-pref("sidebar.position_start") {
+        border-start-start-radius: var(--border-radius-medium);
+      }
+      /* stylelint-disable-next-line media-query-no-invalid */
+      @media not -moz-pref("sidebar.position_start") {
+        border-start-end-radius: var(--border-radius-medium);
+      }
+    }
+  }
+}
+
+.browserSidebarContainer {
+  position: absolute;
+  inset: 0;
 }
 
 .sidebar-browser-stack {
@@ -124,7 +135,7 @@
   appearance: none;
   padding: 0;
   color-scheme: unset;
-  background: var(--tabpanel-background-color);
+  display: flex;
 
   &[pendingpaint] {
     background-image: url("chrome://global/skin/icons/pendingpaint.png");
@@ -144,6 +155,96 @@
   browser[tabDialogShowing] {
     -moz-user-focus: none !important;
   }
+
+  &[splitview] {
+    --panel-min-width: 140px;
+
+    .split-view-panel {
+      position: relative;
+      flex: 1;
+      min-width: var(--panel-min-width);
+      max-width: calc(100% - var(--panel-min-width));
+      margin: var(--space-xsmall);
+    }
+    /* Ensure any dialogs are clipped in an inactive/not-selected panel. */
+    :root:not([inDOMFullscreen]) & > .split-view-panel:not(.deck-selected) {
+      overflow: clip;
+    }
+
+    .browserContainer {
+      border-radius: var(--border-radius-medium);
+      overflow: clip;
+      outline: var(--border-width) solid var(--border-color);
+
+      /* The selected panel's dialogs need to sit above the non-selected tab panels. */
+      .deck-selected > & {
+        z-index: 1;
+        outline: var(--focus-outline);
+      }
+    }
+
+    .split-view-panel[column="0"] {
+      order: 0;
+      margin-inline-end: 0;
+    }
+
+    .split-view-splitter {
+      order: 1;
+      flex: none;
+    }
+
+    .split-view-panel[column="1"] {
+      order: 2;
+      margin-inline-start: 0;
+    }
+
+    /* Panels with a custom width shouldn't grow. */
+    .split-view-panel[width] {
+      flex: none;
+    }
+
+    /* Display split view footer within inactive panels. */
+    .split-view-panel:not(.deck-selected) > split-view-footer {
+      display: inherit;
+    }
+  }
+}
+
+/* Split view */
+
+split-view-footer {
+  max-width: calc(100% - var(--space-xsmall));
+  display: none;
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+
+  border-block-start: 1px solid var(--border-color);
+  border-inline-start: 1px solid var(--border-color);
+  border-start-start-radius: var(--border-radius-medium);
+  border-start-end-radius: 0;
+  border-end-end-radius: var(--border-radius-medium);
+  border-end-start-radius: 0;
+
+  padding-block: var(--space-xxsmall);
+  padding-inline: var(--space-small) var(--space-xsmall);
+}
+
+.split-view-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.split-view-uri {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+split-view-footer,
+.split-view-security-warning {
+  align-items: center;
+  gap: var(--space-small);
+  white-space: nowrap;
 }
 
 /* Status panel */
@@ -203,15 +304,18 @@
   @media -moz-pref("browser.tabs.hideStatusPanel") {
     visibility: hidden;
   }
+
+  /* Ensure that this appears on top of the split view footer. */
+  .split-view-panel & {
+    z-index: 1;
+  }
 }
 
-#statuspanel-label {
+#statuspanel-label,
+split-view-footer {
   color-scheme: env(-moz-content-preferred-color-scheme);
-  margin: 0;
-  padding: 2px 4px;
   background-color: -moz-dialog;
-  border: 1px none ThreeDShadow;
-  border-top-style: solid;
+  border-color: ThreeDShadow;
   color: -moz-dialogText;
   text-shadow: none;
 
@@ -220,6 +324,14 @@
     border-color: light-dark(#ddd, hsl(240, 1%, 40%));
     color: light-dark(#444, rgb(249, 249, 250));
   }
+}
+
+#statuspanel-label {
+  margin: 0;
+  padding: 2px 4px;
+  border-width: 1px;
+  border-style: none;
+  border-top-style: solid;
 
   #statuspanel:not([mirror]) > &:-moz-locale-dir(ltr),
   #statuspanel[mirror] > &:-moz-locale-dir(rtl) {
@@ -360,6 +472,11 @@
     /* Make dialogs overlap with upper chrome UI. Not necessary for Spotlight
     dialogs that are intended to be centered above the window or content area. */
     margin-top: -5px;
+
+    /* When the dialog is in a splitview, the offset is a little larger */
+    .deck-selected.split-view-panel & {
+      margin-top: -8px;
+    }
   }
 
   /* Spotlight dialogs are full-size on the content or window area */
@@ -416,9 +533,23 @@
   width: 34em;
 }
 
+/* Radius the backdrop so it doesnt occlude the radiused .browserContainer below it */
+:root:not([inDOMFullscreen]) #tabbrowser-tabbox[sidebar-shown] .dialogOverlay[topmost="true"] {
+  /* stylelint-disable-next-line media-query-no-invalid */
+  @media -moz-pref("sidebar.revamp.round-content-area") {
+    border-start-end-radius: var(--border-radius-medium);
+
+    /* stylelint-disable-next-line media-query-no-invalid */
+    @media -moz-pref("sidebar.position_start") {
+      border-start-start-radius: var(--border-radius-medium);
+      border-start-end-radius: 0;
+    }
+  }
+}
+
 .dialogOverlay[topmost="true"],
 #window-modal-dialog::backdrop {
-  background-color: rgba(28, 27, 34, 0.45);
+  background-color: var(--dialog-backdrop-color);
 }
 
 .dialogOverlay[hideContent="true"][topmost="true"] {

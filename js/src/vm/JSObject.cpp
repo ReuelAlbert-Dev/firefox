@@ -2202,6 +2202,10 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
         id == NameToId(cx->names().isError)) {
       return true;
     }
+    if (!JS::Prefs::experimental_iterator_sequencing() &&
+        id == NameToId(cx->names().concat)) {
+      return true;
+    }
   }
 
 #ifdef JS_HAS_INTL_API
@@ -2225,10 +2229,6 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
          id == NameToId(cx->names().zipKeyed))) {
       return true;
     }
-    if (!JS::Prefs::experimental_iterator_sequencing() &&
-        id == NameToId(cx->names().concat)) {
-      return true;
-    }
   }
   if (key == JSProto_Map || key == JSProto_WeakMap) {
     if (!JS::Prefs::experimental_upsert() &&
@@ -2245,18 +2245,17 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
       return true;
     }
   }
+  if (key == JSProto_Iterator && !JS::Prefs::experimental_iterator_chunking()) {
+    if (id == NameToId(cx->names().chunks) ||
+        id == NameToId(cx->names().windows)) {
+      return true;
+    }
+  }
 #endif
 
   if (key == JSProto_Function &&
       !JS::Prefs::experimental_error_capture_stack_trace() &&
       id == NameToId(cx->names().captureStackTrace)) {
-    return true;
-  }
-
-  if (key == JSProto_JSON &&
-      !JS::Prefs::experimental_json_parse_with_source() &&
-      (id == NameToId(cx->names().isRawJSON) ||
-       id == NameToId(cx->names().rawJSON))) {
     return true;
   }
 
@@ -3258,11 +3257,11 @@ void JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
     info->objectsMallocHeapMisc +=
         as<WeakCollectionObject>().sizeOfExcludingThis(mallocSizeOf);
   } else if (is<WasmStructObject>()) {
-    WasmStructObject::addSizeOfExcludingThis(this, mallocSizeOf, info,
-                                             runtimeSizes);
+    const WasmStructObject& s = as<WasmStructObject>();
+    info->objectsMallocHeapSlots += s.sizeOfExcludingThis();
   } else if (is<WasmArrayObject>()) {
-    WasmArrayObject::addSizeOfExcludingThis(this, mallocSizeOf, info,
-                                            runtimeSizes);
+    const WasmArrayObject& a = as<WasmArrayObject>();
+    info->objectsMallocHeapElementsNormal += a.sizeOfExcludingThis();
   }
 #ifdef JS_HAS_CTYPES
   else {
@@ -3296,14 +3295,10 @@ size_t JSObject::sizeOfIncludingThisInNursery(
     }
   } else if (is<WasmStructObject>()) {
     const WasmStructObject& s = as<WasmStructObject>();
-    if (s.outlineData_) {
-      size += mallocSizeOf(s.outlineData_);
-    }
+    size += s.sizeOfExcludingThis();
   } else if (is<WasmArrayObject>()) {
     const WasmArrayObject& a = as<WasmArrayObject>();
-    if (!a.isDataInline()) {
-      size += mallocSizeOf(a.dataHeader());
-    }
+    size += a.sizeOfExcludingThis();
   }
 
   return size;

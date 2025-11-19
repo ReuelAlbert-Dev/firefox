@@ -299,10 +299,14 @@ These shortcuts work while the :ref:`node picker <page-inspector-how-to-select-a
     - :kbd:`Click`
 
   * - Select the element under the mouse and stay in picker mode
-    - :kbd:`Shift` + :kbd:`Click`
-    - :kbd:`Shift` + :kbd:`Click`
-    - :kbd:`Shift` + :kbd:`Click`
+    - :kbd:`Ctrl` + :kbd:`Click`
+    - :kbd:`Cmd` + :kbd:`Click`
+    - :kbd:`Ctrl` + :kbd:`Click`
 
+  * - Select the element under the mouse, even if it can't consume pointer events
+    - :kbd:`Shift` + :kbd:`Click`
+    - :kbd:`Shift` + :kbd:`Click`
+    - :kbd:`Shift` + :kbd:`Click`
 
 .. _keyboard-shortcuts-html-pane:
 
@@ -401,7 +405,7 @@ These shortcuts work while you're in the :doc:`Inspector's HTML pane <../page_in
     - :kbd:`F2`
 
   * - Stop editing HTML
-    - :kbd:`F2` / :kbd:`Ctrl` +:kbd:`Enter`
+    - :kbd:`F2` / :kbd:`Ctrl` + :kbd:`Enter`
     - :kbd:`F2` / :kbd:`Cmd` + :kbd:`Return`
     - :kbd:`F2` / :kbd:`Ctrl` + :kbd:`Enter`
 

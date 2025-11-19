@@ -27,6 +27,7 @@
 #include "mozilla/glean/NetwerkMetrics.h"
 #include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/TRRServiceChild.h"
+#include "mozilla/ProfilerMarkers.h"
 // Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
 #include "DNSLogging.h"
 
@@ -334,7 +335,7 @@ bool TRRService::MaybeSetPrivateURI(const nsACString& aURI) {
       if (!neckoParent) {
         continue;
       }
-      Unused << neckoParent->SendSetTRRDomain(host);
+      (void)neckoParent->SendSetTRRDomain(host);
     }
 
     AsyncCreateTRRConnectionInfo(mPrivateURI);
@@ -714,7 +715,7 @@ void TRRService::ConfirmationContext::SetState(
   TRRServiceChild* child = TRRServiceChild::GetSingleton();
   if (child && child->CanSend()) {
     LOG(("TRRService::SendSetConfirmationState"));
-    Unused << child->SendSetConfirmationState(mState);
+    (void)child->SendSetConfirmationState(mState);
   }
 }
 
@@ -1299,8 +1300,12 @@ void TRRService::ConfirmationContext::CompleteConfirmation(nsresult aStatus,
 
     MOZ_ASSERT(mTask);
     if (NS_SUCCEEDED(aStatus)) {
+      profiler_add_marker("TRR Confirmation Success",
+                          geckoprofiler::category::NETWORK);
       HandleEvent(ConfirmationEvent::ConfirmOK, lock);
     } else {
+      profiler_add_marker("TRR Confirmation Failure",
+                          geckoprofiler::category::NETWORK);
       HandleEvent(ConfirmationEvent::ConfirmFail, lock);
     }
 
@@ -1388,7 +1393,7 @@ void TRRService::InitTRRConnectionInfo(bool aForceReinit) {
   TRRServiceChild* child = TRRServiceChild::GetSingleton();
   if (child && child->CanSend()) {
     LOG(("TRRService::SendInitTRRConnectionInfo"));
-    Unused << child->SendInitTRRConnectionInfo(aForceReinit);
+    (void)child->SendInitTRRConnectionInfo(aForceReinit);
   }
 }
 

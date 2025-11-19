@@ -6,7 +6,6 @@
 
 #include "frontend/Stencil.h"
 
-#include "mozilla/AlreadyAddRefed.h"        // already_AddRefed
 #include "mozilla/Assertions.h"             // MOZ_RELEASE_ASSERT
 #include "mozilla/CheckedInt.h"             // mozilla::CheckedInt
 #include "mozilla/Maybe.h"                  // mozilla::Maybe
@@ -1152,7 +1151,7 @@ NameLocation ScopeContext::searchInEnclosingScopeWithCache(
   mozilla::Maybe<NameLocation> found;
 
   // Number of enclosing scope we walked over.
-  uint8_t hops = 0;
+  uint16_t hops = 0;
 
   for (InputScopeIter si(input.enclosingScope); si; si++) {
     MOZ_ASSERT(NameIsOnEnvironment(fc, parserAtoms, input.atomCache, si.scope(),
@@ -1221,8 +1220,8 @@ NameLocation ScopeContext::searchInEnclosingScopeNoCache(
   // NameLocation which contains relative locations to access `name`.
   mozilla::Maybe<NameLocation> result;
 
-  // Number of enclosing scoep we walked over.
-  uint8_t hops = 0;
+  // Number of enclosing scope we walked over.
+  uint16_t hops = 0;
 
   for (InputScopeIter si(input.enclosingScope); si; si++) {
     MOZ_ASSERT(NameIsOnEnvironment(fc, parserAtoms, input.atomCache, si.scope(),
@@ -6213,4 +6212,12 @@ bool JS::IsStencilCacheable(JS::Stencil* stencil) {
   }
 
   return true;
+}
+
+JS_PUBLIC_API size_t JS::GetScriptSourceLength(JS::Stencil* stencil) {
+  const ScriptSource* source = stencil->getInitial()->source;
+  if (!source->hasSourceText()) {
+    return 0;
+  }
+  return source->length();
 }

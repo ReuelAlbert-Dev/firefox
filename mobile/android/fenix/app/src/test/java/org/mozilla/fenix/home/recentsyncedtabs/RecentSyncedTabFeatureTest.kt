@@ -11,6 +11,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkConstructor
 import io.mockk.verify
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -32,7 +33,6 @@ import mozilla.components.service.fxa.store.SyncAction
 import mozilla.components.service.fxa.store.SyncStatus
 import mozilla.components.service.fxa.store.SyncStore
 import mozilla.components.service.fxa.sync.SyncReason
-import mozilla.components.support.test.libstate.ext.waitUntilIdle
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.rule.MainCoroutineRule
 import mozilla.telemetry.glean.testing.ErrorType
@@ -48,6 +48,7 @@ import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.helpers.FenixGleanTestRule
 
+@OptIn(ExperimentalCoroutinesApi::class) // runCurrent
 @RunWith(AndroidJUnit4::class)
 class RecentSyncedTabFeatureTest {
 
@@ -570,7 +571,6 @@ class RecentSyncedTabFeatureTest {
         account?.let {
             this.dispatch(SyncAction.UpdateAccount(account))
         }
-        this.waitUntilIdle()
     }
 
     private fun Tab.toVisitInfo(url: String, previewUrl: String?) = VisitInfo(

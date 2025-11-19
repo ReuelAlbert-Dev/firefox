@@ -250,6 +250,7 @@ class ChangesView {
 
   /**
    * Event handler for the "contextmenu" event fired when the context menu is requested.
+   *
    * @param {Event} e
    */
   onContextMenu(e) {
@@ -267,8 +268,6 @@ class ChangesView {
       ],
       { onAvailable: this.onResourceAvailable }
     );
-
-    this.store.dispatch(resetChanges());
 
     this.document = null;
     this.inspector = null;

@@ -47,6 +47,7 @@ export class FxAccountsOAuth {
 
   /**
    * Stores a flow in-memory
+   *
    * @param { string } state: A base-64 URL-safe string represnting a random value created at the start of the flow
    * @param { Object } value: The data needed to complete a flow, once the oauth code is available.
    * in practice, `value` is:
@@ -65,8 +66,9 @@ export class FxAccountsOAuth {
     this.#flow = {};
   }
 
-  /*
+  /**
    * Gets a stored flow
+   *
    * @param { string } state: The base-64 URL-safe state string that was created at the start of the flow
    * @returns { Object }: The values initially stored when startign th eoauth flow
    * in practice, the return value is:
@@ -172,7 +174,9 @@ export class FxAccountsOAuth {
     return queryParams;
   }
 
-  /** Completes an OAuth flow and invalidates any other ongoing flows
+  /**
+   * Completes an OAuth flow and invalidates any other ongoing flows
+   *
    * @param { string } sessionTokenHex: The session token encoded in hexadecimal
    * @param { string } code: OAuth authorization code provided by running an OAuth flow
    * @param { string } state: The state first provided by `beginOAuthFlow`, then roundtripped through the server
@@ -182,7 +186,7 @@ export class FxAccountsOAuth {
    *     - 'scopedKeys': The encryption keys provided by the server, already decrypted
    *     - 'refreshToken': The refresh token provided by the server
    *     - 'accessToken': The access token provided by the server
-   * */
+   */
   async completeOAuthFlow(sessionTokenHex, code, state) {
     const flow = this.getFlow(state);
     if (!flow) {

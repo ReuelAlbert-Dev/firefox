@@ -136,10 +136,10 @@ static gfx::IntSize CalculateDesiredSize(DesiredSizeInput aInput) {
     // Max constraints decide the envelope.
     const double scale_width_strict =
         std::min(1.0, AssertedCast<double>(aInput.mConstraints.mWidth.mMax) /
-                          AssertedCast<double>(aInput.mInputWidth));
+                          AssertedCast<double>(inputWidth));
     const double scale_height_strict =
         std::min(1.0, AssertedCast<double>(aInput.mConstraints.mHeight.mMax) /
-                          AssertedCast<double>(aInput.mInputHeight));
+                          AssertedCast<double>(inputHeight));
 
     double scale_width =
         AssertedCast<double>(dst_width) / AssertedCast<double>(inputWidth);
@@ -155,10 +155,10 @@ static gfx::IntSize CalculateDesiredSize(DesiredSizeInput aInput) {
     double scale = std::min(
         {scale_width, scale_height, scale_width_strict, scale_height_strict});
 
-    dst_width = AssertedCast<int32_t>(
-        std::round(scale * AssertedCast<double>(aInput.mInputWidth)));
-    dst_height = AssertedCast<int32_t>(
-        std::round(scale * AssertedCast<double>(aInput.mInputHeight)));
+    dst_width = SaturatingCast<int32_t>(
+        std::round(scale * AssertedCast<double>(inputWidth)));
+    dst_height = SaturatingCast<int32_t>(
+        std::round(scale * AssertedCast<double>(inputHeight)));
   }
 
   if (aInput.mCapEngine == camera::CameraEngine) {
@@ -203,6 +203,22 @@ MediaEngineRemoteVideoSource::MediaEngineRemoteVideoSource(
   }
 }
 
+/*static*/
+already_AddRefed<MediaEngineRemoteVideoSource>
+MediaEngineRemoteVideoSource::CreateFrom(
+    const MediaEngineRemoteVideoSource* aSource,
+    const MediaDevice* aMediaDevice) {
+  auto src = MakeRefPtr<MediaEngineRemoteVideoSource>(aMediaDevice);
+  *static_cast<MediaTrackSettings*>(src->mSettings) = *aSource->mSettings;
+  *static_cast<MediaTrackCapabilities*>(src->mTrackCapabilities) =
+      *aSource->mTrackCapabilities;
+  {
+    MutexAutoLock lock(aSource->mMutex);
+    src->mIncomingImageSize = aSource->mIncomingImageSize;
+  }
+  return src.forget();
+}
+
 MediaEngineRemoteVideoSource::~MediaEngineRemoteVideoSource() {
   mFirstFramePromiseHolder.RejectIfExists(NS_ERROR_ABORT, __func__);
 }
@@ -243,9 +259,12 @@ nsresult MediaEngineRemoteVideoSource::Allocate(
   webrtc::CaptureCapability newCapability;
   LOG("ChooseCapability(%s) for mCapability (Allocate) ++",
       ToString(distanceMode));
-  if (!ChooseCapability(c, aPrefs, newCapability, distanceMode)) {
-    *aOutBadConstraint =
-        MediaConstraintsHelper::FindBadConstraint(c, aPrefs, mMediaDevice);
+  if (!ChooseCapability(c, aPrefs, newCapability, distanceMode,
+                        aOutBadConstraint)) {
+    if (aOutBadConstraint && !*aOutBadConstraint) {
+      *aOutBadConstraint =
+          MediaConstraintsHelper::FindBadConstraint(c, aPrefs, mMediaDevice);
+    }
     return NS_ERROR_FAILURE;
   }
   LOG("ChooseCapability(%s) for mCapability (Allocate) --",
@@ -280,8 +299,8 @@ nsresult MediaEngineRemoteVideoSource::Allocate(
         .mCapabilityWidth = cw ? Some(cw) : Nothing(),
         .mCapabilityHeight = ch ? Some(ch) : Nothing(),
         .mCapEngine = mCapEngine,
-        .mInputWidth = cw,
-        .mInputHeight = ch,
+        .mInputWidth = cw ? cw : mIncomingImageSize.width,
+        .mInputHeight = ch ? ch : mIncomingImageSize.height,
         .mRotation = 0,
     };
     framerate = input.mCanCropAndScale.valueOr(false)
@@ -350,12 +369,22 @@ nsresult MediaEngineRemoteVideoSource::Deallocate() {
 
   LOG("Video device %d deallocated", mCaptureId);
 
-  if (camera::GetChildAndCall(&camera::CamerasChild::ReleaseCapture, mCapEngine,
-                              mCaptureId)) {
-    // Failure can occur when the parent process is shutting down.
-    return NS_ERROR_FAILURE;
+  int error = camera::GetChildAndCall(&camera::CamerasChild::ReleaseCapture,
+                                      mCapEngine, mCaptureId);
+
+  if (error == camera::kSuccess) {
+    return NS_OK;
   }
-  return NS_OK;
+
+  if (error == camera::kIpcError) {
+    // Failure can occur when the parent process is shutting down, and the IPC
+    // channel is down. We still consider the capturer deallocated in this
+    // case, since it cannot deliver frames without the IPC channel open.
+    return NS_OK;
+  }
+
+  MOZ_ASSERT(error == camera::kError);
+  return NS_ERROR_FAILURE;
 }
 
 void MediaEngineRemoteVideoSource::SetTrack(const RefPtr<MediaTrack>& aTrack,
@@ -449,9 +478,11 @@ nsresult MediaEngineRemoteVideoSource::Stop() {
 
   MOZ_ASSERT(mState == kStarted);
 
-  if (camera::GetChildAndCall(&camera::CamerasChild::StopCapture, mCapEngine,
-                              mCaptureId)) {
-    // Failure can occur when the parent process is shutting down.
+  int error = camera::GetChildAndCall(&camera::CamerasChild::StopCapture,
+                                      mCapEngine, mCaptureId);
+
+  if (error == camera::kError) {
+    // CamerasParent replied with error. The capturer is still running.
     return NS_ERROR_FAILURE;
   }
 
@@ -460,7 +491,15 @@ nsresult MediaEngineRemoteVideoSource::Stop() {
     mState = kStopped;
   }
 
-  return NS_OK;
+  if (error == camera::kSuccess) {
+    return NS_OK;
+  }
+
+  MOZ_ASSERT(error == camera::kIpcError);
+  // Failure can occur when the parent process is shutting down, and the IPC
+  // channel is down. We still consider the capturer stopped in this case,
+  // since it cannot deliver frames without the IPC channel open.
+  return NS_ERROR_FAILURE;
 }
 
 nsresult MediaEngineRemoteVideoSource::Reconfigure(
@@ -476,9 +515,12 @@ nsresult MediaEngineRemoteVideoSource::Reconfigure(
   webrtc::CaptureCapability newCapability;
   LOG("ChooseCapability(%s) for mTargetCapability (Reconfigure) ++",
       ToString(distanceMode));
-  if (!ChooseCapability(c, aPrefs, newCapability, distanceMode)) {
-    *aOutBadConstraint =
-        MediaConstraintsHelper::FindBadConstraint(c, aPrefs, mMediaDevice);
+  if (!ChooseCapability(c, aPrefs, newCapability, distanceMode,
+                        aOutBadConstraint)) {
+    if (aOutBadConstraint && !*aOutBadConstraint) {
+      *aOutBadConstraint =
+          MediaConstraintsHelper::FindBadConstraint(c, aPrefs, mMediaDevice);
+    }
     return NS_ERROR_INVALID_ARG;
   }
   LOG("ChooseCapability(%s) for mTargetCapability (Reconfigure) --",
@@ -887,7 +929,7 @@ static void LogCapability(const char* aHeader,
 bool MediaEngineRemoteVideoSource::ChooseCapability(
     const NormalizedConstraints& aConstraints, const MediaEnginePrefs& aPrefs,
     webrtc::CaptureCapability& aCapability,
-    const DistanceCalculation aCalculate) {
+    const DistanceCalculation aCalculate, const char** aOutBadConstraint) {
   LOG("%s", __PRETTY_FUNCTION__);
   AssertIsOnOwningThread();
 
@@ -907,7 +949,29 @@ bool MediaEngineRemoteVideoSource::ChooseCapability(
     case camera::ScreenEngine:
     case camera::WinEngine:
     case camera::BrowserEngine: {
+      MOZ_ASSERT_IF(aOutBadConstraint, !*aOutBadConstraint);
       FlattenedConstraints c(aConstraints);
+      const auto checkConstraint = [](const auto& aConstraint) {
+        return aConstraint.mMin <= aConstraint.mMax && aConstraint.mMax > 0;
+      };
+      if (!checkConstraint(c.mWidth)) {
+        if (aOutBadConstraint) {
+          *aOutBadConstraint = "width";
+        }
+        return false;
+      }
+      if (!checkConstraint(c.mHeight)) {
+        if (aOutBadConstraint) {
+          *aOutBadConstraint = "height";
+        }
+        return false;
+      }
+      if (!checkConstraint(c.mFrameRate)) {
+        if (aOutBadConstraint) {
+          *aOutBadConstraint = "frameRate";
+        }
+        return false;
+      }
       // DesktopCaptureImpl polls for frames and so must know the framerate to
       // capture at. This is signaled through CamerasParent as the capability's
       // maxFPS. Note that DesktopCaptureImpl does not expose any capabilities.

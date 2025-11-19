@@ -83,6 +83,7 @@ import org.mozilla.focus.ext.components
 import org.mozilla.focus.ext.isTablet
 import org.mozilla.focus.ext.settings
 import org.mozilla.focus.media.MediaSessionService
+import org.mozilla.focus.nimbus.FocusNimbus
 import org.mozilla.focus.search.SearchFilterMiddleware
 import org.mozilla.focus.search.SearchMigration
 import org.mozilla.focus.state.AppState
@@ -153,6 +154,7 @@ class Components(
             httpsOnlyMode = settings.getHttpsOnlyMode(),
             preferredColorScheme = settings.getPreferredColorScheme(),
             cookieBannerHandlingModePrivateBrowsing = settings.getCurrentCookieBannerOptionFromSharePref().mode,
+            certificateTransparencyMode = FocusNimbus.features.pki.value().certificateTransparencyMode,
         )
     }
 
@@ -242,7 +244,7 @@ class Components(
 
     val contextMenuUseCases: ContextMenuUseCases by lazy { ContextMenuUseCases(store) }
 
-    val downloadsUseCases: DownloadsUseCases by lazy { DownloadsUseCases(store) }
+    val downloadsUseCases: DownloadsUseCases by lazy { DownloadsUseCases(store, context.applicationContext) }
 
     val appLinksUseCases: AppLinksUseCases by lazy { AppLinksUseCases(context.applicationContext) }
 
@@ -260,8 +262,20 @@ class Components(
         )
     }
 
+    val remoteSettingsService by lazy {
+        RemoteSettingsService(
+            context,
+            if (context.settings.useProductionRemoteSettingsServer) {
+                RemoteSettingsServer.Prod.into()
+            } else {
+                RemoteSettingsServer.Stage.into()
+            },
+            channel = BuildConfig.BUILD_TYPE,
+        )
+    }
+
     val experiments: NimbusApi by lazy {
-        createNimbus(context, BuildConfig.NIMBUS_ENDPOINT)
+        createNimbus(context, BuildConfig.NIMBUS_ENDPOINT, remoteSettingsService.remoteSettingsService)
     }
 
     val adsTelemetry: AdsTelemetry by lazy { AdsTelemetry() }
@@ -288,18 +302,6 @@ class Components(
     val dateTimeProvider: DateTimeProvider by lazy { DefaultDateTimeProvider() }
 
     val downloadEstimator: DownloadEstimator by lazy { DownloadEstimator(dateTimeProvider = dateTimeProvider) }
-
-    val remoteSettingsService by lazy {
-        RemoteSettingsService(
-            context,
-            if (context.settings.useProductionRemoteSettingsServer) {
-                RemoteSettingsServer.Prod.into()
-            } else {
-                RemoteSettingsServer.Stage.into()
-            },
-            channel = BuildConfig.BUILD_TYPE,
-        )
-    }
 }
 
 private fun createCrashReporter(context: Context): CrashReporter {

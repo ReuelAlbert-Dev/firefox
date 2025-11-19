@@ -7,7 +7,9 @@
 #include "builtin/temporal/Temporal.h"
 
 #include "mozilla/Casting.h"
-#include "mozilla/CheckedInt.h"
+#ifdef DEBUG
+#  include "mozilla/CheckedInt.h"
+#endif
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
@@ -15,7 +17,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
-#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <stdint.h>
@@ -26,7 +27,6 @@
 #include "jspubtd.h"
 #include "NamespaceImports.h"
 
-#include "builtin/temporal/Int128.h"
 #include "builtin/temporal/PlainDate.h"
 #include "builtin/temporal/PlainDateTime.h"
 #include "builtin/temporal/PlainMonthDay.h"
@@ -49,6 +49,7 @@
 #include "js/Value.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/GlobalObject.h"
+#include "vm/Int128.h"
 #include "vm/JSAtomState.h"
 #include "vm/JSAtomUtils.h"
 #include "vm/JSContext.h"

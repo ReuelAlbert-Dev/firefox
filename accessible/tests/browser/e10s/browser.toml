@@ -31,8 +31,6 @@ prefs = [
 
 ["browser_caching_attributes.js"]
 
-["browser_caching_description.js"]
-
 ["browser_caching_document_props.js"]
 https_first_disabled = true
 
@@ -47,13 +45,7 @@ skip-if = ["os != 'win'"]
 
 ["browser_caching_large_update.js"]
 
-["browser_caching_name.js"]
-
 ["browser_caching_position.js"]
-
-["browser_caching_relations.js"]
-
-["browser_caching_relations_002.js"]
 
 ["browser_caching_states.js"]
 

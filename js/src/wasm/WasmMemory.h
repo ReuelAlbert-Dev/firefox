@@ -22,6 +22,7 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 
+#include <compare>  // std::strong_ordering
 #include <stdint.h>
 
 #include "js/Value.h"
@@ -102,6 +103,13 @@ struct Pages {
     return length.value();
   }
 
+  // Return the byteLength for a 64-bits memory.
+  uint64_t byteLength64() const {
+    mozilla::CheckedInt<uint64_t> length(value_);
+    length *= PageSize;
+    return length.value();
+  }
+
   // Increment this pages by delta and return whether the resulting value
   // did not overflow. If there is no overflow, then this is set to the
   // resulting value.
@@ -117,12 +125,7 @@ struct Pages {
 
   // Implement pass-through comparison operators so that Pages can be compared.
 
-  bool operator==(Pages other) const { return value_ == other.value_; }
-  bool operator!=(Pages other) const { return value_ != other.value_; }
-  bool operator<=(Pages other) const { return value_ <= other.value_; }
-  bool operator<(Pages other) const { return value_ < other.value_; }
-  bool operator>=(Pages other) const { return value_ >= other.value_; }
-  bool operator>(Pages other) const { return value_ > other.value_; }
+  constexpr auto operator<=>(const Pages& other) const = default;
 };
 
 // The largest number of pages the application can request.

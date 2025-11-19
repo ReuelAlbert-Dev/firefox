@@ -10,7 +10,6 @@
 
 #include "HTMLDataListElement.h"
 #include "HTMLFormSubmissionConstants.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/Components.h"
@@ -32,7 +31,6 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/Try.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/AutocompleteInfoBinding.h"
 #include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/CustomEvent.h"
@@ -57,6 +55,7 @@
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/glean/DomMetrics.h"
 #include "nsAttrValueInlines.h"
+#include "nsAttrValueOrString.h"
 #include "nsBaseCommandController.h"
 #include "nsCRTGlue.h"
 #include "nsColorControlFrame.h"
@@ -67,6 +66,7 @@
 #include "nsIEditor.h"
 #include "nsIFilePicker.h"
 #include "nsIFormControl.h"
+#include "nsIFormFillController.h"
 #include "nsIFrame.h"
 #include "nsIMutationObserver.h"
 #include "nsIPromptCollection.h"
@@ -101,13 +101,11 @@
 #include "nsIObserverService.h"
 
 // input type=image
-#include <limits>
 
 #include "HTMLSplitOnSpacesTokenizer.h"
 #include "imgRequestProxy.h"
 #include "mozAutoDocUpdate.h"
 #include "mozilla/LookAndFeel.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/DirectionalityUtils.h"
 #include "nsContentCreatorFunctions.h"
@@ -238,7 +236,7 @@ class DispatchChangeEventCallback final : public GetFilesCallback {
     }
 
     mInputElement->SetFilesOrDirectories(array, true);
-    Unused << NS_WARN_IF(NS_FAILED(DispatchEvents()));
+    (void)NS_WARN_IF(NS_FAILED(DispatchEvents()));
   }
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
@@ -343,7 +341,7 @@ UploadLastDir::ContentPrefCallback::HandleCompletion(uint16_t aReason) {
 
   if (!prefStr.IsEmpty()) {
     nsresult rv = NS_NewLocalFile(prefStr, getter_AddRefs(localFile));
-    Unused << NS_WARN_IF(NS_FAILED(rv));
+    (void)NS_WARN_IF(NS_FAILED(rv));
   }
 
   if (localFile) {
@@ -914,6 +912,14 @@ nsresult HTMLInputElement::InitFilePicker(FilePickerType aType) {
   nsCOMPtr<nsIFilePickerShownCallback> callback =
       new HTMLInputElement::nsFilePickerShownCallback(this, filePicker);
 
+  nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
+  if (obs) {
+    // Used by WebDriver BiDi to emit input.fileDialogOpened whenever an input
+    // type=file opens a file picker.
+    obs->NotifyObservers(ToSupports(this), "file-input-picker-opening",
+                         nullptr);
+  }
+
   if (!oldFiles.IsEmpty() && aType != FILE_PICKER_DIRECTORY) {
     nsAutoString path;
 
@@ -1299,17 +1305,17 @@ void HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
   if (aNameSpaceID == kNameSpaceID_None) {
     bool needValidityUpdate = false;
     if (aName == nsGkAtoms::src) {
+      nsAttrValueOrString value(aValue);
       mSrcTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
-          this, aValue ? aValue->GetStringValue() : EmptyString(),
-          aSubjectPrincipal);
+          this, value.String(), aSubjectPrincipal);
       if (aNotify && mType == FormControlType::InputImage) {
         if (aValue) {
           // Mark channel as urgent-start before load image if the image load is
           // initiated by a user interaction.
           mUseUrgentStartForChannel = UserActivation::IsHandlingUserInput();
 
-          LoadImage(aValue->GetStringValue(), true, aNotify,
-                    eImageLoadType_Normal, mSrcTriggeringPrincipal);
+          LoadImage(value.String(), true, aNotify, eImageLoadType_Normal,
+                    mSrcTriggeringPrincipal);
         } else {
           // Null value means the attr got unset; drop the image
           CancelImageRequests(aNotify);
@@ -1667,7 +1673,7 @@ void HTMLInputElement::GetNonFileValueInternal(nsAString& aValue) const {
     case VALUE_MODE_VALUE:
       if (IsSingleLineTextControl(false)) {
         if (mInputData.mState) {
-          mInputData.mState->GetValue(aValue, true, /* aForDisplay = */ false);
+          mInputData.mState->GetValue(aValue, /* aForDisplay = */ false);
         } else {
           // Value hasn't been set yet.
           aValue.Truncate();
@@ -2212,13 +2218,13 @@ void HTMLInputElement::MozSetFileNameArray(const Sequence<nsString>& aFileNames,
                          nsASCIICaseInsensitiveStringComparator)) {
       // Converts the URL string into the corresponding nsIFile if possible
       // A local file will be created if the URL string begins with file://
-      Unused << NS_GetFileFromURLSpec(NS_ConvertUTF16toUTF8(aFileNames[i]),
-                                      getter_AddRefs(file));
+      (void)NS_GetFileFromURLSpec(NS_ConvertUTF16toUTF8(aFileNames[i]),
+                                  getter_AddRefs(file));
     }
 
     if (!file) {
       // this is no "file://", try as local file
-      Unused << NS_NewLocalFile(aFileNames[i], getter_AddRefs(file));
+      (void)NS_NewLocalFile(aFileNames[i], getter_AddRefs(file));
     }
 
     if (!file) {
@@ -5901,7 +5907,7 @@ void HTMLInputElement::ShowPicker(ErrorResult& aRv) {
   // InitFilePicker() and InitColorPicker() consume it themselves,
   // so only consume in this function if not those.
 
-  // Step 4. If element's type attribute is in the File Upload state, then run
+  // Step 5. If element's type attribute is in the File Upload state, then run
   // these steps in parallel:
   if (mType == FormControlType::InputFile) {
     FilePickerType type = FILE_PICKER_FILE;
@@ -5913,9 +5919,11 @@ void HTMLInputElement::ShowPicker(ErrorResult& aRv) {
     return;
   }
 
-  // Step 5. Otherwise, the user agent should show any relevant user interface
+  // Step 6. Otherwise, the user agent should show any relevant user interface
   // for selecting a value for element, in the way it normally would when the
   // user interacts with the control
+
+  // Step 6 for color
   if (mType == FormControlType::InputColor) {
     InitColorPicker();
     return;
@@ -5928,6 +5936,7 @@ void HTMLInputElement::ShowPicker(ErrorResult& aRv) {
     return;
   }
 
+  // Step 6 for date and time types
   if (IsDateTimeTypeSupported(mType)) {
     if (CreatesDateTimeWidget()) {
       if (RefPtr<Element> dateTimeBoxElement = GetDateTimeBoxElement()) {
@@ -5941,6 +5950,19 @@ void HTMLInputElement::ShowPicker(ErrorResult& aRv) {
       DateTimeValue value;
       GetDateTimeInputBoxValue(value);
       OpenDateTimePicker(value);
+    }
+    return;
+  }
+
+  // Step 6 for input elements with a suggestions source element.
+  // I.e. show the autocomplete dropdown based on the list attribute.
+  // XXX Form-fill support on android is bug 1535985.
+  if (StaticPrefs::dom_input_showPicker_datalist_enabled() &&
+      IsSingleLineTextControl(true) && GetList()) {
+    if (nsCOMPtr<nsIFormFillController> controller =
+            do_GetService("@mozilla.org/satchel/form-fill-controller;1")) {
+      controller->SetControlledElement(this);
+      controller->ShowPopup();
     }
   }
 }
@@ -7065,7 +7087,7 @@ bool HTMLInputElement::ValueChanged() const { return mValueChanged; }
 
 void HTMLInputElement::GetTextEditorValue(nsAString& aValue) const {
   if (TextControlState* state = GetEditorState()) {
-    state->GetValue(aValue, /* aIgnoreWrap = */ true, /* aForDisplay = */ true);
+    state->GetValue(aValue, /* aForDisplay = */ true);
   }
 }
 

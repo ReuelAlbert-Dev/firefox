@@ -6,7 +6,6 @@
 
 #include "Telemetry.h"
 
-#include <algorithm>
 #include <prio.h>
 #include <prproces.h>
 #if defined(XP_UNIX) && !defined(XP_DARWIN)
@@ -34,11 +33,8 @@
 #endif
 #include "mozilla/Components.h"
 #include "mozilla/DataMutex.h"
-#include "mozilla/DebugOnly.h"
-#include "mozilla/FStream.h"
 #include "mozilla/IOInterposer.h"
 #include "mozilla/Likely.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/MemoryTelemetry.h"
 #include "mozilla/ModuleUtils.h"
@@ -47,7 +43,6 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/StartupTimeline.h"
 #include "mozilla/StaticPtr.h"
-#include "mozilla/Unused.h"
 #if defined(XP_WIN)
 #  include "mozilla/WinDllServices.h"
 #endif
@@ -1212,7 +1207,7 @@ TelemetryImpl::FlushBatchedChildTelemetry() {
 
 NS_IMETHODIMP
 TelemetryImpl::EarlyInit() {
-  Unused << MemoryTelemetry::Get();
+  (void)MemoryTelemetry::Get();
 
   return NS_OK;
 }

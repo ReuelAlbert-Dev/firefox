@@ -12,6 +12,7 @@
   It implements all the common DOM interfaces and handles attributes.
 */
 
+#include "NonCustomCSSPropertyId.h"
 #include "gfxMatrix.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/RefPtr.h"
@@ -21,7 +22,6 @@
 #include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/gfx/MatrixFwd.h"
-#include "nsCSSPropertyID.h"
 #include "nsChangeHint.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsError.h"
@@ -150,6 +150,13 @@ class SVGElement : public SVGElementBase  // nsIContent
   bool IsStringAnimatable(uint8_t aAttrEnum) {
     return GetStringInfo().mInfos[aAttrEnum].mIsAnimatable;
   }
+  bool LengthAttrIsNonNegative(uint8_t aAttrEnum) {
+    const nsStaticAtom* name = GetLengthInfo().mInfos[aAttrEnum].mName;
+    return name == nsGkAtoms::width || name == nsGkAtoms::height ||
+           name == nsGkAtoms::r || name == nsGkAtoms::rx ||
+           name == nsGkAtoms::ry || name == nsGkAtoms::markerWidth ||
+           name == nsGkAtoms::markerHeight || name == nsGkAtoms::textLength;
+  }
   bool NumberAttrAllowsPercentage(uint8_t aAttrEnum) {
     return IsSVGElement(nsGkAtoms::stop) &&
            GetNumberInfo().mInfos[aAttrEnum].mName == nsGkAtoms::offset;
@@ -159,7 +166,7 @@ class SVGElement : public SVGElementBase  // nsIContent
 
   enum class ValToUse { Base, Anim };
   static bool UpdateDeclarationBlockFromLength(
-      const StyleLockedDeclarationBlock&, nsCSSPropertyID,
+      const StyleLockedDeclarationBlock&, NonCustomCSSPropertyId,
       const SVGAnimatedLength&, ValToUse);
   static bool UpdateDeclarationBlockFromPath(const StyleLockedDeclarationBlock&,
                                              const SVGAnimatedPathSegList&,

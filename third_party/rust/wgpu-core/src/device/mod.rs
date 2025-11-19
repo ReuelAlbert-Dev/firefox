@@ -35,10 +35,6 @@ pub const SHADER_STAGE_COUNT: usize = hal::MAX_CONCURRENT_SHADER_STAGES;
 // value is enough for a 16k texture with float4 format.
 pub(crate) const ZERO_BUFFER_SIZE: BufferAddress = 512 << 10;
 
-// If a submission is not completed within this time, we go off into UB land.
-// See https://github.com/gfx-rs/wgpu/issues/4589. 60s to reduce the chances of this.
-const CLEANUP_WAIT_MS: u32 = 60000;
-
 pub(crate) const ENTRYPOINT_FAILURE_ERROR: &str = "The given EntryPoint is Invalid";
 
 pub type DeviceDescriptor<'a> = wgt::DeviceDescriptor<Label<'a>>;
@@ -65,7 +61,7 @@ impl<T: PartialEq> Eq for AttachmentData<T> {}
 pub(crate) struct RenderPassContext {
     pub attachments: AttachmentData<TextureFormat>,
     pub sample_count: u32,
-    pub multiview: Option<NonZeroU32>,
+    pub multiview_mask: Option<NonZeroU32>,
 }
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
@@ -148,10 +144,10 @@ impl RenderPassContext {
                 res: res.error_ident(),
             });
         }
-        if self.multiview != other.multiview {
+        if self.multiview_mask != other.multiview_mask {
             return Err(RenderPassCompatibilityError::IncompatibleMultiview {
-                expected: self.multiview,
-                actual: other.multiview,
+                expected: self.multiview_mask,
+                actual: other.multiview_mask,
                 res: res.error_ident(),
             });
         }
@@ -513,6 +509,10 @@ pub fn create_validator(
     caps.set(
         Caps::TEXTURE_EXTERNAL,
         features.intersects(wgt::Features::EXTERNAL_TEXTURE),
+    );
+    caps.set(
+        Caps::SHADER_BARYCENTRICS,
+        features.intersects(wgt::Features::SHADER_BARYCENTRICS),
     );
 
     naga::valid::Validator::new(flags, caps)

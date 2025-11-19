@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This file is loaded into the browser window scope.
-/* eslint-env mozilla/browser-window */
-
 const {
   FX_MONITOR_OAUTH_CLIENT_ID,
   FX_RELAY_OAUTH_CLIENT_ID,
@@ -919,6 +916,7 @@ var gSync = {
 
   /**
    * Potential network call. Fetch the list of OAuth clients attached to the current Mozilla account.
+   *
    * @returns {Promise<boolean>} - Resolves to true if successful, false otherwise.
    */
   async fetchListOfOAuthClients() {
@@ -1113,10 +1111,12 @@ var gSync = {
     this.enableSendTabIfValidTab();
 
     if (!this.getSendTabTargets().length) {
-      PanelMultiView.getViewNode(
-        document,
-        "PanelUI-fxa-menu-sendtab-button"
-      ).hidden = true;
+      for (const id of [
+        "PanelUI-fxa-menu-sendtab-button",
+        "PanelUI-fxa-menu-sendtab-separator",
+      ]) {
+        PanelMultiView.getViewNode(document, id).hidden = true;
+      }
     }
 
     if (anchor.getAttribute("open") == "true") {
@@ -1370,10 +1370,12 @@ var gSync = {
       t => !!BrowserUtils.getShareableURL(t.linkedBrowser.currentURI)
     );
 
-    PanelMultiView.getViewNode(
-      document,
-      "PanelUI-fxa-menu-sendtab-button"
-    ).hidden = !canSendAllURIs;
+    for (const id of [
+      "PanelUI-fxa-menu-sendtab-button",
+      "PanelUI-fxa-menu-sendtab-separator",
+    ]) {
+      PanelMultiView.getViewNode(document, id).hidden = !canSendAllURIs;
+    }
   },
 
   // This is mis-named - it can be used to record any FxA UI telemetry, whether from
@@ -1999,6 +2001,10 @@ var gSync = {
 
     let sendTabsToDevice = document.getElementById("context_sendTabToDevice");
     sendTabsToDevice.disabled = !enabled;
+    let sendTabToDeviceSeparator = document.getElementById(
+      "context_sendTabToDeviceSeparator"
+    );
+    sendTabToDeviceSeparator.disabled = !enabled;
 
     if (hideItems || !hasASendableURI) {
       sendTabsToDevice.hidden = true;
@@ -2047,10 +2053,12 @@ var gSync = {
       "context-sendpagetodevice",
       !hideItems && showSendPage
     );
-    contextMenu.showItem(
+    for (const id of [
       "context-sendlinktodevice",
-      !hideItems && showSendLink
-    );
+      "context-sep-sendlinktodevice",
+    ]) {
+      contextMenu.showItem(id, !hideItems && showSendLink);
+    }
 
     if (!showSendLink && !showSendPage) {
       return false;
@@ -2421,8 +2429,10 @@ var gSync = {
     }
   },
 
-  /** Checks if the current list of attached clients to the Mozilla account
+  /**
+   * Checks if the current list of attached clients to the Mozilla account
    * has a service associated with the passed in Id
+   *
    *  @param {string} clientId
    *   A known static Id from FxA that identifies the service it's associated with
    *  @returns {boolean}

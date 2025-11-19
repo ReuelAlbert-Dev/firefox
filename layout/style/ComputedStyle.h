@@ -66,8 +66,15 @@ class ComputedStyle {
                 ServoComputedDataForgotten aComputedValues);
 
   // Returns the computed (not resolved) value of the given property.
-  void GetComputedPropertyValue(nsCSSPropertyID aId, nsACString& aOut) const {
+  void GetComputedPropertyValue(NonCustomCSSPropertyId aId,
+                                nsACString& aOut) const {
     Servo_GetComputedValue(this, aId, &aOut);
+  }
+
+  // Returns the computed typed value of the given property.
+  bool GetPropertyTypedValue(const nsACString& aProperty,
+                             StylePropertyTypedValueResult& aOut) const {
+    return Servo_GetComputedTypedValue(this, &aProperty, &aOut);
   }
 
   // Return the ComputedStyle whose style data should be used for the R,
@@ -189,6 +196,8 @@ class ComputedStyle {
   }
 
   bool HasAnchorPosReference() const;
+
+  bool MaybeAnchorPosReferencesDiffer(const ComputedStyle* aOther) const;
 
   ComputedStyle* GetCachedInheritingAnonBoxStyle(
       PseudoStyleType aPseudoType) const {

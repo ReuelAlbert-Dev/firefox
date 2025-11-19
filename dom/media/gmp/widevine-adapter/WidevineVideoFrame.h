@@ -6,10 +6,7 @@
 #ifndef WidevineVideoFrame_h_
 #define WidevineVideoFrame_h_
 
-#include <vector>
-
 #include "content_decryption_module.h"
-#include "mozilla/Attributes.h"
 #include "stddef.h"
 
 namespace mozilla {

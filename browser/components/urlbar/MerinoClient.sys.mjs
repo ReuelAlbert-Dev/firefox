@@ -6,13 +6,13 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = XPCOMUtils.declareLazy({
   ObliviousHTTP: "resource://gre/modules/ObliviousHTTP.sys.mjs",
-  SkippableTimer: "resource:///modules/UrlbarUtils.sys.mjs",
-  UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
-  UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
+  SkippableTimer: "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs",
+  UrlbarPrefs: "moz-src:///browser/components/urlbar/UrlbarPrefs.sys.mjs",
+  UrlbarUtils: "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs",
 });
 
 /**
- * @import {SkippableTimer} from "resource:///modules/UrlbarUtils.sys.mjs"
+ * @import {SkippableTimer} from "moz-src:///browser/components/urlbar/UrlbarUtils.sys.mjs"
  * @import {OHTTPResponse} from "resource://gre/modules/ObliviousHTTP.sys.mjs"
  */
 
@@ -54,17 +54,6 @@ export class MerinoClient {
    */
   static get SEARCH_PARAMS() {
     return { ...SEARCH_PARAMS };
-  }
-
-  /**
-   * @returns {boolean}
-   *   Returns true if the OHTTP Prefs are defined for use.
-   */
-  static get hasOHTTPPrefs() {
-    return (
-      lazy.UrlbarPrefs.get("merinoOhttpConfigURL") &&
-      lazy.UrlbarPrefs.get("merinoOhttpRelayURL")
-    );
   }
 
   /**
@@ -239,7 +228,6 @@ export class MerinoClient {
     // params.
 
     let details = { query, providers, timeoutMs, url: url.toString() };
-    this.#lazy.logger.debug("Fetch details", details);
 
     // If caching is enabled, generate the cache key for this request URL.
     let cacheKey;
@@ -253,7 +241,7 @@ export class MerinoClient {
         Date.now() < this.#cache.dateMs + this.#cachePeriodMs &&
         this.#cache.key == cacheKey
       ) {
-        this.#lazy.logger.debug("Fetch served from cache");
+        this.#lazy.logger.debug("Fetch served from cache", details);
         return this.#cache.suggestions;
       }
     }
@@ -283,6 +271,11 @@ export class MerinoClient {
       this.#sequenceNumber.toString()
     );
     this.#sequenceNumber++;
+
+    this.#lazy.logger.debug("Fetch details", {
+      ...details,
+      url: url.toString(),
+    });
 
     /** @type {(category: string) => void} */
     let recordResponse = category => {
@@ -328,9 +321,11 @@ export class MerinoClient {
           // `response` in the outer scope and set it here instead of returning
           // the response from this inner function and assuming it will also be
           // returned by `Promise.race`.
-          response = await this.#fetch(url, { signal: controller.signal });
+          let result = await this.#fetch(url, { signal: controller.signal });
+          response = result?.response;
           this.#lazy.logger.debug("Got response", {
             status: response?.status,
+            elapsedMs: result ? result.elapsedMs : "n/a",
             ...details,
           });
           if (!response?.ok) {
@@ -470,8 +465,14 @@ export class MerinoClient {
    *   Options object.
    * @param {AbortSignal} options.signal
    *   An `AbortController.signal` for the fetch.
-   * @returns {Promise<?OHTTPResponse|?Response>}
-   *   The fetch `Response` or null if a response can't be fetched.
+   * @returns {Promise<?FetchResult>}
+   *   The fetch result, or null if the fetch couldn't be started.
+   *
+   * @typedef {object} FetchResult
+   * @property {OHTTPResponse|Response} response
+   *   The response object.
+   * @property {number} elapsedMs
+   *   The duration of the fetch in ms.
    */
   async #fetch(url, { signal }) {
     let configUrl;
@@ -510,7 +511,7 @@ export class MerinoClient {
       elapsedMs,
     ]);
 
-    return response;
+    return { response, elapsedMs };
   }
 
   static _test_disableCache = false;

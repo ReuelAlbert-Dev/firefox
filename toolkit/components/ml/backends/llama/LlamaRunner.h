@@ -21,7 +21,6 @@
 #include "mozilla/llama/LlamaBackend.h"
 
 #include "prsystem.h"
-#include "mozilla/Casting.h"
 #include "mozilla/SPSCQueue.h"
 #include "mozilla/Array.h"
 #include <cstdint>
@@ -33,7 +32,6 @@
 
 #include "nsThreadUtils.h"
 #include "mozilla/TaskQueue.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/RefPtr.h"
 #include "nsIThread.h"
 #include "nsError.h"

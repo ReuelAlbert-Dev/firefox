@@ -390,26 +390,16 @@ export class PlacesFrecencyRecalculator {
   }
 
   /**
-   * Decays frecency and adaptive history.
+   * Decays adaptive history.
    *
    * @returns {Promise<void>} once the process is complete. Never rejects.
    */
   async decay() {
-    lazy.logger.trace("Decay frecency");
+    lazy.logger.trace("Decay adaptive history.");
     let timerId = Glean.places.idleFrecencyDecayTime.start();
-    // Ensure moz_places_afterupdate_frecency_trigger ignores decaying
-    // frecency changes.
-    lazy.PlacesUtils.history.isFrecencyDecaying = true;
     try {
       let db = await lazy.PlacesUtils.promiseUnsafeWritableDBConnection();
       await db.executeTransaction(async function () {
-        // Decay all frecency rankings to reduce value of pages that haven't
-        // been visited in a while.
-        await db.executeCached(
-          `UPDATE moz_places SET frecency = ROUND(frecency * :decay_rate)
-            WHERE frecency > 0 AND recalc_frecency = 0`,
-          { decay_rate: lazy.frecencyDecayRate }
-        );
         // Decay potentially unused adaptive entries (e.g. those that are at 1)
         // to allow better chances for new entries that will start at 1.
         await db.executeCached(
@@ -428,14 +418,11 @@ export class PlacesFrecencyRecalculator {
         );
 
         Glean.places.idleFrecencyDecayTime.stopAndAccumulate(timerId);
-        PlacesObservers.notifyListeners([new PlacesRanking()]);
       });
     } catch (ex) {
       Glean.places.idleFrecencyDecayTime.cancel(timerId);
       console.error(ex);
       lazy.logger.error(ex);
-    } finally {
-      lazy.PlacesUtils.history.isFrecencyDecaying = false;
     }
   }
 
@@ -635,7 +622,20 @@ class AlternativeFrecencyHelper {
         await lazy.PlacesUtils.withConnectionWrapper(
           `PlacesFrecencyRecalculator :: ${type} alternative frecency set recalc`,
           async db => {
-            await db.execute(`UPDATE ${set.table} SET recalc_alt_frecency = 1`);
+            // We must avoid NULL values as SQL expressions like `frecency <> 0`
+            // will evaluate to NULL, instead of TRUE. To ensure entires are
+            // properly filtered in queries, we set alt_frecency = -1 that is
+            // a valid altough very low ranking score.
+            // We aonly updated entries with a NULL alt_frecency, since new
+            // visits may have already triggers recalculation for some entries.
+            // This works as fare as alt_frecency values are cleared to NULL
+            // when alternative frecency is disabled.
+            await db.execute(
+              `UPDATE ${set.table}
+               SET alt_frecency = CASE WHEN frecency = 0 THEN 0 ELSE -1 END,
+               recalc_alt_frecency = CASE WHEN frecency = 0 THEN 0 ELSE 1 END
+               WHERE alt_frecency IS NULL`
+            );
           }
         );
         await lazy.PlacesUtils.metadata.set(set.metadataKey, set.variables);

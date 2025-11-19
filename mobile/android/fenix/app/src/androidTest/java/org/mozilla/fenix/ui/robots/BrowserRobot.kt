@@ -10,7 +10,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
-import android.widget.TimePicker
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertAny
 import androidx.compose.ui.test.assertIsDisplayed
@@ -32,10 +31,8 @@ import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.longClick
 import androidx.test.espresso.assertion.ViewAssertions.matches
-import androidx.test.espresso.contrib.PickerActions
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.Visibility
-import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withEffectiveVisibility
@@ -68,6 +65,7 @@ import org.mozilla.fenix.helpers.MatcherHelper.assertItemTextEquals
 import org.mozilla.fenix.helpers.MatcherHelper.assertUIObjectExists
 import org.mozilla.fenix.helpers.MatcherHelper.assertUIObjectIsGone
 import org.mozilla.fenix.helpers.MatcherHelper.itemContainingText
+import org.mozilla.fenix.helpers.MatcherHelper.itemWithClassNameAndContainingDescription
 import org.mozilla.fenix.helpers.MatcherHelper.itemWithDescription
 import org.mozilla.fenix.helpers.MatcherHelper.itemWithResId
 import org.mozilla.fenix.helpers.MatcherHelper.itemWithResIdAndText
@@ -769,13 +767,21 @@ class BrowserRobot {
     }
 
     fun selectTime(hour: Int, minute: Int) {
-        Log.i(TAG, "selectTime: Trying to select time picker hour: $hour and minute: $minute")
-        onView(
-            isAssignableFrom(TimePicker::class.java),
-        ).inRoot(
-            isDialog(),
-        ).perform(PickerActions.setTime(hour, minute))
-        Log.i(TAG, "selectTime: Selected time picker hour: $hour and minute: $minute")
+        Log.i(TAG, "selectTime: Trying to select time picker hour: $hour and minute: $minute AM")
+        itemWithClassNameAndContainingDescription(
+            "android.widget.TextView",
+            "$hour o'clock",
+        ).click()
+        waitForAppWindowToBeUpdated()
+        itemWithClassNameAndContainingDescription(
+            "android.widget.TextView",
+            "$minute minutes",
+        ).click()
+        itemWithResIdContainingText(
+            "$packageName:id/material_clock_period_am_button",
+            "AM",
+        ).click()
+        Log.i(TAG, "selectTime: Selected time picker hour: $hour and minute: $minute AM")
     }
 
     fun verifySelectedDate() {
@@ -918,6 +924,22 @@ class BrowserRobot {
     fun verifyOpenLinkInAnotherAppPrompt(appName: String) {
         assertUIObjectExists(
             itemWithResId("$packageName:id/parentPanel"),
+            itemContainingText(
+                getStringResource(
+                    applinksR.string.mozac_feature_applinks_normal_confirm_dialog_title_with_app_name,
+                    appName,
+                ),
+            ),
+            itemContainingText(
+                getStringResource(
+                    applinksR.string.mozac_feature_applinks_normal_confirm_dialog_message,
+                ),
+            ),
+        )
+    }
+
+    fun verifyOpenLinkInAnotherAppPromptIsNotShown() {
+        assertUIObjectIsGone(
             itemContainingText(
                 getStringResource(
                     applinksR.string.mozac_feature_applinks_normal_confirm_dialog_title_with_app_name,
@@ -1183,7 +1205,11 @@ class BrowserRobot {
     fun verifyWebCompatReporterViewItems(composeTestRule: ComposeTestRule, websiteURL: String) {
         Log.i(TAG, "verifyWebCompatReporterViewItems: Trying to verify that the report broken site description is displayed")
         composeTestRule.onNodeWithContentDescription(
-            getStringResource(R.string.webcompat_reporter_description_2, appName) + " " + getStringResource(R.string.a11y_links_available),
+            getStringResource(
+                R.string.webcompat_reporter_description_3,
+                appName,
+                getStringResource(R.string.webcompat_reporter_learn_more),
+            ) + " " + getStringResource(R.string.a11y_links_available),
         ).assertIsDisplayed()
         Log.i(TAG, "verifyWebCompatReporterViewItems: Verified that the report broken site description is displayed")
         Log.i(TAG, "verifyWebCompatReporterViewItems: Trying to verify that the \"URL\" header is displayed")
@@ -1220,7 +1246,7 @@ class BrowserRobot {
             )
         }
         Log.i(TAG, "verifyWebCompatReporterViewItems: Trying to verify that the \"Cancel\" button is displayed")
-        composeTestRule.onNodeWithText(getStringResource(R.string.webcompat_reporter_cancel))
+        composeTestRule.onNodeWithText(getStringResource(R.string.webcompat_reporter_cancel)).assertIsDisplayed()
         Log.i(TAG, "verifyWebCompatReporterViewItems: Verified that the \"Cancel \" button is displayed")
         Log.i(TAG, "verifyWebCompatReporterViewItems: Trying to verify that the \"Send\" button is displayed")
         composeTestRule.onNodeWithText(getStringResource(R.string.webcompat_reporter_send)).assertIsDisplayed()

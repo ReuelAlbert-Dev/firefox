@@ -19,6 +19,15 @@ for (const pref of devtoolsPreferences.getChildList("")) {
   }
 }
 
+{
+  const { PromiseTestUtils } = ChromeUtils.importESModule(
+    "resource://testing-common/PromiseTestUtils.sys.mjs"
+  );
+  PromiseTestUtils.allowMatchingRejectionsGlobally(
+    /REDUX_MIDDLEWARE_IGNORED_REDUX_ACTION/
+  );
+}
+
 async function resetPreferencesModifiedDuringTest() {
   if (!isXpcshell) {
     await SpecialPowers.flushPrefEnv();
@@ -534,6 +543,7 @@ function waitForAllTargetsToBeAttached(targetCommand) {
 
 /**
  * Add a new test tab in the browser and load the given url.
+ *
  * @param {String} url The url to be loaded in the new tab
  * @param {Object} options Object with various optional fields:
  *   - {Boolean} background If true, open the tab in background
@@ -580,6 +590,7 @@ async function addTab(url, options = {}) {
 
 /**
  * Remove the given tab.
+ *
  * @param {Object} tab The tab to be removed.
  * @return Promise<undefined> resolved when the tab is successfully removed.
  */
@@ -883,6 +894,8 @@ function _watchForPanelReload(toolbox, toolId) {
 
       info("Waiting for inspector updates after page reload");
       await onReloaded;
+
+      info("Received 'reloaded' event for inspector");
     };
   } else if (
     ["netmonitor", "accessibility", "webconsole", "jsdebugger"].includes(toolId)
@@ -891,6 +904,8 @@ function _watchForPanelReload(toolbox, toolId) {
     return async function () {
       info(`Waiting for ${toolId} updates after page reload`);
       await onReloaded;
+
+      info(`Received 'reloaded' event for ${toolId}`);
     };
   }
   return null;
@@ -1016,6 +1031,7 @@ async function createAndAttachTargetForTab(tab) {
 
 /**
  * Open the inspector in a tab with given URL.
+ *
  * @param {string} url  The URL to open.
  * @param {String} hostType Optional hostType, as defined in Toolbox.HostType
  * @return A promise that is resolved once the tab and inspector have loaded
@@ -1061,6 +1077,7 @@ var waitForTime = DevToolsUtils.waitForTime;
 
 /**
  * Wait for a tick.
+ *
  * @return {Promise}
  */
 function waitForTick() {
@@ -1269,6 +1286,7 @@ function once(target, eventName, useCapture = false) {
  * is either not common-enough to be in head.js, or that is located in a
  * separate directory.
  * The script will be loaded synchronously and in the test's scope.
+ *
  * @param {String} filePath The file path, relative to the current directory.
  *                 Examples:
  *                 - "helper_attributes_test_runner.js"
@@ -1280,6 +1298,7 @@ function loadHelperScript(filePath) {
 
 /**
  * Open the toolbox in a given tab.
+ *
  * @param {XULNode} tab The tab the toolbox should be opened in.
  * @param {String} toolId Optional. The ID of the tool to be selected.
  * @param {String} hostType Optional. The type of toolbox host to be used.
@@ -1310,6 +1329,7 @@ async function openToolboxForTab(tab, toolId, hostType) {
 
 /**
  * Add a new tab and open the toolbox in it.
+ *
  * @param {String} url The URL for the tab to be opened.
  * @param {String} toolId Optional. The ID of the tool to be selected.
  * @param {String} hostType Optional. The type of toolbox host to be used.
@@ -1323,6 +1343,7 @@ async function openNewTabAndToolbox(url, toolId, hostType) {
 
 /**
  * Close a tab and if necessary, the toolbox that belongs to it
+ *
  * @param {Tab} tab The tab to close.
  * @return {Promise} Resolves when the toolbox and tab have been destroyed and
  * closed.
@@ -1339,6 +1360,7 @@ async function closeTabAndToolbox(tab = gBrowser.selectedTab) {
 
 /**
  * Close a toolbox and the current tab.
+ *
  * @param {Toolbox} toolbox The toolbox to close.
  * @return {Promise} Resolves when the toolbox and tab have been destroyed and
  * closed.
@@ -1496,8 +1518,11 @@ function isWindows() {
  *
  * The server can be accessed like:
  *
- *   const server = createTestHTTPServer();
- *   let url = "http://localhost: " + server.identity.primaryPort + "/path";
+ * ```js
+ * const server = createTestHTTPServer();
+ * let url = "http://localhost: " + server.identity.primaryPort + "/path";
+ * ```
+ *
  * @returns {HttpServer}
  */
 function createTestHTTPServer() {
@@ -1514,7 +1539,7 @@ function createTestHTTPServer() {
   return server;
 }
 
-/*
+/**
  * Register an actor in the content process of the current tab.
  *
  * Calling ActorRegistry.registerModule only registers the actor in the current process.
@@ -1778,6 +1803,7 @@ function checkImageColorAt({ image, x = 0, y, expectedColor, label }) {
 
 /**
  * Wait until the store has reached a state that matches the predicate.
+ *
  * @param Store store
  *        The Redux store being used.
  * @param function predicate
@@ -2012,7 +2038,7 @@ async function waitForNextTopLevelDomCompleteResource(commands) {
  * early.
  *
  * @param {BrowsingContext} context
- **/
+ */
 function waitForPresShell(context) {
   return SpecialPowers.spawn(context, [], async () => {
     const winUtils = SpecialPowers.getDOMWindowUtils(content);
@@ -2514,6 +2540,7 @@ async function toggleJsTracer(toolbox) {
 /**
  * Retrieve the context menu element corresponding to the provided id, for the
  * provided netmonitor instance.
+ *
  * @param {Object} monitor
  *        The network monitor object
  * @param {String} id
@@ -2524,9 +2551,10 @@ function getNetmonitorContextMenuItem(monitor, id) {
   return Menu.getMenuElementById(id, monitor.panelWin.document);
 }
 
-/*
+/**
  * Selects and clicks the context menu item of the netmonitor, it should
  * also wait for the popup to close.
+ *
  * @param {Object} monitor
  *        The network monitor object
  * @param {String} id
@@ -2601,4 +2629,93 @@ async function waitForConsoleMessageLink(toolbox, messageText, linkText) {
 
     return linkEl;
   });
+}
+
+/**
+ * Click on a Frame component link and ensure it opens the debugger on the expected location
+ *
+ * @param {Toolbox} toolbox
+ * @param {DOMElement} frameLinkNode
+ * @param {Object] options
+ * @param {String|null} options.url
+ * @param {Number|null} options.line
+ * @param {Number|null} options.column
+ * @param {String|undefined} logPointExpr
+ */
+async function clickAndAssertFrameLinkNode(
+  toolbox,
+  frameLinkNode,
+  { url, line, column },
+  logPointExpr
+) {
+  info("checking click on node location");
+
+  // If the debugger hasn't fully loaded yet and breakpoints are still being
+  // added when we click on the logpoint link, the logpoint panel might not
+  // render. Work around this for now, see bug 1592854.
+  if (logPointExpr) {
+    await waitForTime(1000);
+  }
+
+  const onSourceOpened = toolbox.once("source-opened-in-debugger");
+
+  EventUtils.sendMouseEvent(
+    { type: "click" },
+    // The frame DOM Element may be coming from a Debugger Frame component, or a shared compoentn Frame component
+    // and the link would be at a distinct selector.
+    frameLinkNode.querySelector(".frame-link-filename") ||
+      frameLinkNode.querySelector(".location")
+  );
+
+  // Wait for the source to finish loading, if it is pending.
+  await onSourceOpened;
+
+  // Wait for the debugger to have fully processed the opened source
+  const dbg = toolbox.getPanel("jsdebugger");
+
+  const selectedLocation = await waitFor(() =>
+    dbg._selectors.getSelectedLocation(dbg._getState())
+  );
+
+  if (typeof url == "string") {
+    const frameUrl = frameLinkNode.getAttribute("data-url");
+    is(frameUrl, url, "Frame link url is correct");
+
+    is(selectedLocation.source.url, url, "debugger opened url is correct");
+  }
+  if (typeof line == "number") {
+    const frameLine = frameLinkNode.getAttribute("data-line");
+    is(parseInt(frameLine, 10), line, "Frame link line is correct");
+
+    is(selectedLocation.line, line, "debugger opened line is correct");
+  }
+  if (typeof column == "number") {
+    // Note that debugger's Frame component doesn't show the column
+    const frameColumn = frameLinkNode.getAttribute("data-column");
+    is(parseInt(frameColumn, 10), column, "Frame link column is correct");
+
+    // Redux location object uses 0-based column, while we display a 1-based one.
+    is(
+      selectedLocation.column + 1,
+      column,
+      "debugger opened column is correct"
+    );
+  }
+
+  if (logPointExpr !== undefined && logPointExpr !== "") {
+    const inputEl = dbg.panelWin.document.activeElement;
+
+    const isPanelFocused =
+      inputEl.classList.contains("cm-content") &&
+      inputEl.closest(".conditional-breakpoint-panel.log-point");
+
+    ok(isPanelFocused, "The textarea of logpoint panel is focused");
+
+    const inputValue = inputEl.parentElement.parentElement.innerText.trim();
+    is(
+      inputValue,
+      logPointExpr,
+      "The input in the open logpoint panel matches the logpoint expression"
+    );
+  }
 }

@@ -16,6 +16,7 @@
 #include <linux/mman.h>
 #include <linux/net.h>
 #include <linux/sched.h>
+#include <linux/sockios.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -26,10 +27,11 @@
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
+// This has to go after <sys/socket.h> for annoying reasons
+#include <linux/wireless.h>
 
 #include <algorithm>
 #include <utility>
-#include <vector>
 
 #include "PlatformMacros.h"
 #include "Sandbox.h"  // for ContentProcessSandboxParams
@@ -1397,6 +1399,13 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
       case __NR_getcwd:
         return Error(ENOENT);
 
+        // Basically every process type ends up using this for some
+        // reason (nsSystemInfo in content, Mesa in RDD, bug 1992904 for
+        // utility, etc.).  Other than GMP, which overrides this (see
+        // below), it's relatively safe to expose this information.
+      case __NR_uname:
+        return Allow();
+
       default:
         return SandboxPolicyBase::EvaluateSyscall(sysno);
     }
@@ -1779,9 +1788,6 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
 
 #endif  // DESKTOP
 
-        // nsSystemInfo uses uname (and we cache an instance, so
-        // the info remains present even if we block the syscall)
-      case __NR_uname:
 #ifdef DESKTOP
       case __NR_sysinfo:
 #endif
@@ -2116,10 +2122,6 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
       case __NR_sched_get_priority_max:
         return Allow();
 
-        // Mesa sometimes wants to know the OS version.
-      case __NR_uname:
-        return Allow();
-
         // nvidia tries to mknod(!) its devices; that won't work anyway,
         // so quietly reject it.
 #ifdef __NR_mknod
@@ -2257,16 +2259,21 @@ class SocketProcessSandboxPolicy final : public SandboxPolicyCommon {
         auto shifted_type = request & kIoctlTypeMask;
 
         // Rust's stdlib seems to use FIOCLEX instead of equivalent fcntls.
-        return If(request == FIOCLEX, Allow())
+        return Switch(request)
+            .Case(FIOCLEX, Allow())
             // Rust's stdlib also uses FIONBIO instead of equivalent fcntls.
-            .ElseIf(request == FIONBIO, Allow())
+            .Case(FIONBIO, Allow())
             // This is used by PR_Available in nsSocketInputStream::Available.
-            .ElseIf(request == FIONREAD, Allow())
-            // Allow anything that isn't a tty ioctl (if level < 2)
-            .ElseIf(
-                BelowLevel(2) ? shifted_type != kTtyIoctls : BoolConst(false),
-                Allow())
-            .Else(SandboxPolicyCommon::EvaluateSyscall(sysno));
+            .Case(FIONREAD, Allow())
+            // WebRTC needs interface information (bug 1975576)
+            .Cases({SIOCGIFNAME, SIOCGIFFLAGS, SIOCETHTOOL, SIOCGIWRATE},
+                   Allow())
+            .Default(
+                // Allow anything that isn't a tty ioctl (if level < 2)
+                If(BelowLevel(2) ? shifted_type != kTtyIoctls
+                                 : BoolConst(false),
+                   Allow())
+                    .Else(SandboxPolicyCommon::EvaluateSyscall(sysno)));
       }
 
       CASES_FOR_fcntl: {
@@ -2305,10 +2312,6 @@ class SocketProcessSandboxPolicy final : public SandboxPolicyCommon {
             .Else(InvalidSyscall());
       }
 #endif  // DESKTOP
-
-      // Bug 1640612
-      case __NR_uname:
-        return Allow();
 
       default:
         return SandboxPolicyCommon::EvaluateSyscall(sysno);

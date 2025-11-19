@@ -857,7 +857,7 @@ function waitForLoadedSource(dbg, url) {
   );
 }
 
-/*
+/**
  * Selects the source node for a specific source
  * from the source tree.
  *
@@ -896,7 +896,7 @@ async function selectSourceFromSourceTreeWithIndex(
   );
 }
 
-/*
+/**
  * Trigger a context menu in the debugger source tree
  *
  * @param {Object} dbg
@@ -1548,7 +1548,7 @@ function type(dbg, string) {
   string.split("").forEach(char => EventUtils.synthesizeKey(char, {}, dbg.win));
 }
 
-/*
+/**
  * Checks to see if the inner element is visible inside the editor.
  *
  * @memberof mochitest/helpers
@@ -1562,7 +1562,7 @@ function isVisibleInEditor(dbg, element) {
   return isVisible(findElement(dbg, "codeMirror"), element);
 }
 
-/*
+/**
  * Checks to see if the inner element is visible inside the
  * outer element.
  *
@@ -1619,6 +1619,7 @@ async function scrollAndGetEditorLineGutterElement(dbg, line) {
 
 /**
  * Gets node at a specific line in the editor
+ *
  * @param {*} dbg
  * @param {Number} line
  * @returns {Element} DOM Element
@@ -1630,6 +1631,7 @@ async function getNodeAtEditorLine(dbg, line) {
 
 /**
  * Gets node at a specific line in the gutter
+ *
  * @param {*} dbg
  * @param {Number} line
  * @returns {Element} DOM Element
@@ -1655,6 +1657,7 @@ async function waitForConditionalPanelFocus(dbg) {
 /**
  * Opens the debugger editor context menu in either codemirror or the
  * the debugger gutter.
+ *
  * @param {Object} dbg
  * @param {String} elementName
  *                  The element to select
@@ -1670,6 +1673,7 @@ async function openContextMenuInDebugger(dbg, elementName, line) {
 
 /**
  * Select a range of lines in the editor and open the contextmenu
+ *
  * @param {Object} dbg
  * @param {Object} lines
  * @param {String} elementName
@@ -1687,6 +1691,7 @@ async function selectEditorLinesAndOpenContextMenu(
 
 /**
  * Asserts that the styling for ignored lines are applied
+ *
  * @param {Object} dbg
  * @param {Object} options
  *                 lines {null | Number[]} [lines] Line(s) to assert.
@@ -1739,7 +1744,7 @@ function assertTextContentOnLine(dbg, line, expectedTextContent) {
   is(textContent, expectedTextContent, `Expected text content on line ${line}`);
 }
 
-/*
+/**
  * Assert that no breakpoint is set on a given line of
  * the currently selected source in the editor.
  *
@@ -1755,7 +1760,7 @@ async function assertNoBreakpoint(dbg, line) {
   ok(!exists, `Breakpoint doesn't exists on line ${line}`);
 }
 
-/*
+/**
  * Assert that a regular breakpoint is set in the currently
  * selected source in the editor. (no conditional, nor log breakpoint)
  *
@@ -1781,7 +1786,7 @@ async function assertBreakpoint(dbg, line) {
   ok(!hasLogClass, `Regular breakpoint doesn't have log on line ${line}`);
 }
 
-/*
+/**
  * Assert that a conditionnal breakpoint is set.
  *
  * @memberof mochitest/helpers
@@ -1807,7 +1812,7 @@ async function assertConditionBreakpoint(dbg, line) {
   );
 }
 
-/*
+/**
  * Assert that a log breakpoint is set.
  *
  * @memberof mochitest/helpers
@@ -1917,6 +1922,8 @@ const selectors = {
   sourceTreeThreads: '.sources-list .tree-node[aria-level="1"]',
   sourceTreeGroups: '.sources-list .tree-node[aria-level="2"]',
   sourceTreeFiles: ".sources-list .tree-node[data-expandable=false]",
+  sourceTreeFilesElement: i =>
+    `.sources-list .tree-node[data-expandable=false]:nth-child(${i})`,
   threadSourceTree: i => `.threads-list .sources-pane:nth-child(${i})`,
   sourceDirectoryLabel: i => `.sources-list .tree-node:nth-child(${i}) .label`,
   resultItems: ".result-list .result-item",
@@ -1935,6 +1942,7 @@ const selectors = {
   conditionalBreakpointInSecPane: ".breakpoint.is-conditional",
   logPointPanel: ".conditional-breakpoint-panel.log-point",
   logPointInSecPane: ".breakpoint.is-log",
+  tracePanel: ".trace-panel",
   searchField: ".search-field",
   blackbox: ".action.black-box",
   projectSearchSearchInput: ".project-text-search .search-field input",
@@ -2342,16 +2350,32 @@ function getCodeMirrorInstance(dbg, panelName = null) {
   return dbg.win.codeMirrorSourceEditorTestInstance.codeMirror;
 }
 
+async function waitForCursorPosition(dbg, expectedLine) {
+  return waitFor(() => {
+    const cursorPosition = findElementWithSelector(dbg, ".cursor-position");
+    if (!cursorPosition) {
+      return false;
+    }
+    const { innerText } = cursorPosition;
+    // Cursor position text has the following shape: (L, C)
+    // where L is the line number, and C the column number
+    const line = innerText.substring(1, innerText.indexOf(","));
+    return parseInt(line, 10) == expectedLine;
+  });
+}
+
 /**
  * Set the cursor  at a specific location in the editor
+ *
  * @param {*} dbg
  * @param {Number} line
  * @param {Number} column
- * @returns
+ * @returns {Promise}
  */
-function setEditorCursorAt(dbg, line, column) {
-  scrollEditorIntoView(dbg, line, 0);
-  return getCMEditor(dbg).setCursorAt(line, column);
+async function setEditorCursorAt(dbg, line, column) {
+  const cursorSet = waitForCursorPosition(dbg, line);
+  await getCMEditor(dbg).setCursorAt(line, column);
+  return cursorSet;
 }
 
 /**
@@ -2673,6 +2697,7 @@ async function getTokenElAtLine(dbg, expression, line, column = 0) {
 
 /**
  * Wait for a few ms and assert that a tooltip preview was not displayed.
+ *
  * @param {*} dbg
  */
 async function assertNoTooltip(dbg) {
@@ -2683,6 +2708,7 @@ async function assertNoTooltip(dbg) {
 
 /**
  * Hovers and asserts tooltip previews with simple text expressions (i.e numbers and strings)
+ *
  * @param {*} dbg
  * @param {Number} line
  * @param {Number} column
@@ -2723,6 +2749,7 @@ async function assertPreviewTextValue(
 
 /**
  * Asserts multiple previews
+ *
  * @param {*} dbg
  * @param {Array} previews
  */
@@ -2803,6 +2830,7 @@ async function assertPreviews(dbg, previews) {
 
 /**
  * Asserts the inline expression preview value
+ *
  * @param {*} dbg
  * @param {Number} line
  * @param {Number} column
@@ -2864,6 +2892,7 @@ async function assertInlineExceptionPreview(
 
 /**
  * Wait until a preview popup containing the given result is shown
+ *
  * @param {*} dbg
  * @param {String} result
  */
@@ -2877,6 +2906,7 @@ async function waitForPreviewWithResult(dbg, result) {
 
 /**
  * Expand or collapse a node in the preview popup
+ *
  * @param {*} dbg
  * @param {Number} index
  */
@@ -3027,6 +3057,7 @@ async function assertNodeIsFocused(dbg, index) {
 /**
  * Asserts that the debugger is paused and the debugger tab is
  * highlighted.
+ *
  * @param {*} toolbox
  * @returns
  */
@@ -3425,6 +3456,7 @@ if (protocolHandler.hasSubstitution("testing-common")) {
 
 /**
  * Selects the specific black box context menu item
+ *
  * @param {Object} dbg
  * @param {String} itemName
  *                  The name of the context menu item.
@@ -3515,19 +3547,28 @@ async function toggleJsTracerMenuItem(dbg, selector) {
 }
 
 /**
- * Asserts that the contents of the inline previews and the lines
- * that they are displayed on are accurate
+ * Asserts that the number of displayed inline previews, the contents of the inline previews and the lines
+ * that they are displayed on, are accurate
  *
  * @param {Object} dbg
  * @param {Array} expectedInlinePreviews
  * @param {String} fnName
  */
 async function assertInlinePreviews(dbg, expectedInlinePreviews, fnName) {
-  await waitForAllElements(
+  // Accumulate all the previews over the various lines
+  let expectedNumberOfInlinePreviews = 0;
+  for (const { previews } of expectedInlinePreviews) {
+    expectedNumberOfInlinePreviews += previews.length;
+  }
+
+  const inlinePreviews = await waitForAllElements(
     dbg,
     "visibleInlinePreviews",
-    expectedInlinePreviews.length
+    expectedNumberOfInlinePreviews,
+    true
   );
+
+  ok(true, `Displayed ${inlinePreviews.length} inline previews`);
 
   for (const expectedInlinePreview of expectedInlinePreviews) {
     const { previews, line } = expectedInlinePreview;

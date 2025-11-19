@@ -344,8 +344,8 @@ class Property(object):
     def is_prioritary(self):
         return self.name in PRIORITARY_PROPERTIES
 
-    def nscsspropertyid(self):
-        return "nsCSSPropertyID::eCSSProperty_" + self.ident
+    def noncustomcsspropertyid(self):
+        return "NonCustomCSSPropertyId::eCSSProperty_" + self.ident
 
 
 class Longhand(Property):
@@ -551,7 +551,7 @@ class Longhand(Property):
             "SVGStrokeDashArray",
             "SVGWidth",
             "TextDecorationLength",
-            "TextDecorationTrim",
+            "TextDecorationInset",
             "TextIndent",
             "WordSpacing",
         }
@@ -568,9 +568,6 @@ class Longhand(Property):
             return False
         if self.predefined_type:
             return self.predefined_type in {
-                "AlignContent",
-                "AlignItems",
-                "AlignSelf",
                 "Appearance",
                 "AnimationComposition",
                 "AnimationDirection",
@@ -611,9 +608,10 @@ class Longhand(Property):
                 "PositionArea",
                 "PositionAreaKeyword",
                 "PositionProperty",
-                "JustifyContent",
+                "ContentDistribution",
+                "ItemPlacement",
+                "SelfAlignment",
                 "JustifyItems",
-                "JustifySelf",
                 "LineBreak",
                 "LineClamp",
                 "MasonryAutoFlow",
@@ -763,8 +761,8 @@ class Alias(object):
     def enabled_in_content(self):
         return self.enabled_in == "content"
 
-    def nscsspropertyid(self):
-        return "nsCSSPropertyID::eCSSPropertyAlias_%s" % self.ident
+    def noncustomcsspropertyid(self):
+        return "NonCustomCSSPropertyId::eCSSPropertyAlias_%s" % self.ident
 
 
 class Method(object):
@@ -1071,18 +1069,29 @@ class PropertyRestrictions:
 
         return props
 
-    # https://drafts.csswg.org/css-pseudo/#marker-pseudo
+    # https://drafts.csswg.org/css-lists-3/#marker-properties
     @staticmethod
     def marker(data):
         return set(
             [
                 "color",
+                "content",
+                "counter-increment",
+                "counter-reset",
+                "counter-set",
+                "cursor",
+                "direction",
+                "hyphens",
+                "line-height",
+                "quotes",
                 "text-combine-upright",
+                "text-emphasis-color",
+                "text-emphasis-position",
+                "text-emphasis-style",
+                "text-orientation",
+                "text-shadow",
                 "text-transform",
                 "unicode-bidi",
-                "direction",
-                "content",
-                "line-height",
                 "-moz-osx-font-smoothing",
             ]
             + PropertyRestrictions.shorthand(data, "text-wrap")

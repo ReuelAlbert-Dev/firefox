@@ -251,6 +251,14 @@ TEST(ServiceWorkerRegistrar, TestReadData)
   buffer.AppendLiteral("true\n");
   buffer.AppendInt(0);
   buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
   buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
 
   buffer.AppendLiteral("\n");
@@ -269,6 +277,14 @@ TEST(ServiceWorkerRegistrar, TestReadData)
   buffer.AppendInt(1);
   buffer.AppendLiteral("\n");
   buffer.AppendLiteral("false\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
   buffer.AppendInt(0);
   buffer.AppendLiteral("\n");
   buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
@@ -1010,6 +1026,7 @@ TEST(ServiceWorkerRegistrar, TestDedupeWrite)
       ServiceWorkerRegistrationData reg;
 
       reg.scope() = "https://scope_write.dedupe"_ns;
+      reg.type() = WorkerType::Classic;
       reg.currentWorkerURL() = nsPrintfCString("currentWorkerURL write %d", i);
       reg.currentWorkerHandlesFetch() = true;
       reg.cacheName() =
@@ -1096,6 +1113,14 @@ TEST(ServiceWorkerRegistrar, TestLoadHandler)
   buffer.AppendLiteral("hello world!\n");
   buffer.AppendLiteral("handler_test2\n");
   buffer.AppendLiteral("hello\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
+  buffer.AppendInt(0);
+  buffer.AppendLiteral("\n");
   buffer.Append(SERVICEWORKERREGISTRAR_TERMINATOR "\n");
 
   ASSERT_TRUE(CreateFile(buffer))

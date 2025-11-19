@@ -59,6 +59,7 @@ const modifiedStyleSheets = new WeakMap();
 
 /**
  * Manage stylesheets related to a given Target Actor.
+ *
  * @emits stylesheet-updated: emitted when there was changes in a stylesheet
  *        First arg is an object with the following properties:
  *        - resourceId {String}: The id that was assigned to the stylesheet
@@ -101,16 +102,18 @@ class StyleSheetsManager extends EventEmitter {
     const { signal } = this.#abortController;
 
     // Listen for new stylesheet being added via StyleSheetApplicableStateChanged
-    this.#targetActor.chromeEventHandler.addEventListener(
-      "StyleSheetApplicableStateChanged",
-      this.#onApplicableStateChanged,
-      { capture: true, signal }
-    );
-    this.#targetActor.chromeEventHandler.addEventListener(
-      "StyleSheetRemoved",
-      this.#onStylesheetRemoved,
-      { capture: true, signal }
-    );
+    if (this.#targetActor.chromeEventHandler) {
+      this.#targetActor.chromeEventHandler.addEventListener(
+        "StyleSheetApplicableStateChanged",
+        this.#onApplicableStateChanged,
+        { capture: true, signal }
+      );
+      this.#targetActor.chromeEventHandler.addEventListener(
+        "StyleSheetRemoved",
+        this.#onStylesheetRemoved,
+        { capture: true, signal }
+      );
+    }
 
     this.#watchStyleSheetChangeEvents();
     this.#targetActor.on("window-ready", this.#onTargetActorWindowReady, {
@@ -122,6 +125,7 @@ class StyleSheetsManager extends EventEmitter {
    * Calling this function will make the StyleSheetsManager start the event listeners needed
    * to watch for stylesheet additions and modifications.
    * This resolves once it notified about existing stylesheets.
+   *
    * @param {Object} options
    * @param {Function} onAvailable: Function that will be called when a stylesheet is
    *                   registered, but also with already registered stylesheets

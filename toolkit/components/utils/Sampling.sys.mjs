@@ -9,6 +9,7 @@ const hashMultiplier = Math.pow(2, hashBits) - 1;
 export var Sampling = {
   /**
    * Map from the range [0, 1] to [0, 2^48].
+   *
    * @param  {number} frac A float from 0.0 to 1.0.
    * @return {string} A 48 bit number represented in hex, padded to 12 characters.
    */
@@ -107,7 +108,8 @@ export var Sampling = {
    * @param {integer}    count Number of buckets to check.
    * @param {integer}    total Total number of buckets to group inputs into.
    * @promises {boolean} True if the given input is within the range of buckets
-   *                     we're checking. */
+   *                     we're checking.
+   */
   async bucketSample(input, start, count, total) {
     const inputHash = await Sampling.truncatedHash(input);
     const wrappedStart = start % total;

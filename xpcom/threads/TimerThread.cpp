@@ -15,7 +15,6 @@
 #include "mozilla/Services.h"
 #include "mozilla/ChaosMode.h"
 #include "mozilla/ArenaAllocator.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/StaticPrefs_timer.h"
 
@@ -466,8 +465,7 @@ struct TimerMarker {
     schema.AddKeyLabelFormat("ttype", "Timer Type", MS::Format::String);
     schema.AddKeyLabelFormat("canceled", "Canceled", MS::Format::String);
     schema.SetChartLabel("{marker.data.prefix} {marker.data.delay}");
-    schema.SetTableLabel(
-        "{marker.name} - {marker.data.prefix} {marker.data.delay}");
+    schema.SetTableLabel("{marker.data.prefix} {marker.data.delay}");
     return schema;
   }
 };
@@ -497,8 +495,7 @@ struct AddRemoveTimerMarker {
     schema.AddKeyLabelFormat("name", "Name", MS::Format::String,
                              MS::PayloadFlags::Searchable);
     schema.AddKeyLabelFormat("delay", "Delay", MS::Format::Milliseconds);
-    schema.SetTableLabel(
-        "{marker.name} - {marker.data.name} - {marker.data.delay}");
+    schema.SetTableLabel("{marker.data.name} - {marker.data.delay}");
     return schema;
   }
 };
@@ -836,7 +833,7 @@ void TimerThread::Wait(TimeDuration aWaitFor) MOZ_REQUIRES(mMonitor) {
   mWaiting = true;
   mNotified = false;
   {
-    AUTO_PROFILER_TRACING_MARKER("TimerThread", "Wait", OTHER);
+    AUTO_PROFILER_MARKER("TimerThread::Wait", OTHER);
     mMonitor.Wait(aWaitFor);
   }
   mWaiting = false;
@@ -1233,25 +1230,25 @@ void TimerThread::PostTimerEvent(Entry& aPostMe) {
   // event, so we can avoid firing a timer that was re-initialized after being
   // canceled.
 
-  nsCOMPtr<nsIEventTarget> target = timer->mEventTarget;
-
   void* p = nsTimerEvent::operator new(sizeof(nsTimerEvent));
   if (!p) {
     return;
   }
-  RefPtr<nsTimerEvent> event = ::new (KnownNotNull, p)
-      nsTimerEvent(timer.forget(), aPostMe.mTimerSeq, mProfilerThreadId);
 
+  // We need to release mMonitor around the Dispatch because if the Dispatch
+  // or any Release of our objects interacts with the timer API we'll deadlock.
+
+  nsCOMPtr<nsIEventTarget> lockedTargetPtr = timer->mEventTarget;
+  RefPtr<nsTimerEvent> lockedEventPtr = ::new (KnownNotNull, p)
+      nsTimerEvent(timer.forget(), aPostMe.mTimerSeq, mProfilerThreadId);
   {
-    // We release mMonitor around the Dispatch because if the Dispatch interacts
-    // with the timer API we'll deadlock.
     MonitorAutoUnlock unlock(mMonitor);
-    if (NS_WARN_IF(NS_FAILED(target->Dispatch(event, NS_DISPATCH_NORMAL)))) {
-      // Dispatch may fail for an already shut down target. In that case
-      // we can't do much about it but drop the timer. We already removed
-      // its reference from our book-keeping, anyways.
-      RefPtr<nsTimerImpl> dropMe = event->ForgetTimer();
-    }
+    // Ensure references are released while we're unlocked.
+    nsCOMPtr<nsIEventTarget> target = lockedTargetPtr.forget();
+    RefPtr<nsTimerEvent> event = lockedEventPtr.forget();
+    // If we fail we have no way to report an error, but fallible dispatch
+    // will take care of releasing our event and timer.
+    target->Dispatch(event.forget(), NS_DISPATCH_FALLIBLE);
   }
 }
 

@@ -35,6 +35,8 @@ import org.mozilla.fenix.home.ui.HomepageTestTag.HOMEPAGE
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.wallpapers.WallpaperState
 
+private const val BOTTOM_PADDING = 47
+
 /**
  * Top level composable for the middle search homepage.
  *
@@ -43,7 +45,7 @@ import org.mozilla.fenix.wallpapers.WallpaperState
  * @param onMiddleSearchBarVisibilityChanged Invoked when the middle search is shown/hidden.
  * @param onTopSitesItemBound Invoked during the composition of a top site item.
  */
-@Suppress("LongMethod", "CyclomaticComplexMethod")
+@Suppress("LongMethod", "CyclomaticComplexMethod", "CognitiveComplexMethod")
 @Composable
 internal fun MiddleSearchHomepage(
     state: HomepageState,
@@ -126,9 +128,7 @@ internal fun MiddleSearchHomepage(
                                 )
                             }
 
-                            Spacer(Modifier.height(state.bottomSpacerHeight))
-
-                            Spacer(Modifier.height(47.dp))
+                            Spacer(Modifier.height(BOTTOM_PADDING.dp))
                         }
                     }
                 }
@@ -183,8 +183,8 @@ private fun MiddleSearchHomepagePreview() {
                 cardBackgroundColor = WallpaperState.default.cardBackgroundColor,
                 buttonTextColor = WallpaperState.default.buttonTextColor,
                 buttonBackgroundColor = WallpaperState.default.buttonBackgroundColor,
-                bottomSpacerHeight = 188.dp,
                 isSearchInProgress = false,
+                bottomPadding = 68,
             ),
             interactor = FakeHomepagePreview.homepageInteractor,
             onTopSitesItemBound = {},

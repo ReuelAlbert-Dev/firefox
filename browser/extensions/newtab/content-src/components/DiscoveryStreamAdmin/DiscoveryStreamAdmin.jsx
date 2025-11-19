@@ -4,16 +4,12 @@
 
 import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import { connect } from "react-redux";
-import React from "react";
-import { SimpleHashRouter } from "./SimpleHashRouter";
+import React, { useEffect } from "react";
 
 // Pref Constants
 const PREF_AD_SIZE_MEDIUM_RECTANGLE = "newtabAdSize.mediumRectangle";
 const PREF_AD_SIZE_BILLBOARD = "newtabAdSize.billboard";
 const PREF_AD_SIZE_LEADERBOARD = "newtabAdSize.leaderboard";
-const PREF_CONTEXTUAL_CONTENT_SELECTED_FEED =
-  "discoverystream.contextualContent.selectedFeed";
-const PREF_CONTEXTUAL_CONTENT_FEEDS = "discoverystream.contextualContent.feeds";
 const PREF_SECTIONS_ENABLED = "discoverystream.sections.enabled";
 const PREF_SPOC_PLACEMENTS = "discoverystream.placements.spocs";
 const PREF_SPOC_COUNTS = "discoverystream.placements.spocs.counts";
@@ -151,9 +147,9 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
       this.refreshInferredPersonalization.bind(this);
     this.refreshTopicSelectionCache =
       this.refreshTopicSelectionCache.bind(this);
-    this.toggleTBRFeed = this.toggleTBRFeed.bind(this);
     this.handleSectionsToggle = this.handleSectionsToggle.bind(this);
     this.toggleIABBanners = this.toggleIABBanners.bind(this);
+    this.sendConversionEvent = this.sendConversionEvent.bind(this);
     this.state = {
       toggledStories: {},
       weatherQuery: "",
@@ -230,12 +226,6 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
 
   showPlaceholder() {
     this.dispatchSimpleAction(at.DISCOVERY_STREAM_DEV_SHOW_PLACEHOLDER);
-  }
-
-  toggleTBRFeed(e) {
-    const feed = e.target.value;
-    const selectedFeed = PREF_CONTEXTUAL_CONTENT_SELECTED_FEED;
-    this.props.dispatch(ac.SetPref(selectedFeed, feed));
   }
 
   idleDaily() {
@@ -366,6 +356,20 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
     this.props.dispatch(
       ac.SetPref("discoverystream.sections.cards.thumbsUpDown.enabled", pressed)
     );
+  }
+
+  sendConversionEvent() {
+    const detail = {
+      partnerId: "demo-partner",
+      lookbackDays: 7,
+      impressionType: "default",
+    };
+    const event = new CustomEvent("FirefoxConversionNotification", {
+      detail,
+      bubbles: true,
+      composed: true,
+    });
+    window?.dispatchEvent(event);
   }
 
   renderComponent(width, component) {
@@ -630,14 +634,7 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
     const { config, layout } = this.props.state.DiscoveryStream;
     const personalized =
       this.props.otherPrefs["discoverystream.personalization.enabled"];
-    const selectedFeed =
-      this.props.otherPrefs[PREF_CONTEXTUAL_CONTENT_SELECTED_FEED];
     const sectionsEnabled = this.props.otherPrefs[PREF_SECTIONS_ENABLED];
-    const TBRFeeds = this.props.otherPrefs[PREF_CONTEXTUAL_CONTENT_FEEDS].split(
-      ","
-    )
-      .map(s => s.trim())
-      .filter(item => item);
 
     // Prefs for IAB Banners
     const mediumRectangleEnabled =
@@ -688,17 +685,6 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
         <button className="button" onClick={this.showPlaceholder}>
           Show Placeholder Cards
         </button>{" "}
-        <select
-          className="button"
-          onChange={this.toggleTBRFeed}
-          value={selectedFeed}
-        >
-          {TBRFeeds.map(feed => (
-            <option key={feed} value={feed}>
-              {feed}
-            </option>
-          ))}
-        </select>
         <div className="toggle-wrapper">
           <moz-toggle
             id="sections-toggle"
@@ -735,6 +721,9 @@ export class DiscoveryStreamAdminUI extends React.PureComponent {
             />
           </div>
         </details>
+        <button className="button" onClick={this.sendConversionEvent}>
+          Send conversion event
+        </button>
         <table>
           <tbody>
             {prefToggles.map(pref => (
@@ -831,77 +820,44 @@ export class DiscoveryStreamAdminInner extends React.PureComponent {
   }
 }
 
-export class CollapseToggle extends React.PureComponent {
-  constructor(props) {
-    super(props);
-    this.onCollapseToggle = this.onCollapseToggle.bind(this);
-    this.state = { collapsed: false };
-  }
+export function CollapseToggle(props) {
+  const { devtoolsCollapsed } = props;
+  const label = `${devtoolsCollapsed ? "Expand" : "Collapse"} devtools`;
 
-  get renderAdmin() {
-    const { props } = this;
-    return props.location.hash && props.location.hash.startsWith("#devtools");
-  }
-
-  onCollapseToggle(e) {
-    e.preventDefault();
-    this.setState(state => ({ collapsed: !state.collapsed }));
-  }
-
-  setBodyClass() {
-    if (this.renderAdmin && !this.state.collapsed) {
-      globalThis.document.body.classList.add("no-scroll");
-    } else {
+  useEffect(() => {
+    // Set or remove body class depending on devtoolsCollapsed state
+    if (devtoolsCollapsed) {
       globalThis.document.body.classList.remove("no-scroll");
+    } else {
+      globalThis.document.body.classList.add("no-scroll");
     }
-  }
 
-  componentDidMount() {
-    this.setBodyClass();
-  }
+    // Cleanup on unmount
+    return () => {
+      globalThis.document.body.classList.remove("no-scroll");
+    };
+  }, [devtoolsCollapsed]);
 
-  componentDidUpdate() {
-    this.setBodyClass();
-  }
-
-  componentWillUnmount() {
-    globalThis.document.body.classList.remove("no-scroll");
-  }
-
-  render() {
-    const { props } = this;
-    const { renderAdmin } = this;
-    const isCollapsed = this.state.collapsed || !renderAdmin;
-    const label = `${isCollapsed ? "Expand" : "Collapse"} devtools`;
-    return (
-      <React.Fragment>
-        <a
-          href="#devtools"
-          title={label}
-          aria-label={label}
-          className={`discoverystream-admin-toggle ${
-            isCollapsed ? "collapsed" : "expanded"
-          }`}
-          onClick={this.renderAdmin ? this.onCollapseToggle : null}
-        >
-          <span className="icon icon-devtools" />
-        </a>
-        {renderAdmin ? (
-          <DiscoveryStreamAdminInner
-            {...props}
-            collapsed={this.state.collapsed}
-          />
-        ) : null}
-      </React.Fragment>
-    );
-  }
+  return (
+    <>
+      <a
+        href={devtoolsCollapsed ? "#devtools" : "#"}
+        title={label}
+        aria-label={label}
+        className={`discoverystream-admin-toggle ${
+          devtoolsCollapsed ? "expanded" : "collapsed"
+        }`}
+      >
+        <span className="icon icon-devtools" />
+      </a>
+      {!devtoolsCollapsed ? (
+        <DiscoveryStreamAdminInner {...props} collapsed={devtoolsCollapsed} />
+      ) : null}
+    </>
+  );
 }
 
-const _DiscoveryStreamAdmin = props => (
-  <SimpleHashRouter>
-    <CollapseToggle {...props} />
-  </SimpleHashRouter>
-);
+const _DiscoveryStreamAdmin = props => <CollapseToggle {...props} />;
 
 export const DiscoveryStreamAdmin = connect(state => ({
   Sections: state.Sections,

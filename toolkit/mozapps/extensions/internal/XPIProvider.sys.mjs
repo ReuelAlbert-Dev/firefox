@@ -39,16 +39,19 @@ ChromeUtils.defineESModuleGetters(lazy, {
 XPCOMUtils.defineLazyServiceGetters(lazy, {
   aomStartup: [
     "@mozilla.org/addons/addon-manager-startup;1",
-    "amIAddonManagerStartup",
+    Ci.amIAddonManagerStartup,
   ],
   resProto: [
     "@mozilla.org/network/protocol;1?name=resource",
-    "nsISubstitutingProtocolHandler",
+    Ci.nsISubstitutingProtocolHandler,
   ],
-  spellCheck: ["@mozilla.org/spellchecker/engine;1", "mozISpellCheckingEngine"],
+  spellCheck: [
+    "@mozilla.org/spellchecker/engine;1",
+    Ci.mozISpellCheckingEngine,
+  ],
   timerManager: [
     "@mozilla.org/updates/timer-manager;1",
-    "nsIUpdateTimerManager",
+    Ci.nsIUpdateTimerManager,
   ],
 });
 
@@ -1771,6 +1774,7 @@ var XPIStates = {
   /**
    * Find the highest priority location of an add-on by ID and return the
    * XPIState.
+   *
    * @param {string} aId
    *        The add-on IDa
    * @param {function} aFilter
@@ -1879,7 +1883,6 @@ var XPIStates = {
    *        The name of the add-on location.
    * @param {string} aId
    *        The ID of the add-on.
-   *
    */
   removeAddon(aLocation, aId) {
     logger.debug(`Removing XPIState for ${aLocation}: ${aId}`);
@@ -3582,7 +3585,7 @@ export var XPIProvider = {
     return XPIExports.XPIDatabase.getBlocklistAttentionInfo();
   },
 
-  /*
+  /**
    * Notified when a preference we're interested in has changed.
    *
    * @see nsIObserver

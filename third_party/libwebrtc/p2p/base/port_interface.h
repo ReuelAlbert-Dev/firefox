@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "api/candidate.h"
 #include "api/packet_socket_factory.h"
@@ -55,7 +56,7 @@ class PortInterface {
   virtual ~PortInterface();
 
   virtual IceCandidateType Type() const = 0;
-  virtual const Network* Network() const = 0;
+  virtual const ::webrtc::Network* Network() const = 0;
 
   // Methods to set/get ICE role and tiebreaker values.
   virtual void SetIceRole(IceRole role) = 0;
@@ -121,10 +122,13 @@ class PortInterface {
   // Signaled when this port decides to delete itself because it no longer has
   // any usefulness.
   virtual void SubscribePortDestroyed(
-      std::function<void(webrtc::PortInterface*)> callback) = 0;
+      std::function<void(PortInterface*)> callback) = 0;
 
   // Signaled when Port discovers ice role conflict with the peer.
+  // TODO: bugs.webrtc.org/42222066 - remove slot.
   sigslot::signal1<PortInterface*> SignalRoleConflict;
+  virtual void SubscribeRoleConflict(absl::AnyInvocable<void()> callback) = 0;
+  virtual void NotifyRoleConflict() = 0;
 
   // Normally, packets arrive through a connection (or they result signaling of
   // unknown address).  Calling this method turns off delivery of packets
@@ -204,19 +208,5 @@ class PortInterface {
 };
 
 }  //  namespace webrtc
-
-// Re-export symbols from the webrtc namespace for backwards compatibility.
-// TODO(bugs.webrtc.org/4222596): Remove once all references are updated.
-#ifdef WEBRTC_ALLOW_DEPRECATED_NAMESPACES
-namespace cricket {
-using ::webrtc::PortInterface;
-using ::webrtc::PROTO_LAST;
-using ::webrtc::PROTO_SSLTCP;
-using ::webrtc::PROTO_TCP;
-using ::webrtc::PROTO_TLS;
-using ::webrtc::PROTO_UDP;
-using ::webrtc::ProtocolType;
-}  // namespace cricket
-#endif  // WEBRTC_ALLOW_DEPRECATED_NAMESPACES
 
 #endif  // P2P_BASE_PORT_INTERFACE_H_

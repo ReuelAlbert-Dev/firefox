@@ -34,7 +34,7 @@ import androidx.core.view.setPadding
 import com.google.android.material.snackbar.BaseTransientBottomBar
 import kotlinx.coroutines.launch
 import mozilla.components.compose.base.annotation.FlexibleWindowLightDarkPreview
-import mozilla.components.compose.base.button.PrimaryButton
+import mozilla.components.compose.base.button.FilledButton
 import mozilla.components.compose.base.snackbar.Snackbar
 import mozilla.components.compose.base.snackbar.SnackbarVisuals
 import mozilla.components.compose.base.snackbar.displaySnackbar
@@ -120,7 +120,13 @@ class Snackbar private constructor(
                 contentView.setContent {
                     FirefoxTheme {
                         Snackbar(
-                            snackbarData = snackbarState.copy(action = action).toSnackbarData(),
+                            snackbarData = snackbarState.copy(
+                                action = action,
+                                onDismiss = {
+                                    snackbar.dismiss()
+                                    snackbarState.onDismiss()
+                                },
+                            ).toSnackbarData(),
                         )
                     }
                 }
@@ -225,7 +231,7 @@ private fun SnackbarHostPreview() {
                 .padding(all = 16.dp),
         ) {
             Column {
-                PrimaryButton(
+                FilledButton(
                     text = "Show snackbar",
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -254,7 +260,9 @@ private fun SnackbarHostPreview() {
             SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            ) {
+                Snackbar(snackbarData = it)
+            }
         }
     }
 }

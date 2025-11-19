@@ -21,7 +21,6 @@
 #include "nsNavHistoryQuery.h"
 #include "Database.h"
 #include "mozilla/Atomics.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/intl/Collator.h"
 #include "mozilla/UniquePtr.h"
 #include "mozIStorageVacuumParticipant.h"
@@ -339,10 +338,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
   static mozilla::Atomic<int64_t> sLastInsertedPlaceId;
   static mozilla::Atomic<int64_t> sLastInsertedVisitId;
 
-  /**
-   * Tracks whether frecency is currently being decayed.
-   */
-  static mozilla::Atomic<bool> sIsFrecencyDecaying;
   /**
    * Tracks whether there's frecency to be recalculated.
    */

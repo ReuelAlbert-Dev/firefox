@@ -2,16 +2,53 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { html, ifDefined } from "chrome://global/content/vendor/lit.all.mjs";
-import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
+import { html } from "chrome://global/content/vendor/lit.all.mjs";
+import {
+  SettingElement,
+  spread,
+} from "chrome://browser/content/preferences/widgets/setting-element.mjs";
 
-const CLICK_HANDLERS = ["moz-box-link"];
+/** @import { SettingElementConfig } from "chrome://browser/content/preferences/widgets/setting-element.mjs" */
+/** @import { SettingControlConfig, SettingControlEvent } from "../setting-control/setting-control.mjs" */
+/** @import { Preferences } from "chrome://global/content/preferences/Preferences.mjs" */
 
-export class SettingGroup extends MozLitElement {
+/**
+ * @typedef {object} SettingGroupConfigExtensions
+ * @property {SettingControlConfig[]} items Array of SettingControlConfigs to render.
+ * @property {number} [headingLevel] A heading level to create the legend as (1-6).
+ * @property {boolean} [inProgress]
+ * Hide this section unless the browser.settings-redesign.enabled or
+ * browser.settings-redesign.<groupid>.enabled prefs are true.
+ */
+/** @typedef {SettingElementConfig & SettingGroupConfigExtensions} SettingGroupConfig */
+
+const CLICK_HANDLERS = new Set([
+  "dialog-button",
+  "moz-box-button",
+  "moz-box-item",
+  "moz-box-link",
+  "moz-button",
+  "moz-box-group",
+]);
+
+export class SettingGroup extends SettingElement {
+  constructor() {
+    super();
+
+    /**
+     * @type {Preferences['getSetting'] | undefined}
+     */
+    this.getSetting = undefined;
+
+    /**
+     * @type {SettingGroupConfig | undefined}
+     */
+    this.config = undefined;
+  }
+
   static properties = {
     config: { type: Object },
     groupId: { type: String },
-    // getSetting should be Preferences.getSetting from preferencesBindings.js
     getSetting: { type: Function },
   };
 
@@ -23,8 +60,32 @@ export class SettingGroup extends MozLitElement {
     return this;
   }
 
+  async handleVisibilityChange() {
+    await this.updateComplete;
+    // @ts-expect-error bug 1997478
+    let hasVisibleControls = [...this.controlEls].some(el => !el.hidden);
+    this.hidden = !hasVisibleControls;
+    let groupbox = /** @type {XULElement} */ (this.closest("groupbox"));
+    if (hasVisibleControls) {
+      this.removeAttribute("data-hidden-from-search");
+      if (groupbox && groupbox.hasAttribute("data-hidden-by-setting-group")) {
+        groupbox.removeAttribute("data-hidden-from-search");
+        groupbox.removeAttribute("data-hidden-by-setting-group");
+        groupbox.hidden = false;
+      }
+    } else {
+      this.setAttribute("data-hidden-from-search", "true");
+      if (groupbox && !groupbox.hasAttribute("data-hidden-from-search")) {
+        groupbox.setAttribute("data-hidden-from-search", "true");
+        groupbox.setAttribute("data-hidden-by-setting-group", "");
+        groupbox.hidden = true;
+      }
+    }
+  }
+
   async getUpdateComplete() {
     let result = await super.getUpdateComplete();
+    // @ts-expect-error bug 1997478
     await Promise.all([...this.controlEls].map(el => el.updateComplete));
     return result;
   }
@@ -33,22 +94,32 @@ export class SettingGroup extends MozLitElement {
    * Notify child controls when their input has fired an event. When controls
    * are nested the parent receives events for the nested controls, so this is
    * actually easier to manage here; it also registers fewer listeners.
+   *
+   * @param {SettingControlEvent<InputEvent>} e
    */
   onChange(e) {
     let inputEl = e.target;
-    let control = inputEl.control;
-    control?.onChange(inputEl);
+    inputEl.control?.onChange(inputEl);
   }
 
+  /**
+   * Notify child controls when their input has been clicked. When controls
+   * are nested the parent receives events for the nested controls, so this is
+   * actually easier to manage here; it also registers fewer listeners.
+   *
+   * @param {SettingControlEvent<MouseEvent>} e
+   */
   onClick(e) {
-    if (!CLICK_HANDLERS.includes(e.target.localName)) {
+    let inputEl = e.target;
+    if (!CLICK_HANDLERS.has(inputEl.localName)) {
       return;
     }
-    let inputEl = e.target;
-    let control = inputEl.control;
-    control?.onClick(e);
+    inputEl.control?.onClick(e);
   }
 
+  /**
+   * @param {SettingControlConfig} item
+   */
   itemTemplate(item) {
     let setting = this.getSetting(item.id);
     return html`<setting-control
@@ -63,9 +134,12 @@ export class SettingGroup extends MozLitElement {
       return "";
     }
     return html`<moz-fieldset
-      data-l10n-id=${ifDefined(this.config.l10nId)}
+      .headingLevel=${this.config.headingLevel}
       @change=${this.onChange}
+      @toggle=${this.onChange}
       @click=${this.onClick}
+      @visibility-change=${this.handleVisibilityChange}
+      ${spread(this.getCommonPropertyMapping(this.config))}
       >${this.config.items.map(item => this.itemTemplate(item))}</moz-fieldset
     >`;
   }

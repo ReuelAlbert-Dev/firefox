@@ -9,12 +9,15 @@
 
 #include "PLDHashTable.h"                    // PLDHashEntryHdr
 #include "js/loader/LoadedScript.h"          // JS::loader::LoadedScript
+#include "js/loader/ScriptFetchOptions.h"    // JS::loader::ScriptFetchOptions
 #include "js/loader/ScriptKind.h"            // JS::loader::ScriptKind
 #include "js/loader/ScriptLoadRequest.h"     // JS::loader::ScriptLoadRequest
 #include "mozilla/CORSMode.h"                // mozilla::CORSMode
 #include "mozilla/MemoryReporting.h"         // MallocSizeOf
+#include "mozilla/Mutex.h"                   // Mutex, GUARDED_BY, MutexAutoLock
 #include "mozilla/RefPtr.h"                  // RefPtr
 #include "mozilla/SharedSubResourceCache.h"  // SharedSubResourceCache, SharedSubResourceCacheLoadingValueBase, SubResourceNetworkMetadataHolder
+#include "mozilla/ThreadSafety.h"            // MOZ_GUARDED_BY
 #include "mozilla/WeakPtr.h"                 // SupportsWeakPtr
 #include "mozilla/dom/CacheExpirationTime.h"  // CacheExpirationTime
 #include "mozilla/dom/SRIMetadata.h"          // mozilla::dom::SRIMetadata
@@ -36,15 +39,15 @@ class ScriptHashKey : public PLDHashEntryHdr {
 
   explicit ScriptHashKey(const ScriptHashKey& aKey)
       : PLDHashEntryHdr(),
+        mKind(aKey.mKind),
+        mCORSMode(aKey.mCORSMode),
+        mIsLinkRelPreload(aKey.mIsLinkRelPreload),
         mURI(aKey.mURI),
         mLoaderPrincipal(aKey.mLoaderPrincipal),
         mPartitionPrincipal(aKey.mPartitionPrincipal),
-        mCORSMode(aKey.mCORSMode),
         mSRIMetadata(aKey.mSRIMetadata),
-        mKind(aKey.mKind),
         mNonce(aKey.mNonce),
-        mHintCharset(aKey.mHintCharset),
-        mIsLinkRelPreload(aKey.mIsLinkRelPreload) {
+        mHintCharset(aKey.mHintCharset) {
     MOZ_COUNT_CTOR(ScriptHashKey);
   }
 
@@ -52,20 +55,25 @@ class ScriptHashKey : public PLDHashEntryHdr {
 
   ScriptHashKey(ScriptHashKey&& aKey)
       : PLDHashEntryHdr(),
+        mKind(std::move(aKey.mKind)),
+        mCORSMode(std::move(aKey.mCORSMode)),
+        mIsLinkRelPreload(std::move(aKey.mIsLinkRelPreload)),
         mURI(std::move(aKey.mURI)),
         mLoaderPrincipal(std::move(aKey.mLoaderPrincipal)),
         mPartitionPrincipal(std::move(aKey.mPartitionPrincipal)),
-        mCORSMode(std::move(aKey.mCORSMode)),
         mSRIMetadata(std::move(aKey.mSRIMetadata)),
-        mKind(std::move(aKey.mKind)),
         mNonce(std::move(aKey.mNonce)),
-        mHintCharset(std::move(aKey.mHintCharset)),
-        mIsLinkRelPreload(std::move(aKey.mIsLinkRelPreload)) {
+        mHintCharset(std::move(aKey.mHintCharset)) {
     MOZ_COUNT_CTOR(ScriptHashKey);
   }
 
   ScriptHashKey(ScriptLoader* aLoader,
-                const JS::loader::ScriptLoadRequest* aRequest);
+                const JS::loader::ScriptLoadRequest* aRequest,
+                const JS::loader::LoadedScript* aLoadedScript);
+  ScriptHashKey(ScriptLoader* aLoader,
+                const JS::loader::ScriptLoadRequest* aRequest,
+                const JS::loader::ScriptFetchOptions* aFetchOptions,
+                const nsCOMPtr<nsIURI> aURI);
   explicit ScriptHashKey(const ScriptLoadData& aLoadData);
 
   MOZ_COUNTED_DTOR(ScriptHashKey)
@@ -92,12 +100,14 @@ class ScriptHashKey : public PLDHashEntryHdr {
   enum { ALLOW_MEMMOVE = true };
 
  protected:
+  const JS::loader::ScriptKind mKind;
+  const CORSMode mCORSMode;
+  const bool mIsLinkRelPreload;
+
   const nsCOMPtr<nsIURI> mURI;
   const nsCOMPtr<nsIPrincipal> mLoaderPrincipal;
   const nsCOMPtr<nsIPrincipal> mPartitionPrincipal;
-  const CORSMode mCORSMode;
   const SRIMetadata mSRIMetadata;
-  const JS::loader::ScriptKind mKind;
   const nsString mNonce;
 
   // charset attribute for classic script.
@@ -110,8 +120,6 @@ class ScriptHashKey : public PLDHashEntryHdr {
   // top-level document's host
   //   maybe part of principal?
   //   what if it's inside frame in different host?
-
-  const bool mIsLinkRelPreload;
 };
 
 class ScriptLoadData final
@@ -122,8 +130,8 @@ class ScriptLoadData final
   ~ScriptLoadData() {}
 
  public:
-  ScriptLoadData(ScriptLoader* aLoader,
-                 JS::loader::ScriptLoadRequest* aRequest);
+  ScriptLoadData(ScriptLoader* aLoader, JS::loader::ScriptLoadRequest* aRequest,
+                 JS::loader::LoadedScript* aLoadedScript);
 
   NS_DECL_ISUPPORTS
 
@@ -187,6 +195,14 @@ class SharedScriptCache final
   SharedScriptCache();
   void Init();
 
+  bool MaybeScheduleUpdateDiskCache();
+  void UpdateDiskCache();
+
+  void EncodeAndCompress();
+  void SaveToDiskCache();
+
+  void InvalidateInProcess();
+
   // This has to be static because it's also called for loaders that don't have
   // a sheet cache (loaders that are not owned by a document).
   static void LoadCompleted(SharedScriptCache*, ScriptLoadData&);
@@ -197,10 +213,34 @@ class SharedScriptCache final
                     const Maybe<OriginAttributesPattern>& aPattern = Nothing(),
                     const Maybe<nsCString>& aURL = Nothing());
 
+  static void Invalidate();
+
   static void PrepareForLastCC();
 
  protected:
   ~SharedScriptCache();
+
+ private:
+  class EncodeItem {
+   public:
+    EncodeItem(JS::Stencil* aStencil, JS::TranscodeBuffer&& aSRI,
+               JS::loader::LoadedScript* aLoadedScript)
+        : mStencil(aStencil),
+          mSRI(std::move(aSRI)),
+          mLoadedScript(aLoadedScript) {}
+
+    // These fields can be touched from multiple threads.
+    RefPtr<JS::Stencil> mStencil;
+    JS::TranscodeBuffer mSRI;
+    Vector<uint8_t> mCompressed;
+
+    // This can be dereferenced only from the main thread.
+    // Reading the pointer itself is allowed also off main thread.
+    RefPtr<JS::loader::LoadedScript> mLoadedScript;
+  };
+
+  Mutex mEncodeMutex{"SharedScriptCache::mEncodeMutex"};
+  Vector<EncodeItem> mEncodeItems MOZ_GUARDED_BY(mEncodeMutex);
 };
 
 }  // namespace dom

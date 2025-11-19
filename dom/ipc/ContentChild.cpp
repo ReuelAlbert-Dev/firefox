@@ -15,6 +15,7 @@
 #include "Geolocation.h"
 #include "HandlerServiceChild.h"
 #include "ScrollingMetrics.h"
+#include "gfxUtils.h"
 #include "imgLoader.h"
 #include "mozilla/AppShutdown.h"
 #include "mozilla/Attributes.h"
@@ -48,7 +49,6 @@
 #include "mozilla/StaticPrefs_threads.h"
 #include "mozilla/StorageAccessAPIHelper.h"
 #include "mozilla/TelemetryIPC.h"
-#include "mozilla/Unused.h"
 #include "mozilla/WebBrowserPersistDocumentChild.h"
 #include "mozilla/devtools/HeapSnapshotTempFileHelperChild.h"
 #include "mozilla/dom/AutoSuppressEventHandlingAndSuspend.h"
@@ -92,11 +92,14 @@
 #include "mozilla/dom/ipc/SharedMap.h"
 #include "mozilla/extensions/ExtensionsChild.h"
 #include "mozilla/extensions/StreamFilterParent.h"
+#include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Logging.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
+#include "mozilla/image/FetchDecodedImage.h"
 #include "mozilla/intl/L10nRegistry.h"
 #include "mozilla/intl/LocaleService.h"
+#include "mozilla/intl/OSPreferences.h"
 #include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/FileDescriptorUtils.h"
@@ -442,7 +445,7 @@ class CycleCollectWithLogsChild final : public PCycleCollectWithLogsChild {
         mCCLog = nullptr;
       }
       // The XPCOM refcount drives the IPC lifecycle;
-      Unused << mActor->Send__delete__(mActor);
+      (void)mActor->Send__delete__(mActor);
     }
 
     nsresult UnimplementedProperty() {
@@ -1044,7 +1047,7 @@ nsresult ContentChild::ProvideWindowCommon(
         return false;
       }() || hasValidUserGestureActivation;
 
-      Unused << SendCreateWindowInDifferentProcess(
+      (void)SendCreateWindowInDifferentProcess(
           aTabOpener, parent, aChromeFlags, aCalledFromJS,
           aOpenWindowInfo->GetIsTopLevelCreatedByWebContent(), aURI, features,
           aModifiers, name, triggeringPrincipal, policyContainer, referrerInfo,
@@ -1081,7 +1084,7 @@ nsresult ContentChild::ProvideWindowCommon(
 
   browsingContext->InitPendingInitialization(true);
   auto unsetPending = MakeScopeExit([browsingContext]() {
-    Unused << browsingContext->SetPendingInitialization(false);
+    (void)browsingContext->SetPendingInitialization(false);
   });
 
   browsingContext->EnsureAttached();
@@ -1386,6 +1389,8 @@ void ContentChild::InitXPCOM(
   RecvSetOffline(aXPCOMInit.isOffline());
   RecvSetConnectivity(aXPCOMInit.isConnected());
 
+  OSPreferences::GetInstance()->AssignSysLocales(aXPCOMInit.sysLocales());
+
   LocaleService::GetInstance()->AssignAppLocales(aXPCOMInit.appLocales());
   LocaleService::GetInstance()->AssignRequestedLocales(
       aXPCOMInit.requestedLocales());
@@ -1467,9 +1472,61 @@ mozilla::ipc::IPCResult ContentChild::RecvRequestMemoryReport(
   MemoryReportRequestClient::Start(
       aGeneration, aAnonymize, aMinimizeMemoryUsage, aDMDFile, process,
       [&](const MemoryReport& aReport) {
-        Unused << GetSingleton()->SendAddMemoryReport(aReport);
+        (void)GetSingleton()->SendAddMemoryReport(aReport);
       },
       aResolver);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDecodeImage(
+    NotNull<nsIURI*> aURI, const ImageIntSize& aSize,
+    DecodeImageResolver&& aResolver) {
+  auto size = aSize.ToUnknownSize();
+  // TODO(Bug 1999930): Investigate using  a content-principal for
+  // moz-remote-image: requests
+  image::FetchDecodedImage(aURI, size, nsContentUtils::GetSystemPrincipal())
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [size, aResolver](already_AddRefed<imgIContainer> aImage) {
+            using Result = std::tuple<nsresult, mozilla::Maybe<IPCImage>>;
+
+            nsCOMPtr<imgIContainer> image(std::move(aImage));
+
+            const int32_t flags = imgIContainer::FLAG_SYNC_DECODE |
+                                  imgIContainer::FLAG_ASYNC_NOTIFY;
+            RefPtr<gfx::SourceSurface> surface;
+            if (size.Width() && size.Height()) {
+              surface = image->GetFrameAtSize(size, imgIContainer::FRAME_FIRST,
+                                              flags);
+              if (surface && surface->GetSize() != size) {
+                surface = gfxUtils::ScaleSourceSurface(*surface, size);
+              }
+            } else {
+              surface = image->GetFrame(imgIContainer::FRAME_FIRST, flags);
+            }
+
+            if (!surface) {
+              aResolver(Result(NS_ERROR_FAILURE, Nothing()));
+              return;
+            }
+
+            if (RefPtr<gfx::DataSourceSurface> dataSurface =
+                    surface->GetDataSurface()) {
+              if (Maybe<IPCImage> image =
+                      nsContentUtils::SurfaceToIPCImage(*dataSurface)) {
+                aResolver(Result(NS_OK, std::move(image)));
+                return;
+              }
+            }
+
+            aResolver(Result(NS_ERROR_FAILURE, Nothing()));
+            return;
+          },
+          [aResolver](nsresult aStatus) {
+            aResolver(std::tuple<nsresult, mozilla::Maybe<IPCImage>>(
+                aStatus, Nothing()));
+          });
+
   return IPC_OK();
 }
 
@@ -1697,7 +1754,7 @@ static void DisconnectWindowServer(bool aIsSandboxEnabled) {
     CGError result = CGSSetDenyWindowServerConnections(true);
     MOZ_DIAGNOSTIC_ASSERT(result == kCGErrorSuccess);
 #  if !MOZ_DIAGNOSTIC_ASSERT_ENABLED
-    Unused << result;
+    (void)result;
 #  endif
   }
 }
@@ -1716,7 +1773,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
 
   if (sandboxEnabled && !StaticPrefs::media_cubeb_sandbox()) {
     // Pre-start audio before sandboxing; see bug 1443612.
-    Unused << CubebUtils::GetCubeb();
+    (void)CubebUtils::GetCubeb();
   }
 
   if (sandboxEnabled) {
@@ -1730,12 +1787,14 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
     ::LoadLibraryW(L"freebl3.dll");
     ::LoadLibraryW(L"softokn3.dll");
     // Cache value that is retrieved from a registry entry.
-    Unused << GetCpuFrequencyMHz();
+    (void)GetCpuFrequencyMHz();
   }
   mozilla::SandboxTarget::Instance()->StartSandbox();
 #  elif defined(XP_MACOSX)
   sandboxEnabled = (GetEffectiveContentSandboxLevel() >= 1);
   DisconnectWindowServer(sandboxEnabled);
+#  elif defined(XP_IOS)
+  LockdownExtensionKitProcess(ExtensionKitSandboxRevision::Revision1);
 #  endif
 
   CrashReporter::RecordAnnotationBool(
@@ -2089,6 +2148,11 @@ mozilla::ipc::IPCResult ContentChild::RecvClearScriptCache(
     const Maybe<nsCString>& aURL) {
   SharedScriptCache::Clear(aChrome, aPrincipal, aSchemelessSite, aPattern,
                            aURL);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvInvalidateScriptCache() {
+  SharedScriptCache::Invalidate();
   return IPC_OK();
 }
 
@@ -2801,7 +2865,7 @@ mozilla::ipc::IPCResult ContentChild::RecvMinimizeMemoryUsage() {
       do_GetService("@mozilla.org/memory-reporter-manager;1");
   NS_ENSURE_TRUE(mgr, IPC_OK());
 
-  Unused << mgr->MinimizeMemoryUsage(/* callback = */ nullptr);
+  (void)mgr->MinimizeMemoryUsage(/* callback = */ nullptr);
   return IPC_OK();
 }
 
@@ -3070,7 +3134,7 @@ void ContentChild::ShutdownInternal() {
 
   // Notify the parent that we are done with shutdown. This is sent with high
   // priority and will just flag we are done.
-  Unused << SendNotifyShutdownSuccess();
+  (void)SendNotifyShutdownSuccess();
 
   // Now tell the parent to actually destroy our channel which will make end
   // our process. This is expected to be the last event the parent will
@@ -3138,7 +3202,7 @@ mozilla::ipc::IPCResult ContentChild::RecvPush(const nsCString& aScope,
                                                nsIPrincipal* aPrincipal,
                                                const nsString& aMessageId) {
   PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId, Nothing());
-  Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
+  (void)NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
   return IPC_OK();
 }
 
@@ -3147,7 +3211,7 @@ mozilla::ipc::IPCResult ContentChild::RecvPushWithData(
     const nsString& aMessageId, nsTArray<uint8_t>&& aData) {
   PushMessageDispatcher dispatcher(aScope, aPrincipal, aMessageId,
                                    Some(std::move(aData)));
-  Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
+  (void)NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
   return IPC_OK();
 }
 
@@ -3156,7 +3220,7 @@ mozilla::ipc::IPCResult ContentChild::RecvPushError(const nsCString& aScope,
                                                     const nsString& aMessage,
                                                     const uint32_t& aFlags) {
   PushErrorDispatcher dispatcher(aScope, aPrincipal, aMessage, aFlags);
-  Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
+  (void)NS_WARN_IF(NS_FAILED(dispatcher.NotifyObserversAndWorkers()));
   return IPC_OK();
 }
 
@@ -3164,7 +3228,7 @@ mozilla::ipc::IPCResult
 ContentChild::RecvNotifyPushSubscriptionModifiedObservers(
     const nsCString& aScope, nsIPrincipal* aPrincipal) {
   PushSubscriptionModifiedDispatcher dispatcher(aScope, aPrincipal);
-  Unused << NS_WARN_IF(NS_FAILED(dispatcher.NotifyObservers()));
+  (void)NS_WARN_IF(NS_FAILED(dispatcher.NotifyObservers()));
   return IPC_OK();
 }
 
@@ -3193,7 +3257,7 @@ void ContentChild::CreateGetFilesRequest(nsTArray<nsString>&& aDirectoryPaths,
   MOZ_ASSERT(aChild);
   MOZ_ASSERT(!mGetFilesPendingRequests.Contains(aUUID));
 
-  Unused << SendGetFilesRequest(aUUID, aDirectoryPaths, aRecursiveFlag);
+  (void)SendGetFilesRequest(aUUID, aDirectoryPaths, aRecursiveFlag);
   mGetFilesPendingRequests.InsertOrUpdate(aUUID, RefPtr{aChild});
 }
 
@@ -3202,7 +3266,7 @@ void ContentChild::DeleteGetFilesRequest(nsID& aUUID,
   MOZ_ASSERT(aChild);
   MOZ_ASSERT(mGetFilesPendingRequests.Contains(aUUID));
 
-  Unused << SendDeleteGetFilesRequest(aUUID);
+  (void)SendDeleteGetFilesRequest(aUUID);
   mGetFilesPendingRequests.Remove(aUUID);
 }
 
@@ -4365,13 +4429,6 @@ mozilla::ipc::IPCResult ContentChild::RecvDispatchBeforeUnloadToSubtree(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvInitNextGenLocalStorageEnabled(
-    const bool& aEnabled) {
-  mozilla::dom::RecvInitNextGenLocalStorageEnabled(aEnabled);
-
-  return IPC_OK();
-}
-
 /* static */ void ContentChild::DispatchBeforeUnloadToSubtree(
     BrowsingContext* aStartingAt,
     const mozilla::Maybe<SessionHistoryInfo>& aInfo,
@@ -4417,6 +4474,26 @@ mozilla::ipc::IPCResult ContentChild::RecvInitNextGenLocalStorageEnabled(
   if (!resolved) {
     aResolver(nsIDocumentViewer::eContinue);
   }
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDispatchNavigateToTraversable(
+    const MaybeDiscarded<BrowsingContext>& aTraversable,
+    const mozilla::Maybe<SessionHistoryInfo>& aInfo,
+    DispatchNavigateToTraversableResolver&& aResolver) {
+  if (aTraversable.IsNullOrDiscarded() || !aTraversable->GetDocShell()) {
+    aResolver(nsIDocumentViewer::eContinue);
+  } else {
+    RefPtr docShell = nsDocShell::Cast(aTraversable->GetDocShell());
+    aResolver(docShell->MaybeFireTraversableTraverseHistory(*aInfo, Nothing()));
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvInitNextGenLocalStorageEnabled(
+    const bool& aEnabled) {
+  mozilla::dom::RecvInitNextGenLocalStorageEnabled(aEnabled);
+
+  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentChild::RecvGoBack(
@@ -4574,19 +4651,14 @@ already_AddRefed<JSActor> ContentChild::InitJSActor(
 }
 
 IPCResult ContentChild::RecvRawMessage(
-    const JSActorMessageMeta& aMeta, const UniquePtr<ClonedMessageData>& aData,
+    const JSActorMessageMeta& aMeta, JSIPCValue&& aData,
     const UniquePtr<ClonedMessageData>& aStack) {
-  UniquePtr<StructuredCloneData> data;
-  if (aData) {
-    data = MakeUnique<StructuredCloneData>();
-    data->BorrowFromClonedMessageData(*aData);
-  }
   UniquePtr<StructuredCloneData> stack;
   if (aStack) {
     stack = MakeUnique<StructuredCloneData>();
     stack->BorrowFromClonedMessageData(*aStack);
   }
-  ReceiveRawMessage(aMeta, std::move(data), std::move(stack));
+  ReceiveRawMessage(aMeta, std::move(aData), std::move(stack));
   return IPC_OK();
 }
 

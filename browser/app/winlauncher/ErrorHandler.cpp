@@ -6,11 +6,8 @@
 
 #include "ErrorHandler.h"
 
-#include <utility>
-
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 
 #if defined(MOZ_LAUNCHER_PROCESS)
 #  include "mozilla/LauncherRegistryInfo.h"
@@ -66,7 +63,7 @@ void HandleLauncherError(const LauncherError& aError,
                          const char* aProcessType) {
 #if defined(MOZ_LAUNCHER_PROCESS)
   LauncherRegistryInfo regInfo;
-  Unused << regInfo.DisableDueToFailure();
+  (void)regInfo.DisableDueToFailure();
 #endif  // defined(MOZ_LAUNCHER_PROCESS)
 
   PostErrorToLog(aError);

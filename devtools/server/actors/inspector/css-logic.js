@@ -138,6 +138,7 @@ class CssLogic {
   /**
    * Get the values of all the computed CSS properties for the highlighted
    * element.
+   *
    * @returns {object} The computed CSS properties for a selected element
    */
   get computedStyle() {
@@ -146,6 +147,7 @@ class CssLogic {
 
   /**
    * Get the source filter.
+   *
    * @returns {string} The source filter being used.
    */
   get sourceFilter() {
@@ -156,6 +158,7 @@ class CssLogic {
    * Source filter. Only display properties coming from the given source (web
    * address). Note that in order to avoid information overload we DO NOT show
    * unmatched system rules.
+   *
    * @see FILTER.*
    */
   set sourceFilter(value) {
@@ -214,6 +217,7 @@ class CssLogic {
 
   /**
    * Cache all the stylesheets in the inspected document
+   *
    * @private
    */
   _cacheSheets() {
@@ -482,7 +486,9 @@ class CssLogic {
   selectorMatchesElement(domRule, idx) {
     let element = this.viewedElement;
     do {
-      if (domRule.selectorMatchesElement(idx, element)) {
+      const { bindingElement, pseudo } =
+        CssLogic.getBindingElementAndPseudo(element);
+      if (domRule.selectorMatchesElement(idx, bindingElement, pseudo)) {
         return true;
       }
 
@@ -861,6 +867,7 @@ class CssSheet {
 
   /**
    * Check if the stylesheet is disabled or not.
+   *
    * @return {boolean} true if this stylesheet is disabled, or false otherwise.
    */
   get disabled() {
@@ -939,7 +946,7 @@ class CssSheet {
    * DOMException (Bug 625013). This wrapper will return an empty array instead.
    *
    * @return {Array} array of css rules.
-   **/
+   */
   getCssRules() {
     try {
       return this.domSheet.cssRules;
@@ -1343,6 +1350,7 @@ class CssPropertyInfo {
    * Uses CssLogic.processMatchedSelectors() to find the matched selectors,
    * passing in a reference to CssPropertyInfo._processMatchedSelector() to
    * create CssSelectorInfo objects, which we then sort
+   *
    * @private
    */
   _findMatchedSelectors() {
@@ -1399,6 +1407,7 @@ class CssPropertyInfo {
   /**
    * Refilter the matched selectors array when the CssLogic.sourceFilter
    * changes. This allows for quick filter changes.
+   *
    * @private
    */
   _refilterSelectors() {

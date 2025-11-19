@@ -6,10 +6,8 @@
 
 #include "MLUtils.h"
 
-#include <algorithm>
 #include <cmath>
 #include "prsystem.h"
-#include "mozilla/Casting.h"
 #include <sys/types.h>
 #include "nsSystemInfo.h"
 

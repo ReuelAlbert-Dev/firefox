@@ -85,7 +85,6 @@ const CM_MAPPING = [
   "clearHistory",
   "defaultCharWidth",
   "extendSelection",
-  "focus",
   "getCursor",
   "getLine",
   "getScrollInfo",
@@ -165,10 +164,34 @@ class Editor extends EventEmitter {
     haxe: { name: "haxe" },
     http: { name: "http" },
     html: { name: "htmlmixed" },
-    js: { name: "javascript" },
+    xml: { name: "xml" },
+    javascript: { name: "javascript" },
+    json: { name: "json" },
     text: { name: "text" },
     vs: { name: "x-shader/x-vertex" },
     wasm: { name: "wasm" },
+  };
+
+  markerTypes = {
+    /* Line Markers */
+    CONDITIONAL_BP_MARKER: "conditional-breakpoint-panel-marker",
+    TRACE_MARKER: "trace-panel-marker",
+    DEBUG_LINE_MARKER: "debug-line-marker",
+    LINE_EXCEPTION_MARKER: "line-exception-marker",
+    HIGHLIGHT_LINE_MARKER: "highlight-line-marker",
+    MULTI_HIGHLIGHT_LINE_MARKER: "multi-highlight-line-marker",
+    BLACKBOX_LINE_MARKER: "blackbox-line-marker",
+    INLINE_PREVIEW_MARKER: "inline-preview-marker",
+    /* Position Markers */
+    COLUMN_BREAKPOINT_MARKER: "column-breakpoint-marker",
+    DEBUG_POSITION_MARKER: "debug-position-marker",
+    EXCEPTION_POSITION_MARKER: "exception-position-marker",
+    ACTIVE_SELECTION_MARKER: "active-selection-marker",
+    PAUSED_LOCATION_MARKER: "paused-location-marker",
+    /* Gutter Markers */
+    EMPTY_LINE_MARKER: "empty-line-marker",
+    BLACKBOX_LINE_GUTTER_MARKER: "blackbox-line-gutter-marker",
+    GUTTER_BREAKPOINT_MARKER: "gutter-breakpoint-marker",
   };
 
   container = null;
@@ -249,8 +272,13 @@ class Editor extends EventEmitter {
       autocompleteOpts: {},
       // Expect a CssProperties object (see devtools/client/fronts/css-properties.js)
       cssProperties: null,
-      // Set to true to prevent the search addon to be activated.
+      // Set to `true` to prevent the search addon to be activated.
       disableSearchAddon: false,
+      // When the search addon is activated (i.e disableSearchAddon == false),
+      // `useSearchAddonPanel` determines if the default search panel for the search addon should be used.
+      // Set to `false` when a custom search panel is used.
+      // Note: This can probably be removed when Bug 1941575 is fixed, and custom search panel is used everywhere
+      useSearchAddonPanel: true,
       maxHighlightLength: 1000,
       // Disable codeMirror setTimeout-based cursor blinking (will be replaced by a CSS animation)
       cursorBlinkRate: 0,
@@ -668,11 +696,22 @@ class Editor extends EventEmitter {
     if (!this.config.cm6) {
       return;
     }
-    const { codemirrorLangJavascript } = this.#CodeMirror6;
+    const {
+      codemirrorLangJavascript,
+      codemirrorLangJson,
+      codemirrorLangHtml,
+      codemirrorLangXml,
+      codemirrorLangCss,
+    } = this.#CodeMirror6;
+
     this.#languageModes.set(
-      Editor.modes.js.name,
+      Editor.modes.javascript,
       codemirrorLangJavascript.javascript()
     );
+    this.#languageModes.set(Editor.modes.json, codemirrorLangJson.json());
+    this.#languageModes.set(Editor.modes.html, codemirrorLangHtml.html());
+    this.#languageModes.set(Editor.modes.xml, codemirrorLangXml.xml());
+    this.#languageModes.set(Editor.modes.css, codemirrorLangCss.css());
   }
 
   /**
@@ -704,7 +743,7 @@ class Editor extends EventEmitter {
         placeholder,
       },
       codemirrorState: { EditorState, Compartment, Prec },
-      codemirrorSearch: { highlightSelectionMatches },
+      codemirrorSearch: { search, searchKeymap, highlightSelectionMatches },
       codemirrorLanguage: {
         syntaxTreeAvailable,
         indentUnit,
@@ -715,26 +754,16 @@ class Editor extends EventEmitter {
       lezerHighlight,
     } = this.#CodeMirror6;
 
-    const tabSizeCompartment = new Compartment();
-    const indentCompartment = new Compartment();
-    const lineWrapCompartment = new Compartment();
-    const lineNumberCompartment = new Compartment();
-    const lineNumberMarkersCompartment = new Compartment();
-    const searchHighlightCompartment = new Compartment();
-    const domEventHandlersCompartment = new Compartment();
-    const foldGutterCompartment = new Compartment();
-    const languageCompartment = new Compartment();
-
     this.#compartments = {
-      tabSizeCompartment,
-      indentCompartment,
-      lineWrapCompartment,
-      lineNumberCompartment,
-      lineNumberMarkersCompartment,
-      searchHighlightCompartment,
-      domEventHandlersCompartment,
-      foldGutterCompartment,
-      languageCompartment,
+      tabSizeCompartment: new Compartment(),
+      indentCompartment: new Compartment(),
+      lineWrapCompartment: new Compartment(),
+      lineNumberCompartment: new Compartment(),
+      lineNumberMarkersCompartment: new Compartment(),
+      searchHighlightCompartment: new Compartment(),
+      domEventHandlersCompartment: new Compartment(),
+      foldGutterCompartment: new Compartment(),
+      languageCompartment: new Compartment(),
     };
 
     const { lineContentMarkerEffect, lineContentMarkerExtension } =
@@ -757,23 +786,27 @@ class Editor extends EventEmitter {
     this.#setupLanguageModes();
 
     const languageMode = [];
-    if (this.config.mode && this.#languageModes.has(this.config.mode.name)) {
-      languageMode.push(this.#languageModes.get(this.config.mode.name));
+    if (this.config.mode && this.#languageModes.has(this.config.mode)) {
+      languageMode.push(this.#languageModes.get(this.config.mode));
     }
 
     const extensions = [
       bracketMatching(),
-      indentCompartment.of(indentUnit.of(indentStr)),
-      tabSizeCompartment.of(EditorState.tabSize.of(this.config.tabSize)),
-      lineWrapCompartment.of(
+      this.#compartments.indentCompartment.of(indentUnit.of(indentStr)),
+      this.#compartments.tabSizeCompartment.of(
+        EditorState.tabSize.of(this.config.tabSize)
+      ),
+      this.#compartments.lineWrapCompartment.of(
         this.config.lineWrapping ? EditorView.lineWrapping : []
       ),
       EditorState.readOnly.of(this.config.readOnly),
-      lineNumberCompartment.of(this.config.lineNumbers ? lineNumbers() : []),
+      this.#compartments.lineNumberCompartment.of(
+        this.config.lineNumbers ? lineNumbers() : []
+      ),
       codeFolding({
         placeholderText: "↔",
       }),
-      foldGutterCompartment.of([]),
+      this.#compartments.foldGutterCompartment.of([]),
       syntaxHighlighting(lezerHighlight.classHighlighter),
       EditorView.updateListener.of(v => {
         if (!cm.isDocumentLoadComplete) {
@@ -797,18 +830,27 @@ class Editor extends EventEmitter {
           this.#updateListener(v);
         }
       }),
-      domEventHandlersCompartment.of(
+      this.#compartments.domEventHandlersCompartment.of(
         EditorView.domEventHandlers(this.#createEventHandlers())
       ),
-      lineNumberMarkersCompartment.of([]),
+      this.#compartments.lineNumberMarkersCompartment.of([]),
       lineContentMarkerExtension,
       positionContentMarkerExtension,
-      searchHighlightCompartment.of(this.#searchHighlighterExtension([])),
-      languageCompartment.of(languageMode),
+      this.#compartments.searchHighlightCompartment.of(
+        this.#searchHighlighterExtension([])
+      ),
+      this.#compartments.languageCompartment.of(languageMode),
       highlightSelectionMatches(),
       // keep last so other extension take precedence
       codemirror.minimalSetup,
     ];
+
+    if (!this.config.disableSearchAddon && this.config.useSearchAddonPanel) {
+      this.config.keyMap = this.config.keyMap
+        ? [...this.config.keyMap, ...searchKeymap]
+        : [...searchKeymap];
+      extensions.push(search({ top: true }));
+    }
 
     if (this.config.placeholder) {
       extensions.push(placeholder(this.config.placeholder));
@@ -848,7 +890,6 @@ class Editor extends EventEmitter {
    * @returns {Object} The object contains an extension and effects which used to trigger updates to the extension
    *          {Object} - lineContentMarkerExtension - The line content marker extension
    *          {Object} - lineContentMarkerEffect - The effects to add and remove markers
-   *
    */
   #createlineContentMarkersExtension() {
     const {
@@ -1085,6 +1126,7 @@ class Editor extends EventEmitter {
 
   /**
    * Adds the DOM event handlers for the editor.
+   *
    * @param {Object} domEventHandlers - A dictionary of handlers for the DOM events
    *                                    the handlers are getting called with the following arguments
    *                                     - {Object} `event`: The DOM event
@@ -1128,6 +1170,7 @@ class Editor extends EventEmitter {
 
   /**
    * Remove specified DOM event handlers for the editor.
+   *
    * @param {Object} domEventHandlers - A dictionary of handlers for the DOM events
    */
   removeEditorDOMEventListeners(domEventHandlers) {
@@ -1175,6 +1218,7 @@ class Editor extends EventEmitter {
 
   /**
    * This adds a marker used to add classes to editor line based on a condition.
+   *
    *   @property {object}             marker
    *                                  The rule rendering a marker or class.
    *   @property {object}             marker.id
@@ -1204,6 +1248,7 @@ class Editor extends EventEmitter {
 
   /**
    * This removes the marker which has the specified className
+   *
    * @param {string} markerId - The unique identifier for this marker
    */
   removeLineContentMarker(markerId) {
@@ -1495,6 +1540,7 @@ class Editor extends EventEmitter {
 
   /**
    * This adds a marker used to decorate token / content at a specific position .
+   *
    * @param {Object} marker
    * @param {String} marker.id
    * @param {Array<Object>} marker.positions - This includes the line / column and any optional positionData which defines each position.
@@ -1518,6 +1564,7 @@ class Editor extends EventEmitter {
 
   /**
    * This removes the marker which has the specified id
+   *
    * @param {string} markerId - The unique identifier for this marker
    */
   removePositionContentMarker(markerId) {
@@ -1531,6 +1578,7 @@ class Editor extends EventEmitter {
 
   /**
    * Set event listeners for the line gutter
+   *
    * @param {Object} domEventHandlers
    *
    * example usage:
@@ -1686,6 +1734,7 @@ class Editor extends EventEmitter {
   /**
    * This creates the extension used to manage the rendering of markers for
    * results for any search pattern
+   *
    * @param {RegExp}      pattern - The search pattern
    * @param {String}      className - The class used to decorate each result
    * @returns {Array<ViewPlugin>} An extension which is an array containing the view
@@ -1849,6 +1898,7 @@ class Editor extends EventEmitter {
 
   /**
    * Gets the position information for the current selection
+   *
    * @returns {Object} cursor      - The location information for the  current selection
    *                   cursor.from - An object with the starting line / column of the selection
    *                   cursor.to   - An object with the end line / column of the selection
@@ -1878,6 +1928,7 @@ class Editor extends EventEmitter {
 
   /**
    * Gets the text content for the current selection
+   *
    * @returns {String}
    */
   getSelectedText() {
@@ -1893,6 +1944,7 @@ class Editor extends EventEmitter {
    * Given screen coordinates this should return the line and column
    * related. This used currently to determine the line and columns
    * for the tokens that are hovered over.
+   *
    * @param {Number} left - Horizontal position from the left
    * @param {Number} top - Vertical position from the top
    * @returns {Object} position - The line and column related to the screen coordinates.
@@ -1926,6 +1978,7 @@ class Editor extends EventEmitter {
 
   /**
    * Check that text is selected
+   *
    * @returns {Boolean}
    */
   isTextSelected() {
@@ -1984,19 +2037,26 @@ class Editor extends EventEmitter {
   }
 
   /**
-   * Changes the value of a currently used highlighting mode.
-   * See Editor.modes for the list of all supported modes.
+   * Changes the currently used syntax highlighting mode.
+   *
+   * @param {Object} mode - Any of the modes from Editor.modes
+   * @returns
    */
-  setMode(value) {
+  setMode(mode) {
     if (this.config.cm6) {
       const cm = editors.get(this);
+      // Fallback to using js syntax highlighting if there is none found
+      const languageMode = this.#languageModes.has(mode)
+        ? this.#languageModes.get(mode)
+        : this.#languageModes.get(Editor.modes.javascript);
+
       return cm.dispatch({
         effects: this.#compartments.languageCompartment.reconfigure([
-          this.#languageModes.get(value),
+          languageMode,
         ]),
       });
     }
-    this.setOption("mode", value);
+    this.setOption("mode", mode);
 
     // If autocomplete was set up and the mode is changing, then
     // turn it off and back on again so the proper mode can be used.
@@ -2390,7 +2450,7 @@ class Editor extends EventEmitter {
    *                      },
    *                      ...
    *                    }
-   **/
+   */
   async getBindingReferences(location, scope) {
     const cm = editors.get(this);
     const {
@@ -2483,10 +2543,14 @@ class Editor extends EventEmitter {
    * the 'value' argument.
    *
    * @param {String} value: The text to replace the editor content
-   * @param {String} documentId: Optional unique id represeting the specific document which is source of the text.
+   * @param {Object} options
+   * @param {String} options.documentId
+   *                 Optional unique id represeting the specific document which is source of the text.
    *                 Will be null for loading and error messages.
+   * @param {Boolean} options.saveTransactionToHistory
+   *                 This determines if the transaction for this specific text change should be added to the undo/redo history.
    */
-  async setText(value, documentId) {
+  async setText(value, { documentId, saveTransactionToHistory = true } = {}) {
     const cm = editors.get(this);
     const isWasm = typeof value !== "string" && "binary" in value;
 
@@ -2532,11 +2596,13 @@ class Editor extends EventEmitter {
 
       const {
         codemirrorView: { EditorView, lineNumbers },
+        codemirrorState: { Transaction },
       } = this.#CodeMirror6;
 
       await cm.dispatch({
         changes: { from: 0, to: cm.state.doc.length, insert: value },
         selection: { anchor: 0 },
+        annotations: [Transaction.addToHistory.of(saveTransactionToHistory)],
       });
 
       const effects = [];
@@ -3374,6 +3440,7 @@ class Editor extends EventEmitter {
 
   /**
    * Gets the element at the specified codemirror offset
+   *
    * @param {Number} offset
    * @return {Element|null}
    */
@@ -3394,6 +3461,7 @@ class Editor extends EventEmitter {
   /**
    * This checks if the specified position (line/column) is within the current viewport
    * bounds. it helps determine if scrolling should happen.
+   *
    * @param {Number} line - The line in the source
    * @param {Number} column - The column in the source
    * @returns {Boolean}
@@ -3452,6 +3520,7 @@ class Editor extends EventEmitter {
 
   /**
    * Converts  line/col to CM6 offset position
+   *
    * @param {Number} line - The line in the source
    * @param {Number} col - The column in the source
    * @returns {Number}
@@ -3506,6 +3575,7 @@ class Editor extends EventEmitter {
 
   /**
    * Scrolls the editor to the specified line and column
+   *
    * @param {Number} line - The line in the source
    * @param {Number} column - The column in the source
    * @param {String|null} yAlign - Optional value for position of the line after the line is scrolled.
@@ -3574,31 +3644,31 @@ class Editor extends EventEmitter {
 
   /**
    * Move CodeMirror cursor to a given location.
+   * This will also scroll the editor to the specified position.
+   * Used only for CM6
    *
    * @param {Number} line
    * @param {Number} column
    */
-  setCursorAt(line, column) {
+  async setCursorAt(line, column) {
+    await this.scrollTo(line, column);
     const cm = editors.get(this);
-    if (this.config.cm6) {
-      const { lines } = cm.state.doc;
-      if (line > lines) {
-        console.error(
-          `Trying to set the cursor on a non-existing line ${line} > ${lines}`
-        );
-        return null;
-      }
-      const lineInfo = cm.state.doc.line(line + 1);
-      if (column >= lineInfo.length) {
-        console.error(
-          `Trying to set the cursor on a non-existing column ${column} >= ${lineInfo.length}`
-        );
-        return null;
-      }
-      const position = lineInfo.from + column;
-      return cm.dispatch({ selection: { anchor: position, head: position } });
+    const { lines } = cm.state.doc;
+    if (line > lines) {
+      console.error(
+        `Trying to set the cursor on a non-existing line ${line} > ${lines}`
+      );
+      return null;
     }
-    return cm.setCursor({ line, ch: column });
+    const lineInfo = cm.state.doc.line(line);
+    if (column >= lineInfo.length) {
+      console.error(
+        `Trying to set the cursor on a non-existing column ${column} >= ${lineInfo.length}`
+      );
+      return null;
+    }
+    const position = lineInfo.from + column;
+    return cm.dispatch({ selection: { anchor: position, head: position } });
   }
 
   // Used only in tests

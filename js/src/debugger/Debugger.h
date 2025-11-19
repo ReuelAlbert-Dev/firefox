@@ -336,7 +336,7 @@ extern void CheckDebuggeeThing(JSObject* obj, bool invisibleOk);
  * beacomes a debuggee again later, new Frame objects are created.)
  */
 template <class Referent, class Wrapper, bool InvisibleKeysOk = false>
-class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
+class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*, ZoneAllocPolicy> {
  private:
   using Key = Referent*;
   using Value = Wrapper*;
@@ -344,7 +344,7 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
   JS::Compartment* compartment;
 
  public:
-  using Base = WeakMap<Key, Value>;
+  using Base = WeakMap<Key, Value, ZoneAllocPolicy>;
   using ReferentType = Referent;
   using WrapperType = Wrapper;
 
@@ -394,8 +394,13 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
  public:
   void traceCrossCompartmentEdges(JSTracer* tracer) {
     for (Enum e(*this); !e.empty(); e.popFront()) {
-      TraceEdge(tracer, &e.front().mutableKey(), "Debugger WeakMap key");
+      // The values are debugger objects which contain a cross-compartment
+      // debuggee pointer, so trace their contents.
       e.front().value()->trace(tracer);
+
+      // Trace the keys, which are cross compartment debuggee pointers.
+      // This can rekey the entry and invalidate |e.front()|.
+      Base::traceKey(tracer, e);
     }
   }
 

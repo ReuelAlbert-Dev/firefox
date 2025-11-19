@@ -12,22 +12,22 @@
 #include "mozilla/ViewportFrame.h"
 
 #include "MobileViewportManager.h"
+#include "mozilla/AbsoluteContainingBlock.h"
 #include "mozilla/ComputedStyleInlines.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ScrollContainerFrame.h"
 #include "mozilla/dom/ViewTransition.h"
-#include "nsAbsoluteContainingBlock.h"
 #include "nsCanvasFrame.h"
 #include "nsGkAtoms.h"
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
 #include "nsSubDocumentFrame.h"
+#include "nsView.h"
+#include "nsViewManager.h"
 
 using namespace mozilla;
-
-using AbsPosReflowFlags = nsAbsoluteContainingBlock::AbsPosReflowFlags;
 
 // ScrollContainerFrame can create two other wrap lists for scrollbars and such.
 static constexpr uint16_t kFirstTopLayerIndex = 2;
@@ -339,45 +339,23 @@ void ViewportFrame::RemoveFrame(DestroyContext& aContext, ChildListID aListID,
 }
 #endif
 
+void ViewportFrame::SetView(nsView* aView) {
+  MOZ_ASSERT(!mView, "Should not swap views");
+  mView = aView;
+}
+
+void ViewportFrame::Destroy(DestroyContext& aContext) {
+  if (PresShell()->IsDestroying()) {
+    PresShell::ClearMouseCapture(this);
+  }
+  nsContainerFrame::Destroy(aContext);
+}
+
 nscoord ViewportFrame::IntrinsicISize(const IntrinsicSizeInput& aInput,
                                       IntrinsicISizeType aType) {
   return mFrames.IsEmpty()
              ? 0
              : mFrames.FirstChild()->IntrinsicISize(aInput, aType);
-}
-
-nsPoint ViewportFrame::AdjustReflowInputForScrollbars(
-    ReflowInput& aReflowInput) const {
-  // Get our prinicpal child frame and see if we're scrollable
-  nsIFrame* kidFrame = mFrames.FirstChild();
-
-  if (ScrollContainerFrame* scrollContainerFrame = do_QueryFrame(kidFrame)) {
-    // Note: In ReflowInput::CalculateHypotheticalPosition(), we exclude the
-    // scrollbar or scrollbar-gutter area when computing the offset to
-    // ViewportFrame. Ensure the code there remains in sync with the logic here.
-    WritingMode wm = aReflowInput.GetWritingMode();
-    LogicalMargin scrollbars(wm,
-                             scrollContainerFrame->GetActualScrollbarSizes());
-    aReflowInput.SetComputedISize(
-        aReflowInput.ComputedISize() - scrollbars.IStartEnd(wm),
-        ReflowInput::ResetResizeFlags::No);
-    aReflowInput.SetAvailableISize(aReflowInput.AvailableISize() -
-                                   scrollbars.IStartEnd(wm));
-    aReflowInput.SetComputedBSize(
-        aReflowInput.ComputedBSize() - scrollbars.BStartEnd(wm),
-        ReflowInput::ResetResizeFlags::No);
-    return nsPoint(scrollbars.Left(wm), scrollbars.Top(wm));
-  }
-  return nsPoint(0, 0);
-}
-
-nsRect ViewportFrame::AdjustReflowInputAsContainingBlock(
-    ReflowInput& aReflowInput) const {
-  const nsPoint origin = AdjustReflowInputForScrollbars(aReflowInput);
-  nsRect rect(origin, aReflowInput.ComputedPhysicalSize());
-  rect.SizeTo(AdjustViewportSizeForFixedPosition(rect));
-
-  return rect;
 }
 
 nsRect ViewportFrame::GetContainingBlockAdjustedForScrollbars(
@@ -499,11 +477,13 @@ void ViewportFrame::Reflow(nsPresContext* aPresContext,
     // size and dynamic toolbar into account because
     // ::-moz-snapshot-containing-block should include those areas.
     //
-    // We will take them into account in nsAbsoluteContainingBlock::Reflow(),
+    // We will take them into account in AbsoluteContainingBlock::Reflow(),
     // for kid frames other than ::-moz-snapshot-containing-block.
     const nsRect cb(nsPoint(), reflowInput.ComputedPhysicalSize());
-    // XXX could be optimized
-    AbsPosReflowFlags flags = AbsPosReflowFlags::CBWidthAndHeightChanged;
+    // XXX: To optimize the performance, set the flags only when the CB width or
+    // height actually changes.
+    AbsPosReflowFlags flags{AbsPosReflowFlag::CBWidthChanged,
+                            AbsPosReflowFlag::CBHeightChanged};
     GetAbsoluteContainingBlock()->Reflow(this, aPresContext, reflowInput,
                                          aStatus, cb, flags,
                                          /* aOverflowAreas = */ nullptr);
@@ -521,6 +501,10 @@ void ViewportFrame::Reflow(nsPresContext* aPresContext,
   // Clipping is handled by the document container (e.g., nsSubDocumentFrame),
   // so we don't need to change our overflow areas.
   FinishAndStoreOverflow(&aDesiredSize);
+
+  if (mView) {
+    mView->GetViewManager()->ResizeView(mView, aDesiredSize.PhysicalSize());
+  }
 
   NS_FRAME_TRACE_REFLOW_OUT("ViewportFrame::Reflow", aStatus);
 }

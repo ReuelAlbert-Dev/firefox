@@ -10,7 +10,6 @@
 
 #include "media/engine/fake_webrtc_video_engine.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -42,8 +41,7 @@ namespace webrtc {
 
 namespace {
 
-
-static constexpr TimeDelta kEventTimeout = TimeDelta::Seconds(10);
+constexpr TimeDelta kEventTimeout = TimeDelta::Seconds(10);
 
 bool IsScalabilityModeSupported(const std::vector<SdpVideoFormat>& formats,
                                 std::optional<std::string> scalability_mode) {
@@ -131,8 +129,7 @@ std::unique_ptr<VideoDecoder> FakeWebRtcVideoDecoderFactory::Create(
 
 void FakeWebRtcVideoDecoderFactory::DecoderDestroyed(
     FakeWebRtcVideoDecoder* decoder) {
-  decoders_.erase(std::remove(decoders_.begin(), decoders_.end(), decoder),
-                  decoders_.end());
+  std::erase(decoders_, decoder);
 }
 
 void FakeWebRtcVideoDecoderFactory::AddSupportedVideoCodec(
@@ -296,8 +293,7 @@ bool FakeWebRtcVideoEncoderFactory::WaitForCreatedVideoEncoders(
 void FakeWebRtcVideoEncoderFactory::EncoderDestroyed(
     FakeWebRtcVideoEncoder* encoder) {
   MutexLock lock(&mutex_);
-  encoders_.erase(std::remove(encoders_.begin(), encoders_.end(), encoder),
-                  encoders_.end());
+  std::erase(encoders_, encoder);
 }
 
 void FakeWebRtcVideoEncoderFactory::AddSupportedVideoCodec(

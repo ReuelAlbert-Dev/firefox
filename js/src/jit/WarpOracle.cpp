@@ -22,6 +22,7 @@
 #include "jit/JitSpewer.h"
 #include "jit/JitZone.h"
 #include "jit/MIRGenerator.h"
+#include "jit/ShapeList.h"
 #include "jit/TrialInlining.h"
 #include "jit/TypeData.h"
 #include "jit/WarpBuilder.h"
@@ -160,8 +161,8 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
   WarpScriptOracle scriptOracle(cx_, this, outerScript_, &mirGen_.outerInfo(),
                                 icScript);
 
-  WarpScriptSnapshot* scriptSnapshot;
-  MOZ_TRY_VAR(scriptSnapshot, scriptOracle.createScriptSnapshot());
+  WarpScriptSnapshot* scriptSnapshot =
+      MOZ_TRY(scriptOracle.createScriptSnapshot());
 
   // Insert the outermost scriptSnapshot at the front of the list.
   scriptSnapshots_.insertFront(scriptSnapshot);
@@ -874,6 +875,73 @@ bool WarpOracle::addFuseDependency(RealmFuses::FuseIndex fuseIndex,
   }
 }
 
+template <auto FuseMember, CompilationDependency::Type DepType>
+struct RuntimeFuseDependency final : public CompilationDependency {
+  explicit RuntimeFuseDependency() : CompilationDependency(DepType) {}
+
+  bool registerDependency(JSContext* cx,
+                          const IonScriptKey& ionScript) override {
+    MOZ_ASSERT(checkDependency(cx));
+    return (cx->runtime()->runtimeFuses.ref().*FuseMember)
+        .addFuseDependency(cx, ionScript);
+  }
+
+  CompilationDependency* clone(TempAllocator& alloc) const override {
+    return new (alloc.fallible()) RuntimeFuseDependency<FuseMember, DepType>();
+  }
+
+  bool checkDependency(JSContext* cx) const override {
+    return (cx->runtime()->runtimeFuses.ref().*FuseMember).intact();
+  }
+
+  HashNumber hash() const override { return mozilla::HashGeneric(type); }
+
+  bool operator==(const CompilationDependency& dep) const override {
+    // Since this dependency is runtime wide, they are all equal.
+    return dep.type == type;
+  }
+};
+
+bool WarpOracle::addFuseDependency(RuntimeFuses::FuseIndex fuseIndex,
+                                   bool* stillValid) {
+  MOZ_ASSERT(RuntimeFuses::isInvalidatingFuse(fuseIndex),
+             "All current runtime fuses are invalidating");
+
+  auto addIfStillValid = [&](const auto& dep) {
+    if (!dep.checkDependency(cx_)) {
+      *stillValid = false;
+      return true;
+    }
+    *stillValid = true;
+    return mirGen().tracker.addDependency(alloc_, dep);
+  };
+
+  // Register a compilation dependency for all fuses that are still valid.
+  switch (fuseIndex) {
+    case RuntimeFuses::FuseIndex::HasSeenObjectEmulateUndefinedFuse: {
+      using Dependency = RuntimeFuseDependency<
+          &RuntimeFuses::hasSeenObjectEmulateUndefinedFuse,
+          CompilationDependency::Type::EmulatesUndefined>;
+      return addIfStillValid(Dependency());
+    }
+    case RuntimeFuses::FuseIndex::HasSeenArrayExceedsInt32LengthFuse: {
+      using Dependency = RuntimeFuseDependency<
+          &RuntimeFuses::hasSeenArrayExceedsInt32LengthFuse,
+          CompilationDependency::Type::ArrayExceedsInt32Length>;
+      return addIfStillValid(Dependency());
+    }
+    case RuntimeFuses::FuseIndex::DefaultLocaleHasDefaultCaseMappingFuse: {
+      using Dependency = RuntimeFuseDependency<
+          &RuntimeFuses::defaultLocaleHasDefaultCaseMappingFuse,
+          CompilationDependency::Type::DefaultCaseMapping>;
+      return addIfStillValid(Dependency());
+    }
+    case RuntimeFuses::FuseIndex::LastFuseIndex:
+      break;
+  }
+  MOZ_CRASH("invalid runtime fuse index");
+}
+
 class ObjectPropertyFuseDependency final : public CompilationDependency {
   ObjectFuse* fuse_;
   uint32_t expectedGeneration_;
@@ -1015,9 +1083,7 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
     // and their relative frequency.
     if (ICSupportsPolymorphicTypeData(loc.getOp()) &&
         fallbackStub->enteredCount() == 0) {
-      bool inlinedPolymorphicTypes = false;
-      MOZ_TRY_VAR(
-          inlinedPolymorphicTypes,
+      bool inlinedPolymorphicTypes = MOZ_TRY(
           maybeInlinePolymorphicTypes(snapshots, loc, stub, fallbackStub));
       if (inlinedPolymorphicTypes) {
         return Ok();
@@ -1037,6 +1103,9 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
 
   const CacheIRStubInfo* stubInfo = stub->stubInfo();
   const uint8_t* stubData = stub->stubDataStart();
+
+  // List of shapes for a GuardMultipleShapes op with a small number of shapes.
+  mozilla::Maybe<ShapeListSnapshot> shapeList;
 
   // Only create a snapshot if all opcodes are supported by the transpiler.
   CacheIRReader reader(stubInfo);
@@ -1106,6 +1175,17 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
         }
         break;
       }
+      case CacheOp::GuardRuntimeFuse: {
+        auto [fuseIndex] = reader.argsForGuardRuntimeFuse();
+        bool stillValid;
+        if (!oracle_->addFuseDependency(fuseIndex, &stillValid)) {
+          return abort(AbortReason::Alloc);
+        }
+        if (!stillValid) {
+          hasInvalidFuseGuard = true;
+        }
+        break;
+      }
       case CacheOp::GuardObjectFuseProperty: {
         auto args = reader.argsForGuardObjectFuseProperty();
         ObjectFuse* fuse = reinterpret_cast<ObjectFuse*>(
@@ -1125,6 +1205,21 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
           }
         } else {
           hasInvalidFuseGuard = true;
+        }
+        break;
+      }
+      case CacheOp::GuardMultipleShapes: {
+        auto args = reader.argsForGuardMultipleShapes();
+        JSObject* shapes = stubInfo->getStubField<StubField::Type::JSObject>(
+            stub, args.shapesOffset);
+        auto* shapesObject = &shapes->as<ShapeListObject>();
+        MOZ_ASSERT(shapeList.isNothing());
+        size_t numShapes = shapesObject->length();
+        if (ShapeListSnapshot::shouldSnapshot(numShapes)) {
+          shapeList.emplace();
+          for (size_t i = 0; i < numShapes; i++) {
+            shapeList->init(i, shapesObject->get(i));
+          }
         }
         break;
       }
@@ -1173,17 +1268,24 @@ AbortReasonOr<Ok> WarpScriptOracle::maybeInlineIC(WarpOpSnapshotList& snapshots,
   if (fallbackStub->trialInliningState() == TrialInliningState::Inlined ||
       fallbackStub->trialInliningState() ==
           TrialInliningState::MonomorphicInlined) {
-    bool inlinedCall;
-    MOZ_TRY_VAR(inlinedCall, maybeInlineCall(snapshots, loc, stub, fallbackStub,
-                                             stubDataCopy));
+    bool inlinedCall = MOZ_TRY(
+        maybeInlineCall(snapshots, loc, stub, fallbackStub, stubDataCopy));
     if (inlinedCall) {
       return Ok();
     }
   }
 
-  if (!AddOpSnapshot<WarpCacheIR>(alloc_, snapshots, offset, jitCode, stubInfo,
-                                  stubDataCopy)) {
-    return abort(AbortReason::Alloc);
+  if (shapeList.isSome()) {
+    if (!AddOpSnapshot<WarpCacheIRWithShapeList>(alloc_, snapshots, offset,
+                                                 jitCode, stubInfo,
+                                                 stubDataCopy, *shapeList)) {
+      return abort(AbortReason::Alloc);
+    }
+  } else {
+    if (!AddOpSnapshot<WarpCacheIR>(alloc_, snapshots, offset, jitCode,
+                                    stubInfo, stubDataCopy)) {
+      return abort(AbortReason::Alloc);
+    }
   }
 
   fallbackStub->setUsedByTranspiler();

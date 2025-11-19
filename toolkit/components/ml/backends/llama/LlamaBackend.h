@@ -13,6 +13,7 @@
 #include "ggml-cpu.h"
 #include "mozilla/dom/LlamaRunnerBinding.h"
 #include "mozilla/Result.h"
+#include "mozilla/ResultVariant.h"
 #include "mozilla/UniquePtr.h"
 
 namespace mozilla::llama {
@@ -123,7 +124,8 @@ class LlamaBackend {
 
  private:
   SamplerResult InitializeSampler(
-      const mozilla::dom::Sequence<LlamaSamplerConfig>& aSamplers);
+      const mozilla::dom::Sequence<LlamaSamplerConfig>& aSamplers,
+      const llama_vocab* vocab);
 
   // Pointer to the dynamically loaded llama library
   LlamaLibWrapper* mLib = nullptr;

@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-@file:Suppress("MagicNumber", "TooManyFunctions")
-
 package org.mozilla.fenix.home.recenttabs.view
 
 import android.graphics.Bitmap
@@ -25,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -76,7 +76,7 @@ private const val THUMBNAIL_SIZE = 108
 fun RecentTabs(
     recentTabs: List<RecentTab>,
     menuItems: List<RecentTabMenuItem>,
-    backgroundColor: Color = FirefoxTheme.colors.layer2,
+    backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
     onRecentTabClick: (String) -> Unit = {},
 ) {
     Column(
@@ -142,7 +142,6 @@ private fun RecentTabItem(
                 modifier = Modifier
                     .size(108.dp, 80.dp)
                     .clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop,
             )
 
             Spacer(modifier = Modifier.width(16.dp))
@@ -157,7 +156,7 @@ private fun RecentTabItem(
                         testTagsAsResourceId = true
                         testTag = "recent.tab.title"
                     },
-                    color = FirefoxTheme.colors.textPrimary,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontSize = 14.sp,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -181,7 +180,7 @@ private fun RecentTabItem(
                             testTagsAsResourceId = true
                             testTag = "recent.tab.url"
                         },
-                        color = FirefoxTheme.colors.textSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 1,
@@ -209,13 +208,11 @@ private fun RecentTabItem(
  *
  * @param tab [RecentTab] that was recently viewed.
  * @param modifier [Modifier] used to draw the image content.
- * @param contentScale [ContentScale] used to draw image content.
  */
 @Composable
 fun RecentTabImage(
     tab: RecentTab.Tab,
     modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.FillWidth,
 ) {
     val previewImageUrl = tab.state.content.previewImageUrl
 
@@ -229,18 +226,16 @@ fun RecentTabImage(
                 fallback = {
                     TabThumbnail(
                         tab = tab.state,
-                        size = LocalDensity.current.run { THUMBNAIL_SIZE.dp.toPx().toInt() },
+                        thumbnailSizePx = LocalDensity.current.run { THUMBNAIL_SIZE.dp.toPx().toInt() },
                         modifier = modifier,
-                        contentScale = contentScale,
                     )
                 },
             )
         }
         else -> TabThumbnail(
             tab = tab.state,
-            size = LocalDensity.current.run { THUMBNAIL_SIZE.dp.toPx().toInt() },
+            thumbnailSizePx = LocalDensity.current.run { THUMBNAIL_SIZE.dp.toPx().toInt() },
             modifier = modifier,
-            contentScale = contentScale,
         )
     }
 }
@@ -316,15 +311,21 @@ private fun PlaceHolderTabIcon(modifier: Modifier) {
 @Composable
 private fun RecentTabsPreview() {
     FirefoxTheme {
-        RecentTabs(
-            recentTabs = FakeHomepagePreview.recentTabs(),
-            menuItems = listOf(
-                RecentTabMenuItem(
-                    title = "Menu item",
-                    onClick = {},
-                ),
-            ),
-            onRecentTabClick = {},
-        )
+        Surface {
+            Column(
+                modifier = Modifier.padding(all = FirefoxTheme.layout.space.static200),
+            ) {
+                RecentTabs(
+                    recentTabs = FakeHomepagePreview.recentTabs(),
+                    menuItems = listOf(
+                        RecentTabMenuItem(
+                            title = "Menu item",
+                            onClick = {},
+                        ),
+                    ),
+                    onRecentTabClick = {},
+                )
+            }
+        }
     }
 }

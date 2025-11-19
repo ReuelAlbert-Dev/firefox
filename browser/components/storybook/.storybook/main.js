@@ -15,7 +15,9 @@ module.exports = {
   stories: [
     // Show the Storybook document first in the list
     // so that navigating to firefoxux.github.io/firefox-desktop-components/
-    // lands on the Storybook.stories.md file
+    // lands on the ComponentStatus.stories.md file
+    `../**/component-status.stories.mjs`,
+    // and lands on the Storybook.stories.md file
     "../**/README.storybook.stories.md",
     // Docs section
     "../**/README.*.stories.md",
@@ -108,7 +110,7 @@ module.exports = {
 
     config.module.rules.push({
       test: /\.m?js$/,
-      exclude: /.storybook/,
+      exclude: /\.storybook/,
       use: [{ loader: path.resolve(__dirname, "./chrome-styles-loader.js") }],
     });
 
@@ -121,7 +123,7 @@ module.exports = {
     );
     config.module.rules[cssRuleIndex] = {
       test: /\.css$/,
-      exclude: [/.storybook/, /node_modules/],
+      exclude: [/\.storybook/, /node_modules/],
       type: "asset/resource",
       generator: {
         filename: "[name].[contenthash].css",

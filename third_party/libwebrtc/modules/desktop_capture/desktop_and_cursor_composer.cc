@@ -10,16 +10,19 @@
 
 #include "modules/desktop_capture/desktop_and_cursor_composer.h"
 
-#include <stdint.h>
-#include <string.h>
-
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <utility>
 
+#include "modules/desktop_capture/desktop_capture_metadata.h"
+#include "modules/desktop_capture/desktop_capture_types.h"
 #include "modules/desktop_capture/desktop_capturer.h"
 #include "modules/desktop_capture/desktop_frame.h"
+#include "modules/desktop_capture/desktop_geometry.h"
 #include "modules/desktop_capture/mouse_cursor.h"
 #include "modules/desktop_capture/mouse_cursor_monitor.h"
+#include "modules/desktop_capture/shared_memory.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 
@@ -104,6 +107,7 @@ DesktopFrameWithCursor::DesktopFrameWithCursor(
     bool cursor_changed)
     : DesktopFrame(frame->size(),
                    frame->stride(),
+                   frame->pixel_format(),
                    frame->data(),
                    frame->shared_memory()),
       original_frame_(std::move(frame)) {
@@ -133,7 +137,7 @@ DesktopFrameWithCursor::DesktopFrameWithCursor(
 
   // Copy original screen content under cursor to `restore_frame_`.
   restore_position_ = cursor_rect_.top_left();
-  restore_frame_.reset(new BasicDesktopFrame(cursor_rect_.size()));
+  restore_frame_.reset(new BasicDesktopFrame(cursor_rect_.size(), FOURCC_ARGB));
   restore_frame_->CopyPixelsFrom(*this, cursor_rect_.top_left(),
                                  DesktopRect::MakeSize(restore_frame_->size()));
 

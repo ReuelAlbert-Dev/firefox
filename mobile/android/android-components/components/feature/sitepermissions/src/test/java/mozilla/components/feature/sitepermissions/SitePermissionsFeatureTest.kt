@@ -25,12 +25,14 @@ import mozilla.components.browser.state.action.ContentAction.UpdatePermissionHig
 import mozilla.components.browser.state.action.ContentAction.UpdatePermissionHighlightsStateAction.MicrophoneChangedAction
 import mozilla.components.browser.state.action.ContentAction.UpdatePermissionHighlightsStateAction.NotificationChangedAction
 import mozilla.components.browser.state.action.ContentAction.UpdatePermissionHighlightsStateAction.PersistentStorageChangedAction
+import mozilla.components.browser.state.engine.EngineMiddleware
 import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.ContentState
 import mozilla.components.browser.state.state.SessionState
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.browser.state.state.createTab
 import mozilla.components.browser.state.store.BrowserStore
+import mozilla.components.concept.engine.Engine
 import mozilla.components.concept.engine.permission.Permission
 import mozilla.components.concept.engine.permission.Permission.AppAudio
 import mozilla.components.concept.engine.permission.Permission.ContentAudioCapture
@@ -61,7 +63,6 @@ import mozilla.components.support.base.facts.processor.CollectionProcessor
 import mozilla.components.support.base.feature.OnNeedToRequestPermissions
 import mozilla.components.support.test.any
 import mozilla.components.support.test.eq
-import mozilla.components.support.test.ext.joinBlocking
 import mozilla.components.support.test.mock
 import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.support.test.rule.MainCoroutineRule
@@ -128,7 +129,19 @@ class SitePermissionsFeatureTest {
             url = "https://www.mozilla.org",
             id = SESSION_ID,
         )
-        mockStore = spy(BrowserStore(initialState = BrowserState(tabs = listOf(selectedTab), selectedTabId = selectedTab.id)))
+        val mockEngine = mock<Engine>()
+        whenever(mockEngine.createSession()).thenReturn(mock())
+        mockStore = spy(
+            BrowserStore(
+                initialState = BrowserState(
+                    tabs = listOf(selectedTab),
+                    selectedTabId = selectedTab.id,
+                ),
+                middleware = EngineMiddleware.create(
+                    engine = mockEngine,
+                ),
+            ),
+        )
         sitePermissionFeature = spy(
             SitePermissionsFeature(
                 context = testContext,
@@ -173,7 +186,7 @@ class SitePermissionsFeatureTest {
         verify(sitePermissionFeature).setupLoadingCollector()
 
         // when
-        mockStore.dispatch(ContentAction.UpdateLoadingStateAction(SESSION_ID, true)).joinBlocking()
+        mockStore.dispatch(ContentAction.UpdateLoadingStateAction(SESSION_ID, true))
 
         // then
         verify(mockStore).dispatch(
@@ -191,7 +204,7 @@ class SitePermissionsFeatureTest {
         sitePermissionFeature.stop()
 
         // when
-        mockStore.dispatch(ContentAction.UpdateLoadingStateAction(SESSION_ID, true)).joinBlocking()
+        mockStore.dispatch(ContentAction.UpdateLoadingStateAction(SESSION_ID, true))
 
         verify(mockStorage).clearTemporaryPermissions()
 
@@ -355,6 +368,7 @@ class SitePermissionsFeatureTest {
     @Test
     fun `GIVEN shouldStore true WHEN onContentPermissionGranted() THEN storeSitePermissions() called`() {
         // given
+        doReturn(listOf(ContentNotification())).`when`(mockPermissionRequest).permissions
         doNothing().`when`(sitePermissionFeature)
             .storeSitePermissions(any(), any(), any(), any())
 
@@ -383,6 +397,7 @@ class SitePermissionsFeatureTest {
     @Test
     fun `GIVEN permissionRequest WHEN onPositiveButtonPress() THEN consumePermissionRequest, onContentPermissionGranted are called`() {
         // given
+        doReturn(listOf(ContentNotification())).`when`(mockPermissionRequest).permissions
         doNothing().`when`(sitePermissionFeature).consumePermissionRequest(any(), any())
         doNothing().`when`(sitePermissionFeature)
             .onContentPermissionGranted(mockPermissionRequest, true)
@@ -396,8 +411,11 @@ class SitePermissionsFeatureTest {
         // then
         verify(sitePermissionFeature)
             .consumePermissionRequest(mockPermissionRequest, SESSION_ID)
-        verify(sitePermissionFeature)
-            .onContentPermissionGranted(mockPermissionRequest, true)
+        verify(sitePermissionFeature).onContentPermissionGranted(
+            eq(mockPermissionRequest),
+            eq(true),
+            any(),
+        )
     }
 
     @Test

@@ -11,6 +11,9 @@
 const EventEmitter = require("devtools/shared/event-emitter");
 const { InspectorCSSParserWrapper } = require("devtools/shared/css/lexer");
 const { throttle } = require("devtools/shared/throttle");
+const {
+  canPointerEventDrag,
+} = require("resource://devtools/client/shared/events.js");
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -29,7 +32,6 @@ const percentFormatter = new Intl.NumberFormat("en", {
  * but this will be hard to have proper visual representation to handle those cases, so we
  * only handle points inside [0,0] [1,1] to represent most common use cases (even though
  * the line will properly link points outside of this range)
- *
  *
  * @emits "updated" events whenever the line is changed, with the updated property value.
  */
@@ -190,9 +192,7 @@ class LinearEasingFunctionWidget extends EventEmitter {
    */
   #onPointerDown(event) {
     if (
-      // We want to handle a drag during a mouse button is pressed.  So, we can
-      // ignore pointer events which are caused by other devices.
-      event.pointerType != "mouse" ||
+      !canPointerEventDrag(event) ||
       !event.target.classList.contains(
         LinearEasingFunctionWidget.CONTROL_POINTS_CLASSNAME
       )
@@ -533,6 +533,7 @@ class TimingFunctionPreviewWidget {
    * Preview a new timing function. The current preview will only be stopped if
    * the supplied function value is different from the previous one. If the
    * supplied function is invalid, the preview will stop.
+   *
    * @param {Array} value
    */
   preview(timingFunction) {
@@ -545,6 +546,7 @@ class TimingFunctionPreviewWidget {
 
   /**
    * Re-start the preview animation from the beginning.
+   *
    * @param {Array} points
    */
   #restartAnimation = throttle(timingFunction => {

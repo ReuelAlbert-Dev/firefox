@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "api/audio/audio_device.h"
 #include "api/audio/builtin_audio_processing_builder.h"
 #include "api/audio_codecs/audio_decoder_factory.h"
@@ -57,6 +58,8 @@
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/task_queue_for_test.h"
+#include "test/create_test_environment.h"
+#include "test/create_test_field_trials.h"
 #include "test/encoder_settings.h"
 #include "test/fake_decoder.h"
 #include "test/fake_encoder.h"
@@ -65,15 +68,15 @@
 #include "test/gtest.h"
 #include "test/network/simulated_network.h"
 #include "test/rtp_rtcp_observer.h"
-#include "test/testsupport/file_utils.h"
 #include "test/video_test_constants.h"
 #include "video/config/video_encoder_config.h"
 
 namespace webrtc {
 namespace test {
 
-CallTest::CallTest()
-    : env_(CreateEnvironment(&field_trials_)),
+CallTest::CallTest(absl::string_view field_trials)
+    : field_trials_(CreateTestFieldTrials(field_trials)),
+      env_(CreateTestEnvironment({.field_trials = &field_trials_})),
       send_env_(env_),
       recv_env_(env_),
       audio_send_config_(/*send_transport=*/nullptr),
@@ -344,6 +347,7 @@ void CallTest::CreateAudioAndFecSendConfigs(size_t num_audio_streams,
     audio_send_config.rtp.ssrc = VideoTestConstants::kAudioSendSsrc;
     AddRtpExtensionByUri(RtpExtension::kTransportSequenceNumberUri,
                          &audio_send_config.rtp.extensions);
+    audio_send_config.include_in_congestion_control_allocation = true;
 
     audio_send_config.send_codec_spec = AudioSendStream::Config::SendCodecSpec(
         VideoTestConstants::kAudioSendPayloadType,
@@ -584,7 +588,7 @@ void CallTest::CreateVideoSendStreams() {
 
   // We currently only support testing external fec controllers with a single
   // VideoSendStream.
-  if (fec_controller_factory_.get()) {
+  if (fec_controller_factory_) {
     RTC_DCHECK_LE(video_send_configs_.size(), 1);
   }
 
@@ -604,7 +608,7 @@ void CallTest::CreateVideoSendStreams() {
   video_send_streams_.resize(video_send_configs_.size(), nullptr);
 
   for (size_t i : streams_creation_order) {
-    if (fec_controller_factory_.get()) {
+    if (fec_controller_factory_) {
       video_send_streams_[i] = sender_call_->CreateVideoSendStream(
           video_send_configs_[i].Copy(), video_encoder_configs_[i].Copy(),
           fec_controller_factory_->CreateFecController(send_env_));

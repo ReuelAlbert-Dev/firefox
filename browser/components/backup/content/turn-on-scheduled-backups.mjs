@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { html } from "chrome://global/content/vendor/lit.all.mjs";
+import { html, nothing } from "chrome://global/content/vendor/lit.all.mjs";
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
 
 // eslint-disable-next-line import/no-unassigned-import
@@ -36,11 +36,52 @@ export default class TurnOnScheduledBackups extends MozLitElement {
   #placeholderIconURL = "chrome://global/skin/icons/page-portrait.svg";
 
   static properties = {
+    backupServiceState: { type: Object },
     // passed in from parents
     defaultIconURL: { type: String, reflect: true },
     defaultLabel: { type: String, reflect: true },
     defaultPath: { type: String, reflect: true },
     supportBaseLink: { type: String },
+    embeddedFxBackupOptIn: {
+      type: Boolean,
+      reflect: true,
+      attribute: "embedded-fx-backup-opt-in",
+    },
+    hideFilePathChooser: {
+      type: Boolean,
+      reflect: true,
+      attribute: "hide-file-path-chooser",
+    },
+    hideSecondaryButton: {
+      type: Boolean,
+      reflect: true,
+      attribute: "hide-secondary-button",
+    },
+    filePathLabelL10nId: {
+      type: String,
+      reflect: true,
+      attribute: "file-path-label-l10n-id",
+    },
+    turnOnBackupHeaderL10nId: {
+      type: String,
+      reflect: true,
+      attribute: "turn-on-backup-header-l10n-id",
+    },
+    createPasswordLabelL10nId: {
+      type: String,
+      reflect: true,
+      attribute: "create-password-label-l10n-id",
+    },
+    turnOnBackupConfirmBtnL10nId: {
+      type: String,
+      reflect: true,
+      attribute: "turn-on-backup-confirm-btn-l10n-id",
+    },
+    turnOnBackupCancelBtnL10nId: {
+      type: String,
+      reflect: true,
+      attribute: "turn-on-backup-cancel-btn-l10n-id",
+    },
 
     // internal state
     _newIconURL: { type: String, state: true },
@@ -69,6 +110,7 @@ export default class TurnOnScheduledBackups extends MozLitElement {
 
   constructor() {
     super();
+    this.backupServiceState = {};
     this.defaultIconURL = "";
     this.defaultLabel = "";
     this.defaultPath = "";
@@ -78,6 +120,7 @@ export default class TurnOnScheduledBackups extends MozLitElement {
     this._showPasswordOptions = false;
     this._passwordsMatch = false;
     this.enableBackupErrorCode = 0;
+    this.disableSubmit = false;
   }
 
   connectedCallback() {
@@ -92,6 +135,9 @@ export default class TurnOnScheduledBackups extends MozLitElement {
     // listen to events from <password-validation-inputs>
     this.addEventListener("ValidPasswordsDetected", this);
     this.addEventListener("InvalidPasswordsDetected", this);
+
+    // listens to keydown events
+    this.addEventListener("keydown", this);
   }
 
   handleEvent(event) {
@@ -107,6 +153,15 @@ export default class TurnOnScheduledBackups extends MozLitElement {
     } else if (event.type == "InvalidPasswordsDetected") {
       this._passwordsMatch = false;
       this._inputPassValue = "";
+    } else if (event.type == "keydown") {
+      if (
+        event.key === "Enter" &&
+        (event.originalTarget.id ==
+          "backup-location-filepicker-input-default" ||
+          event.originalTarget.id == "backup-location-filepicker-input-custom")
+      ) {
+        event.preventDefault();
+      }
     }
   }
 
@@ -128,7 +183,6 @@ export default class TurnOnScheduledBackups extends MozLitElement {
         composed: true,
       })
     );
-    this.reset();
   }
 
   handleConfirm() {
@@ -153,15 +207,33 @@ export default class TurnOnScheduledBackups extends MozLitElement {
     this._passwordsMatch = false;
   }
 
+  updated(changedProperties) {
+    super.updated?.(changedProperties);
+
+    if (changedProperties.has("hideFilePathChooser")) {
+      // If hideFilePathChooser is true, show password options
+      this._showPasswordOptions = !!this.hideFilePathChooser;
+
+      // Uncheck the checkbox if it exists
+      if (this.passwordOptionsCheckboxEl) {
+        this.passwordOptionsCheckboxEl.checked = this._showPasswordOptions;
+      }
+    }
+  }
+
   reset() {
-    this._newPath = "";
-    this._newIconURL = "";
-    this._newLabel = "";
     this._showPasswordOptions = false;
     this.passwordOptionsCheckboxEl.checked = false;
     this._passwordsMatch = false;
     this._inputPassValue = "";
     this.enableBackupErrorCode = 0;
+    this.disableSubmit = false;
+    // we don't want to reset the path when embedded in the spotlight
+    if (!this.embeddedFxBackupOptIn) {
+      this._newPath = "";
+      this._newIconURL = "";
+      this._newLabel = "";
+    }
 
     if (this.passwordOptionsExpandedEl) {
       /** @type {import("./password-validation-inputs.mjs").default} */
@@ -174,17 +246,22 @@ export default class TurnOnScheduledBackups extends MozLitElement {
     let filename = this.defaultLabel;
     let iconURL = this.defaultIconURL || this.#placeholderIconURL;
 
+    const hasFilename = !!filename;
+    const l10nArgs = hasFilename
+      ? JSON.stringify({ recommendedFolder: filename })
+      : null;
+
     return html`
       <input
         id="backup-location-filepicker-input-default"
         class="backup-location-filepicker-input"
         type="text"
         readonly
-        data-l10n-id="turn-on-scheduled-backups-location-default-folder"
-        data-l10n-args=${JSON.stringify({
-          recommendedFolder: filename,
-        })}
-        data-l10n-attrs="value"
+        data-l10n-id=${hasFilename
+          ? "turn-on-scheduled-backups-location-default-folder"
+          : nothing}
+        data-l10n-args=${hasFilename ? l10nArgs : nothing}
+        data-l10n-attrs=${hasFilename ? "value" : nothing}
         style=${`background-image: url(${iconURL})`}
       />
     `;
@@ -223,7 +300,8 @@ export default class TurnOnScheduledBackups extends MozLitElement {
           <label
             id="backup-location-label"
             for="backup-location-filepicker-input"
-            data-l10n-id="turn-on-scheduled-backups-location-label"
+            data-l10n-id=${this.filePathLabelL10nId ||
+            "turn-on-scheduled-backups-location-label"}
           ></label>
           <div id="backup-location-filepicker">
             ${!this._newPath
@@ -237,7 +315,6 @@ export default class TurnOnScheduledBackups extends MozLitElement {
             ></moz-button>
           </div>
         </div>
-
         <fieldset id="sensitive-data-controls">
           <div id="sensitive-data-checkbox">
             <label
@@ -259,7 +336,7 @@ export default class TurnOnScheduledBackups extends MozLitElement {
             </label>
             <span
               class="text-deemphasized"
-              data-l10n-id="turn-on-scheduled-backups-encryption-description"
+              data-l10n-id="settings-sensitive-data-encryption-description"
             ></span>
           </div>
 
@@ -274,21 +351,39 @@ export default class TurnOnScheduledBackups extends MozLitElement {
       <password-validation-inputs
         id="passwords"
         .supportBaseLink=${this.supportBaseLink}
+        .createPasswordLabelL10nId=${this.createPasswordLabelL10nId}
+        ?embedded-fx-backup-opt-in=${this.embeddedFxBackupOptIn}
       ></password-validation-inputs>
     `;
   }
 
   contentTemplate() {
+    // All the situations where we want to disable submit:
+    // - passwords don't match
+    // - there's no destination folder
+    // - other unknown errors
+    if (
+      (this._showPasswordOptions && !this._passwordsMatch) ||
+      (!this._newPath && !this.defaultLabel) ||
+      this.enableBackupErrorCode != ERRORS.NONE
+    ) {
+      this.disableSubmit = true;
+    } else {
+      this.disableSubmit = false;
+    }
+
     return html`
       <form
         id="backup-turn-on-scheduled-wrapper"
         aria-labelledby="backup-turn-on-scheduled-header"
         aria-describedby="backup-turn-on-scheduled-description"
+        part="form"
       >
         <h1
           id="backup-turn-on-scheduled-header"
           class="heading-medium"
-          data-l10n-id="turn-on-scheduled-backups-header"
+          data-l10n-id=${this.turnOnBackupHeaderL10nId ||
+          "turn-on-scheduled-backups-header"}
         ></h1>
         <main id="backup-turn-on-scheduled-content">
           <div id="backup-turn-on-scheduled-description">
@@ -296,12 +391,12 @@ export default class TurnOnScheduledBackups extends MozLitElement {
               id="backup-turn-on-scheduled-description-span"
               data-l10n-id="turn-on-scheduled-backups-description"
             ></span>
-            <!--TODO: finalize support page links (bug 1900467)-->
             <a
               id="backup-turn-on-scheduled-learn-more-link"
               is="moz-support-link"
-              support-page="todo-backup"
+              support-page="firefox-backup"
               data-l10n-id="turn-on-scheduled-backups-support-link"
+              utm-content="turn-on-backup"
             ></a>
           </div>
           ${this.allOptionsTemplate()}
@@ -312,15 +407,17 @@ export default class TurnOnScheduledBackups extends MozLitElement {
           <moz-button
             id="backup-turn-on-scheduled-cancel-button"
             @click=${this.close}
-            data-l10n-id="turn-on-scheduled-backups-cancel-button"
+            data-l10n-id=${this.turnOnBackupCancelBtnL10nId ||
+            "turn-on-scheduled-backups-cancel-button"}
           ></moz-button>
           <moz-button
             id="backup-turn-on-scheduled-confirm-button"
             form="backup-turn-on-scheduled-wrapper"
             @click=${this.handleConfirm}
             type="primary"
-            data-l10n-id="turn-on-scheduled-backups-confirm-button"
-            ?disabled=${this._showPasswordOptions && !this._passwordsMatch}
+            data-l10n-id=${this.turnOnBackupConfirmBtnL10nId ||
+            "turn-on-scheduled-backups-confirm-button"}
+            ?disabled=${this.disableSubmit}
           ></moz-button>
         </moz-button-group>
       </form>

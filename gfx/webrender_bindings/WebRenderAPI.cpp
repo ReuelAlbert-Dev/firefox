@@ -11,12 +11,14 @@
 #include "mozilla/webrender/RendererOGL.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/CompositorThread.h"
+#include "mozilla/HelperMacros.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_webgl.h"
 #include "mozilla/ToString.h"
 #include "mozilla/webrender/RenderCompositor.h"
 #include "mozilla/widget/CompositorWidget.h"
 #include "mozilla/layers/SynchronousTask.h"
+#include "nsDisplayList.h"
 #include "nsThreadUtils.h"
 #include "TextDrawTarget.h"
 #include "malloc_decls.h"
@@ -488,7 +490,7 @@ wr::WebRenderAPI* WebRenderAPI::GetRootAPI() {
   return this;
 }
 
-void WebRenderAPI::UpdateDebugFlags(uint32_t aFlags) {
+void WebRenderAPI::UpdateDebugFlags(uint64_t aFlags) {
   wr_api_set_debug_flags(mDocHandle, wr::DebugFlags{aFlags});
 }
 
@@ -866,7 +868,7 @@ void WebRenderAPI::FlushSceneBuilder() {
   wr_api_flush_scene_builder(mDocHandle);
 }
 
-void WebRenderAPI::WaitFlushed() {
+void WebRenderAPI::WaitUntilPresentationFlushed() {
   class WaitFlushedEvent : public RendererEvent {
    public:
     explicit WaitFlushedEvent(layers::SynchronousTask* aTask) : mTask(aTask) {
@@ -876,6 +878,11 @@ void WebRenderAPI::WaitFlushed() {
     MOZ_COUNTED_DTOR_OVERRIDE(WaitFlushedEvent)
 
     void Run(RenderThread& aRenderThread, WindowId aWindowId) override {
+      if (RendererOGL* renderer = aRenderThread.GetRenderer(aWindowId)) {
+        if (RenderCompositor* compositor = renderer->GetCompositor()) {
+          compositor->WaitUntilPresentationFlushed();
+        }
+      }
       layers::AutoCompleteTask complete(mTask);
     }
 
@@ -885,7 +892,7 @@ void WebRenderAPI::WaitFlushed() {
     layers::SynchronousTask* mTask;
   };
 
-  layers::SynchronousTask task("WaitFlushed");
+  layers::SynchronousTask task("WaitUntilPresentationFlushed");
   auto event = MakeUnique<WaitFlushedEvent>(&task);
   // This event will be passed from wr_backend thread to renderer thread. That
   // implies that all frame data have been processed when the renderer runs this
@@ -1199,6 +1206,7 @@ void DisplayListBuilder::Begin(layers::DisplayItemCache* aCache) {
   wr_api_begin_builder(mWrState);
 
   mScrollIds.clear();
+  mASRToSpatialIdMap.clear();
   mCurrentSpaceAndClipChain = wr::RootScrollNodeWithChain();
   mClipChainLeaf = Nothing();
   mSuspendedSpaceAndClipChain = Nothing();
@@ -1335,16 +1343,20 @@ wr::WrClipId DisplayListBuilder::DefineRectClip(Maybe<wr::WrSpatialId> aSpace,
 }
 
 wr::WrSpatialId DisplayListBuilder::DefineStickyFrame(
-    const wr::LayoutRect& aContentRect, const float* aTopMargin,
-    const float* aRightMargin, const float* aBottomMargin,
-    const float* aLeftMargin, const StickyOffsetBounds& aVerticalBounds,
+    const ActiveScrolledRoot* aStickyAsr,
+    Maybe<wr::WrSpatialId> aParentSpatialId, const wr::LayoutRect& aContentRect,
+    const float* aTopMargin, const float* aRightMargin,
+    const float* aBottomMargin, const float* aLeftMargin,
+    const StickyOffsetBounds& aVerticalBounds,
     const StickyOffsetBounds& aHorizontalBounds,
     const wr::LayoutVector2D& aAppliedOffset, wr::SpatialTreeItemKey aKey,
     const WrAnimationProperty* aAnimation) {
   auto spatialId = wr_dp_define_sticky_frame(
-      mWrState, mCurrentSpaceAndClipChain.space, aContentRect, aTopMargin,
-      aRightMargin, aBottomMargin, aLeftMargin, aVerticalBounds,
-      aHorizontalBounds, aAppliedOffset, aKey, aAnimation);
+      mWrState, aParentSpatialId.valueOr(mCurrentSpaceAndClipChain.space),
+      aContentRect, aTopMargin, aRightMargin, aBottomMargin, aLeftMargin,
+      aVerticalBounds, aHorizontalBounds, aAppliedOffset, aKey, aAnimation);
+
+  mASRToSpatialIdMap.emplace(aStickyAsr, spatialId);
 
   WRDL_LOG("DefineSticky id=%zu c=%s t=%s r=%s b=%s l=%s v=%s h=%s a=%s\n",
            mWrState, spatialId.id, ToString(aContentRect).c_str(),
@@ -1367,6 +1379,17 @@ Maybe<wr::WrSpatialId> DisplayListBuilder::GetScrollIdForDefinedScrollLayer(
 
   auto it = mScrollIds.find(aViewId);
   if (it == mScrollIds.end()) {
+    return Nothing();
+  }
+
+  return Some(it->second);
+}
+
+Maybe<wr::WrSpatialId> DisplayListBuilder::GetSpatialIdForDefinedStickyLayer(
+    const ActiveScrolledRoot* aASR) const {
+  MOZ_ASSERT(aASR->mKind == ActiveScrolledRoot::ASRKind::Sticky);
+  auto it = mASRToSpatialIdMap.find(aASR);
+  if (it == mASRToSpatialIdMap.end()) {
     return Nothing();
   }
 

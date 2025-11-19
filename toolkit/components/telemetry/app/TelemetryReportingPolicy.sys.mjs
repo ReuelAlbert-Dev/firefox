@@ -141,7 +141,8 @@ export var TelemetryReportingPolicy = {
    *   2. The user is not eligible to see the ToU. Example local builds and temporarily Linux.
    */
   TELEMETRY_TOU_ACCEPTED_OR_INELIGIBLE: "telemetry-tou-accepted-or-ineligible",
-
+  // Make this value accessible on TelemetryReportingPolicy
+  OLDEST_ALLOWED_TOU_ACCEPTANCE_YEAR,
   /**
    * Setup the policy.
    */
@@ -221,10 +222,21 @@ export var TelemetryReportingPolicy = {
   },
 
   /**
+   * Test only method, used simulate a notification being in-progress.
+   */
+  testNotificationInProgress(inProgress) {
+    TelemetryReportingPolicyImpl._notificationInProgress = inProgress;
+  },
+
+  /**
    * Test only method, used to get TOS on-train release dates by channel.
    */
   get fullOnTrainReleaseDates() {
     return TelemetryReportingPolicyImpl.fullOnTrainReleaseDates;
+  },
+
+  get minimumPolicyVersion() {
+    return TelemetryReportingPolicyImpl.minimumPolicyVersion;
   },
 
   async ensureUserIsNotified() {
@@ -250,6 +262,8 @@ var TelemetryReportingPolicyImpl = {
   // reporting policy tab / infobar
   _notificationType: null,
 
+  _observerRegistered: false,
+
   get _log() {
     if (!this._logger) {
       this._logger = Log.repository.getLoggerWithMessagePrefix(
@@ -263,6 +277,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Get the date the policy was notified.
+   *
    * @return {Object} A date object or null on errors.
    */
   get dataSubmissionPolicyNotifiedDate() {
@@ -302,6 +317,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Set the date the policy was notified.
+   *
    * @param {Object} aDate A valid date object.
    */
   set dataSubmissionPolicyNotifiedDate(aDate) {
@@ -325,6 +341,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Get the date the terms of use were accepted.
+   *
    * @return {Object} A date object or null on errors.
    */
   get termsOfUseAcceptedDate() {
@@ -359,6 +376,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Set the date the policy was notified.
+   *
    * @param {Object} aDate A valid date object.
    */
   set termsOfUseAcceptedDate(aDate) {
@@ -480,6 +498,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Checks to see if the user has been notified about data submission
+   *
    * @return {Bool} True if user has been notified and the notification is still valid,
    *         false otherwise.
    */
@@ -503,6 +522,7 @@ var TelemetryReportingPolicyImpl = {
 
   /**
    * Checks to see if the user has accepted the current terms of use
+   *
    * @return {Bool} True if user has accepted and the acceptance is still valid,
    *         false otherwise.
    */
@@ -702,6 +722,7 @@ var TelemetryReportingPolicyImpl = {
     this.shutdown();
     this._isFirstRun = undefined;
     this._ensureUserIsNotifiedPromise = undefined;
+    this._nimbusVariables = {};
     return this.setup();
   },
 
@@ -724,7 +745,10 @@ var TelemetryReportingPolicyImpl = {
     Services.prefs.addObserver(TOU_ACCEPTED_VERSION_PREF, this);
 
     // Add the event observers.
-    Services.obs.addObserver(this, "sessionstore-windows-restored");
+    if (!this._observerRegistered) {
+      Services.obs.addObserver(this, "sessionstore-windows-restored");
+      this._observerRegistered = true;
+    }
   },
 
   /**
@@ -742,16 +766,24 @@ var TelemetryReportingPolicyImpl = {
    * Detach the observers that were attached during setup.
    */
   _detachObservers() {
-    Services.obs.removeObserver(this, "sessionstore-windows-restored");
+    if (this._observerRegistered) {
+      Services.obs.removeObserver(this, "sessionstore-windows-restored");
+      this._observerRegistered = false;
+    }
     Services.prefs.removeObserver(TOU_ACCEPTED_DATE_PREF, this);
     Services.prefs.removeObserver(TOU_ACCEPTED_VERSION_PREF, this);
   },
 
   /**
-   * Check if we are allowed to upload data. In order to submit data both these conditions
-   * should be true:
-   * - The data submission preference should be true.
-   * - The datachoices infobar should have been displayed.
+   * Check if we are allowed to upload data.
+   * Prerequisite: data submission is enabled (this.dataSubmissionEnabled).
+   *
+   * If a notification is currently in progress, the user should not be allowed
+   * to upload data.
+   *
+   * Otherwise, for upload to be allowed from a data reporting standpoint, the
+   * user should not qualify to see the legacy policy notification flow and also
+   * not qualify to see the Terms of Use acceptance flow.
    *
    * @return {Boolean} True if we are allowed to upload data, false otherwise.
    */
@@ -762,13 +794,16 @@ var TelemetryReportingPolicyImpl = {
       return false;
     }
 
-    // Submission is enabled. We enable upload if user is notified or we need to bypass
-    // the policy.
-    const bypassNotification = Services.prefs.getBoolPref(
-      TelemetryUtils.Preferences.BypassNotification,
-      false
-    );
-    return this.isUserNotifiedOfCurrentPolicy || bypassNotification;
+    // If a notification is in progress, such as when the TOU modal is currently
+    // showing and user has not yet accepted, do not allow upload. The legacy
+    // flow doesn't require interaction, so the notification is only considered
+    // to be in progress for the brief period between when the infobar or
+    // privacy notice tab is shown and when the notification is recorded.
+    if (this._notificationInProgress) {
+      return false;
+    }
+
+    return !this._shouldNotifyDataReportingPolicy() && !this._shouldShowTOU();
   },
 
   isFirstRun() {
@@ -835,6 +870,20 @@ var TelemetryReportingPolicyImpl = {
    * Determine whether the user should be shown the terms of use.
    */
   _shouldShowTOU() {
+    // In some cases, _shouldShowTOU can be called before the Nimbus variables
+    // are set. When this happens, we call _configureFromNimbus to initialize
+    // these variables before evaluating them. This ensures we have accurate
+    // data regarding whether preonboarding is enabled for the user. When
+    // preonboarding is explicitly disabled, it should be treated the same the
+    // bypassing the TOU flow via the bypass pref.
+    if (
+      !this._nimbusVariables ||
+      (typeof this._nimbusVariables === "object" &&
+        Object.keys(this._nimbusVariables).length === 0)
+    ) {
+      this._configureFromNimbus();
+    }
+
     if (!this._nimbusVariables.enabled || !this._nimbusVariables.screens) {
       this._log.trace(
         "_shouldShowTOU - TOU not enabled or no screens configured."
@@ -1059,7 +1108,7 @@ var TelemetryReportingPolicyImpl = {
     // _during_ the Firefox process lifetime; right now, we only notify the user
     // at Firefox startup.
     this.updateTOUPrefsForLegacyUsers();
-    await this._configureFromNimbus();
+    this._configureFromNimbus();
 
     if (this.isFirstRun()) {
       // We're performing the first run, flip firstRun preference for subsequent runs.
@@ -1196,7 +1245,7 @@ var TelemetryReportingPolicyImpl = {
    * Capture Nimbus configuration: record feature variables for future use and
    * set Gecko preferences based on values.
    */
-  async _configureFromNimbus() {
+  _configureFromNimbus() {
     if (AppConstants.MOZ_BUILD_APP != "browser") {
       // OnboardingMessageProvider is browser/ only
       return;

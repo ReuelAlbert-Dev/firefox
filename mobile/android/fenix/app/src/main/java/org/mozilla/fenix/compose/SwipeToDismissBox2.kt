@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import mozilla.components.compose.base.snackbar.Snackbar
 import mozilla.components.compose.base.snackbar.displaySnackbar
 import org.mozilla.fenix.theme.FirefoxTheme
 import kotlin.math.abs
@@ -158,7 +159,7 @@ class SwipeToDismissState2(
 }
 
 // https://bugzilla.mozilla.org/show_bug.cgi?id=1957790
-@Suppress("DEPRECATION")
+@Suppress("DEPRECATION", "CognitiveComplexMethod")
 private fun Modifier.anchoredHorizontalDraggable(
     state: SwipeToDismissState2,
     scope: CoroutineScope,
@@ -214,6 +215,7 @@ private fun isReallyHorizontal(x: Float, y: Float) =
  * @param dismissContent The content that can be dismissed.
  */
 @Composable
+@Suppress("CognitiveComplexMethod")
 fun SwipeToDismissBox2(
     state: SwipeToDismissState2,
     modifier: Modifier = Modifier,
@@ -328,7 +330,9 @@ private fun SwipeToDismissBoxPreview() {
             SnackbarHost(
                 hostState = snackbarState,
                 modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            ) {
+                Snackbar(snackbarData = it)
+            }
         }
     }
 }

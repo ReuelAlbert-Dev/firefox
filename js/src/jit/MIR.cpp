@@ -10,8 +10,8 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/ScopeExit.h"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -28,6 +28,7 @@
 #include "jit/RangeAnalysis.h"
 #include "jit/VMFunctions.h"
 #include "jit/WarpBuilderShared.h"
+#include "jit/WarpSnapshot.h"
 #include "js/Conversions.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo, JSTypedMethodJitInfo
 #include "js/ScalarType.h"            // js::Scalar::Type
@@ -559,6 +560,14 @@ const MDefinition* MDefinition::skipObjectGuards() const {
   while (true) {
     if (result->isGuardShape()) {
       result = result->toGuardShape()->object();
+      continue;
+    }
+    if (result->isGuardShapeList()) {
+      result = result->toGuardShapeList()->object();
+      continue;
+    }
+    if (result->isGuardMultipleShapes()) {
+      result = result->toGuardMultipleShapes()->object();
       continue;
     }
     if (result->isGuardNullProto()) {
@@ -4250,6 +4259,7 @@ static void AssertKnownClass(TempAllocator& alloc, MInstruction* ins,
 
 MDefinition* MBoxNonStrictThis::foldsTo(TempAllocator& alloc) {
   MDefinition* in = input();
+
   if (!in->isBox()) {
     return this;
   }
@@ -4257,6 +4267,10 @@ MDefinition* MBoxNonStrictThis::foldsTo(TempAllocator& alloc) {
   MDefinition* unboxed = in->toBox()->input();
   if (unboxed->type() == MIRType::Object) {
     return unboxed;
+  }
+
+  if (unboxed->typeIsOneOf({MIRType::Undefined, MIRType::Null})) {
+    return MConstant::NewObject(alloc, this->globalThis());
   }
 
   return this;
@@ -7163,24 +7177,50 @@ MDefinition* MGuardSpecificInt32::foldsTo(TempAllocator& alloc) {
   return this;
 }
 
-bool MCallBindVar::congruentTo(const MDefinition* ins) const {
-  if (!ins->isCallBindVar()) {
-    return false;
+MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
+  if (object()->isGuardShape() &&
+      shape() == object()->toGuardShape()->shape()) {
+    return object();
   }
-  return congruentIfOperandsEqual(ins);
+  return this;
 }
 
 bool MGuardShape::congruentTo(const MDefinition* ins) const {
-  if (!ins->isGuardShape()) {
-    return false;
-  }
-  if (shape() != ins->toGuardShape()->shape()) {
-    return false;
-  }
-  return congruentIfOperandsEqual(ins);
+  return congruentIfOperandsEqual(ins) &&
+         shape() == ins->toGuardShape()->shape();
 }
 
 AliasSet MGuardShape::getAliasSet() const {
+  return AliasSet::Load(AliasSet::ObjectFields);
+}
+
+bool MGuardShapeList::congruentTo(const MDefinition* ins) const {
+  if (!congruentIfOperandsEqual(ins)) {
+    return false;
+  }
+
+  // Returns true iff all non-nullptr shapes in |a| are also in |b|.
+  auto hasAllShapes = [](const auto& a, const auto& b) {
+    for (Shape* shape : a) {
+      if (!shape) {
+        continue;
+      }
+      auto isSameShape = [shape](Shape* other) { return shape == other; };
+      if (!std::any_of(b.begin(), b.end(), isSameShape)) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Return true if all shapes in |shapesA| are also in |shapesB| and vice
+  // versa.
+  const auto& shapesA = this->shapeList()->shapes();
+  const auto& shapesB = ins->toGuardShapeList()->shapeList()->shapes();
+  return hasAllShapes(shapesA, shapesB) && hasAllShapes(shapesB, shapesA);
+}
+
+AliasSet MGuardShapeList::getAliasSet() const {
   return AliasSet::Load(AliasSet::ObjectFields);
 }
 
@@ -7739,6 +7779,10 @@ AliasSet MGuardElementsArePacked::getAliasSet() const {
 }
 
 AliasSet MSuperFunction::getAliasSet() const {
+  return AliasSet::Load(AliasSet::ObjectFields);
+}
+
+AliasSet MSuperFunctionAndUnbox::getAliasSet() const {
   return AliasSet::Load(AliasSet::ObjectFields);
 }
 
@@ -8319,4 +8363,60 @@ bool MInt32ToStringWithBase::congruentTo(const MDefinition* ins) const {
     return false;
   }
   return congruentIfOperandsEqual(ins);
+}
+
+// Returns `false` if it can be proven that (1) both `mtyA` and `mtyB` are
+// struct types and (2) they are not related by inheritance.  Returns `true` in
+// all other cases.  `true` is the safe-but-possibly-suboptimal return value.
+static bool StructTypesMightBeRelatedByInheritance(wasm::MaybeRefType mtyA,
+                                                   wasm::MaybeRefType mtyB) {
+  if (!mtyA.isSome() || !mtyB.isSome()) {
+    // The "Track Wasm ref types" pass couldn't establish that both `mtyA` and
+    // `mtyB` are ref types.  Give up.
+    return true;
+  }
+
+  wasm::RefType tyA = mtyA.value();
+  wasm::RefType tyB = mtyB.value();
+  if (!tyA.isTypeRef() || !tyA.typeDef()->isStructType() || !tyB.isTypeRef() ||
+      !tyB.typeDef()->isStructType()) {
+    // They aren't both struct types.  Give up.
+    return true;
+  }
+
+  // They are both struct types.  So they are related by inheritance if one is
+  // a subtype of the other.  (Which is also the case if they are the same
+  // type.)
+  return wasm::RefType::valuesMightAlias(tyA, tyB);
+}
+
+MDefinition::AliasType MWasmLoadField::mightAlias(
+    const MDefinition* ins) const {
+  if (!(getAliasSet().flags() & ins->getAliasSet().flags())) {
+    return AliasType::NoAlias;
+  }
+  MOZ_ASSERT(!isEffectful() && ins->isEffectful());
+
+  // Pick off cases where we can easily prove non-aliasing.  The idea is that
+  // two struct field accesses can't alias if either they are at different
+  // offsets, or the struct types are unrelated (which implies that the struct
+  // base pointer for one of the accesses could not validly be handed to the
+  // other access).
+  if (ins->isWasmStoreField()) {
+    const MWasmStoreField* store = ins->toWasmStoreField();
+    if (offset() != store->offset() ||
+        !StructTypesMightBeRelatedByInheritance(base()->wasmRefType(),
+                                                store->base()->wasmRefType())) {
+      return AliasType::NoAlias;
+    }
+  } else if (ins->isWasmStoreFieldRef()) {
+    const MWasmStoreFieldRef* store = ins->toWasmStoreFieldRef();
+    if (offset() != store->offset() ||
+        !StructTypesMightBeRelatedByInheritance(base()->wasmRefType(),
+                                                store->base()->wasmRefType())) {
+      return AliasType::NoAlias;
+    }
+  }
+
+  return AliasType::MayAlias;
 }

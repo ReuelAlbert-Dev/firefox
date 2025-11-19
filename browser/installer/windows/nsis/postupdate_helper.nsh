@@ -5,7 +5,6 @@
 !include "LogicLib.nsh"
 
 !define buildNumWin10 10240 ; First Win10 version
-!define buildNumWin11 22000 ; First Win11 version
 
 ; Depending on the installation type (as admin or not) we have different
 ; default installation directories, one of which we push onto the stack as the
@@ -70,13 +69,10 @@ Function getNormalizedPath
   Exch $0
 FunctionEnd
 
-; This function expects the Windows build number as a parameter from the stack.
-; It Returns the appropriate uninstall registry key on the stack.
-Function getUninstallKey
-  Exch $3 ; Equivalent to: Push $3, Exch, Pop $3
+; This function takes no arguments and returns the name of the legacy uninstall
+; key stored on the stack.
+Function getLegacyUninstallKey
   Push $0
-  Push $1
-  Push $2
 
   ; $0 is used as the return value for this function. It is initially set to
   ; the Uninstall key, which has been standard for decades.
@@ -87,8 +83,54 @@ Function getUninstallKey
   ${EndIf}
   StrCpy $0 "$0 (${ARCH} ${AB_CD})"
 
+  Exch $0
+FunctionEnd
+
+; This function returns the uninstallation key used for installing applications
+; in their default directory on the stack.
+Function getModernUninstallKey
+  Push "Software\Microsoft\Windows\CurrentVersion\Uninstall\${BrandFullNameInternal}"
+FunctionEnd
+
+; This function checks for a registry key under HKEY_LOCAL_MACHINE with a
+; matching installation directory to $INSTDIR or an empty string if no matching
+; installation is found.
+Function findUninstallKey
+  Push $0
+  Push $1
+  Push $2
+
+  ${GetLongPath} "$INSTDIR" $2
+
+  Call getLegacyUninstallKey
+  Pop $0
+  ReadRegStr $1 "HKLM" $0 "InstallLocation"
+  ${If} $1 != $2
+    Call getModernUninstallKey
+    Pop $0
+    ReadRegStr $1 "HKLM" $0 "InstallLocation"
+    ${If} $1 != $2
+      StrCpy $0 ""
+    ${EndIf}
+  ${EndIf}
+
+  Pop $2
+  Pop $1
+  Exch $0
+FunctionEnd
+
+; This function expects the Windows build number as a parameter from the stack.
+; It Returns the appropriate uninstall registry key on the stack.
+Function getUninstallKey
+  Exch $3 ; Equivalent to: Push $3, Exch, Pop $3
+  Push $0
+  Push $1
+  Push $2
+
+  Call getLegacyUninstallKey
+  Pop $0
+
   ${If} $3 >= ${buildNumWin10}
-  ${AndIf} $3 < ${buildNumWin11}
     ClearErrors
 
     ; Determine the path to the user configured target directory.
@@ -104,7 +146,8 @@ Function getUninstallKey
     ${IfNot} ${Errors}
     ${AndIf} "$1" == "$2"
       ; The default path and target path matched.
-      StrCpy $0 "Software\Microsoft\Windows\CurrentVersion\Uninstall\${BrandFullNameInternal}"
+      Call getModernUninstallKey
+      Pop $0
       DetailPrint "Default installation detected."
     ${EndIf}
   ${EndIf}
@@ -115,4 +158,41 @@ Function getUninstallKey
   Pop $0
   ; Return the result on the stack and restore $0
   Exch $3
+FunctionEnd
+
+; Looks at installation_telemetry.json to determine whether the installation
+; was installed by the stub installer or not.
+;
+; Expects the JSON file on the stack as a parameter; will return the
+; installation type from the JSON file, generally either "stub" or "full".
+; On failure, pushes "unknown".
+Function GetInstallationType
+  Exch $1 ; directory
+  Push $0 ; temporary variable
+
+  nsJSON::Set /file /unicode "$1"
+  nsJSON::Get /type `installer_type` /end
+
+  Pop $0
+  ${If} $0 == ""
+    ; It's only ever written as UTF-16, but decode it as ANSI for redundancy.
+    nsJSON::Set /file "$1"
+    nsJSON::Get /type `installer_type` /end
+    Pop $0 ; type
+  ${EndIf}
+
+  ClearErrors
+  StrCpy $1 "unknown"
+  ${If} $0 == "string"
+    nsJSON::Get `installer_type` /end
+    ${IfNot} ${Errors}
+      ; get the actual installer type from the file
+      Pop $1
+    ${EndIf}
+  ${EndIf}
+
+  Exch
+  Pop $0
+  Exch $1
+  ClearErrors
 FunctionEnd

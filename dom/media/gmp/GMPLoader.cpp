@@ -9,7 +9,6 @@
 #include <stdio.h>
 
 #include "gmp-entrypoints.h"
-#include "mozilla/Attributes.h"
 #include "nsExceptionHandler.h"
 #include "prenv.h"
 #include "prerror.h"
@@ -24,8 +23,6 @@
 #  include "mozilla/SandboxInfo.h"
 #  include "mozilla/SandboxProfilerObserver.h"
 #endif
-
-#include <string>
 
 #ifdef XP_WIN
 #  include <windows.h>

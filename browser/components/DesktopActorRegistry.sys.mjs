@@ -236,13 +236,18 @@ let JSWINDOWACTORS = {
         "BackupUI:EnableEncryption": { wantUntrusted: true },
         "BackupUI:DisableEncryption": { wantUntrusted: true },
         "BackupUI:RerunEncryption": { wantUntrusted: true },
-        "BackupUI:FindIfABackupFileExists": { wantUntrusted: true },
         "BackupUI:ShowBackupLocation": { wantUntrusted: true },
         "BackupUI:EditBackupLocation": { wantUntrusted: true },
       },
     },
-    matches: ["about:preferences*", "about:settings*"],
-    enablePreference: "browser.backup.preferences.ui.enabled",
+    includeChrome: true,
+    allFrames: true,
+    matches: [
+      "about:preferences*",
+      "about:settings*",
+      "about:welcome*",
+      "chrome://browser/content/spotlight.html",
+    ],
   },
 
   BlockedSite: {
@@ -265,6 +270,21 @@ let JSWINDOWACTORS = {
       esModuleURI: "resource:///actors/BrowserTabChild.sys.mjs",
     },
 
+    messageManagerGroups: ["browsers"],
+  },
+
+  CanonicalURL: {
+    parent: {
+      esModuleURI: "resource:///actors/CanonicalURLParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource:///actors/CanonicalURLChild.sys.mjs",
+      events: {
+        DOMContentLoaded: {},
+      },
+    },
+    enablePreference: "browser.tabs.notes.enabled",
+    matches: ["http://*/*", "https://*/*"],
     messageManagerGroups: ["browsers"],
   },
 
@@ -336,6 +356,20 @@ let JSWINDOWACTORS = {
     },
 
     allFrames: true,
+  },
+
+  CustomKeys: {
+    parent: {
+      esModuleURI: "resource:///actors/CustomKeysParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource:///actors/CustomKeysChild.sys.mjs",
+      events: {
+        DOMDocElementInserted: { wantUntrusted: true },
+      },
+    },
+    matches: ["about:keyboard"],
+    remoteTypes: ["privilegedabout"],
   },
 
   DecoderDoctor: {
@@ -518,6 +552,12 @@ let JSWINDOWACTORS = {
     },
 
     allFrames: true,
+  },
+
+  PageInfoPreview: {
+    child: {
+      esModuleURI: "resource:///actors/PageInfoPreviewChild.sys.mjs",
+    },
   },
 
   PageStyle: {

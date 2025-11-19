@@ -4,7 +4,9 @@ support-files = [
     "shared-head.js"
 ]
 prefs = [
-    "gfx.webgpu.ignore-blocklist=true", # https://bugzilla.mozilla.org/show_bug.cgi?id=1985348
+    # Ignoring the blocklist is necessary to run tests in CI on old Mesa versions
+    # (https://bugzilla.mozilla.org/show_bug.cgi?id=1985348).
+    "gfx.webgpu.ignore-blocklist=true",
 ]
 
 ["browser_ml_autofill_perf.js"]

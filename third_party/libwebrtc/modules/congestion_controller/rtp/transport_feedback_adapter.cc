@@ -10,10 +10,9 @@
 
 #include "modules/congestion_controller/rtp/transport_feedback_adapter.h"
 
-#include <stdlib.h>
-
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -254,7 +253,7 @@ TransportFeedbackAdapter::ProcessTransportFeedback(
                      << " packets because they were sent on a different route.";
   }
   return ToTransportFeedback(std::move(packet_result_vector),
-                             feedback_receive_time, /*suports_ecn=*/false);
+                             feedback_receive_time, /*supports_ecn=*/false);
 }
 
 std::optional<TransportPacketsFeedback>

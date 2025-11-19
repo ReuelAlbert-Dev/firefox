@@ -32,7 +32,10 @@ class SecureTabsTrayBinding(
                 )
             }
             .collect { state ->
-                if (state.selectedPage == Page.PrivateTabs) {
+                if (
+                    state.selectedPage == Page.PrivateTabs &&
+                    !settings.shouldSecureModeBeOverridden
+                ) {
                     fragment.secure()
                     dialog.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 } else if (!settings.lastKnownMode.isPrivate) {

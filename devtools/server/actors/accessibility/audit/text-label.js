@@ -35,6 +35,7 @@ const {
 
 /**
  * Check if the accessible is visible to the assistive technology.
+ *
  * @param {nsIAccessible} accessible
  *        Accessible object to be tested for visibility.
  *
@@ -50,6 +51,7 @@ function isVisible(accessible) {
 /**
  * Get related accessible objects that are targets of labelled by relation e.g.
  * labels.
+ *
  * @param {nsIAccessible} accessible
  *        Accessible objects to get labels for.
  *
@@ -186,7 +188,7 @@ const formGroupingRule = function (accessible) {
             score: FAIL,
             issue: FORM_OPTGROUP_NO_NAME_FROM_LABEL,
           };
-    case "FIELDSET":
+    case "FIELDSET": {
       if (!name) {
         return { score: FAIL, issue: FORM_FIELDSET_NO_NAME };
       }
@@ -206,6 +208,7 @@ const formGroupingRule = function (accessible) {
             score: WARNING,
             issue: FORM_FIELDSET_NO_NAME_FROM_LEGEND,
           };
+    }
     default:
       return null;
   }
@@ -253,13 +256,14 @@ const internalFrameRule = function (accessible) {
   switch (DOMNode.nodeName) {
     case "FRAME":
       return mustHaveNonEmptyNameRule(FRAME_NO_NAME, accessible);
-    case "IFRAME":
+    case "IFRAME": {
       const name = getAccessibleName(accessible);
       const title = DOMNode.title && DOMNode.title.trim();
 
       return title && title === name
         ? null
         : { score: FAIL, issue: IFRAME_NO_NAME_FROM_TITLE };
+    }
     case "OBJECT": {
       const type = DOMNode.getAttribute("type");
       if (!type || !type.startsWith("image/")) {
@@ -420,6 +424,7 @@ const RULES = {
 /**
  * Perform audit for WCAG 1.1 criteria related to providing alternative text
  * depending on the type of content.
+ *
  * @param {nsIAccessible} accessible
  *        Accessible object to be tested to determine if it requires and has
  *        an appropriate text alternative.

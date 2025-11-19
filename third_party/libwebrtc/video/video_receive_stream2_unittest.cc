@@ -294,8 +294,7 @@ class VideoReceiveStream2Test : public ::testing::TestWithParam<bool> {
 TEST_P(VideoReceiveStream2Test, CreateFrameFromH264FmtpSpropAndIdr) {
   constexpr uint8_t idr_nalu[] = {0x05, 0xFF, 0xFF, 0xFF};
   RtpPacketToSend rtppacket(nullptr);
-  uint8_t* payload = rtppacket.AllocatePayload(sizeof(idr_nalu));
-  memcpy(payload, idr_nalu, sizeof(idr_nalu));
+  rtppacket.SetPayload(idr_nalu);
   rtppacket.SetMarker(true);
   rtppacket.SetSsrc(kRemoteSsrc);
   rtppacket.SetPayloadType(kH264PayloadType);
@@ -328,7 +327,7 @@ TEST_P(VideoReceiveStream2Test, PlayoutDelay) {
   EXPECT_EQ(kPlayoutDelay.max(), timings.max_playout_delay);
 
   // Check that the biggest minimum delay is chosen.
-  video_receive_stream_->SetMinimumPlayoutDelay(400);
+  video_receive_stream_->SetMinimumPlayoutDelay(TimeDelta::Millis(400));
   timings = timing_->GetTimings();
   EXPECT_EQ(400, timings.min_playout_delay.ms());
 
@@ -345,7 +344,7 @@ TEST_P(VideoReceiveStream2Test, PlayoutDelay) {
   timings = timing_->GetTimings();
   EXPECT_EQ(400, timings.min_playout_delay.ms());
 
-  video_receive_stream_->SetMinimumPlayoutDelay(0);
+  video_receive_stream_->SetMinimumPlayoutDelay(TimeDelta::Zero());
   timings = timing_->GetTimings();
   EXPECT_EQ(123, timings.min_playout_delay.ms());
 }
@@ -361,7 +360,7 @@ TEST_P(VideoReceiveStream2Test, MinPlayoutDelayIsLimitedByMaxPlayoutDelay) {
   EXPECT_EQ(timing_->GetTimings().min_playout_delay, kPlayoutDelay.min());
 
   // Check that the biggest minimum delay is limited by the max playout delay.
-  video_receive_stream_->SetMinimumPlayoutDelay(400);
+  video_receive_stream_->SetMinimumPlayoutDelay(TimeDelta::Millis(400));
   EXPECT_EQ(timing_->GetTimings().min_playout_delay, kPlayoutDelay.max());
 }
 
@@ -460,8 +459,7 @@ TEST_P(VideoReceiveStream2Test, MaxCompositionDelaySetFromMaxPlayoutDelay) {
 TEST_P(VideoReceiveStream2Test, LazyDecoderCreation) {
   constexpr uint8_t idr_nalu[] = {0x05, 0xFF, 0xFF, 0xFF};
   RtpPacketToSend rtppacket(nullptr);
-  uint8_t* payload = rtppacket.AllocatePayload(sizeof(idr_nalu));
-  memcpy(payload, idr_nalu, sizeof(idr_nalu));
+  rtppacket.SetPayload(idr_nalu);
   rtppacket.SetMarker(true);
   rtppacket.SetSsrc(kRemoteSsrc);
   rtppacket.SetPayloadType(kH264PayloadType);
@@ -494,8 +492,7 @@ TEST_P(VideoReceiveStream2Test, LazyDecoderCreation) {
 TEST_P(VideoReceiveStream2Test, LazyDecoderCreationCodecSwitch) {
   constexpr uint8_t idr_nalu[] = {0x05, 0xFF, 0xFF, 0xFF};
   RtpPacketToSend rtppacket(nullptr);
-  uint8_t* payload = rtppacket.AllocatePayload(sizeof(idr_nalu));
-  memcpy(payload, idr_nalu, sizeof(idr_nalu));
+  rtppacket.SetPayload(idr_nalu);
   rtppacket.SetMarker(true);
   rtppacket.SetSsrc(kRemoteSsrc);
   rtppacket.SetPayloadType(kH264PayloadType);
@@ -528,8 +525,7 @@ TEST_P(VideoReceiveStream2Test, LazyDecoderCreationCodecSwitch) {
   // Switch to AV1.
   const uint8_t av1_key_obu[] = {0x18, 0x48, 0x01, 0xAA};  // \  OBU
   RtpPacketToSend av1_rtppacket(nullptr);
-  uint8_t* av1_payload = av1_rtppacket.AllocatePayload(sizeof(av1_key_obu));
-  memcpy(av1_payload, av1_key_obu, sizeof(av1_key_obu));
+  av1_rtppacket.SetPayload(av1_key_obu);
   av1_rtppacket.SetMarker(true);
   av1_rtppacket.SetSsrc(kRemoteSsrc);
   av1_rtppacket.SetPayloadType(kAv1PayloadType);

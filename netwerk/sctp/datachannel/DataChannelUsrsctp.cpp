@@ -141,7 +141,7 @@ class DataChannelRegistry {
   void DeregisterImpl(uintptr_t aId) {
     MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
     size_t removed = mConnections.erase(aId);
-    mozilla::Unused << removed;
+    (void)removed;
     MOZ_DIAGNOSTIC_ASSERT(removed);
   }
 
@@ -783,7 +783,10 @@ bool DataChannelConnectionUsrsctp::SendBufferedMessages(
 void DataChannelConnectionUsrsctp::OnStreamOpen(uint16_t stream) {
   MOZ_ASSERT(mSTS->IsOnCurrentThread());
 
-  mQueuedData.RemoveElementsBy([stream, this](const auto& dataItem) {
+  nsTArray<UniquePtr<QueuedDataMessage>> temp;
+  std::swap(temp, mQueuedData);
+
+  temp.RemoveElementsBy([stream, this](const auto& dataItem) {
     const bool match = dataItem->mStream == stream;
     if (match) {
       DC_DEBUG(("Delivering queued data for stream %u, length %zu", stream,
@@ -795,6 +798,8 @@ void DataChannelConnectionUsrsctp::OnStreamOpen(uint16_t stream) {
     }
     return match;
   });
+
+  std::swap(temp, mQueuedData);
 }
 
 bool DataChannelConnectionUsrsctp::HasQueuedData(uint16_t aStream) const {
@@ -1208,14 +1213,14 @@ void DataChannelConnectionUsrsctp::HandleSendFailedEvent(
   }
 }
 
-void DataChannelConnectionUsrsctp::ResetStreams(nsTArray<uint16_t>& aStreams) {
+bool DataChannelConnectionUsrsctp::ResetStreams(nsTArray<uint16_t>& aStreams) {
   MOZ_ASSERT(mSTS->IsOnCurrentThread());
 
   DC_DEBUG(("%s %p: Sending outgoing stream reset for %zu streams", __func__,
             this, aStreams.Length()));
   if (aStreams.IsEmpty()) {
     DC_DEBUG(("No streams to reset"));
-    return;
+    return false;
   }
   const size_t len =
       sizeof(sctp_reset_streams) + (aStreams.Length()) * sizeof(uint16_t);
@@ -1239,6 +1244,7 @@ void DataChannelConnectionUsrsctp::ResetStreams(nsTArray<uint16_t>& aStreams) {
     aStreams.Clear();
   }
   free(srs);
+  return aStreams.Length() == 0;
 }
 
 void DataChannelConnectionUsrsctp::HandleStreamResetEvent(
@@ -1251,13 +1257,15 @@ void DataChannelConnectionUsrsctp::HandleStreamResetEvent(
         (strrst->strreset_length - sizeof(struct sctp_stream_reset_event)) /
         sizeof(uint16_t);
     for (size_t i = 0; i < n; ++i) {
-      if (strrst->strreset_flags & SCTP_STREAM_RESET_INCOMING_SSN) {
-        streamsReset.push_back(strrst->strreset_stream_list[i]);
-      }
+      streamsReset.push_back(strrst->strreset_stream_list[i]);
     }
   }
 
-  OnStreamsReset(std::move(streamsReset));
+  if (strrst->strreset_flags & SCTP_STREAM_RESET_INCOMING_SSN) {
+    OnStreamsReset(std::move(streamsReset));
+  } else if (strrst->strreset_flags & SCTP_STREAM_RESET_OUTGOING_SSN) {
+    OnStreamsResetComplete(std::move(streamsReset));
+  }
 }
 
 void DataChannelConnectionUsrsctp::HandleStreamChangeEvent(

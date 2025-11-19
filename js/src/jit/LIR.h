@@ -11,6 +11,7 @@
 // inputs and outputs, as well as the interface instructions must conform to.
 
 #include "mozilla/Array.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/Casting.h"
 
 #include "jit/Bailouts.h"
@@ -1117,6 +1118,8 @@ class LBlock {
   LMoveGroup* entryMoveGroup_;
   LMoveGroup* exitMoveGroup_;
   Label label_;
+  // If true, this block will be generated out of line.
+  bool isOutOfLine_;
 
  public:
   explicit LBlock(MBasicBlock* block);
@@ -1130,6 +1133,7 @@ class LBlock {
   LPhi* getPhi(size_t index) { return &phis_[index]; }
   const LPhi* getPhi(size_t index) const { return &phis_[index]; }
   MBasicBlock* mir() const { return block_; }
+  bool isOutOfLine() const { return isOutOfLine_; }
   LInstructionIterator begin() { return instructions_.begin(); }
   LInstructionIterator begin(LInstruction* at) {
     return instructions_.begin(at);
@@ -1268,7 +1272,7 @@ inline LDefinition* LInstruction::getTemp(size_t index) {
 template <size_t Defs, size_t Operands, size_t Temps>
 class LInstructionHelper
     : public details::LInstructionFixedDefsTempsHelper<Defs, Temps> {
-  mozilla::Array<LAllocation, Operands> operands_;
+  MOZ_NO_UNIQUE_ADDRESS mozilla::Array<LAllocation, Operands> operands_;
 
  protected:
   explicit LInstructionHelper(LNode::Opcode opcode)
@@ -1358,7 +1362,7 @@ class LCallInstructionHelper
 template <size_t Succs, size_t Operands, size_t Temps>
 class LControlInstructionHelper
     : public LInstructionHelper<0, Operands, Temps> {
-  mozilla::Array<MBasicBlock*, Succs> successors_;
+  MOZ_NO_UNIQUE_ADDRESS mozilla::Array<MBasicBlock*, Succs> successors_;
 
  protected:
   explicit LControlInstructionHelper(LNode::Opcode opcode)
@@ -2168,13 +2172,10 @@ AnyRegister LAllocation::toAnyRegister() const {
 }  // namespace js
 
 #include "jit/shared/LIR-shared.h"
-#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
-#  if defined(JS_CODEGEN_X86)
-#    include "jit/x86/LIR-x86.h"
-#  elif defined(JS_CODEGEN_X64)
-#    include "jit/x64/LIR-x64.h"
-#  endif
-#  include "jit/x86-shared/LIR-x86-shared.h"
+#if defined(JS_CODEGEN_X86)
+#  include "jit/x86/LIR-x86.h"
+#elif defined(JS_CODEGEN_X64)
+#  include "jit/x64/LIR-x64.h"
 #elif defined(JS_CODEGEN_ARM)
 #  include "jit/arm/LIR-arm.h"
 #elif defined(JS_CODEGEN_ARM64)

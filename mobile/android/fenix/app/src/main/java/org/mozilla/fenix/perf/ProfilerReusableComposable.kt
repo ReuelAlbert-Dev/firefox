@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -110,6 +111,7 @@ fun WaitForProfilerDialog(
             Text(
                 text = stringResource(message),
                 fontWeight = FontWeight.Bold,
+                color = FirefoxTheme.colors.textPrimary,
                 fontSize = 15.sp,
                 modifier = Modifier.padding(8.dp),
             )
@@ -185,11 +187,11 @@ fun BaseProfilerDialogContent(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 TextButton(onClick = onNegativeAction) {
-                    Text(negativeActionText, color = FirefoxTheme.colors.textAccent)
+                    Text(negativeActionText, color = MaterialTheme.colorScheme.tertiary)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 TextButton(onClick = onPositiveAction) {
-                    Text(positiveActionText, color = FirefoxTheme.colors.textAccent)
+                    Text(positiveActionText, color = MaterialTheme.colorScheme.tertiary)
                 }
             }
         }
@@ -222,7 +224,7 @@ fun ProfilerErrorDialog(
                 modifier = Modifier.padding(bottom = 16.dp),
             )
             TextButton(onClick = onDismiss) {
-                Text(dismissButtonText, color = FirefoxTheme.colors.textAccent)
+                Text(dismissButtonText, color = MaterialTheme.colorScheme.tertiary)
             }
         }
     }

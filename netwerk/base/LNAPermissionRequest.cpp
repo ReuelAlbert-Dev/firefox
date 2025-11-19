@@ -10,6 +10,11 @@
 #include "nsPIDOMWindow.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
+#include "mozilla/glean/NetwerkMetrics.h"
+
+#include "mozilla/dom/WindowGlobalParent.h"
+#include "nsIIOService.h"
+#include "nsIOService.h"
 
 namespace mozilla::net {
 
@@ -35,10 +40,31 @@ LNAPermissionRequest::LNAPermissionRequest(PermissionPromptCallback&& aCallback,
   MOZ_ASSERT(aLoadInfo);
 
   aLoadInfo->GetTriggeringPrincipal(getter_AddRefs(mPrincipal));
-  mTopLevelPrincipal = aLoadInfo->GetTopLevelPrincipal();
+
+  RefPtr<mozilla::dom::BrowsingContext> bc;
+  aLoadInfo->GetBrowsingContext(getter_AddRefs(bc));
+  if (bc && bc->Top()) {
+    if (bc->Top()->Canonical()) {
+      RefPtr<mozilla::dom::WindowGlobalParent> topWindowGlobal =
+          bc->Top()->Canonical()->GetCurrentWindowGlobal();
+      if (topWindowGlobal) {
+        mTopLevelPrincipal = topWindowGlobal->DocumentPrincipal();
+      }
+    }
+  }
+
   if (!mTopLevelPrincipal) {
-    // top-level principal is not always available we could re-use the
-    // triggering principal for this
+    // this could happen in tests
+    mTopLevelPrincipal = mPrincipal;
+  }
+
+  if (!mPrincipal->Equals(mTopLevelPrincipal)) {
+    // This is a cross origin request from Iframe
+    // Since permission delegation is not implemented yet in the parent process
+    // we need to set this flag to true explicitly and display the origin of the
+    // iframe in the prompt. See Bug 1978550
+    mIsRequestDelegatedToUnsafeThirdParty = true;
+    // permissions for this iframe is limited to the iframe's principal
     mTopLevelPrincipal = mPrincipal;
   }
 
@@ -83,6 +109,18 @@ nsresult LNAPermissionRequest::RequestPermission() {
     return Cancel();
   }
 
+  // Check if the domain should skip LNA checks
+  if (mPrincipal && gIOService) {
+    nsAutoCString origin;
+    nsresult rv = mPrincipal->GetAsciiHost(origin);
+    if (NS_SUCCEEDED(rv) && !origin.IsEmpty()) {
+      if (gIOService->ShouldSkipDomainForLNA(origin)) {
+        // Domain is in the skip list, grant permission automatically
+        return Allow(JS::UndefinedHandleValue);
+      }
+    }
+  }
+
   PromptResult pr = CheckPromptPrefs();
   if (pr == PromptResult::Granted) {
     return Allow(JS::UndefinedHandleValue);
@@ -90,6 +128,17 @@ nsresult LNAPermissionRequest::RequestPermission() {
 
   if (pr == PromptResult::Denied) {
     return Cancel();
+  }
+
+  // Record telemetry for permission prompts shown to users
+  if (mType.Equals(LOCAL_HOST_PERMISSION_KEY)) {
+    mozilla::glean::networking::local_network_access_prompts_shown
+        .Get("localhost"_ns)
+        .Add(1);
+  } else if (mType.Equals(LOCAL_NETWORK_PERMISSION_KEY)) {
+    mozilla::glean::networking::local_network_access_prompts_shown
+        .Get("local_network"_ns)
+        .Add(1);
   }
 
   if (NS_SUCCEEDED(

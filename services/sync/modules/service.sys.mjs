@@ -577,13 +577,14 @@ Sync11Service.prototype = {
           });
         }
         break;
-      case "weave:service:setup-complete":
+      case "weave:service:setup-complete": {
         let status = this._checkSetup();
         if (status != STATUS_DISABLED && status != CLIENT_NOT_CONFIGURED) {
           this._startTracking();
         }
         break;
-      case "nsPref:changed":
+      }
+      case "nsPref:changed": {
         if (this._ignorePrefObserver) {
           return;
         }
@@ -595,6 +596,7 @@ Sync11Service.prototype = {
         }
         this._handleEngineStatusChanged(engine);
         break;
+      }
       case "weave:service:sync:finish":
         if (this._queuedSyncReason) {
           this.sync({ why: this._queuedSyncReason });
@@ -1426,6 +1428,7 @@ Sync11Service.prototype = {
 
   /**
    * Upload a fresh meta/global record
+   *
    * @throws the response object if the upload request was not a success
    */
   async _uploadNewMetaGlobal() {
@@ -1441,6 +1444,7 @@ Sync11Service.prototype = {
 
   /**
    * Upload meta/global, throwing the response on failure
+   *
    * @param {WBORecord} meta meta/global record
    * @throws the response object if the request was not a success
    */
@@ -1460,6 +1464,7 @@ Sync11Service.prototype = {
 
   /**
    * Upload crypto/keys
+   *
    * @param {WBORecord} cryptoKeys crypto/keys record
    * @param {Number} lastModified known last modified timestamp (in decimal seconds),
    *                 will be used to set the X-If-Unmodified-Since header

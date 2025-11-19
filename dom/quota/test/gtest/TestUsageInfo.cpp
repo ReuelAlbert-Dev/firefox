@@ -5,15 +5,12 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <cstdint>
-#include <memory>
 #include <ostream>
-#include <utility>
 
 #include "gtest/gtest.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
 #include "mozilla/dom/quota/UsageInfo.h"
-#include "mozilla/fallible.h"
 
 using namespace mozilla;
 using namespace mozilla::dom::quota;

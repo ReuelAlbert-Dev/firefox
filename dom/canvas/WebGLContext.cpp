@@ -9,7 +9,6 @@
 #include <array>
 #include <bitset>
 #include <cctype>
-#include <iterator>
 #include <queue>
 
 #include "AccessCheck.h"
@@ -32,7 +31,6 @@
 #include "gfxEnv.h"
 #include "gfxPattern.h"
 #include "mozilla/EnumeratedArrayCycleCollection.h"
-#include "mozilla/EnumeratedRange.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProcessPriorityManager.h"
 #include "mozilla/ResultVariant.h"

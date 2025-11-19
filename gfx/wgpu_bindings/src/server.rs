@@ -25,6 +25,7 @@ use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 #[allow(unused_imports)]
 use std::ffi::CString;
@@ -197,7 +198,10 @@ pub extern "C" fn wgpu_server_device_poll(
     force_wait: bool,
 ) {
     let maintain = if force_wait {
-        wgt::PollType::Wait
+        wgt::PollType::Wait {
+            submission_index: None,
+            timeout: Some(Duration::from_secs(60)),
+        }
     } else {
         wgt::PollType::Poll
     };
@@ -2420,26 +2424,19 @@ impl Global {
                     error_buf.init(err, device_id);
                 }
             }
-            CommandEncoderAction::RunComputePass {
-                base,
-                timestamp_writes,
-            } => self.compute_pass_end_with_unresolved_commands(
-                self_id,
-                base,
-                timestamp_writes.as_ref(),
-            ),
+            CommandEncoderAction::RunComputePass { .. } => unimplemented!(),
             CommandEncoderAction::WriteTimestamp {
-                query_set_id,
+                query_set,
                 query_index,
             } => {
                 if let Err(err) =
-                    self.command_encoder_write_timestamp(self_id, query_set_id, query_index)
+                    self.command_encoder_write_timestamp(self_id, query_set, query_index)
                 {
                     error_buf.init(err, device_id);
                 }
             }
             CommandEncoderAction::ResolveQuerySet {
-                query_set_id,
+                query_set,
                 start_query,
                 query_count,
                 destination,
@@ -2447,7 +2444,7 @@ impl Global {
             } => {
                 if let Err(err) = self.command_encoder_resolve_query_set(
                     self_id,
-                    query_set_id,
+                    query_set,
                     start_query,
                     query_count,
                     destination,
@@ -2456,20 +2453,7 @@ impl Global {
                     error_buf.init(err, device_id);
                 }
             }
-            CommandEncoderAction::RunRenderPass {
-                base,
-                target_colors,
-                target_depth_stencil,
-                timestamp_writes,
-                occlusion_query_set_id,
-            } => self.render_pass_end_with_unresolved_commands(
-                self_id,
-                base,
-                &target_colors,
-                target_depth_stencil.as_ref(),
-                timestamp_writes.as_ref(),
-                occlusion_query_set_id,
-            ),
+            CommandEncoderAction::RunRenderPass { .. } => unimplemented!(),
             CommandEncoderAction::ClearBuffer { dst, offset, size } => {
                 if let Err(err) = self.command_encoder_clear_buffer(self_id, dst, offset, size) {
                     error_buf.init(err, device_id);
@@ -2502,6 +2486,9 @@ impl Global {
             }
             CommandEncoderAction::BuildAccelerationStructures { .. } => {
                 unreachable!("internal error: attempted to build acceleration structures")
+            }
+            CommandEncoderAction::TransitionResources { .. } => {
+                unreachable!("internal error: attempted to transition resources")
             }
         }
     }
@@ -2537,6 +2524,19 @@ pub unsafe extern "C" fn wgpu_server_pack_buffer_map_error(
 #[no_mangle]
 pub unsafe extern "C" fn wgpu_server_pack_work_done(bb: &mut ByteBuf, queue_id: id::QueueId) {
     *bb = make_byte_buf(&ServerMessage::QueueOnSubmittedWorkDoneResponse(queue_id));
+}
+
+/// # Panics
+///
+/// If the size of `buffer_ids` is not [`crate::MAX_SWAPCHAIN_BUFFER_COUNT`].
+#[no_mangle]
+pub unsafe extern "C" fn wgpu_server_pack_free_swap_chain_buffer_ids(
+    bb: &mut ByteBuf,
+    buffer_ids: FfiSlice<'_, id::BufferId>,
+) {
+    *bb = make_byte_buf(&ServerMessage::FreeSwapChainBufferIds(
+        buffer_ids.as_slice().try_into().unwrap(),
+    ));
 }
 
 #[no_mangle]
@@ -2647,6 +2647,8 @@ unsafe fn process_message(
                     driver,
                     driver_info,
                     backend,
+                    transient_saves_memory,
+                    device_pci_bus_id: _,
                 } = global.adapter_get_info(adapter_id);
 
                 let is_hardware = match device_type {
@@ -2684,6 +2686,7 @@ unsafe fn process_message(
                     driver_info: Cow::Owned(driver_info),
                     backend,
                     support_use_shared_texture_in_swap_chain,
+                    transient_saves_memory,
                 };
                 Some(info)
             } else {
@@ -2719,9 +2722,9 @@ unsafe fn process_message(
             global.command_encoder_action(device_id, id, action, error_buf)
         }
         Message::CommandEncoderFinish(device_id, command_encoder_id, command_buffer_id, desc) => {
-            let (_, error) =
+            let (_, label_and_error) =
                 global.command_encoder_finish(command_encoder_id, &desc, Some(command_buffer_id));
-            if let Some(err) = error {
+            if let Some((_label, err)) = label_and_error {
                 error_buf.init(err, device_id);
             }
         }
@@ -2971,9 +2974,9 @@ pub extern "C" fn wgpu_server_encoder_finish(
 ) {
     let label = wgpu_string(desc.label);
     let desc = desc.map_label(|_| label);
-    let (_, error) =
+    let (_, label_and_error) =
         global.command_encoder_finish(command_encoder_id, &desc, Some(command_buffer_id));
-    if let Some(err) = error {
+    if let Some((_label, err)) = label_and_error {
         error_buf.init(err, device_id);
     }
 }

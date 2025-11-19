@@ -11,9 +11,6 @@ const REMOTE_TIMEOUT_DEFAULT = 500;
 const lazy = XPCOMUtils.declareLazy({
   FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
   SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
-  // This is currently only used within experiment code.
-  // eslint-disable-next-line mozilla/no-browser-refs-in-toolkit
-  MerinoClient: "resource:///modules/MerinoClient.sys.mjs",
   logConsole: () =>
     console.createInstance({
       prefix: "SearchSuggestionController",
@@ -36,10 +33,6 @@ const lazy = XPCOMUtils.declareLazy({
     pref: "browser.search.suggest.timeout",
     default: REMOTE_TIMEOUT_DEFAULT,
   },
-  ohttpEnabled: {
-    pref: "browser.search.suggest.ohttp.featureGate",
-    default: false,
-  },
 });
 
 /**
@@ -50,10 +43,6 @@ const lazy = XPCOMUtils.declareLazy({
  * @typedef {[
  *   suggestions: string[], descriptions:string[], richResultInformation: object[]
  * ]} SuggestionRemoteResult
- */
-
-/**
- * @import {MerinoClient} from "resource:///modules/MerinoClient.sys.mjs"
  */
 
 /**
@@ -79,8 +68,6 @@ const lazy = XPCOMUtils.declareLazy({
  * @typedef {object} SuggestionExtraContext
  * @property {boolean} awaitingLocalResults
  *   Indicates if this request context is awaiting local results.
- * @property {string} engineId
- *   The engine identifier to use for some telemetry.
  * @property {XMLHttpRequest} [request]
  *   The request for this suggestion context.
  * @property {number} gleanTimerId
@@ -270,12 +257,6 @@ export class SearchSuggestionController {
   maxRemoteResults = 10;
 
   /**
-   * The identifier of the search engine that can currently be enabled for
-   * OHTTP. May be overridden for tests.
-   */
-  static oHTTPEngineId = "google";
-
-  /**
    * The additional parameter used when searching form history.
    *
    * @type {string}
@@ -294,7 +275,9 @@ export class SearchSuggestionController {
   /**
    * @typedef {object} FetchResult
    * @property {string} term
+   *   The search term used for obtaining the suggestions.
    * @property {FormHistoryResultType} [formHistoryResults]
+   *   The results in a form history result object, used for `SearchSuggestions`.
    * @property {Array<SearchSuggestionEntry>} local
    *   Contains local search suggestions.
    * @property {Array<SearchSuggestionEntry>} remote
@@ -352,7 +335,6 @@ export class SearchSuggestionController {
       awaitingLocalResults: false,
       dedupeRemoteAndLocal,
       engine,
-      engineId: engine?.identifier || "other",
       fetchTrending,
       inPrivateBrowsing,
       restrictToEngine,
@@ -421,23 +403,9 @@ export class SearchSuggestionController {
   }
 
   /**
-   * Should be called at the end of a search engagement (e.g. on blur / search
-   * complete), to reset the Merino session.
-   */
-  resetSession() {
-    this.#merino?.resetSession();
-  }
-
-  /**
    * @type {SuggestionRequestContext}
    */
   #context;
-
-  /**
-   * @type {MerinoClient}
-   *   The MerinoClient associated with any ObliviousHTTP requests.
-   */
-  #merino;
 
   /**
    * Fetches search suggestions from the form history.
@@ -475,26 +443,18 @@ export class SearchSuggestionController {
     // If the timer id has been reset, then we have already handled telemetry.
     // This might occur in the context of an abort or or cancel.
     if (context.gleanTimerId) {
+      let engineId = context.engine.isConfigEngine
+        ? context.engine.id
+        : "other";
       // Stop the latency stopwatch.
       if (context.aborted) {
-        Glean.search.suggestionsLatency[context.engineId].cancel(
-          context.gleanTimerId
-        );
+        Glean.searchSuggestions.latency[engineId].cancel(context.gleanTimerId);
       } else {
-        Glean.search.suggestionsLatency[context.engineId].stopAndAccumulate(
+        Glean.searchSuggestions.latency[engineId].stopAndAccumulate(
           context.gleanTimerId
         );
       }
       context.gleanTimerId = 0;
-      if (context.engine.isConfigEngine) {
-        if (context.aborted) {
-          Glean.searchSuggestions.abortedRequests[context.engine.id].add();
-        } else if (context.errorWasReceived) {
-          Glean.searchSuggestions.failedRequests[context.engine.id].add();
-        } else {
-          Glean.searchSuggestions.successfulRequests[context.engine.id].add();
-        }
-      }
     }
   }
 
@@ -516,31 +476,6 @@ export class SearchSuggestionController {
         : lazy.SearchUtils.URL_TYPE.TRENDING_JSON
     );
 
-    // Note: when we enable this for all engines, we need to make sure we have
-    // the capability for POST submissions handled.
-    if (
-      lazy.ohttpEnabled &&
-      lazy.MerinoClient.hasOHTTPPrefs &&
-      context.engine.id == SearchSuggestionController.oHTTPEngineId
-    ) {
-      return this.#fetchRemoteObliviousHTTP(context, submission);
-    }
-    return this.#fetchRemoteNormalHTTP(context, submission);
-  }
-
-  /**
-   * Fetch suggestions from the search engine over the network using normal
-   * HTTP(s).
-   *
-   * @param {SuggestionRequestContext} context
-   *   The search context.
-   * @param {nsISearchSubmission} submission
-   *   The submission URL and data for the search suggestion.
-   * @returns {Promise}
-   *   Returns a promise that is resolved when the response is received, or
-   *   rejected if there is an error.
-   */
-  #fetchRemoteNormalHTTP(context, submission) {
     let deferredResponse = Promise.withResolvers();
     let request = (context.request = new XMLHttpRequest());
     // Expect the response type to be JSON, so that the network layer will
@@ -636,66 +571,12 @@ export class SearchSuggestionController {
     }
 
     context.gleanTimerId =
-      Glean.search.suggestionsLatency[context.engineId].start();
+      Glean.searchSuggestions.latency[
+        context.engine.isConfigEngine ? context.engine.id : "other"
+      ].start();
 
     return deferredResponse.promise;
   }
-
-  /**
-   * Fetch suggestions from the search engine over the network using Oblivious
-   * HTTP.
-   *
-   * POST submissions are not currently supported.
-   *
-   * @param {SuggestionRequestContext} context
-   *   The search context.
-   * @param {nsISearchSubmission} submission
-   *   The submission URL and data for the search suggestion.
-   * @returns {Promise}
-   *   Returns a promise that is resolved when the response is received, or
-   *   rejected if there is an error.
-   */
-  async #fetchRemoteObliviousHTTP(context, submission) {
-    if (!this.#merino) {
-      this.#merino = new lazy.MerinoClient("SearchSuggestions", {
-        allowOhttp: true,
-      });
-    }
-
-    let submissionURL = URL.fromURI(submission.uri);
-
-    lazy.logConsole.debug(`OHTTP request started for ${submission.uri.spec}`);
-
-    context.gleanTimerId =
-      Glean.search.suggestionsLatency[context.engineId].start();
-
-    let merinoSuggestions = await this.#merino.fetch({
-      query: context.searchString,
-      providers: ["google_suggest"],
-      timeoutMs: lazy.remoteTimeout,
-      otherParams: {
-        google_suggest_params: submissionURL.searchParams.toString(),
-      },
-    });
-
-    this.#reportTelemetryForEngine(context);
-    if (!this.#context || context != this.#context || context.aborted) {
-      return "Got OHTTP response after the request was cancelled";
-    }
-
-    if (!merinoSuggestions) {
-      return "An error occurred see the MerinoClient for details.";
-    }
-
-    return new Promise(resolve => {
-      this.#onRemoteLoaded(
-        context,
-        merinoSuggestions[0]?.custom_details?.google_suggest?.suggestions || [],
-        resolve
-      );
-    });
-  }
-
   /**
    * Called when the request completed successfully so we can handle the
    * response data.

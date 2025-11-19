@@ -240,8 +240,10 @@ def run_info_extras(logger, default_prefs=None, **kwargs):
           "swgl": bool_pref("gfx.webrender.software"),
           "useDrawSnapshot": bool_pref("reftest.use-draw-snapshot"),
           "privateBrowsing": bool_pref("browser.privatebrowsing.autostart"),
-          "remoteAsyncEvents": bool_pref("remote.events.async.wheel.enabled"),
+          "remoteAsyncEvents": (bool_pref("remote.events.async.mouse.enabled") or
+                                bool_pref("remote.events.async.wheel.enabled")),
           "incOriginInit": os.environ.get("MOZ_ENABLE_INC_ORIGIN_INIT") == "1",
+          "navigationApi": bool_pref("dom.navigation.webidl.enabled"),
           }
     rv.update(run_info_browser_version(**kwargs))
 
@@ -265,7 +267,6 @@ def run_info_browser_version(**kwargs):
 def update_properties():
     return ([
         "os",
-        "os_version",
         "debug",
         "display",
         "fission",
@@ -278,7 +279,7 @@ def update_properties():
         "remoteAsyncEvents",
         "sessionHistoryInParent",
         "subsuite"], {
-        "os": ["version"],
+        "os": ["version", "os_version"],
         "processor": ["bits"]})
 
 

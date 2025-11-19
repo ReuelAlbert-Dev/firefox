@@ -33,7 +33,6 @@
 #include "absl/strings/string_view.h"
 #include "api/array_view.h"
 #include "api/environment/environment.h"
-#include "api/environment/environment_factory.h"
 #include "api/field_trials_view.h"
 #include "api/make_ref_counted.h"
 #include "api/numerics/samples_stats_counter.h"
@@ -85,7 +84,6 @@
 #include "rtc_base/thread.h"
 #include "rtc_base/thread_annotations.h"
 #include "rtc_base/time_utils.h"
-#include "test/testsupport/file_utils.h"
 #include "test/testsupport/frame_reader.h"
 #include "test/testsupport/video_frame_writer.h"
 #include "third_party/libyuv/include/libyuv/compare.h"
@@ -138,11 +136,11 @@ scoped_refptr<VideoFrameBuffer> ScaleFrame(
 // AV1 or H264) files.
 class VideoSource {
  public:
-  explicit VideoSource(VideoSourceSettings source_settings)
+  VideoSource(const Environment& env, VideoSourceSettings source_settings)
       : source_settings_(source_settings) {
     if (absl::EndsWith(source_settings.file_path, "ivf")) {
-      ivf_reader_ = CreateFromIvfFileFrameGenerator(CreateEnvironment(),
-                                                    source_settings.file_path);
+      ivf_reader_ =
+          CreateFromIvfFileFrameGenerator(env, source_settings.file_path);
     } else if (absl::EndsWith(source_settings.file_path, "y4m")) {
       yuv_reader_ =
           CreateY4mFrameReader(source_settings_.file_path,
@@ -537,7 +535,7 @@ class VideoCodecAnalyzer : public VideoCodecTester::VideoCodecStats {
     }
   }
 
-  std::vector<Frame> Slice(Filter filter, bool merge) const {
+  std::vector<Frame> Slice(Filter filter, bool merge) const override {
     std::vector<Frame> slice;
     for (const auto& [timestamp_rtp, temporal_unit_frames] : frames_) {
       if (temporal_unit_frames.empty()) {
@@ -615,7 +613,7 @@ class VideoCodecAnalyzer : public VideoCodecTester::VideoCodecStats {
     return slice;
   }
 
-  Stream Aggregate(Filter filter) const {
+  Stream Aggregate(Filter filter) const override {
     std::vector<Frame> frames = Slice(filter, /*merge=*/true);
     Stream stream;
     LeakyBucket leaky_bucket;
@@ -709,7 +707,7 @@ class VideoCodecAnalyzer : public VideoCodecTester::VideoCodecStats {
 
   void LogMetrics(absl::string_view csv_path,
                   std::vector<Frame> frames,
-                  std::map<std::string, std::string> metadata) const {
+                  std::map<std::string, std::string> metadata) const override {
     RTC_LOG(LS_INFO) << "Write metrics to " << csv_path;
     FILE* csv_file = fopen(csv_path.data(), "w");
     const std::string delimiter = ";";
@@ -850,7 +848,7 @@ class VideoCodecAnalyzer : public VideoCodecTester::VideoCodecStats {
 
   SamplesStatsCounter::StatsSample StatsSample(double value,
                                                Timestamp time) const {
-    return SamplesStatsCounter::StatsSample{value, time};
+    return SamplesStatsCounter::StatsSample{.value = value, .time = time};
   }
 
   LimitedTaskQueue task_queue_;
@@ -950,7 +948,7 @@ class Decoder : public DecodedImageCallback {
       MutexLock lock(&mutex_);
       spatial_idx = *spatial_idx_;
 
-      if (ref_frames_.size() > 0) {
+      if (!ref_frames_.empty()) {
         auto it = ref_frames_.find(decoded_frame.rtp_timestamp());
         RTC_CHECK(it != ref_frames_.end());
         ref_frame = it->second;
@@ -1189,19 +1187,45 @@ class Encoder : public EncodedImageCallback {
     if (is_simulcast) {
       vc.numberOfSimulcastStreams = num_spatial_layers;
       for (int sidx = 0; sidx < num_spatial_layers; ++sidx) {
-        auto tl0_settings = es.layers_settings.find(
-            LayerId{.spatial_idx = sidx, .temporal_idx = 0});
-        auto tlx_settings = es.layers_settings.find(LayerId{
-            .spatial_idx = sidx, .temporal_idx = num_temporal_layers - 1});
-        DataRate total_layer_bitrate = std::accumulate(
-            tl0_settings, tlx_settings, DataRate::Zero(),
-            [](DataRate acc,
-               const std::pair<const LayerId, LayerSettings> layer) {
-              return acc + layer.second.bitrate;
-            });
+        const Resolution& resolution =
+            es.layers_settings
+                .at(LayerId{.spatial_idx = sidx, .temporal_idx = 0})
+                .resolution;
+        DataRate total_layer_bitrate = DataRate::Zero();
+        for (int tidx = 0; tidx < num_temporal_layers; ++tidx) {
+          total_layer_bitrate +=
+              es.layers_settings
+                  .at(LayerId{.spatial_idx = sidx, .temporal_idx = tidx})
+                  .bitrate;
+        }
         SimulcastStream& ss = vc.simulcastStream[sidx];
-        ss.width = tl0_settings->second.resolution.width;
-        ss.height = tl0_settings->second.resolution.height;
+        ss.width = resolution.width;
+        ss.height = resolution.height;
+        ss.numberOfTemporalLayers = num_temporal_layers;
+        ss.maxBitrate = total_layer_bitrate.kbps();
+        ss.targetBitrate = total_layer_bitrate.kbps();
+        ss.minBitrate = 0;
+        ss.maxFramerate = vc.maxFramerate;
+        ss.qpMax = vc.qpMax;
+        ss.active = true;
+      }
+    } else if (vc.codecType == kVideoCodecVP9 ||
+               vc.codecType == kVideoCodecAV1) {
+      for (int sidx = 0; sidx < num_spatial_layers; ++sidx) {
+        const Resolution& resolution =
+            es.layers_settings
+                .at(LayerId{.spatial_idx = sidx, .temporal_idx = 0})
+                .resolution;
+        DataRate total_layer_bitrate = DataRate::Zero();
+        for (int tidx = 0; tidx < num_temporal_layers; ++tidx) {
+          total_layer_bitrate +=
+              es.layers_settings
+                  .at(LayerId{.spatial_idx = sidx, .temporal_idx = tidx})
+                  .bitrate;
+        }
+        SpatialLayer& ss = vc.spatialLayers[sidx];
+        ss.width = resolution.width;
+        ss.height = resolution.height;
         ss.numberOfTemporalLayers = num_temporal_layers;
         ss.maxBitrate = total_layer_bitrate.kbps();
         ss.targetBitrate = total_layer_bitrate.kbps();
@@ -1667,7 +1691,7 @@ VideoCodecTester::RunEncodeTest(
     VideoEncoderFactory* encoder_factory,
     const EncoderSettings& encoder_settings,
     const std::map<uint32_t, EncodingSettings>& encoding_settings) {
-  VideoSource video_source(source_settings);
+  VideoSource video_source(env, source_settings);
   std::unique_ptr<VideoCodecAnalyzer> analyzer =
       std::make_unique<VideoCodecAnalyzer>();
   Encoder encoder(env, encoder_factory, encoder_settings, analyzer.get());
@@ -1696,7 +1720,7 @@ VideoCodecTester::RunEncodeDecodeTest(
     const EncoderSettings& encoder_settings,
     const DecoderSettings& decoder_settings,
     const std::map<uint32_t, EncodingSettings>& encoding_settings) {
-  VideoSource video_source(source_settings);
+  VideoSource video_source(env, source_settings);
   std::unique_ptr<VideoCodecAnalyzer> analyzer =
       std::make_unique<VideoCodecAnalyzer>();
   const EncodingSettings& first_frame_settings =

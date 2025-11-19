@@ -52,24 +52,8 @@ internal fun loginsReducer(state: LoginsState, action: LoginsAction) = when (act
     is LoginsListBackClicked -> state.respondToLoginsListBackClick()
     is AddLoginBackClicked -> state.respondToAddLoginBackClick()
     is EditLoginBackClicked -> state.respondToEditLoginBackClick()
-    is BiometricAuthenticationAction.AuthenticationSucceeded -> state.copy(
-        biometricAuthenticationState = BiometricAuthenticationState.Authorized,
-    )
-    is BiometricAuthenticationAction.AuthenticationInProgress -> state.copy(
-        biometricAuthenticationState = BiometricAuthenticationState.InProgress,
-    )
-    is BiometricAuthenticationAction.AuthenticationFailed -> state.copy(
-        biometricAuthenticationState = BiometricAuthenticationState.NonAuthorized,
-    )
-    is BiometricAuthenticationDialogAction -> state.copy(
-        biometricAuthenticationDialogState = BiometricAuthenticationDialogState(
-            action.shouldShowDialog,
-        ),
-    )
-    is PinVerificationAction -> state.handlePinVerificationAction(action)
-    ViewDisposed,
-    is Init, LearnMoreAboutSync,
-    -> state
+    is LoginsListAppeared, LearnMoreAboutSync,
+        -> state
 }
 
 private fun LoginsState.withDeletedLoginRemoved(): LoginsState = when {
@@ -111,24 +95,6 @@ private fun LoginsState.respondToLoginsListBackClick(): LoginsState = when {
     loginsListState != null -> copy(loginsListState = null)
     else -> this
 }
-
-private fun LoginsState.handlePinVerificationAction(action: PinVerificationAction): LoginsState =
-    when (action) {
-        is PinVerificationAction.None -> copy(pinVerificationState = PinVerificationState.Inert)
-        is PinVerificationAction.Start -> copy(pinVerificationState = PinVerificationState.Started)
-        is PinVerificationAction.Duplicate -> copy(pinVerificationState = PinVerificationState.Duplicated)
-        is PinVerificationAction.Succeeded -> copy(
-            biometricAuthenticationState = BiometricAuthenticationState.Authorized,
-            biometricAuthenticationDialogState = BiometricAuthenticationDialogState(false),
-            pinVerificationState = PinVerificationState.Inert,
-        )
-
-        is PinVerificationAction.Failed -> copy(
-            biometricAuthenticationState = BiometricAuthenticationState.NonAuthorized,
-            biometricAuthenticationDialogState = BiometricAuthenticationDialogState(true),
-            pinVerificationState = PinVerificationState.Inert,
-        )
-    }
 
 private fun LoginsState.handleSortMenuAction(action: LoginsListSortMenuAction): LoginsState =
     when (action) {

@@ -14,7 +14,6 @@
 #include "mozilla/StaticPrefs_extensions.h"
 #include "mozilla/TaskQueue.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 #include "mozilla/dom/CacheBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseWorkerProxy.h"
@@ -1046,7 +1045,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
     // Get the stringified numeric status code, not statusText which could be
     // something misleading like OK for a 404.
     uint32_t status = 0;
-    Unused << httpChannel->GetResponseStatus(
+    (void)httpChannel->GetResponseStatus(
         &status);  // don't care if this fails, use 0.
     nsAutoString statusAsText;
     statusAsText.AppendInt(status);
@@ -1062,8 +1061,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
 
   // Note: we explicitly don't check for the return value here, because the
   // absence of the header is not an error condition.
-  Unused << httpChannel->GetResponseHeader("Service-Worker-Allowed"_ns,
-                                           mMaxScope);
+  (void)httpChannel->GetResponseHeader("Service-Worker-Allowed"_ns, mMaxScope);
 
   // [9.2 Update]4.13, If response's cache state is not "local",
   // set registration's last update check time to the current time
@@ -1082,13 +1080,14 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
     return rv;
   }
 
-  if (mimeType.IsEmpty() ||
-      !nsContentUtils::IsJavascriptMIMEType(NS_ConvertUTF8toUTF16(mimeType))) {
+  auto mimeTypeUTF16 = NS_ConvertUTF8toUTF16(mimeType);
+  if (mimeTypeUTF16.IsEmpty() ||
+      !(nsContentUtils::IsJavascriptMIMEType(mimeTypeUTF16) ||
+        nsContentUtils::IsJsonMimeType(mimeTypeUTF16))) {
     ServiceWorkerManager::LocalizeAndReportToAllClients(
         mRegistration->Scope(), "ServiceWorkerRegisterMimeTypeError2",
         nsTArray<nsString>{NS_ConvertUTF8toUTF16(mRegistration->Scope()),
-                           NS_ConvertUTF8toUTF16(mimeType),
-                           NS_ConvertUTF8toUTF16(mURL)});
+                           mimeTypeUTF16, NS_ConvertUTF8toUTF16(mURL)});
     rv = NS_ERROR_DOM_SECURITY_ERR;
     return rv;
   }

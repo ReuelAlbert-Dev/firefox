@@ -47,8 +47,6 @@ class CanvasChild final : public PCanvasChild, public SupportsWeakPtr {
    */
   void ClearCachedResources();
 
-  ipc::IPCResult RecvNotifyDeviceChanged();
-
   ipc::IPCResult RecvNotifyDeviceReset(
       const nsTArray<RemoteTextureOwnerId>& aOwnerIds);
 
@@ -181,6 +179,9 @@ class CanvasChild final : public PCanvasChild, public SupportsWeakPtr {
 
   ~CanvasChild() final;
 
+  size_t SizeOfDataSurfaceShmem(gfx::IntSize, gfx::SurfaceFormat aFormat);
+  bool ShouldGrowDataSurfaceShmem(size_t aSizeRequired);
+  bool EnsureDataSurfaceShmem(size_t aSizeRequired);
   bool EnsureDataSurfaceShmem(gfx::IntSize aSize, gfx::SurfaceFormat aFormat);
 
   static void ReleaseDataShmemHolder(void* aClosure);

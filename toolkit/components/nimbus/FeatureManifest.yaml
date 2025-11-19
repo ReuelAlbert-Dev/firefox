@@ -287,6 +287,12 @@ urlbar:
       description: >-
         Feature gate that controls whether all aspects of the Fakespot suggestion
         feature are exposed to the user.
+    flightStatusFeatureGate:
+      type: boolean
+      fallbackPref: browser.urlbar.flightStatus.featureGate
+      description: >-
+        Feature gate that controls whether all aspects of flight status suggestions
+        feature are exposed to the user.
     importantDatesFeatureGate:
       type: boolean
       fallbackPref: browser.urlbar.importantDates.featureGate
@@ -354,14 +360,6 @@ urlbar:
       type: int
       fallbackPref: browser.urlbar.merino.timeoutMs
       description: Timeout for Merino fetches (ms)
-    suggestOhttp:
-      type: boolean
-      description: >-
-        Whether search suggestions should be fetched over OHTTP.
-        Currently this applies only to Google suggestions.
-      setPref:
-        pref: browser.search.suggest.ohttp.featureGate
-        branch: user
     exposureResults:
       type: string
       setPref:
@@ -426,9 +424,6 @@ urlbar:
         branch: default
         pref: browser.urlbar.quicksuggest.contextualOptIn.impressionDaysLimit
       description: Days until dismiss the Firefox Suggest contextual opt-in result after first impression.
-    quickSuggestDataCollectionEnabled:
-      type: boolean
-      description: Whether data collection should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) data collection, if the user has already toggled that preference.
     quickSuggestDynamicSuggestionTypes:
       type: string
       setPref:
@@ -479,13 +474,20 @@ urlbar:
         Whether Suggest will use the ML backend in addition to Rust.
     quickSuggestNonSponsoredEnabled:
       type: boolean
-      description: Whether non-sponsored suggestions should be enabled by default. If this variable is specified, it will override the value implied by the scenario. It will never override the user's local preference to disable (or enable) non-sponsored suggestions, if the user has already toggled that preference.
+      description: >-
+        Deprecated: In 146 and later this variable no longer does anything. It
+        should be removed once all current experiments that use it finish.
     quickSuggestNonSponsoredIndex:
       type: int
       fallbackPref: browser.urlbar.quicksuggest.nonSponsoredIndex
       description: >-
         The index of non-sponsored QuickSuggest results within the general
         group. A negative index is relative to the end of the group
+    quickSuggestOnlineAvailable:
+      type: boolean
+      fallbackPref: browser.urlbar.quicksuggest.online.available
+      description: >-
+        Whether online Suggest should be made available to the user.
     quickSuggestRankingMode:
       type: string
       fallbackPref: browser.urlbar.quicksuggest.rankingMode
@@ -603,6 +605,12 @@ urlbar:
         pref: browser.urlbar.showDebuggingIcons
       description: >-
         Whether or not to show debugging badges on urlbar results favicons.
+    sportsFeatureGate:
+      type: boolean
+      fallbackPref: browser.urlbar.sports.featureGate
+      description: >-
+        Feature gate that controls whether all aspects of the sports suggestions
+        feature are exposed to the user.
     suggestSemanticHistoryMinLength:
       type: int
       setPref:
@@ -820,7 +828,7 @@ urlbar:
 
 aboutwelcome:
   description: "The about:welcome page"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the about:welcome URL is
@@ -865,7 +873,7 @@ aboutwelcome:
 
 preonboarding:
   description: "A modal that shows on first startup, typically on top of about:welcome"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   # Exposure is recorded by the spotlight feature used to show the modal
   hasExposure: false
   # Needed at `sessionstore-windows-restored`.
@@ -907,7 +915,7 @@ preonboarding:
 
 moreFromMozilla:
   description: "New page on about:preferences to suggest more Mozilla products"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the about:preferences URL is
@@ -924,7 +932,7 @@ moreFromMozilla:
 
 windowsLaunchOnLogin:
   description: "New checkbox in about:preferences startup section to start Firefox on Windows login"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the about:preferences URL is
@@ -953,7 +961,7 @@ firefoxBridge:
 
 abouthomecache:
   description: "The startup about:home cache."
-  owner: omc@mozilla.com, mconley@mozilla.com
+  owner: omc-core@mozilla.com, mconley@mozilla.com
   hasExposure: false
   variables:
     enabled:
@@ -965,7 +973,7 @@ abouthomecache:
 
 newtab:
   description: "The about:newtab page"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent once per browsing session when the first newtab page loads
@@ -1133,21 +1141,6 @@ newtabCustomWallpaper:
       description: >-
         Maximum file size (in MB) a user can upload
 
-newtabGroupedSponsoredControls:
-  description: >-
-    Adjust sponsored content controls on newtab.
-  owner: mcrawford@mozilla.com
-  hasExposure: false
-  variables:
-    enabled:
-      type: boolean
-      setPref:
-        branch: user
-        pref: browser.newtabpage.activity-stream.system.showSponsoredCheckboxes
-      description: >-
-        When true, checkboxes for sponsored results in top sites and recommended stories are grouped separately
-        on about:preferences#home
-
 newtabInlineTopicSelection:
   description: >-
       Adds Inline topic selection to sections layout
@@ -1268,7 +1261,6 @@ newtabPrivatePing:
         pref: browser.newtabpage.activity-stream.telemetry.privatePing.maxSubmissionDelayMs
       description: >-
         The maximum range for the random delay from scheduling the newtab-content ping to actually sending it. The minimum is 1000 by default. This is in milliseconds.
-
 newtabPublisherFavicons:
   description: Enabled publihser favicons on cards in newtab
   owner: nbarrett@mozilla.com
@@ -1424,11 +1416,26 @@ newtabInferredPersonalization:
       type: int
       description: >-
         Time to refresh interest vector in hours
-    iv_unary_dp_in_request:
+    history_cull_days:
+      type: int
+      description: >-
+        Number of days local inferred feature history to preserve
+    normalized_time_zone_offset:
       type: boolean
       description: >-
-        Whether to use Unary encoding with differential privacy in the interest vector. If false or not set, we default to laplace noise with real values
-
+        Include normalized (limited to common values) time zone offset in telemetry and requests
+    local_popular_today_rerank:
+      type: boolean
+      description: >-
+        Whether to rerank popular today section using local interest vector
+    local_inferred_weight:
+      type: int
+      description: >-
+        Relative rank of the local inferred model, will be normalized by 100
+    server_inferred_weight:
+      type: int
+      description: >-
+        Relative rank of merino scores, will be normalized by 100
 
 newtabSmartShortcuts:
   description: about:newtab personalized shortcuts
@@ -2034,42 +2041,6 @@ pocketNewtab:
       description: >-
         Change the layout of the sections to be more compact to account for the added card height with the thumbs up/down enabled.
 
-saveToPocket:
-  description: The save to Pocket feature
-  owner: sdowne@mozilla.com
-  hasExposure: false
-  variables:
-    enabled:
-      type: boolean
-      setPref:
-        branch: user
-        pref: extensions.pocket.enabled
-      description: Enabled save to Pocket feature.
-    emailButton:
-      type: boolean
-      setPref:
-        branch: user
-        pref: extensions.pocket.refresh.emailButton.enabled
-      description: Just for the new Pocket panels, enables the email signup button.
-    bffRecentSaves:
-      type: boolean
-      setPref:
-        branch: user
-        pref: extensions.pocket.bffRecentSaves
-      description: Use the new BFF Proxy Service instead of the legacy Pocket Service for Recent Saves
-    bffApi:
-      type: string
-      setPref:
-        branch: user
-        pref: extensions.pocket.bffApi
-      description: BFF Proxy Service domain
-    oAuthConsumerKeyBff:
-      type: string
-      setPref:
-        branch: user
-        pref: extensions.pocket.oAuthConsumerKeyBff
-      description: BFF Proxy Service OAuth Consumer Key
-
 sessionRestore:
   description: Session restore feature
   owner: sfoster@mozilla.com
@@ -2194,7 +2165,7 @@ shellService:
       description: Whether or not the user should see the guidance notifications when setting Firefox as their default browser.
 upgradeDialog:
   description: The dialog shown for major upgrades
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: false
   isEarlyStartup: true
   variables:
@@ -2205,7 +2176,7 @@ upgradeDialog:
 
 cfr:
   description: "A Firefox Messaging System message for the cfr message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
   schema:
@@ -2215,7 +2186,7 @@ cfr:
 
 "moments-page":
   description: "A Firefox Messaging System message for the moments-page message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2226,7 +2197,7 @@ cfr:
 
 infobar:
   description: "A Firefox Messaging system message for the infobar message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2237,7 +2208,7 @@ infobar:
 
 spotlight:
   description: "A Firefox Messaging System message for the spotlight message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2250,7 +2221,7 @@ spotlight:
 # the minimum version for messaging experiments using this feature ID is 117.
 featureCallout:
   description: "A Firefox Messaging System message for the Feature Callout message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2336,13 +2307,15 @@ pdfjs:
 # Instructions for adding a new fxms-message-* placeholder feature id
 # 1) clone an existing one here
 # 2) update the YAML feature id to the next unused number
-# 3) update the YAML description
+# 3) update the YAML description; include what versions can be targeted on this feature ID
 # 4) add the new feature id to MESSAGING_EXPERIMENTS_DEFAULT_FEATURES list in MessagingExperimentConstants.sys.mjs
-# 5) add the new feature id and the version it landed to the spreadsheet tab linked to above
+# 5) add a new corresponding reach metric to /toolkit/components/messaging-system/metrics.yaml
+# 6) add the new feature id to the `messaging_experiments` > `reach` > `objects` list in /toolkit/telemetry/Events.yaml
+# 7) add the new feature id and the version it landed in to the spreadsheet tab linked to above
 
 fxms-message-1:
   description: "A Firefox Messaging System message"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2353,7 +2326,7 @@ fxms-message-1:
 
 fxms-message-2:
   description: "Firefox Messaging System message 2"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2364,7 +2337,7 @@ fxms-message-2:
 
 fxms-message-3:
   description: "Firefox Messaging System message 3"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2375,7 +2348,7 @@ fxms-message-3:
 
 fxms-message-4:
   description: "Firefox Messaging System message 4"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2386,7 +2359,7 @@ fxms-message-4:
 
 fxms-message-5:
   description: "Firefox Messaging System message 5"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2397,7 +2370,7 @@ fxms-message-5:
 
 fxms-message-6:
   description: "Firefox Messaging System message 6"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2408,7 +2381,7 @@ fxms-message-6:
 
 fxms-message-7:
   description: "Firefox Messaging System message 7"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2419,7 +2392,7 @@ fxms-message-7:
 
 fxms-message-8:
   description: "Firefox Messaging System message 8"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2430,7 +2403,7 @@ fxms-message-8:
 
 fxms-message-9:
   description: "Firefox Messaging System message 9"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2441,7 +2414,7 @@ fxms-message-9:
 
 fxms-message-10:
   description: "Firefox Messaging System message 10"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2452,7 +2425,7 @@ fxms-message-10:
 
 fxms-message-11:
   description: "Firefox Messaging System message 11"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2463,7 +2436,7 @@ fxms-message-11:
 
 fxms-message-12:
   description: "Firefox Messaging System message 12 - ONLY for Fx140+ targeting"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2474,7 +2447,7 @@ fxms-message-12:
 
 fxms-message-13:
   description: "Firefox Messaging System message 13 - ONLY for Fx140+ targeting"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2485,7 +2458,7 @@ fxms-message-13:
 
 fxms-message-14:
   description: "Firefox Messaging System message 14 - ONLY for Fx140+ targeting"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2496,7 +2469,117 @@ fxms-message-14:
 
 fxms-message-15:
   description: "Firefox Messaging System message 15 - ONLY for Fx140+ targeting"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-16:
+  description: "Firefox Messaging System message 16 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-17:
+  description: "Firefox Messaging System message 17 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-18:
+  description: "Firefox Messaging System message 18 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-19:
+  description: "Firefox Messaging System message 19 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-20:
+  description: "Firefox Messaging System message 20 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-21:
+  description: "Firefox Messaging System message 21 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-22:
+  description: "Firefox Messaging System message 22 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-23:
+  description: "Firefox Messaging System message 23 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-24:
+  description: "Firefox Messaging System message 24 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
+  schema:
+    uri: "chrome://browser/content/asrouter/schemas/MessagingExperiment.schema.json"
+    path: "browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json"
+  variables: {}
+
+fxms-message-25:
+  description: "Firefox Messaging System message 25 - ONLY for Fx144+ targeting"
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2507,7 +2590,7 @@ fxms-message-15:
 
 whatsNewPage:
   description: "A Firefox Messaging System message for the What's new page channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -2541,7 +2624,7 @@ whatsNewPage:
 
 pbNewtab:
   description: "A Firefox Messaging System message for the pbNewtab message channel"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched.
@@ -2886,6 +2969,12 @@ networking:
       setPref:
         branch: default
         pref: "network.http.http3.use_nspr_for_io"
+    prefetchNext:
+      description: Enables the prefetch service (i.e., prefetching of <link rel="next"> and <link rel="prefetch"> URLs).
+      type: boolean
+      setPref:
+        branch: default
+        pref: "network.prefetch-next"
 
 networkingEarlyHints:
   description: "Networking (Necko) Early Hints"
@@ -2946,6 +3035,12 @@ networkingConnections:
       setPref:
         branch: default
         pref: "network.http.max-persistent-connections-per-server"
+    httpMaxUrgentStartExcessiveConnectionsPerHost:
+      description: Number of connections that we can open beyond the standard parallelism limit defined by max-persistent-connections-per-server/-proxy to handle urgent-start marked requests.
+      type: int
+      setPref:
+        branch: default
+        pref: "network.http.max-urgent-start-excessive-connections-per-host"
     speculativeConnectionLimit:
       description: The maximum number of half-open sockets allowed for speculative connections
       type: int
@@ -3001,6 +3096,12 @@ localNetworkAccess:
   owner: vgosu@mozilla.com
   hasExposure: false
   variables:
+    enableLNAWithETPStrict:
+      description: Whether to enable LNA restrictions in ETP Strict Mode
+      type: boolean
+      setPref:
+        branch: default
+        pref: "network.lna.etp.enabled"
     blockTrackers:
       description: Whether network requests triggered by third party scripts classified as trackers should be blocked when making a localhost request.
       type: boolean
@@ -3556,6 +3657,18 @@ thirdPartyTrackerCookieBlocking:
       setPref:
         branch: default
         pref: "network.cookie.cookieBehavior.trackerCookieBlocking"
+
+googleSafeBrowsingV5:
+  description: Control Google Safe Browsing V5 protocol
+  owner: tihuang@mozilla.com
+  hasExposure: false
+  variables:
+    enabled:
+      description: Whether to enable Google Safe Browsing V5 protocol.
+      type: boolean
+      setPref:
+        branch: default
+        pref: "browser.safebrowsing.provider.google5.enabled"
 
 fxaButtonVisibility:
   description: Prefs to control the visibility of the Firefox Accounts toolbar button when not signed in.
@@ -4139,6 +4252,60 @@ asmjs:
         branch: user
         pref: "javascript.options.asmjs"
 
+scriptloader:
+  description: Prefs that control scriptloader heuristics.
+  owner: dpalmeiro@mozilla.com
+  hasExposure: false
+  variables:
+    bytecode_cache_strategy:
+      description: Set the bytecode cache strategy.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.script_loader.bytecode_cache.strategy"
+    delazification_max_size:
+      description: Maximum number of bytes supported for speculate OMT full parsing.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.script_loader.delazification.max_size"
+    delazification_min_mem:
+      description: Minimum memory required, in GB, to enable OMT full parsing.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.script_loader.delazification.min_mem"
+    speculate_async_enabled:
+      description: Enable speculative OMT parsing for async scripts.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.script_loader.external_scripts.speculate_async.enabled"
+    speculate_link_preload_enabled:
+      description: Enable speculative OMT parsing for link=preload scripts.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.script_loader.external_scripts.speculate_link_preload.enabled"
+    speculate_non_parser_inserted_enabled:
+      description: Enable speculative OMT parsing for non parser inserted scripts.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.script_loader.external_scripts.speculate_non_parser_inserted.enabled"
+    speculate_enabled:
+      description: Enable speculative OMT parsing.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.script_loader.external_scripts.speculative_omt_parse.enabled"
+    navigation_cache_enabled:
+      description: Enable the navigation cache.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.script_loader.experimental.navigation_cache"
+
 raceCacheWithNetwork:
   description: Prefs to toggle the race cache with network.
   owner: dpalmeiro@mozilla.com, acreskey@mozilla.com
@@ -4185,7 +4352,7 @@ opaqueResponseBlocking:
 
 updatePrompt:
   description: Prefs to control content and behavior of update notifications
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent at most once per browsing session when an update
@@ -4260,7 +4427,7 @@ backgroundUpdate:
 
 bookmarks:
   description: Prefs to control aspects of the bookmarks system.
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: false
   variables:
     enableBookmarksToolbar:
@@ -4433,23 +4600,47 @@ phc:
         branch: user
         pref: memory.phc.min_ram_mb
     phcAvgDelayFirst:
-      description: The delay before the first PHC allocation
+      description: The delay before the first PHC allocation in the parent process
       type: int
       setPref:
         branch: user
         pref: memory.phc.avg_delay.first
     phcAvgDelayNormal:
-      description: The delay between PHC allocations
+      description: The delay between PHC allocations in the parent process
       type: int
       setPref:
         branch: user
         pref: memory.phc.avg_delay.normal
     phcAvgDelayPageReuse:
-      description: The delay before reusing a PHC page
+      description: The delay before reusing a PHC page in the parent process
       type: int
       setPref:
         branch: user
         pref: memory.phc.avg_delay.page_reuse
+    phcAvgDelayContentFirst:
+      description: The delay before the first PHC allocation in the content process
+      type: int
+      setPref:
+        branch: user
+        pref: memory.phc.avg_delay.content.first
+    phcAvgDelayContentNormal:
+      description: The delay between PHC allocations in the content process
+      type: int
+      setPref:
+        branch: user
+        pref: memory.phc.avg_delay.content.normal
+    phcAvgDelayContentPageReuse:
+      description: The delay before reusing a PHC page in the content process
+      type: int
+      setPref:
+        branch: user
+        pref: memory.phc.avg_delay.content.page_reuse
+    phcMaxSize:
+      description: The maximum amount of memory used for the PHC
+      type: int
+      setPref:
+        branch: user
+        pref: memory.phc.size_kb
 
 mailto:
   description: Prefs to control aspects of the mailto handler
@@ -4604,14 +4795,6 @@ backupService:
       description: >-
         When true, the profile backup service will be initialized soon after
         startup.
-    prefsUIEnabled:
-      type: boolean
-      setPref:
-        branch: default
-        pref: browser.backup.preferences.ui.enabled
-      description: >-
-        When true, the section in about:preferences to control the backup
-        feature is visible.
     sqlitePagesPerStep:
       description: >-
         The number of database pages to backup per step when backing up an
@@ -4643,6 +4826,16 @@ backupService:
       setPref:
         branch: user
         pref: browser.backup.scheduled.minimum-time-between-backups-seconds
+    archiveKillswitch:
+      type: boolean
+      default: false
+      description: >-
+        Disables backup archiving, overrides all other configs when true.
+    restoreKillswitch:
+      type: boolean
+      default: false
+      description: >-
+        Disables backup restoration, overrides all other configs when true.
 
 pqcrypto:
   description: Prefs that control the use of post-quantum cryptography.
@@ -4674,7 +4867,7 @@ pqcrypto:
       type: boolean
       setPref:
         branch: default
-        pref: media.webrtc.enable_pq_dtls
+        pref: media.webrtc.enable_pq_hybrid_kex
       description: >-
         Whether to enable mlkem768x25519 for DTLS in WebRTC.
 
@@ -4878,7 +5071,7 @@ sidebar:
 
 fxms_bmb_button:
   description: A feature for the Firefox Messaging System Bookmarks Bar button surface
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     Exposure is sent if the message is about to be shown after trigger and
@@ -4916,7 +5109,7 @@ certificateTransparency:
 
 setToDefaultPrompt:
   description: "Experimental set to default spotlight"
-  owner: omc@mozilla.com
+  owner: omc-core@mozilla.com
   hasExposure: true
   exposureDescription: >-
     "Exposure is sent if the message is about to be shown after trigger and targeting conditions on the message matched."
@@ -4981,6 +5174,30 @@ smartTabGroups:
         branch: user
         pref: browser.tabs.groups.smart.searchTopicEnabled
       description: For single tab groupings, use the search query as the topic rather than use ML
+
+externalLinkHandling:
+  description: Controls how externally-opened URLs will be handled by Firefox.
+  owner: sthompson@mozilla.com
+  hasExposure: true
+  exposureDescription: >-
+    Exposure is recorded when a user clicks on a link outside of Firefox and
+    that link is opened by Firefox.
+  variables:
+    openBehavior:
+      description: >-
+        Control how external links from another application should be opened in Firefox.
+        See the nsIBrowserDOMWindow `OPEN_*` constants for what the values can do.
+        The default value for the backing pref is `-1`. When that pref has the default
+        value, the code will fall back to the value of the general pref that handles
+        opening links, i.e. `browser.link.open_newwindow`, which defaults to `3`.
+      type: int
+      enum:
+        - -1 # use default browser behavior
+        - 2 # `OPEN_NEWWINDOW` open external links in a new window
+        - 3 # `OPEN_NEWTAB` open in a new tab in the topmost window at the end of the tab strip
+        - 6 # `OPEN_NEWTAB_FOREGROUND` open in a new tab in the topmost window at the end of the tab strip and select it
+        - 7 # `OPEN_NEWTAB_AFTER_CURRENT` open in a new tab in the topmost window next to the active tab
+      fallbackPref: browser.link.open_newwindow.override.external
 
 smartblockEmbeds:
   description: Pref to control Smartblock Embeds
@@ -5263,3 +5480,207 @@ passwordManager:
       description: >-
         Triggers a reencryption of all passwords on the next startup for
         migration purposes.
+
+xpcom:
+  description: Prefs that control the cross-platform component object model
+  owner: tthorne@mozilla.com
+  hasExposure: false
+  variables:
+    idle_period_cross_process_scheduling:
+      description: Whether Firefox allows background processes to use idle time to schedule and run tasks.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "idle_period.cross_process_scheduling"
+    low_commit_space_threshold_mb:
+      description: if defined(XP_WIN) || defined(XP_LINUX) - notify TabUnloader or send the memory pressure if the memory resource notification is signaled AND the available commit space is lower than this value.
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.low_commit_space_threshold_mb"
+    low_commit_space_threshold_percent:
+      description: ifdef XP_LINUX - on Linux we also check available memory in comparison to total memory, and use this percent value (out of 100) to determine if we are in a low memory scenario.
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.low_commit_space_threshold_percent"
+
+layout:
+  description: Prefs that control the DOM or core layout.
+  owner: tthorne@mozilla.com
+  hasExposure: false
+  variables:
+    lower_priority_refresh_driver_during_load:
+      description: Reduces refresh rate between fcp and load. The value is TRUE is there to improve page load.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "layout.lower_priority_refresh_driver_during_load"
+    sessionstore_max_tabs_undo:
+      description: How many tabs can be reopened per window.
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.sessionstore.max_tabs_undo"
+    sessionstore_max_windows_undo:
+      description: How many windows will be saved and can be reopened per session - on non-macOS platforms this pref may be ignored when dealing with pop-up windows to ensure the user actually gets at least one window with a menu bar.
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.sessionstore.max_windows_undo"
+    sessionstore_interval:
+      description: Minimum interval between two save operations in milliseconds (while the user is active).
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.sessionstore.interval"
+    sessionhistory_max_total_viewers:
+      description: Number of content viewers to cache based. If negative, determined by amount of available memory.
+      type: int
+      setPref:
+        branch: user
+        pref: "browser.sessionhistory.max_total_viewers"
+    smooth_scroll:
+      description: Whether to enable smooth scrolling.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "general.smoothScroll"
+    frame_rate:
+      description: Pref to control browser frame rate, in Hz.
+      type: int
+      setPref:
+        branch: user
+        pref: "layout.frame_rate"
+    frame_rate_throttled:
+      description: Throttled frame rate, in frames per second.
+      type: int
+      setPref:
+        branch: user
+        pref: "layout.throttled_frame_rate"
+    initialpaint_delay:
+      description: Reduces the time Firefox waits before starting to render a page.
+      type: int
+      setPref:
+        branch: user
+        pref: "nglayout.initialpaint.delay"
+    initialpaint_delay_oopif:
+      description: Reduces the time Firefox waits before starting to render a page in out-of-process iframes.
+      type: int
+      setPref:
+        branch: user
+        pref: "nglayout.initialpaint.delay_in_oopif"
+    page_load_deprioritization_period:
+      description: Time in milliseconds during which certain tasks are deprioritized during page load.
+      type: int
+      setPref:
+        branch: user
+        pref: "page_load.deprioritization_period"
+
+ipc:
+  description: Prefs that control the inter-process communication system.
+  owner: tthorne@mozilla.com
+  hasExposure: false
+  variables:
+    backend_mach:
+      description: if defined(XP_DARWIN) - Whether or not to use the mach-based IPC backend on macOS/iOS. Only read once at startup by IOThreadParent's constructor.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.ipc.backend.mach"
+    process_count:
+      description: The max number of content processes used for non-isolated origins.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processCount"
+    process_count_web_isolated:
+      description: Maximum number of isolated content processes per-origin.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processCount.webIsolated"
+    preallocated_process_count:
+      description: Process preallocation cache. Only used in fission; in e10s we use 1 always.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPrelaunch.fission.number"
+    preallocated_lowmem_mb:
+      description: Limit preallocated processes below this memory size (in MB).
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPrelaunch.lowmem_mb"
+    priority_manager_enabled:
+      description: Determines whether Firefox uses the Process Priority Manager to adjust CPU priority based on importance.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPriorityManager.enabled"
+    priority_manager_background_grace_period_ms:
+      description: The waiting period before Firefox begins lowering the priority of a content process after it goes into background.
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPriorityManager.backgroundGracePeriodMS"
+    priority_manager_background_perceivable_grace_period_ms:
+      description: The waiting period before Firefox begins lowering the priority of a content process that is still considered "perceivable".
+      type: int
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPriorityManager.backgroundPerceivableGracePeriodMS"
+    priority_manager_background_uses_ecoqos:
+      description: Windows only. Determines whether Firefox should use EcoQoS mode for power efficiency.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "dom.ipc.processPriorityManager.backgroundUsesEcoQoS"
+
+graphics:
+  description: Prefs that control media and/or graphics processing.
+  owner: tthorne@mozilla.com
+  hasExposure: false
+  variables:
+    gfx_webrender_all:
+      description: Whether to use the WebRender hardware backend.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "gfx.webrender.all"
+    layers_acceleration_force_enabled:
+      description: Whether to force acceleration on, ignoring blacklists.
+      type: boolean
+      setPref:
+        branch: user
+        pref: "layers.acceleration.force-enabled"
+image:
+  description: Prefs that control image processing.
+  owner: tthorne@mozilla.com
+  hasExposure: false
+  variables:
+    image_cache_size:
+      description: The maximum size, in bytes, of the decoded images we cache.
+      type: int
+      setPref:
+        branch: user
+        pref: "image.cache.size"
+    image_mem_decode_bytes_at_a_time:
+      description: Chunk size for calls to the image decoders.
+      type: int
+      setPref:
+        branch: user
+        pref: "image.mem.decode_bytes_at_a_time"
+
+walletCustomSchemes:
+  description: Defines which custom schemes are treated as digital identity requests
+  owner: bvandersloot@mozilla.com
+  hasExposure: false
+  variables:
+    enabledSchemes:
+      type: string
+      setPref:
+        branch: user
+        pref: privacy.wallet_schemes
+      description: >-
+        Comma separated lists of schemes

@@ -18,7 +18,6 @@
 
 #include <cstdint>
 #include <stddef.h>
-#include <utility>
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
@@ -491,7 +490,7 @@ class BufferAllocator : public SlimLinkedListElement<BufferAllocator> {
 #endif
 
  private:
-  void markNurseryOwnedAlloc(void* alloc, bool ownerWasTenured);
+  void markNurseryOwnedAlloc(void* alloc, bool nurseryOwned);
   friend class js::Nursery;
 
   void maybeMergeSweptData();
@@ -511,7 +510,7 @@ class BufferAllocator : public SlimLinkedListElement<BufferAllocator> {
   bool allocNewSmallRegion(bool inGC);
   void traceSmallAlloc(JSTracer* trc, Cell* owner, void** allocp,
                        const char* name);
-  void markSmallNurseryOwnedBuffer(void* alloc, bool ownerWasTenured);
+  void markSmallNurseryOwnedBuffer(void* alloc, bool nurseryOwned);
   bool markSmallTenuredAlloc(void* alloc);
 
   // Medium allocation methods:
@@ -573,7 +572,7 @@ class BufferAllocator : public SlimLinkedListElement<BufferAllocator> {
   void traceMediumAlloc(JSTracer* trc, Cell* owner, void** allocp,
                         const char* name);
   bool isMediumBufferNurseryOwned(void* alloc) const;
-  void markMediumNurseryOwnedBuffer(void* alloc, bool ownerWasTenured);
+  void markMediumNurseryOwnedBuffer(void* alloc, bool nurseryOwned);
   bool markMediumTenuredAlloc(void* alloc);
 
   // Determine whether a size class is for a small or medium allocation.
@@ -608,7 +607,7 @@ class BufferAllocator : public SlimLinkedListElement<BufferAllocator> {
   void unregisterLarge(LargeBuffer* buffer, bool isSweeping, MaybeLock& lock);
   void traceLargeAlloc(JSTracer* trc, Cell* owner, void** allocp,
                        const char* name);
-  void markLargeNurseryOwnedBuffer(LargeBuffer* buffer, bool ownerWasTenured);
+  void markLargeNurseryOwnedBuffer(LargeBuffer* buffer, bool nurseryOwned);
   bool markLargeTenuredBuffer(LargeBuffer* buffer);
 
   // Lookup a large buffer by pointer in the map.
@@ -616,8 +615,10 @@ class BufferAllocator : public SlimLinkedListElement<BufferAllocator> {
   LargeBuffer* lookupLargeBuffer(void* alloc, MaybeLock& lock);
   bool needLockToAccessBufferMap() const;
 
-  void updateHeapSize(size_t bytes, bool checkThresholds,
-                      bool updateRetainedSize);
+  void increaseHeapSize(size_t bytes, bool nurseryOwned, bool checkThresholds,
+                        bool updateRetainedSize);
+  void decreaseHeapSize(size_t bytes, bool nurseryOwned,
+                        bool updateRetainedSize);
 
   // Testing functions we allow access.
   friend void* TestAllocAligned(JS::Zone* zone, size_t bytes);

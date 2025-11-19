@@ -9,11 +9,9 @@
 #ifndef nsComputedDOMStyle_h__
 #define nsComputedDOMStyle_h__
 
-#include "mozilla/Attributes.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PseudoStyleType.h"
 #include "mozilla/StyleColorInlines.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/WritingModes.h"
 #include "mozilla/gfx/Types.h"
 #include "nsCOMPtr.h"
@@ -72,9 +70,10 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
 
   NS_DECL_NSIDOMCSSSTYLEDECLARATION_HELPER
 
-  void GetPropertyValue(const nsCSSPropertyID aPropID,
+  void GetPropertyValue(const NonCustomCSSPropertyId aPropId,
                         nsACString& aValue) override;
-  void SetPropertyValue(const nsCSSPropertyID aPropID, const nsACString& aValue,
+  void SetPropertyValue(const NonCustomCSSPropertyId aPropId,
+                        const nsACString& aValue,
                         nsIPrincipal* aSubjectPrincipal,
                         mozilla::ErrorResult& aRv) override;
 
@@ -148,7 +147,7 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   already_AddRefed<nsROCSSPrimitiveValue> PixelsToCSSValue(float);
   void SetValueToPixels(nsROCSSPrimitiveValue*, float);
 
-  void GetPropertyValue(const nsCSSPropertyID aPropID,
+  void GetPropertyValue(const NonCustomCSSPropertyId aPropId,
                         const nsACString& aMaybeCustomPropertyNme,
                         nsACString& aValue);
   using nsDOMCSSDeclaration::GetPropertyValue;
@@ -163,7 +162,7 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   nsMargin GetAdjustedValuesForBoxSizing();
 
   // This indicates error by leaving mComputedStyle null.
-  void UpdateCurrentStyleSources(nsCSSPropertyID);
+  void UpdateCurrentStyleSources(NonCustomCSSPropertyId);
   void ClearCurrentStyleSources();
 
   // Helper functions called by UpdateCurrentStyleSources.
@@ -199,8 +198,6 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   already_AddRefed<CSSValue> GetStaticOffset(mozilla::Side aSide);
 
   already_AddRefed<CSSValue> GetPaddingWidthFor(mozilla::Side aSide);
-
-  already_AddRefed<CSSValue> GetBorderWidthFor(mozilla::Side aSide);
 
   already_AddRefed<CSSValue> GetMarginFor(mozilla::Side aSide);
 
@@ -255,12 +252,6 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   already_AddRefed<CSSValue> DoGetPaddingLeft();
   already_AddRefed<CSSValue> DoGetPaddingRight();
 
-  /* Border Properties */
-  already_AddRefed<CSSValue> DoGetBorderTopWidth();
-  already_AddRefed<CSSValue> DoGetBorderBottomWidth();
-  already_AddRefed<CSSValue> DoGetBorderLeftWidth();
-  already_AddRefed<CSSValue> DoGetBorderRightWidth();
-
   /* Margin Properties */
   already_AddRefed<CSSValue> DoGetMarginTop();
   already_AddRefed<CSSValue> DoGetMarginBottom();
@@ -309,10 +300,10 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
 
   // Find out if we can safely skip flushing (i.e. pending restyles do not
   // affect our element).
-  bool NeedsToFlushStyle(nsCSSPropertyID) const;
+  bool NeedsToFlushStyle(NonCustomCSSPropertyId) const;
   // Find out if we need to flush layout of the document, depending on the
   // property that was requested.
-  bool NeedsToFlushLayout(nsCSSPropertyID) const;
+  bool NeedsToFlushLayout(NonCustomCSSPropertyId) const;
   // Find out if we need to flush layout of the document due to container
   // query being made before relevant query containers are reflowed at least
   // once.
@@ -410,7 +401,8 @@ already_AddRefed<nsComputedDOMStyle> NS_NewComputedDOMStyle(
 inline AnchorPosResolutionParams AnchorPosResolutionParams::From(
     const nsComputedDOMStyle* aComputedDOMStyle) {
   return {aComputedDOMStyle->mOuterFrame,
-          aComputedDOMStyle->StyleDisplay()->mPosition};
+          aComputedDOMStyle->StyleDisplay()->mPosition,
+          aComputedDOMStyle->StylePosition()->mPositionArea};
 }
 
 #endif /* nsComputedDOMStyle_h__ */

@@ -10,7 +10,6 @@
 
 #include "test/pc/e2e/sdp/sdp_changer.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -268,7 +267,6 @@ LocalAndRemoteSdp SignalingInterceptor::PatchVp8Offer(
       ++ext_it;
     }
 
-    prototype_media_desc->ClearRtpHeaderExtensions();
     prototype_media_desc->set_rtp_header_extensions(extensions);
 
     // We support only single stream inside video section with simulcast
@@ -299,13 +297,10 @@ LocalAndRemoteSdp SignalingInterceptor::PatchVp8Offer(
 
   // Update transport_infos to add TransportInfo for each new media section.
   std::vector<TransportInfo> transport_infos = desc->transport_infos();
-  transport_infos.erase(std::remove_if(
-      transport_infos.begin(), transport_infos.end(),
-      [this](const TransportInfo& ti) {
-        // Remove transport infos that correspond to simulcast video sections.
-        return context_.simulcast_infos_by_mid.find(ti.content_name) !=
-               context_.simulcast_infos_by_mid.end();
-      }));
+  std::erase_if(transport_infos, [this](const TransportInfo& ti) {
+    // Remove transport infos that correspond to simulcast video sections.
+    return context_.simulcast_infos_by_mid.contains(ti.content_name);
+  });
   for (auto& info : context_.simulcast_infos) {
     for (auto& rid : info.rids) {
       transport_infos.emplace_back(rid, info.transport_description);
@@ -435,19 +430,15 @@ LocalAndRemoteSdp SignalingInterceptor::PatchVp8Answer(
     // Restore mid/rid rtp header extensions
     std::vector<RtpExtension> extensions = media_desc->rtp_header_extensions();
     // First remove existing rid/mid header extensions.
-    extensions.erase(std::remove_if(extensions.begin(), extensions.end(),
-                                    [](const webrtc::RtpExtension& e) {
-                                      return e.uri == RtpExtension::kMidUri ||
-                                             e.uri == RtpExtension::kRidUri ||
-                                             e.uri ==
-                                                 RtpExtension::kRepairedRidUri;
-                                    }));
+    std::erase_if(extensions, [](const webrtc::RtpExtension& e) {
+      return e.uri == RtpExtension::kMidUri || e.uri == RtpExtension::kRidUri ||
+             e.uri == RtpExtension::kRepairedRidUri;
+    });
 
     // Then add right ones.
     extensions.push_back(info.mid_extension);
     extensions.push_back(info.rid_extension);
     // extensions.push_back(info.rrid_extension);
-    media_desc->ClearRtpHeaderExtensions();
     media_desc->set_rtp_header_extensions(extensions);
 
     // Add StreamParams with rids for receive.
@@ -535,10 +526,10 @@ LocalAndRemoteSdp SignalingInterceptor::PatchVp9Answer(
   return LocalAndRemoteSdp(std::move(answer), std::move(answer_for_remote));
 }
 
-std::vector<std::unique_ptr<IceCandidateInterface>>
+std::vector<std::unique_ptr<IceCandidate>>
 SignalingInterceptor::PatchOffererIceCandidates(
-    ArrayView<const IceCandidateInterface* const> candidates) {
-  std::vector<std::unique_ptr<IceCandidateInterface>> out;
+    ArrayView<const IceCandidate* const> candidates) {
+  std::vector<std::unique_ptr<IceCandidate>> out;
   for (auto* candidate : candidates) {
     auto simulcast_info_it =
         context_.simulcast_infos_by_mid.find(candidate->sdp_mid());
@@ -559,10 +550,10 @@ SignalingInterceptor::PatchOffererIceCandidates(
   return out;
 }
 
-std::vector<std::unique_ptr<IceCandidateInterface>>
+std::vector<std::unique_ptr<IceCandidate>>
 SignalingInterceptor::PatchAnswererIceCandidates(
-    ArrayView<const IceCandidateInterface* const> candidates) {
-  std::vector<std::unique_ptr<IceCandidateInterface>> out;
+    ArrayView<const IceCandidate* const> candidates) {
+  std::vector<std::unique_ptr<IceCandidate>> out;
   for (auto* candidate : candidates) {
     auto simulcast_info_it =
         context_.simulcast_infos_by_rid.find(candidate->sdp_mid());

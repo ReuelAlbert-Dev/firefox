@@ -21,7 +21,6 @@
 #include <cstdint>
 #include <functional>
 #include <tuple>
-#include <utility>
 
 #include "ErrorList.h"
 #include "Units.h"
@@ -39,7 +38,6 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/SourceLocation.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/UniquePtr.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/CacheExpirationTime.h"
 #include "mozilla/dom/FetchPriority.h"
@@ -119,7 +117,6 @@ class nsNodeInfoManager;
 class nsParser;
 class nsPIWindowRoot;
 class nsPresContext;
-class nsView;
 class nsWrapperCache;
 enum class WindowMediatorFilter : uint8_t;
 
@@ -848,6 +845,7 @@ class nsContentUtils {
    * HTML 4.01 also lists U+200B (zero-width space).
    */
   static bool IsHTMLWhitespace(char16_t aChar);
+  static constexpr std::string_view kHTMLWhitespace{"\x09\x0a\x0c\x0d\x20"};
 
   /*
    * Returns whether the character is an HTML whitespace (see IsHTMLWhitespace)
@@ -2743,6 +2741,12 @@ class nsContentUtils {
    */
   static bool IsJsonMimeType(const nsAString& aMimeType);
 
+  /**
+   * Returns true if the given MIME type string has a CSS MIME type essence,
+   * otherwise false.
+   */
+  static bool HasCssMimeTypeEssence(const nsAString& aMimeType);
+
   static void SplitMimeType(const nsAString& aValue, nsString& aType,
                             nsString& aParams);
 
@@ -3036,8 +3040,6 @@ class nsContentUtils {
   static mozilla::LayoutDeviceIntPoint ToWidgetPoint(
       const mozilla::CSSPoint& aPoint, const nsPoint& aOffset,
       nsPresContext* aPresContext);
-  static nsView* GetViewToDispatchEvent(nsPresContext* aPresContext,
-                                        mozilla::PresShell** aPresShell);
 
   /**
    * Synthesize a mouse event to the given widget

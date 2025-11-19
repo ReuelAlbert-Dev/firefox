@@ -4,10 +4,13 @@
 
 /**
  * Redux actions for breakpoints
+ *
  * @module actions/breakpoints
  */
 
-import { PROMISE } from "../utils/middleware/promise";
+const {
+  PROMISE,
+} = require("resource://devtools/client/shared/redux/middleware/promise.js");
 import { asyncStore } from "../../utils/prefs";
 import { createLocation } from "../../utils/location";
 import {

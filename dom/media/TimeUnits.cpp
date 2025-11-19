@@ -11,13 +11,11 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <type_traits>
 
 #include "Intervals.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerPrintfMacros.h"
-#include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
 #include "nsDebug.h"
 #include "nsPrintfCString.h"

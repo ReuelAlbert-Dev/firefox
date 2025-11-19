@@ -36,6 +36,7 @@ pub fn map_built_in(
         "front_facing" => crate::BuiltIn::FrontFacing,
         "frag_depth" => crate::BuiltIn::FragDepth,
         "primitive_index" => crate::BuiltIn::PrimitiveIndex,
+        "barycentric" => crate::BuiltIn::Barycentric,
         "sample_index" => crate::BuiltIn::SampleIndex,
         "sample_mask" => crate::BuiltIn::SampleMask,
         // compute
@@ -115,7 +116,7 @@ pub fn map_storage_format(word: &str, span: Span) -> Result<'_, crate::StorageFo
         "rgba8sint" => Sf::Rgba8Sint,
         "rgb10a2uint" => Sf::Rgb10a2Uint,
         "rgb10a2unorm" => Sf::Rgb10a2Unorm,
-        "rg11b10float" => Sf::Rg11b10Ufloat,
+        "rg11b10ufloat" => Sf::Rg11b10Ufloat,
         "r64uint" => Sf::R64Uint,
         "rg32uint" => Sf::Rg32Uint,
         "rg32sint" => Sf::Rg32Sint,

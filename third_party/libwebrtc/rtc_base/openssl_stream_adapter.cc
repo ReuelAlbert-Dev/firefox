@@ -38,9 +38,16 @@
 #include "rtc_base/numerics/safe_conversions.h"
 #include "rtc_base/openssl_adapter.h"
 #include "rtc_base/openssl_digest.h"
+#include "rtc_base/openssl_utility.h"
+#include "rtc_base/ssl_certificate.h"
 #include "rtc_base/ssl_identity.h"
 #include "rtc_base/ssl_stream_adapter.h"
+#include "rtc_base/stream.h"
+#include "rtc_base/string_encode.h"
 #include "rtc_base/task_utils/repeating_task.h"
+#include "rtc_base/thread.h"
+#include "rtc_base/time_utils.h"
+
 #ifdef OPENSSL_IS_BORINGSSL
 #include <openssl/digest.h>
 #include <openssl/dtls1.h>
@@ -53,12 +60,6 @@
 #else
 #include "rtc_base/openssl_identity.h"
 #endif
-#include "rtc_base/openssl_utility.h"
-#include "rtc_base/ssl_certificate.h"
-#include "rtc_base/stream.h"
-#include "rtc_base/string_encode.h"
-#include "rtc_base/thread.h"
-#include "rtc_base/time_utils.h"
 
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
 #error "webrtc requires at least OpenSSL version 1.1.0, to support DTLS-SRTP"
@@ -66,8 +67,7 @@
 
 namespace {
 // Value specified in RFC 5764.
-static constexpr absl::string_view kDtlsSrtpExporterLabel =
-    "EXTRACTOR-dtls_srtp";
+constexpr absl::string_view kDtlsSrtpExporterLabel = "EXTRACTOR-dtls_srtp";
 }  // namespace
 
 namespace webrtc {
@@ -82,10 +82,10 @@ struct SrtpCipherMapEntry {
 
 // This isn't elegant, but it's better than an external reference
 constexpr SrtpCipherMapEntry kSrtpCipherMap[] = {
-    {"SRTP_AES128_CM_SHA1_80", kSrtpAes128CmSha1_80},
-    {"SRTP_AES128_CM_SHA1_32", kSrtpAes128CmSha1_32},
-    {"SRTP_AEAD_AES_128_GCM", kSrtpAeadAes128Gcm},
-    {"SRTP_AEAD_AES_256_GCM", kSrtpAeadAes256Gcm}};
+    {.internal_name = "SRTP_AES128_CM_SHA1_80", .id = kSrtpAes128CmSha1_80},
+    {.internal_name = "SRTP_AES128_CM_SHA1_32", .id = kSrtpAes128CmSha1_32},
+    {.internal_name = "SRTP_AEAD_AES_128_GCM", .id = kSrtpAeadAes128Gcm},
+    {.internal_name = "SRTP_AEAD_AES_256_GCM", .id = kSrtpAeadAes256Gcm}};
 
 #ifdef OPENSSL_IS_BORINGSSL
 // Enabled by EnableTimeCallbackForTesting. Should never be set in production
@@ -144,13 +144,15 @@ int GetForceDtls13(const FieldTrialsView* field_trials) {
     return kForceDtls13Off;
   }
 #ifdef DTLS1_3_VERSION
-  auto mode = field_trials->Lookup("WebRTC-ForceDtls13");
-  RTC_LOG(LS_WARNING) << "WebRTC-ForceDtls13: " << mode;
-  if (mode == "Enabled") {
+  if (field_trials->IsEnabled("WebRTC-ForceDtls13")) {
+    RTC_LOG(LS_WARNING) << "WebRTC-ForceDtls13 Enabled";
     return kForceDtls13Enabled;
-  } else if (mode == "Only") {
+  }
+  if (field_trials->Lookup("WebRTC-ForceDtls13") == "Only") {
+    RTC_LOG(LS_WARNING) << "WebRTC-ForceDtls13 Only";
     return kForceDtls13Only;
   }
+  RTC_LOG(LS_WARNING) << "WebRTC-ForceDtls13 Disabled";
 #endif
   return kForceDtls13Off;
 }
@@ -317,7 +319,7 @@ void OpenSSLStreamAdapter::SetIdentity(std::unique_ptr<SSLIdentity> identity) {
 #ifdef OPENSSL_IS_BORINGSSL
   identity_.reset(static_cast<BoringSSLIdentity*>(identity.release()));
 #else
-  identity_.reset(static_cast<webrtc::OpenSSLIdentity*>(identity.release()));
+  identity_.reset(static_cast<OpenSSLIdentity*>(identity.release()));
 #endif
 }
 
@@ -606,7 +608,7 @@ StreamResult OpenSSLStreamAdapter::Write(ArrayView<const uint8_t> data,
   }
 
   // OpenSSL will return an error if we try to write zero bytes
-  if (data.size() == 0) {
+  if (data.empty()) {
     written = 0;
     return SR_SUCCESS;
   }
@@ -663,7 +665,7 @@ StreamResult OpenSSLStreamAdapter::Read(ArrayView<uint8_t> data,
   }
 
   // Don't trust OpenSSL with zero byte reads
-  if (data.size() == 0) {
+  if (data.empty()) {
     read = 0;
     return SR_SUCCESS;
   }
@@ -850,10 +852,15 @@ void OpenSSLStreamAdapter::SetTimeout(int delay_ms) {
           // We check the timer even after SSL_CONNECTED,
           // but ContinueSSL() is only needed when SSL_CONNECTING
           if (state_ == SSL_CONNECTING) {
+            // Note: timeout is set inside ContinueSSL()
             ContinueSSL();
+          } else if (state_ == SSL_CONNECTED) {
+            MaybeSetTimeout();
+          } else {
+            RTC_DCHECK_NOTREACHED() << "state_: " << state_;
           }
         } else {
-          RTC_DCHECK_NOTREACHED();
+          RTC_DCHECK_NOTREACHED() << "flag->alive() == false";
         }
         // This callback will never run again (stopped above).
         return TimeDelta::PlusInfinity();
@@ -968,6 +975,12 @@ int OpenSSLStreamAdapter::ContinueSSL() {
     }
   }
 
+  MaybeSetTimeout();
+
+  return 0;
+}
+
+void OpenSSLStreamAdapter::MaybeSetTimeout() {
   if (ssl_ != nullptr) {
     struct timeval timeout;
     if (DTLSv1_get_timeout(ssl_, &timeout)) {
@@ -975,8 +988,6 @@ int OpenSSLStreamAdapter::ContinueSSL() {
       SetTimeout(delay);
     }
   }
-
-  return 0;
 }
 
 void OpenSSLStreamAdapter::Error(absl::string_view context,
@@ -1203,7 +1214,7 @@ int OpenSSLStreamAdapter::SSLVerifyCallback(X509_STORE_CTX* store, void* arg) {
   // Record the peer's certificate.
   X509* cert = X509_STORE_CTX_get0_cert(store);
   stream->peer_cert_chain_.reset(
-      new SSLCertChain(std::make_unique<webrtc::OpenSSLCertificate>(cert)));
+      new SSLCertChain(std::make_unique<OpenSSLCertificate>(cert)));
 
   // If the peer certificate digest isn't known yet, we'll wait to verify
   // until it's known, and for now just return a success status.
@@ -1269,16 +1280,17 @@ static const cipher_list OK_ECDSA_ciphers[] = {
 
 static const cipher_list OK_DTLS13_ciphers[] = {
 #ifdef TLS1_3_CK_AES_128_GCM_SHA256  // BoringSSL TLS 1.3
-    {static_cast<uint16_t>(TLS1_3_CK_AES_128_GCM_SHA256 & 0xffff),
-     "TLS_AES_128_GCM_SHA256"},
+    {.cipher = static_cast<uint16_t>(TLS1_3_CK_AES_128_GCM_SHA256 & 0xffff),
+     .cipher_str = "TLS_AES_128_GCM_SHA256"},
 #endif
 #ifdef TLS1_3_CK_AES_256_GCM_SHA256  // BoringSSL TLS 1.3
     {static_cast<uint16_t>(TLS1_3_CK_AES_256_GCM_SHA256 & 0xffff),
      "TLS_AES_256_GCM_SHA256"},
 #endif
 #ifdef TLS1_3_CK_CHACHA20_POLY1305_SHA256  // BoringSSL TLS 1.3
-    {static_cast<uint16_t>(TLS1_3_CK_CHACHA20_POLY1305_SHA256 & 0xffff),
-     "TLS_CHACHA20_POLY1305_SHA256"},
+    {.cipher =
+         static_cast<uint16_t>(TLS1_3_CK_CHACHA20_POLY1305_SHA256 & 0xffff),
+     .cipher_str = "TLS_CHACHA20_POLY1305_SHA256"},
 #endif
 };
 

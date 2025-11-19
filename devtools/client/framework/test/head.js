@@ -65,14 +65,15 @@ async function getParentProcessActors(callback) {
   callback(commands.client, mainProcessTargetFront);
 }
 
-function getSourceActor(aSources, aURL) {
-  const item = aSources.getItemForAttachment(a => a.source.url === aURL);
+function getSourceActor(sources, url) {
+  const item = sources.getItemForAttachment(a => a.source.url === url);
   return item && item.value;
 }
 
 /**
  * Synthesize a keypress from a <key> element, taking into account
  * any modifiers.
+ *
  * @param {Element} el the <key> element to synthesize
  */
 function synthesizeKeyElement(el) {
@@ -85,8 +86,10 @@ function synthesizeKeyElement(el) {
   EventUtils.synthesizeKey(key, mod, el.ownerDocument.defaultView);
 }
 
-/* Check the toolbox host type and prefs to make sure they match the
+/**
+ * Check the toolbox host type and prefs to make sure they match the
  * expected values
+ *
  * @param {Toolbox}
  * @param {HostType} hostType
  *        One of {SIDE, BOTTOM, WINDOW} from Toolbox.HostType
@@ -111,6 +114,7 @@ function checkHostType(toolbox, hostType, previousHostType) {
 /**
  * Create a new <script> referencing URL.  Return a promise that
  * resolves when this has happened
+ *
  * @param {String} url
  *        the url
  * @return {Promise} a promise that resolves when the element has been created
@@ -128,6 +132,7 @@ function createScript(url) {
 
 /**
  * Wait for the toolbox to notice that a given source is loaded
+ *
  * @param {Toolbox} toolbox
  * @param {String} url
  *        the url to wait for
@@ -367,7 +372,7 @@ function getElementByToolIdOrExtensionIdOrSelector(toolbox, idOrSelector) {
 
 /**
  * Returns a toolbox tab element, even if it's overflowed
- **/
+ */
 function getToolboxTab(doc, toolId) {
   return (
     doc.getElementById(`toolbox-tab-${toolId}`) ||

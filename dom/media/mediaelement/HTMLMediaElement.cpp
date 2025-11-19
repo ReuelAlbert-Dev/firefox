@@ -10,7 +10,6 @@
 #include <cmath>
 #include <limits>
 #include <type_traits>
-#include <unordered_map>
 
 #include "AudioDeviceInfo.h"
 #include "AudioStreamTrack.h"
@@ -56,13 +55,10 @@
 #include "js/PropertyAndElement.h"  // JS_DefineProperty
 #include "jsapi.h"
 #include "mozilla/AppShutdown.h"
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/EMEUtils.h"
 #include "mozilla/EventDispatcher.h"
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/MathAlgorithms.h"
-#include "mozilla/NotNull.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/SVGObserverUtils.h"
@@ -70,6 +66,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "mozilla/dom/AncestorIterator.h"
 #include "mozilla/dom/AudioTrack.h"
 #include "mozilla/dom/AudioTrackList.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
@@ -101,6 +98,7 @@
 #include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "mozilla/nsVideoFrame.h"
 #include "nsAttrValueInlines.h"
+#include "nsAttrValueOrString.h"
 #include "nsContentPolicyUtils.h"
 #include "nsContentUtils.h"
 #include "nsCycleCollectionParticipant.h"
@@ -189,6 +187,7 @@ static const double MAX_PLAYBACKRATE = 16.0;
 
 static double ClampPlaybackRate(double aPlaybackRate) {
   MOZ_ASSERT(aPlaybackRate >= 0.0);
+  MOZ_ASSERT(std::isfinite(aPlaybackRate));
 
   if (aPlaybackRate == 0.0) {
     return aPlaybackRate;
@@ -1450,9 +1449,9 @@ HTMLMediaElement::MediaLoadListener::OnStartRequest(nsIRequest* aRequest) {
   bool succeeded;
   if (hc && NS_SUCCEEDED(hc->GetRequestSucceeded(&succeeded)) && !succeeded) {
     uint32_t responseStatus = 0;
-    Unused << hc->GetResponseStatus(&responseStatus);
+    (void)hc->GetResponseStatus(&responseStatus);
     nsAutoCString statusText;
-    Unused << hc->GetResponseStatusText(statusText);
+    (void)hc->GetResponseStatusText(statusText);
     // we need status text for resist fingerprinting mode's message allowlist
     if (statusText.IsEmpty()) {
       net_GetDefaultStatusTextForCode(responseStatus, statusText);
@@ -1893,7 +1892,7 @@ class HTMLMediaElement::ChannelLoader final {
     nsCOMPtr<nsILoadInfo> loadInfo = channel->LoadInfo();
     if (setAttrs) {
       // The function simply returns NS_OK, so we ignore the return value.
-      Unused << loadInfo->SetOriginAttributes(
+      (void)loadInfo->SetOriginAttributes(
           triggeringPrincipal->OriginAttributesRef());
     }
     loadInfo->SetIsMediaRequest(true);
@@ -4556,18 +4555,27 @@ class HTMLMediaElement::TitleChangeObserver final : public nsIObserver {
   }
 
   void Subscribe() {
-    nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
-    if (observerService) {
-      observerService->AddObserver(this, "document-title-changed", false);
+    if (!mIsSubscribed) {
+      nsCOMPtr<nsIObserverService> observerService =
+          mozilla::services::GetObserverService();
+      if (observerService) {
+        if (NS_WARN_IF(NS_FAILED(observerService->AddObserver(
+                this, "document-title-changed", false)))) {
+          return;
+        }
+        mIsSubscribed = true;
+      }
     }
   }
 
   void Unsubscribe() {
-    nsCOMPtr<nsIObserverService> observerService =
-        mozilla::services::GetObserverService();
-    if (observerService) {
-      observerService->RemoveObserver(this, "document-title-changed");
+    if (mIsSubscribed) {
+      mIsSubscribed = false;
+      nsCOMPtr<nsIObserverService> observerService =
+          mozilla::services::GetObserverService();
+      if (observerService) {
+        observerService->RemoveObserver(this, "document-title-changed");
+      }
     }
   }
 
@@ -4575,6 +4583,7 @@ class HTMLMediaElement::TitleChangeObserver final : public nsIObserver {
   ~TitleChangeObserver() = default;
 
   WeakPtr<HTMLMediaElement> mElement;
+  bool mIsSubscribed{false};
 };
 
 NS_IMPL_ISUPPORTS(HTMLMediaElement::TitleChangeObserver, nsIObserver)
@@ -5083,7 +5092,40 @@ void HTMLMediaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
     // content, since we always do that for touchstart.
     case eTouchMove:
     case eTouchEnd:
-    case eTouchStart:
+    case eTouchStart: {
+      // We stop the propagation (both at the capture and the bubbling phase)
+      // when the original target is the part of the ControlBar or the
+      // ClickToPlay button.
+      if (ShadowRoot* shadowRoot = GetShadowRoot()) {
+        nsINode* node =
+            nsINode::FromEventTargetOrNull(aVisitor.mEvent->mOriginalTarget);
+        const bool trap = [&] {
+          if (node->SubtreeRoot() != shadowRoot) {
+            return false;
+          }
+
+          for (auto* node : node->InclusiveAncestorsOfType<Element>()) {
+            auto* id = node->GetID();
+            if (!id) {
+              continue;
+            }
+            if (id == nsGkAtoms::clickToPlay || id == nsGkAtoms::controlBar) {
+              return true;
+            }
+          }
+          return false;
+        }();
+
+        if (trap) {
+          aVisitor.mCanHandle = false;
+        } else {
+          nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+        }
+        return;
+      }
+      nsGenericHTMLElement::GetEventTargetParent(aVisitor);
+      return;
+    }
     case ePointerDown:
     case ePointerUp:
     case ePointerClick:
@@ -5177,13 +5219,12 @@ void HTMLMediaElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
   if (aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::src) {
       mSrcMediaSource = nullptr;
+      nsAttrValueOrString srcVal(aValue);
       mSrcAttrTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
-          this, aValue ? aValue->GetStringValue() : EmptyString(),
-          aMaybeScriptedPrincipal);
+          this, srcVal.String(), aMaybeScriptedPrincipal);
       if (aValue) {
-        nsString srcStr = aValue->GetStringValue();
         nsCOMPtr<nsIURI> uri;
-        NewURIFromString(srcStr, getter_AddRefs(uri));
+        NewURIFromString(srcVal.String(), getter_AddRefs(uri));
         if (uri && IsMediaSourceURI(uri)) {
           nsresult rv = NS_GetSourceForMediaSourceURI(
               uri, getter_AddRefs(mSrcMediaSource));
@@ -6068,7 +6109,7 @@ void HTMLMediaElement::CheckProgress(bool aHaveNewProgress) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mNetworkState == NETWORK_LOADING);
 
-  TimeStamp now = TimeStamp::NowLoRes();
+  TimeStamp now = TimeStamp::Now();
 
   if (aHaveNewProgress) {
     mDataTime = now;
@@ -6086,11 +6127,11 @@ void HTMLMediaElement::CheckProgress(bool aHaveNewProgress) {
                  TimeDuration::FromMilliseconds(PROGRESS_MS) &&
              mDataTime > mProgressTime)) {
     QueueEvent(u"progress"_ns);
-    // Resolution() ensures that future data will have now > mProgressTime,
+    // Going back 1ms ensures that future data will have now > mProgressTime,
     // and so will trigger another event.  mDataTime is not reset because it
     // is still required to detect stalled; it is similarly offset by
-    // resolution to indicate the new data has not yet arrived.
-    mProgressTime = now - TimeDuration::Resolution();
+    // 1ms to indicate the new data has not yet arrived.
+    mProgressTime = now - TimeDuration::FromMilliseconds(1);
     if (mDataTime > mProgressTime) {
       mDataTime = mProgressTime;
     }
@@ -6144,7 +6185,7 @@ void HTMLMediaElement::StartProgressTimer() {
 
 void HTMLMediaElement::StartProgress() {
   // Record the time now for detecting stalled.
-  mDataTime = TimeStamp::NowLoRes();
+  mDataTime = TimeStamp::Now();
   // Reset mProgressTime so that mDataTime is not indicating bytes received
   // after the last progress event.
   mProgressTime = TimeStamp();

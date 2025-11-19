@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// This file is loaded into the browser window scope.
-/* eslint-env mozilla/browser-window */
-
 /**
  * Controls the "full zoom" setting and its site-specific preferences.
  */
@@ -638,6 +635,7 @@ var FullZoom = {
 
   /**
    * Returns the browser that the supplied zoom event is associated with.
+   *
    * @param event  The zoom event.
    * @return  The associated browser element, if one exists, otherwise null.
    */

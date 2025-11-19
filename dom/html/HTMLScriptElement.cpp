@@ -6,7 +6,6 @@
 
 #include "mozilla/dom/HTMLScriptElement.h"
 
-#include "mozilla/Assertions.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/FetchPriority.h"
@@ -134,8 +133,7 @@ void HTMLScriptElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
   }
   if (nsGkAtoms::src == aName && kNameSpaceID_None == aNamespaceID) {
     mSrcTriggeringPrincipal = nsContentUtils::GetAttrTriggeringPrincipal(
-        this, aValue ? aValue->GetStringValue() : EmptyString(),
-        aMaybeScriptedPrincipal);
+        this, nsAttrValueOrString(aValue).String(), aMaybeScriptedPrincipal);
   }
   return nsGenericHTMLElement::AfterSetAttr(
       aNamespaceID, aName, aValue, aOldValue, aMaybeScriptedPrincipal, aNotify);

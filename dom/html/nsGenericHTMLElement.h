@@ -28,7 +28,7 @@ class nsILayoutHistoryState;
 class nsIURI;
 struct nsSize;
 
-enum nsCSSPropertyID : int32_t;
+enum NonCustomCSSPropertyId : uint16_t;
 
 namespace mozilla {
 class EditorBase;
@@ -199,16 +199,18 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
                             Document* aExpectedDocument, ErrorResult& aRv);
   already_AddRefed<mozilla::dom::ToggleEvent> CreateToggleEvent(
       const nsAString& aEventType, const nsAString& aOldState,
-      const nsAString& aNewState, mozilla::Cancelable);
+      const nsAString& aNewState, mozilla::Cancelable, Element* aSource);
   /** Returns true if the event has been cancelled. */
   MOZ_CAN_RUN_SCRIPT bool FireToggleEvent(const nsAString& aOldState,
                                           const nsAString& aNewState,
-                                          const nsAString& aType);
+                                          const nsAString& aType,
+                                          Element* aSource);
   MOZ_CAN_RUN_SCRIPT void QueuePopoverEventTask(
-      mozilla::dom::PopoverVisibilityState aOldState);
+      mozilla::dom::PopoverVisibilityState aOldState, Element* aSource);
   MOZ_CAN_RUN_SCRIPT void RunPopoverToggleEventTask(
       mozilla::dom::PopoverToggleEventTask* aTask,
-      mozilla::dom::PopoverVisibilityState aOldState);
+      mozilla::dom::PopoverVisibilityState aOldState,
+      mozilla::dom::Element* aSource);
   MOZ_CAN_RUN_SCRIPT void ShowPopover(
       const mozilla::dom::ShowPopoverOptions& aOptions, ErrorResult& aRv);
   MOZ_CAN_RUN_SCRIPT void ShowPopoverInternal(Element* aInvoker,
@@ -216,6 +218,7 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void HidePopoverWithoutRunningScript();
   MOZ_CAN_RUN_SCRIPT void HidePopoverInternal(bool aFocusPreviousElement,
                                               bool aFireEvents,
+                                              mozilla::dom::Element* aSource,
                                               ErrorResult& aRv);
   MOZ_CAN_RUN_SCRIPT void HidePopover(ErrorResult& aRv);
   MOZ_CAN_RUN_SCRIPT bool TogglePopover(
@@ -565,7 +568,8 @@ class nsGenericHTMLElement : public nsGenericHTMLElementBase {
    * block, handling percentages and numbers.
    */
   static void MapDimensionAttributeInto(mozilla::MappedDeclarationsBuilder&,
-                                        nsCSSPropertyID, const nsAttrValue&);
+                                        NonCustomCSSPropertyId,
+                                        const nsAttrValue&);
 
   /**
    * Maps the aspect ratio given width and height attributes.

@@ -54,11 +54,11 @@
 #ifndef mozilla_ServoBindingTypes_h
 #define mozilla_ServoBindingTypes_h
 
+#include "NonCustomCSSPropertyId.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ServoTypes.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/Types.h"
-#include "nsCSSPropertyID.h"
 #include "nsStyleAutoArray.h"
 #include "nsTArray.h"
 
@@ -126,6 +126,7 @@ UNLOCKED_RULE_TYPE(Namespace)
 UNLOCKED_RULE_TYPE(Margin)
 UNLOCKED_RULE_TYPE(Container)
 UNLOCKED_RULE_TYPE(Media)
+UNLOCKED_RULE_TYPE(CustomMedia)
 UNLOCKED_RULE_TYPE(Supports)
 UNLOCKED_RULE_TYPE(Document)
 UNLOCKED_RULE_TYPE(FontFeatureValues)

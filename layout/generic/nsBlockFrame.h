@@ -155,11 +155,6 @@ class nsBlockFrame : public nsContainerFrame {
   nsresult GetFrameName(nsAString& aResult) const override;
 #endif
 
-#ifdef DEBUG
-  const char* LineReflowStatusToString(
-      LineReflowStatus aLineReflowStatus) const;
-#endif
-
 #ifdef ACCESSIBILITY
   mozilla::a11y::AccType AccessibleType() override;
 #endif
@@ -769,8 +764,8 @@ class nsBlockFrame : public nsContainerFrame {
   void DoCollectFloats(nsIFrame* aFrame, nsFrameList& aList,
                        bool aCollectFromSiblings);
 
-  // Remove a float, abs, rel positioned frame from the appropriate block's list
-  static void DoRemoveOutOfFlowFrame(DestroyContext&, nsIFrame*);
+  // Remove a float and its continuations.
+  static void DoRemoveFloats(DestroyContext&, nsIFrame*);
 
   /** set up the conditions necessary for an resize reflow
    * the primary task is to mark the minimumly sufficient lines dirty.
@@ -1075,8 +1070,6 @@ class nsBlockFrame : public nsContainerFrame {
   static bool gDisableResizeOpt;
 
   static int32_t gNoiseIndent;
-
-  static const char* kReflowCommandType[];
 
  protected:
   static void InitDebugFlags();

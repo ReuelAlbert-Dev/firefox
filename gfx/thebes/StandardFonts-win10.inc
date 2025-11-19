@@ -61,6 +61,7 @@
     "MS UI Gothic",
     "MV Boli",
     "Myanmar Text",
+    "Nirmala Text",
     "Nirmala UI",
     "Nirmala UI Semilight",
     "NSimSun",
@@ -182,12 +183,15 @@
     "Simplified Arabic",      // Arabic Script Supplemental Fonts
     "Traditional Arabic",     // Arabic Script Supplemental Fonts
     "Tunga",                  // Kannada Supplemental Fonts
-    "UD Digi Kyokasho N-B",   // Japanese Supplemental Fonts
-    "UD Digi Kyokasho N-R",   // Japanese Supplemental Fonts
-    "UD Digi Kyokasho NK-B",  // Japanese Supplemental Fonts
-    "UD Digi Kyokasho NK-R",  // Japanese Supplemental Fonts
-    "UD Digi Kyokasho NP-B",  // Japanese Supplemental Fonts
-    "UD Digi Kyokasho NP-R",  // Japanese Supplemental Fonts
+    "UD Digi Kyokasho N",  // Japanese Supplemental Fonts (since 24H2)
+    "UD Digi Kyokasho N-B",  // Japanese Supplemental Fonts (until 23H2)
+    "UD Digi Kyokasho N-R",  // Japanese Supplemental Fonts (until 23H2)
+    "UD Digi Kyokasho NK",  // Japanese Supplemental Fonts (since 24H2)
+    "UD Digi Kyokasho NK-B",  // Japanese Supplemental Fonts (until 23H2)
+    "UD Digi Kyokasho NK-R",  // Japanese Supplemental Fonts (until 23H2)
+    "UD Digi Kyokasho NP",  // Japanese Supplemental Fonts (since 24H2)
+    "UD Digi Kyokasho NP-B",  // Japanese Supplemental Fonts (until 23H2)
+    "UD Digi Kyokasho NP-R",  // Japanese Supplemental Fonts (until 23H2)
     "Urdu Typesetting",       // Arabic Script Supplemental Fonts
     "Utsaah",                 // Devanagari Supplemental Fonts
     "Vani",                   // Telugu Supplemental Fonts

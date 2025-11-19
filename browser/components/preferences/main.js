@@ -18,6 +18,8 @@ ChromeUtils.defineESModuleGetters(this, {
   TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
   WindowsLaunchOnLogin: "resource://gre/modules/WindowsLaunchOnLogin.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  FormAutofillPreferences:
+    "resource://autofill/FormAutofillPreferences.sys.mjs",
 });
 
 // Constants & Enumeration Values
@@ -31,8 +33,6 @@ const PREF_CONTAINERS_EXTENSION = "privacy.userContext.extension";
 // Strings to identify ExtensionSettingsStore overrides
 const CONTAINERS_KEY = "privacy.containers";
 
-const PREF_CONTENT_APPEARANCE =
-  "layout.css.prefers-color-scheme.content-override";
 const FORCED_COLORS_QUERY = matchMedia("(forced-colors)");
 
 const AUTO_UPDATE_CHANGED_TOPIC =
@@ -50,13 +50,18 @@ const ICON_URL_APP =
 // was set by us to a custom handler icon and CSS should not try to override it.
 const APP_ICON_ATTR_NAME = "appHandlerIcon";
 
+const OPEN_EXTERNAL_LINK_NEXT_TO_ACTIVE_TAB_VALUE =
+  Ci.nsIBrowserDOMWindow.OPEN_NEWTAB_AFTER_CURRENT;
+
 Preferences.addAll([
   // Startup
   { id: "browser.startup.page", type: "int" },
+  { id: "browser.startup.windowsLaunchOnLogin.enabled", type: "bool" },
   { id: "browser.privatebrowsing.autostart", type: "bool" },
 
   // Downloads
   { id: "browser.download.useDownloadDir", type: "bool", inverted: true },
+  { id: "browser.download.enableDeletePrivate", type: "bool" },
   { id: "browser.download.deletePrivate", type: "bool" },
   { id: "browser.download.always_ask_before_handling_new_types", type: "bool" },
   { id: "browser.download.folderList", type: "int" },
@@ -69,6 +74,10 @@ Preferences.addAll([
       1 opens such links in the most recent window or tab,
       2 opens such links in a new window,
       3 opens such links in a new tab
+  browser.link.open_newwindow.override.external
+    - this setting overrides `browser.link.open_newwindow` for externally
+      opened links.
+    - see `nsIBrowserDOMWindow` constants for the meaning of each value.
   browser.tabs.loadInBackground
   - true if display should switch to a new tab which has been opened from a
     link, false if display shouldn't switch
@@ -85,6 +94,7 @@ Preferences.addAll([
   */
 
   { id: "browser.link.open_newwindow", type: "int" },
+  { id: "browser.link.open_newwindow.override.external", type: "int" },
   { id: "browser.tabs.loadInBackground", type: "bool", inverted: true },
   { id: "browser.tabs.warnOnClose", type: "bool" },
   { id: "browser.warnOnQuitShortcut", type: "bool" },
@@ -111,7 +121,7 @@ Preferences.addAll([
   { id: "browser.display.document_color_use", type: "int" },
 
   // Fonts
-  { id: "font.language.group", type: "wstring" },
+  { id: "font.language.group", type: "string" },
 
   // Languages
   { id: "intl.regional_prefs.use_os_locales", type: "bool" },
@@ -182,6 +192,9 @@ Preferences.addAll([
 
   // Media
   { id: "media.hardwaremediakeys.enabled", type: "bool" },
+
+  // Appearance
+  { id: "layout.css.prefers-color-scheme.content-override", type: "int" },
 ]);
 
 if (AppConstants.HAVE_SHELL_SERVICE) {
@@ -209,6 +222,208 @@ if (AppConstants.MOZ_UPDATER) {
 }
 
 Preferences.addSetting({
+  id: "privateBrowsingAutoStart",
+  pref: "browser.privatebrowsing.autostart",
+});
+
+Preferences.addSetting(
+  /** @type {{ _getLaunchOnLoginApprovedCachedValue: boolean } & SettingConfig} */ ({
+    id: "launchOnLoginApproved",
+    _getLaunchOnLoginApprovedCachedValue: true,
+    get() {
+      return this._getLaunchOnLoginApprovedCachedValue;
+    },
+    // Check for a launch on login registry key
+    // This accounts for if a user manually changes it in the registry
+    // Disabling in Task Manager works outside of just deleting the registry key
+    // in HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
+    // but it is not possible to change it back to enabled as the disabled value is just a random
+    // hexadecimal number
+    setup() {
+      if (AppConstants.platform !== "win") {
+        /**
+         * WindowsLaunchOnLogin isnt available if not on windows
+         * but this setup function still fires, so must prevent
+         * WindowsLaunchOnLogin.getLaunchOnLoginApproved
+         * below from executing unnecessarily.
+         */
+        return;
+      }
+      // @ts-ignore bug 1996860
+      WindowsLaunchOnLogin.getLaunchOnLoginApproved().then(val => {
+        this._getLaunchOnLoginApprovedCachedValue = val;
+      });
+    },
+  })
+);
+
+Preferences.addSetting({
+  id: "windowsLaunchOnLoginEnabled",
+  pref: "browser.startup.windowsLaunchOnLogin.enabled",
+});
+
+Preferences.addSetting(
+  /** @type {{_getLaunchOnLoginEnabledValue: boolean, startWithLastProfile: boolean} & SettingConfig} */ ({
+    id: "windowsLaunchOnLogin",
+    deps: ["launchOnLoginApproved", "windowsLaunchOnLoginEnabled"],
+    _getLaunchOnLoginEnabledValue: false,
+    get startWithLastProfile() {
+      return Cc["@mozilla.org/toolkit/profile-service;1"].getService(
+        Ci.nsIToolkitProfileService
+      ).startWithLastProfile;
+    },
+    get() {
+      return this._getLaunchOnLoginEnabledValue;
+    },
+    setup(emitChange) {
+      if (AppConstants.platform !== "win") {
+        /**
+         * WindowsLaunchOnLogin isnt available if not on windows
+         * but this setup function still fires, so must prevent
+         * WindowsLaunchOnLogin.getLaunchOnLoginEnabled
+         * below from executing unnecessarily.
+         */
+        return;
+      }
+
+      /** @type {boolean} */
+      let getLaunchOnLoginEnabledValue;
+      let maybeEmitChange = () => {
+        if (
+          getLaunchOnLoginEnabledValue !== this._getLaunchOnLoginEnabledValue
+        ) {
+          this._getLaunchOnLoginEnabledValue = getLaunchOnLoginEnabledValue;
+          emitChange();
+        }
+      };
+      if (!this.startWithLastProfile) {
+        getLaunchOnLoginEnabledValue = false;
+        maybeEmitChange();
+      } else {
+        // @ts-ignore bug 1996860
+        WindowsLaunchOnLogin.getLaunchOnLoginEnabled().then(val => {
+          getLaunchOnLoginEnabledValue = val;
+          maybeEmitChange();
+        });
+      }
+    },
+    visible: ({ windowsLaunchOnLoginEnabled }) => {
+      let isVisible =
+        AppConstants.platform === "win" && windowsLaunchOnLoginEnabled.value;
+      if (isVisible) {
+        // @ts-ignore bug 1996860
+        NimbusFeatures.windowsLaunchOnLogin.recordExposureEvent({
+          once: true,
+        });
+      }
+      return isVisible;
+    },
+    disabled({ launchOnLoginApproved }) {
+      return !this.startWithLastProfile || !launchOnLoginApproved.value;
+    },
+    onUserChange(checked) {
+      if (checked) {
+        // windowsLaunchOnLogin has been checked: create registry key or shortcut
+        // The shortcut is created with the same AUMID as Firefox itself. However,
+        // this is not set during browser tests and the fallback of checking the
+        // registry fails. As such we pass an arbitrary AUMID for the purpose
+        // of testing.
+        // @ts-ignore bug 1996860
+        WindowsLaunchOnLogin.createLaunchOnLogin();
+        Services.prefs.setBoolPref(
+          "browser.startup.windowsLaunchOnLogin.disableLaunchOnLoginPrompt",
+          true
+        );
+      } else {
+        // windowsLaunchOnLogin has been unchecked: delete registry key and shortcut
+        // @ts-ignore bug 1996860
+        WindowsLaunchOnLogin.removeLaunchOnLogin();
+      }
+    },
+  })
+);
+
+Preferences.addSetting({
+  id: "windowsLaunchOnLoginDisabledProfileBox",
+  deps: ["windowsLaunchOnLoginEnabled"],
+  visible: ({ windowsLaunchOnLoginEnabled }) => {
+    if (AppConstants.platform !== "win") {
+      return false;
+    }
+    let startWithLastProfile = Cc[
+      "@mozilla.org/toolkit/profile-service;1"
+    ].getService(Ci.nsIToolkitProfileService).startWithLastProfile;
+
+    return !startWithLastProfile && windowsLaunchOnLoginEnabled.value;
+  },
+});
+
+Preferences.addSetting({
+  id: "windowsLaunchOnLoginDisabledBox",
+  deps: ["launchOnLoginApproved", "windowsLaunchOnLoginEnabled"],
+  visible: ({ launchOnLoginApproved, windowsLaunchOnLoginEnabled }) => {
+    if (AppConstants.platform !== "win") {
+      return false;
+    }
+    let startWithLastProfile = Cc[
+      "@mozilla.org/toolkit/profile-service;1"
+    ].getService(Ci.nsIToolkitProfileService).startWithLastProfile;
+
+    return (
+      startWithLastProfile &&
+      !launchOnLoginApproved.value &&
+      windowsLaunchOnLoginEnabled.value
+    );
+  },
+});
+
+Preferences.addSetting({
+  /**
+   * The "Open previous windows and tabs" option on about:preferences page.
+   */
+  id: "browserRestoreSession",
+  pref: "browser.startup.page",
+  deps: ["privateBrowsingAutoStart"],
+  get:
+    /**
+     * Returns the value of the "Open previous windows and tabs" option based
+     * on the value of the browser.privatebrowsing.autostart pref.
+     *
+     * @param {number | undefined} value
+     * @returns {boolean}
+     */
+    value => {
+      const pbAutoStartPref = Preferences.get(
+        "browser.privatebrowsing.autostart"
+      );
+      let newValue = pbAutoStartPref.value
+        ? false
+        : value === gMainPane.STARTUP_PREF_RESTORE_SESSION;
+
+      return newValue;
+    },
+  set: checked => {
+    const startupPref = Preferences.get("browser.startup.page");
+    let newValue;
+
+    if (checked) {
+      // We need to restore the blank homepage setting in our other pref
+      if (startupPref.value === gMainPane.STARTUP_PREF_BLANK) {
+        // @ts-ignore bug 1996860
+        HomePage.safeSet("about:blank");
+      }
+      newValue = gMainPane.STARTUP_PREF_RESTORE_SESSION;
+    } else {
+      newValue = gMainPane.STARTUP_PREF_HOMEPAGE;
+    }
+    return newValue;
+  },
+  disabled: deps => {
+    return deps.privateBrowsingAutoStart.value;
+  },
+});
+
+Preferences.addSetting({
   id: "useAutoScroll",
   pref: "general.autoScroll",
 });
@@ -216,6 +431,7 @@ Preferences.addSetting({
   id: "useSmoothScrolling",
   pref: "general.smoothScroll",
 });
+
 Preferences.addSetting({
   id: "useOverlayScrollbars",
   pref: "widget.gtk.overlay-scrollbars.enabled",
@@ -223,58 +439,65 @@ Preferences.addSetting({
 });
 Preferences.addSetting({
   id: "useOnScreenKeyboard",
-  pref: "ui.osk.enabled",
+  // Bug 1993053: Restore the pref to `ui.osk.enabled` after changing
+  // the PrefereceNotFoundError throwing behavior.
+  pref: AppConstants.platform == "win" ? "ui.osk.enabled" : undefined,
   visible: () => AppConstants.platform == "win",
 });
 Preferences.addSetting({
   id: "useCursorNavigation",
   pref: "accessibility.browsewithcaret",
 });
-Preferences.addSetting({
-  id: "useFullKeyboardNavigation",
-  pref: "accessibility.tabfocus",
-  visible: () => AppConstants.platform == "macosx",
-  /**
-   * Returns true if any full keyboard nav is enabled and false otherwise, caching
-   * the current value to enable proper pref restoration if the checkbox is
-   * never changed.
-   *
-   * accessibility.tabfocus
-   * - an integer controlling the focusability of:
-   *     1  text controls
-   *     2  form elements
-   *     4  links
-   *     7  all of the above
-   */
-  get(prefVal) {
-    this._storedFullKeyboardNavigation = prefVal;
-    return prefVal == 7;
-  },
-  /**
-   * Returns the value of the full keyboard nav preference represented by UI,
-   * preserving the preference's "hidden" value if the preference is
-   * unchanged and represents a value not strictly allowed in UI.
-   */
-  set(checked) {
-    if (checked) {
-      return 7;
-    }
-    if (this._storedFullKeyboardNavigation != 7) {
-      // 1/2/4 values set via about:config should persist
-      return this._storedFullKeyboardNavigation;
-    }
-    // When the checkbox is unchecked, default to just text controls.
-    return 1;
-  },
-});
+Preferences.addSetting(
+  /** @type {{ _storedFullKeyboardNavigation: number } & SettingConfig} */ ({
+    _storedFullKeyboardNavigation: -1,
+    id: "useFullKeyboardNavigation",
+    pref: "accessibility.tabfocus",
+    visible: () => AppConstants.platform == "macosx",
+    /**
+     * Returns true if any full keyboard nav is enabled and false otherwise, caching
+     * the current value to enable proper pref restoration if the checkbox is
+     * never changed.
+     *
+     * accessibility.tabfocus
+     * - an integer controlling the focusability of:
+     *     1  text controls
+     *     2  form elements
+     *     4  links
+     *     7  all of the above
+     */
+    get(prefVal) {
+      this._storedFullKeyboardNavigation = prefVal;
+      return prefVal == 7;
+    },
+    /**
+     * Returns the value of the full keyboard nav preference represented by UI,
+     * preserving the preference's "hidden" value if the preference is
+     * unchanged and represents a value not strictly allowed in UI.
+     */
+    set(checked) {
+      if (checked) {
+        return 7;
+      }
+      if (this._storedFullKeyboardNavigation != 7) {
+        // 1/2/4 values set via about:config should persist
+        return this._storedFullKeyboardNavigation;
+      }
+      // When the checkbox is unchecked, default to just text controls.
+      return 1;
+    },
+  })
+);
 Preferences.addSetting({
   id: "linkPreviewEnabled",
   pref: "browser.ml.linkPreview.enabled",
+  // @ts-ignore bug 1996860
   visible: () => LinkPreview.canShowPreferences,
 });
 Preferences.addSetting({
   id: "linkPreviewKeyPoints",
   pref: "browser.ml.linkPreview.optin",
+  // @ts-ignore bug 1996860
   visible: () => LinkPreview.canShowKeyPoints,
 });
 Preferences.addSetting({
@@ -313,6 +536,23 @@ Preferences.addSetting({
     AppConstants.MOZ_WIDGET_GTK,
 });
 Preferences.addSetting({
+  id: "playDRMContent",
+  pref: "media.eme.enabled",
+  visible: () => {
+    if (!Services.prefs.getBoolPref("browser.eme.ui.enabled", false)) {
+      return false;
+    }
+    if (AppConstants.platform == "win") {
+      try {
+        return parseFloat(Services.sysinfo.get("version")) >= 6;
+      } catch (ex) {
+        return false;
+      }
+    }
+    return true;
+  },
+});
+Preferences.addSetting({
   id: "cfrRecommendations",
   pref: "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.addons",
 });
@@ -320,8 +560,997 @@ Preferences.addSetting({
   id: "cfrRecommendations-features",
   pref: "browser.newtabpage.activity-stream.asrouter.userprefs.cfr.features",
 });
+Preferences.addSetting({
+  id: "web-appearance-override-warning",
+  setup: emitChange => {
+    FORCED_COLORS_QUERY.addEventListener("change", emitChange);
+    return () => FORCED_COLORS_QUERY.removeEventListener("change", emitChange);
+  },
+  visible: () => {
+    return FORCED_COLORS_QUERY.matches;
+  },
+});
 
-let SETTINGS_CONFIG = {
+Preferences.addSetting(
+  /** @type {{ themeNames: string[] } & SettingConfig}} */ ({
+    id: "web-appearance-chooser",
+    themeNames: ["dark", "light", "auto"],
+    pref: "layout.css.prefers-color-scheme.content-override",
+    setup(emitChange) {
+      Services.obs.addObserver(emitChange, "look-and-feel-changed");
+      return () =>
+        Services.obs.removeObserver(emitChange, "look-and-feel-changed");
+    },
+    get(val, _, setting) {
+      return (
+        this.themeNames[val] ||
+        this.themeNames[/** @type {number} */ (setting.pref.defaultValue)]
+      );
+    },
+    /** @param {string} val */
+    set(val) {
+      return this.themeNames.indexOf(val);
+    },
+    getControlConfig(config) {
+      // Set the auto theme image to the light/dark that matches.
+      let systemThemeIndex = Services.appinfo
+        .contentThemeDerivedColorSchemeIsDark
+        ? 2
+        : 1;
+      config.options[0].controlAttrs = {
+        ...config.options[0].controlAttrs,
+        imagesrc: config.options[systemThemeIndex].controlAttrs.imagesrc,
+      };
+      return config;
+    },
+  })
+);
+
+Preferences.addSetting({
+  id: "web-appearance-manage-themes-link",
+  onUserClick: e => {
+    e.preventDefault();
+    // @ts-ignore topChromeWindow global
+    window.browsingContext.topChromeWindow.BrowserAddonUI.openAddonsMgr(
+      "addons://list/theme"
+    );
+  },
+});
+
+Preferences.addSetting({ id: "zoomPlaceholder" });
+Preferences.addSetting({
+  id: "containersPane",
+  onUserClick(e) {
+    e.preventDefault();
+    gotoPref("paneContainers2");
+  },
+});
+Preferences.addSetting({ id: "containersPlaceholder" });
+
+Preferences.addSetting({
+  id: "connectionSettings",
+  onUserClick: () => gMainPane.showConnections(),
+});
+
+// Downloads
+/*
+ * Preferences:
+ *
+ * browser.download.useDownloadDir - bool
+ *   True - Save files directly to the folder configured via the
+ *   browser.download.folderList preference.
+ *   False - Always ask the user where to save a file and default to
+ *  browser.download.lastDir when displaying a folder picker dialog.
+ *  browser.download.deletePrivate - bool
+ *   True - Delete files that were downloaded in a private browsing session
+ *   on close of the session
+ *   False - Keep files that were downloaded in a private browsing
+ *   session
+ * browser.download.always_ask_before_handling_new_types - bool
+ *   Defines the default behavior for new file handlers.
+ *   True - When downloading a file that doesn't match any existing
+ *   handlers, ask the user whether to save or open the file.
+ *   False - Save the file. The user can change the default action in
+ *   the Applications section in the preferences UI.
+ * browser.download.dir - local file handle
+ *   A local folder the user may have selected for downloaded files to be
+ *   saved. Migration of other browser settings may also set this path.
+ *   This folder is enabled when folderList equals 2.
+ * browser.download.lastDir - local file handle
+ *   May contain the last folder path accessed when the user browsed
+ *   via the file save-as dialog. (see contentAreaUtils.js)
+ * browser.download.folderList - int
+ *   Indicates the location users wish to save downloaded files too.
+ *   It is also used to display special file labels when the default
+ *   download location is either the Desktop or the Downloads folder.
+ *   Values:
+ *     0 - The desktop is the default download location.
+ *     1 - The system's downloads folder is the default download location.
+ *     2 - The default download location is elsewhere as specified in
+ *         browser.download.dir.
+ * browser.download.downloadDir
+ *   deprecated.
+ * browser.download.defaultFolder
+ *   deprecated.
+ */
+
+/**
+ * Helper object for managing the various downloads related settings.
+ */
+const DownloadsHelpers = new (class DownloadsHelpers {
+  folder;
+  folderPath;
+  folderHostPath;
+  displayName;
+  downloadsDir;
+  desktopDir;
+  downloadsFolderLocalizedName;
+  desktopFolderLocalizedName;
+
+  setupDownloadsHelpersFields = async () => {
+    this.downloadsDir = await this._getDownloadsFolder("Downloads");
+    this.desktopDir = await this._getDownloadsFolder("Desktop");
+    [this.downloadsFolderLocalizedName, this.desktopFolderLocalizedName] =
+      await document.l10n.formatValues([
+        { id: "downloads-folder-name" },
+        { id: "desktop-folder-name" },
+      ]);
+  };
+
+  /**
+   * Returns the Downloads folder.  If aFolder is "Desktop", then the Downloads
+   * folder returned is the desktop folder; otherwise, it is a folder whose name
+   * indicates that it is a download folder and whose path is as determined by
+   * the XPCOM directory service via the download manager's attribute
+   * defaultDownloadsDirectory.
+   *
+   * @throws if aFolder is not "Desktop" or "Downloads"
+   */
+  async _getDownloadsFolder(aFolder) {
+    switch (aFolder) {
+      case "Desktop":
+        return Services.dirsvc.get("Desk", Ci.nsIFile);
+      case "Downloads": {
+        let downloadsDir = await Downloads.getSystemDownloadsDirectory();
+        return new FileUtils.File(downloadsDir);
+      }
+    }
+    throw new Error(
+      "ASSERTION FAILED: folder type should be 'Desktop' or 'Downloads'"
+    );
+  }
+
+  _getSystemDownloadFolderDetails(folderIndex) {
+    let currentDirPref = Preferences.get("browser.download.dir");
+
+    let file;
+    let firefoxLocalizedName;
+    if (folderIndex == 2 && currentDirPref.value) {
+      file = currentDirPref.value;
+      if (file.equals(this.downloadsDir)) {
+        folderIndex = 1;
+      } else if (file.equals(this.desktopDir)) {
+        folderIndex = 0;
+      }
+    }
+    switch (folderIndex) {
+      case 2: // custom path, handled above.
+        break;
+
+      case 1: {
+        // downloads
+        file = this.downloadsDir;
+        firefoxLocalizedName = this.downloadsFolderLocalizedName;
+        break;
+      }
+
+      case 0:
+      // fall through
+      default: {
+        file = this.desktopDir;
+        firefoxLocalizedName = this.desktopFolderLocalizedName;
+      }
+    }
+
+    if (file) {
+      let displayName = file.path;
+
+      // Attempt to translate path to the path as exists on the host
+      // in case the provided path comes from the document portal
+      if (AppConstants.platform == "linux") {
+        if (this.folderHostPath && displayName == this.folderPath) {
+          displayName = this.folderHostPath;
+          if (displayName == this.downloadsDir.path) {
+            firefoxLocalizedName = this.downloadsFolderLocalizedName;
+          } else if (displayName == this.desktopDir.path) {
+            firefoxLocalizedName = this.desktopFolderLocalizedName;
+          }
+        } else if (displayName != this.folderPath) {
+          this.folderHostPath = null;
+          try {
+            file.hostPath().then(folderHostPath => {
+              this.folderHostPath = folderHostPath;
+              Preferences.getSetting("downloadFolder")?.onChange();
+            });
+          } catch (error) {
+            /* ignored */
+          }
+        }
+      }
+
+      if (firefoxLocalizedName) {
+        let folderDisplayName, leafName;
+        // Either/both of these can throw, so check for failures in both cases
+        // so we don't just break display of the download pref:
+        try {
+          folderDisplayName = file.displayName;
+        } catch (ex) {
+          /* ignored */
+        }
+        try {
+          leafName = file.leafName;
+        } catch (ex) {
+          /* ignored */
+        }
+
+        // If we found a localized name that's different from the leaf name,
+        // use that:
+        if (folderDisplayName && folderDisplayName != leafName) {
+          return { file, folderDisplayName };
+        }
+
+        // Otherwise, check if we've got a localized name ourselves.
+        // You can't move the system download or desktop dir on macOS,
+        // so if those are in use just display them. On other platforms
+        // only do so if the folder matches the localized name.
+        if (
+          AppConstants.platform == "macosx" ||
+          leafName == firefoxLocalizedName
+        ) {
+          return { file, folderDisplayName: firefoxLocalizedName };
+        }
+      }
+
+      // If we get here, attempts to use a "pretty" name failed. Just display
+      // the full path:
+      // Force the left-to-right direction when displaying a custom path.
+      return { file, folderDisplayName: `\u2066${displayName}\u2069` };
+    }
+
+    // Don't even have a file - fall back to desktop directory for the
+    // use of the icon, and an empty label:
+    file = this.desktopDir;
+    return { file, folderDisplayName: "" };
+  }
+
+  /**
+   * Determines the type of the given folder.
+   *
+   * @param   aFolder
+   *          the folder whose type is to be determined
+   * @returns integer
+   *          0 if aFolder is the Desktop or is unspecified,
+   *          1 if aFolder is the Downloads folder,
+   *          2 otherwise
+   */
+  _folderToIndex(aFolder) {
+    if (!aFolder || aFolder.equals(this.desktopDir)) {
+      return 0;
+    } else if (aFolder.equals(this.downloadsDir)) {
+      return 1;
+    }
+    return 2;
+  }
+
+  getFolderDetails() {
+    let folderIndex = Preferences.get("browser.download.folderList").value;
+    let { folderDisplayName, file } =
+      this._getSystemDownloadFolderDetails(folderIndex);
+
+    this.folderPath = file?.path ?? "";
+    this.displayName = folderDisplayName;
+  }
+
+  setFolder(folder) {
+    this.folder = folder;
+
+    let folderListPref = Preferences.get("browser.download.folderList");
+    folderListPref.value = this._folderToIndex(this.folder);
+  }
+})();
+
+Preferences.addSetting({
+  id: "browserDownloadFolderList",
+  pref: "browser.download.folderList",
+});
+Preferences.addSetting({
+  id: "downloadFolder",
+  pref: "browser.download.dir",
+  deps: ["browserDownloadFolderList"],
+  get() {
+    DownloadsHelpers.getFolderDetails();
+    return DownloadsHelpers.folderPath;
+  },
+  set(folder) {
+    DownloadsHelpers.setFolder(folder);
+    return DownloadsHelpers.folder;
+  },
+  getControlConfig(config) {
+    if (DownloadsHelpers.displayName) {
+      return {
+        ...config,
+        controlAttrs: {
+          ...config.controlAttrs,
+          ".displayValue": DownloadsHelpers.displayName,
+        },
+      };
+    }
+    return {
+      ...config,
+    };
+  },
+  setup(emitChange) {
+    DownloadsHelpers.setupDownloadsHelpersFields().then(emitChange);
+  },
+  disabled: ({ browserDownloadFolderList }) => {
+    return browserDownloadFolderList.locked;
+  },
+});
+Preferences.addSetting({
+  id: "alwaysAsk",
+  pref: "browser.download.useDownloadDir",
+});
+Preferences.addSetting({
+  id: "enableDeletePrivate",
+  pref: "browser.download.enableDeletePrivate",
+});
+Preferences.addSetting({
+  id: "deletePrivate",
+  pref: "browser.download.deletePrivate",
+  deps: ["enableDeletePrivate"],
+  visible: ({ enableDeletePrivate }) => enableDeletePrivate.value,
+  onUserChange() {
+    Services.prefs.setBoolPref("browser.download.deletePrivate.chosen", true);
+  },
+});
+/**
+ * A helper object containing all logic related to
+ * setting the browser as the user's default.
+ */
+const DefaultBrowserHelper = {
+  /**
+   * @type {number}
+   */
+  _backoffIndex: 0,
+
+  /**
+   * @type {number | undefined}
+   */
+  _pollingTimer: undefined,
+
+  /**
+   * Keeps track of the last known browser
+   * default value set to compare while polling.
+   *
+   * @type {boolean | undefined}
+   */
+  _lastPolledIsDefault: undefined,
+
+  /**
+   * @type {typeof import('../shell/ShellService.sys.mjs').ShellService | undefined}
+   */
+  get shellSvc() {
+    return (
+      AppConstants.HAVE_SHELL_SERVICE &&
+      // @ts-ignore from utilityOverlay.js
+      getShellService()
+    );
+  },
+
+  /**
+   * Sets up polling of whether the browser is set to default,
+   * and calls provided hasChanged function when the state changes.
+   *
+   * @param {Function} hasChanged
+   */
+  pollForDefaultChanges(hasChanged) {
+    if (this._pollingTimer) {
+      return;
+    }
+    this._lastPolledIsDefault = this.isBrowserDefault;
+
+    // Exponential backoff mechanism will delay the polling times if user doesn't
+    // trigger SetDefaultBrowser for a long time.
+    const backoffTimes = [
+      1000, 1000, 1000, 1000, 2000, 2000, 2000, 5000, 5000, 10000,
+    ];
+
+    const pollForDefaultBrowser = () => {
+      if (
+        (location.hash == "" || location.hash == "#general") &&
+        document.visibilityState == "visible"
+      ) {
+        const { isBrowserDefault } = this;
+        if (isBrowserDefault !== this._lastPolledIsDefault) {
+          this._lastPolledIsDefault = isBrowserDefault;
+          hasChanged();
+        }
+      }
+
+      if (!this._pollingTimer) {
+        return;
+      }
+
+      // approximately a "requestIdleInterval"
+      this._pollingTimer = window.setTimeout(
+        () => {
+          window.requestIdleCallback(pollForDefaultBrowser);
+        },
+        backoffTimes[
+          this._backoffIndex + 1 < backoffTimes.length
+            ? this._backoffIndex++
+            : backoffTimes.length - 1
+        ]
+      );
+    };
+
+    this._pollingTimer = window.setTimeout(() => {
+      window.requestIdleCallback(pollForDefaultBrowser);
+    }, backoffTimes[this._backoffIndex]);
+  },
+
+  /**
+   * Stops timer for polling changes.
+   */
+  clearPollingForDefaultChanges() {
+    if (this._pollingTimer) {
+      clearTimeout(this._pollingTimer);
+      this._pollingTimer = undefined;
+    }
+  },
+
+  /**
+   *  Checks if the browser is default through the shell service.
+   */
+  get isBrowserDefault() {
+    if (!this.canCheck) {
+      return false;
+    }
+    return this.shellSvc?.isDefaultBrowser(false, true);
+  },
+
+  /**
+   * Attempts to set the browser as the user's
+   * default through the shell service.
+   *
+   * @returns {Promise<void>}
+   */
+  async setDefaultBrowser() {
+    // Reset exponential backoff delay time in order to do visual update in pollForDefaultBrowser.
+    this._backoffIndex = 0;
+
+    try {
+      await this.shellSvc?.setDefaultBrowser(false);
+    } catch (e) {
+      console.error(e);
+    }
+  },
+
+  /**
+   * Checks whether the browser is capable of being made default.
+   *
+   * @type {boolean}
+   */
+  get canCheck() {
+    return (
+      this.shellSvc &&
+      /**
+       * Flatpak does not support setting nor detection of default browser
+       */
+      !gGIOService?.isRunningUnderFlatpak
+    );
+  },
+};
+
+Preferences.addSetting({
+  id: "alwaysCheckDefault",
+  pref: "browser.shell.checkDefaultBrowser",
+  setup: emitChange => {
+    if (!DefaultBrowserHelper.canCheck) {
+      return;
+    }
+    DefaultBrowserHelper.pollForDefaultChanges(emitChange);
+    // eslint-disable-next-line consistent-return
+    return () => DefaultBrowserHelper.clearPollingForDefaultChanges();
+  },
+  /**
+   * Show button for setting browser as default browser or information that
+   * browser is already the default browser.
+   */
+  visible: () => DefaultBrowserHelper.canCheck,
+  disabled: (_, setting) =>
+    !DefaultBrowserHelper.canCheck ||
+    setting.locked ||
+    DefaultBrowserHelper.isBrowserDefault,
+});
+
+Preferences.addSetting({
+  id: "isDefaultPane",
+  deps: ["alwaysCheckDefault"],
+  visible: () =>
+    DefaultBrowserHelper.canCheck && DefaultBrowserHelper.isBrowserDefault,
+});
+
+Preferences.addSetting({
+  id: "isNotDefaultPane",
+  deps: ["alwaysCheckDefault"],
+  visible: () =>
+    DefaultBrowserHelper.canCheck && !DefaultBrowserHelper.isBrowserDefault,
+  onUserClick: (e, { alwaysCheckDefault }) => {
+    if (!DefaultBrowserHelper.canCheck) {
+      return;
+    }
+    const setDefaultButton = /** @type {MozButton} */ (e.target);
+
+    if (!setDefaultButton) {
+      return;
+    }
+    if (setDefaultButton.disabled) {
+      return;
+    }
+
+    /**
+     * Disable the set default button, so that the user
+     * doesn't try to hit it again while browser is being set to default.
+     */
+    setDefaultButton.disabled = true;
+    alwaysCheckDefault.value = true;
+    DefaultBrowserHelper.setDefaultBrowser().finally(() => {
+      setDefaultButton.disabled = false;
+    });
+  },
+});
+
+// Performance settings
+Preferences.addSetting({
+  id: "contentProcessCount",
+  pref: "dom.ipc.processCount",
+});
+Preferences.addSetting({
+  id: "allowHWAccel",
+  pref: "layers.acceleration.disabled",
+  deps: ["useRecommendedPerformanceSettings"],
+  visible({ useRecommendedPerformanceSettings }) {
+    return !useRecommendedPerformanceSettings.value;
+  },
+});
+Preferences.addSetting({
+  id: "useRecommendedPerformanceSettings",
+  pref: "browser.preferences.defaultPerformanceSettings.enabled",
+  deps: ["contentProcessCount", "allowHWAccel"],
+  get(val, { allowHWAccel, contentProcessCount }) {
+    if (
+      allowHWAccel.value != allowHWAccel.pref.defaultValue ||
+      contentProcessCount.value != contentProcessCount.pref.defaultValue
+    ) {
+      return false;
+    }
+    return val;
+  },
+  set(val, { allowHWAccel, contentProcessCount }) {
+    if (val) {
+      contentProcessCount.value = contentProcessCount.pref.defaultValue;
+      allowHWAccel.value = allowHWAccel.pref.defaultValue;
+    }
+    return val;
+  },
+});
+
+Preferences.addSetting({
+  id: "payment-item",
+  async onUserClick(e) {
+    const action = e.target.getAttribute("action");
+    const guid = e.target.getAttribute("guid");
+    if (action === "remove") {
+      let [title, confirm, cancel] = await document.l10n.formatValues([
+        { id: "payments-remove-payment-prompt-title" },
+        { id: "payments-remove-payment-prompt-confirm-button" },
+        { id: "payments-remove-payment-prompt-cancel-button" },
+      ]);
+      FormAutofillPreferences.prototype.openRemovePaymentDialog(
+        guid,
+        window.browsingContext.topChromeWindow.browsingContext,
+        title,
+        confirm,
+        cancel
+      );
+    } else if (action === "edit") {
+      FormAutofillPreferences.prototype.openEditCreditCardDialog(guid, window);
+    }
+  },
+});
+
+Preferences.addSetting({
+  id: "add-payment-button",
+  onUserClick: ({ target }) => {
+    target.ownerGlobal.gSubDialog.open(
+      "chrome://formautofill/content/editCreditCard.xhtml"
+    );
+  },
+});
+
+Preferences.addSetting({
+  id: "payments-list-header",
+});
+
+Preferences.addSetting(
+  class extends Preferences.AsyncSetting {
+    static id = "payments-list";
+
+    async getPaymentMethods() {
+      await FormAutofillPreferences.prototype.initializePaymentsStorage();
+      return FormAutofillPreferences.prototype.makePaymentsListItems();
+    }
+
+    async getControlConfig() {
+      return {
+        items: await this.getPaymentMethods(),
+      };
+    }
+
+    setup() {
+      Services.obs.addObserver(this.emitChange, "formautofill-storage-changed");
+      return () =>
+        Services.obs.removeObserver(
+          this.emitChange,
+          "formautofill-storage-changed"
+        );
+    }
+  }
+);
+
+SettingGroupManager.registerGroups({
+  containers: {
+    // This section is marked as in progress for testing purposes
+    inProgress: true,
+    items: [
+      {
+        id: "containersPlaceholder",
+        control: "moz-message-bar",
+        controlAttrs: {
+          message: "Placeholder for updated containers",
+        },
+      },
+    ],
+  },
+  startup: {
+    items: [
+      {
+        id: "browserRestoreSession",
+        l10nId: "startup-restore-windows-and-tabs",
+      },
+      {
+        id: "windowsLaunchOnLogin",
+        l10nId: "windows-launch-on-login",
+      },
+      {
+        id: "windowsLaunchOnLoginDisabledBox",
+        control: "moz-message-bar",
+        options: [
+          {
+            control: "span",
+            l10nId: "windows-launch-on-login-disabled",
+            controlAttrs: {
+              slot: "message",
+            },
+            options: [
+              {
+                control: "a",
+                controlAttrs: {
+                  "data-l10n-name": "startup-link",
+                  href: "ms-settings:startupapps",
+                  target: "_self",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "windowsLaunchOnLoginDisabledProfileBox",
+        control: "moz-message-bar",
+        l10nId: "startup-windows-launch-on-login-profile-disabled",
+      },
+      {
+        id: "alwaysCheckDefault",
+        l10nId: "always-check-default",
+      },
+      {
+        id: "isDefaultPane",
+        l10nId: "is-default-browser",
+        control: "moz-promo",
+      },
+      {
+        id: "isNotDefaultPane",
+        l10nId: "is-not-default-browser",
+        control: "moz-promo",
+        options: [
+          {
+            control: "moz-button",
+            l10nId: "set-as-my-default-browser",
+            id: "setDefaultButton",
+            controlAttrs: {
+              slot: "actions",
+              type: "primary",
+            },
+          },
+        ],
+      },
+    ],
+  },
+  home: {
+    inProgress: true,
+    headingLevel: 2,
+    l10nId: "home-prefs-content-header",
+    // Icons are not ready to be used yet.
+    // iconSrc: "chrome://browser/skin/home.svg",
+    items: [
+      {
+        id: "webSearch",
+        l10nId: "home-prefs-search-header2",
+        control: "moz-toggle",
+      },
+      {
+        id: "weather",
+        l10nId: "home-prefs-weather-header",
+        control: "moz-toggle",
+      },
+      {
+        id: "widgets",
+        l10nId: "home-prefs-widgets-header",
+        control: "moz-toggle",
+        items: [
+          {
+            id: "lists",
+            l10nId: "home-prefs-lists-header",
+            control: "moz-checkbox",
+          },
+          {
+            id: "timer",
+            l10nId: "home-prefs-timer-header",
+            control: "moz-checkbox",
+          },
+        ],
+      },
+      {
+        id: "shortcuts",
+        l10nId: "home-prefs-shortcuts-header",
+        control: "moz-toggle",
+        items: [
+          {
+            id: "shortcutsRows",
+            control: "moz-select",
+            options: [
+              {
+                value: 1,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 1 },
+              },
+              {
+                value: 2,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 2 },
+              },
+              {
+                value: 3,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 3 },
+              },
+              {
+                value: 4,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 4 },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "stories",
+        l10nId: "home-prefs-stories-header2",
+        control: "moz-toggle",
+      },
+      {
+        id: "supportFirefox",
+        l10nId: "home-prefs-support-firefox-header",
+        control: "moz-toggle",
+        items: [
+          {
+            id: "sponsoredShortcuts",
+            l10nId: "home-prefs-shortcuts-by-option-sponsored",
+          },
+          {
+            id: "sponsoredStories",
+            l10nId: "home-prefs-recommended-by-option-sponsored-stories",
+          },
+          {
+            id: "supportFirefoxPromo",
+            l10nId: "home-prefs-mission-message2",
+            control: "moz-promo",
+            options: [
+              {
+                control: "a",
+                l10nId: "home-prefs-mission-message-learn-more-link",
+                controlAttrs: {
+                  is: "moz-support-link",
+                  slot: "support-link",
+                  "support-page": "sponsor-privacy",
+                  "utm-content": "inproduct",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "recentActivity",
+        l10nId: "home-prefs-recent-activity-header",
+        control: "moz-toggle",
+        items: [
+          {
+            id: "recentActivityRows",
+            control: "moz-select",
+            controlAttrs: {
+              class: "newtab-rows-select",
+            },
+            options: [
+              {
+                value: 1,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 1 },
+              },
+              {
+                value: 2,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 2 },
+              },
+              {
+                value: 3,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 3 },
+              },
+              {
+                value: 4,
+                l10nId: "home-prefs-sections-rows-option",
+                l10nArgs: { num: 4 },
+              },
+            ],
+          },
+          {
+            id: "recentActivityVisited",
+            l10nId: "home-prefs-highlights-option-visited-pages",
+            control: "moz-checkbox",
+          },
+          {
+            id: "recentActivityBookmarks",
+            l10nId: "home-prefs-highlights-options-bookmarks",
+            control: "moz-checkbox",
+          },
+          {
+            id: "recentActivityDownloads",
+            l10nId: "home-prefs-highlights-option-most-recent-download",
+            control: "moz-checkbox",
+          },
+        ],
+      },
+    ],
+  },
+  zoom: {
+    // This section is marked as in progress for testing purposes
+    inProgress: true,
+    items: [
+      {
+        id: "zoomPlaceholder",
+        control: "moz-message-bar",
+        controlAttrs: {
+          message: "Placeholder for updated zoom controls",
+        },
+      },
+      {
+        id: "containersPane",
+        control: "moz-button",
+        controlAttrs: {
+          label: "Manage container settings",
+        },
+      },
+    ],
+  },
+  appearance: {
+    l10nId: "web-appearance-group",
+    items: [
+      {
+        id: "web-appearance-override-warning",
+        l10nId: "preferences-web-appearance-override-warning3",
+        control: "moz-message-bar",
+      },
+      {
+        id: "web-appearance-chooser",
+        control: "moz-visual-picker",
+        options: [
+          {
+            value: "auto",
+            l10nId: "preferences-web-appearance-choice-auto2",
+            controlAttrs: {
+              id: "preferences-web-appearance-choice-auto",
+              class: "appearance-chooser-item",
+              imagesrc:
+                "chrome://browser/content/preferences/web-appearance-light.svg",
+            },
+          },
+          {
+            value: "light",
+            l10nId: "preferences-web-appearance-choice-light2",
+            controlAttrs: {
+              id: "preferences-web-appearance-choice-light",
+              class: "appearance-chooser-item",
+              imagesrc:
+                "chrome://browser/content/preferences/web-appearance-light.svg",
+            },
+          },
+          {
+            value: "dark",
+            l10nId: "preferences-web-appearance-choice-dark2",
+            controlAttrs: {
+              id: "preferences-web-appearance-choice-dark",
+              class: "appearance-chooser-item",
+              imagesrc:
+                "chrome://browser/content/preferences/web-appearance-dark.svg",
+            },
+          },
+        ],
+      },
+      {
+        id: "web-appearance-manage-themes-link",
+        l10nId: "preferences-web-appearance-link",
+        control: "moz-box-link",
+        controlAttrs: {
+          href: "about:addons",
+        },
+      },
+    ],
+  },
+  downloads: {
+    l10nId: "downloads-header-2",
+    headingLevel: 2,
+    items: [
+      {
+        id: "downloadFolder",
+        l10nId: "download-save-where-2",
+        control: "moz-input-folder",
+        controlAttrs: {
+          id: "chooseFolder",
+        },
+      },
+      {
+        id: "alwaysAsk",
+        l10nId: "download-always-ask-where",
+      },
+      {
+        id: "deletePrivate",
+        l10nId: "download-private-browsing-delete",
+      },
+    ],
+  },
+  drm: {
+    subcategory: "drm",
+    items: [
+      {
+        id: "playDRMContent",
+        l10nId: "play-drm-content",
+        supportPage: "drm-content",
+      },
+    ],
+  },
   browsing: {
     l10nId: "browsing-group-label",
     items: [
@@ -396,6 +1625,100 @@ let SETTINGS_CONFIG = {
       },
     ],
   },
+  httpsOnly: {
+    items: [
+      {
+        id: "httpsOnlyRadioGroup",
+        control: "moz-radio-group",
+        l10nId: "httpsonly-label",
+        supportPage: "https-only-prefs",
+        options: [
+          {
+            id: "httpsOnlyRadioEnabled",
+            value: "enabled",
+            l10nId: "httpsonly-radio-enabled",
+          },
+          {
+            id: "httpsOnlyRadioEnabledPBM",
+            value: "privateOnly",
+            l10nId: "httpsonly-radio-enabled-pbm",
+          },
+          {
+            id: "httpsOnlyRadioDisabled",
+            value: "disabled",
+            l10nId: "httpsonly-radio-disabled3",
+            supportPage: "connection-upgrades",
+          },
+        ],
+      },
+      {
+        id: "httpsOnlyExceptionButton",
+        l10nId: "sitedata-cookies-exceptions",
+        control: "moz-box-button",
+        controlAttrs: {
+          "search-l10n-ids":
+            "permissions-address,permissions-allow.label,permissions-remove.label,permissions-remove-all.label,permissions-exceptions-https-only-desc2",
+        },
+      },
+    ],
+  },
+  certificates: {
+    l10nId: "certs-description2",
+    supportPage: "secure-website-certificate",
+    headingLevel: 2,
+    items: [
+      {
+        id: "certificateButtonGroup",
+        control: "moz-box-group",
+        items: [
+          {
+            id: "viewCertificatesButton",
+            l10nId: "certs-view",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids":
+                "certmgr-tab-mine.label,certmgr-tab-people.label,certmgr-tab-servers.label,certmgr-tab-ca.label,certmgr-mine,certmgr-people,certmgr-server,certmgr-ca,certmgr-cert-name.label,certmgr-token-name.label,certmgr-view.label,certmgr-export.label,certmgr-delete.label",
+            },
+          },
+          {
+            id: "viewSecurityDevicesButton",
+            l10nId: "certs-devices",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids":
+                "devmgr-window.title,devmgr-devlist.label,devmgr-header-details.label,devmgr-header-value.label,devmgr-button-login.label,devmgr-button-logout.label,devmgr-button-changepw.label,devmgr-button-load.label,devmgr-button-unload.label,certs-devices-enable-fips",
+            },
+          },
+        ],
+      },
+
+      {
+        id: "certEnableThirdPartyToggle",
+        l10nId: "certs-thirdparty-toggle",
+        supportPage: "automatically-trust-third-party-certificates",
+      },
+    ],
+  },
+  browsingProtection: {
+    items: [
+      {
+        id: "enableSafeBrowsing",
+        l10nId: "security-enable-safe-browsing",
+        supportPage: "phishing-malware",
+        control: "moz-checkbox",
+        items: [
+          {
+            id: "blockDownloads",
+            l10nId: "security-block-downloads",
+          },
+          {
+            id: "blockUncommonUnwanted",
+            l10nId: "security-block-uncommon-software",
+          },
+        ],
+      },
+    ],
+  },
   nonTechnicalPrivacy: {
     l10nId: "non-technical-privacy-label",
     items: [
@@ -415,12 +1738,639 @@ let SETTINGS_CONFIG = {
       },
     ],
   },
-};
+  securityPrivacyStatus: {
+    items: [
+      {
+        id: "privacyCard",
+        control: "security-privacy-card",
+      },
+      {
+        id: "securityWarningsGroup",
+        control: "moz-box-group",
+        controlAttrs: {
+          type: "list",
+        },
+      },
+    ],
+  },
+  performance: {
+    items: [
+      {
+        id: "useRecommendedPerformanceSettings",
+        l10nId: "performance-use-recommended-settings-checkbox",
+        supportPage: "performance",
+      },
+      {
+        id: "allowHWAccel",
+        l10nId: "performance-allow-hw-accel",
+      },
+    ],
+  },
+  ipprotection: {
+    l10nId: "ip-protection-description",
+    headingLevel: 2,
+    // TODO: Replace support url with finalized link (Bug 1993266)
+    supportPage: "ip-protection",
+    items: [
+      {
+        id: "ipProtectionExceptionsMode",
+        l10nId: "ip-protection-site-exceptions",
+        control: "moz-radio-group",
+        controlAttrs: {
+          ".headingLevel": 3,
+        },
+        options: [
+          {
+            id: "ipProtectionExceptionRadioAll",
+            value: "all",
+            l10nId: "ip-protection-site-exceptions-all-sites-radio",
+            items: [
+              {
+                id: "ipProtectionExceptionAllListButton",
+                l10nId: "ip-protection-site-exceptions-all-sites-button",
+                control: "moz-box-button",
+              },
+            ],
+          },
+          {
+            id: "ipProtectionExceptionRadioSelect",
+            value: "select",
+            l10nId: "ip-protection-site-exceptions-select-sites-radio",
+            items: [
+              {
+                id: "ipProtectionExceptionSelectListButton",
+                l10nId: "ip-protection-site-exceptions-select-sites-button",
+                control: "moz-box-button",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: "ipProtectionAutoStart",
+        l10nId: "ip-protection-autostart",
+        control: "moz-fieldset",
+        items: [
+          {
+            id: "ipProtectionAutoStartCheckbox",
+            l10nId: "ip-protection-autostart-checkbox",
+            control: "moz-checkbox",
+          },
+          {
+            id: "ipProtectionAutoStartPrivateCheckbox",
+            l10nId: "ip-protection-autostart-private-checkbox",
+            control: "moz-checkbox",
+          },
+        ],
+      },
+      {
+        id: "ipProtectionAdditionalLinks",
+        control: "moz-box-group",
+        options: [
+          {
+            id: "ipProtectionSupportLink",
+            l10nId: "ip-protection-contact-support-link",
+            control: "moz-box-link",
+            controlAttrs: {
+              href: "https://support.mozilla.org/questions/new/mozilla-vpn/form",
+            },
+          },
+          {
+            id: "ipProtectionUpgradeLink",
+            l10nId: "ip-protection-upgrade-link",
+            control: "moz-box-link",
+            controlAttrs: {
+              href: "https://www.mozilla.org/products/vpn/",
+            },
+          },
+        ],
+      },
+    ],
+  },
+  cookiesAndSiteData: {
+    l10nId: "sitedata-label",
+    items: [
+      {
+        id: "clearSiteDataButton",
+        l10nId: "sitedata-clear2",
+        control: "moz-box-button",
+        iconSrc: "chrome://browser/skin/flame.svg",
+        controlAttrs: {
+          "search-l10n-ids": `
+            clear-site-data-cookies-empty.label,
+            clear-site-data-cache-empty.label
+          `,
+        },
+      },
+      {
+        id: "deleteOnCloseInfo",
+        l10nId: "sitedata-delete-on-close-private-browsing3",
+        control: "moz-message-bar",
+      },
+      {
+        id: "manageDataSettingsGroup",
+        control: "moz-box-group",
+        controlAttrs: {
+          type: "default",
+        },
+        items: [
+          {
+            id: "siteDataSize",
+            l10nId: "sitedata-total-size-calculating",
+            control: "moz-box-item",
+            supportPage: "sitedata-learn-more",
+          },
+          {
+            id: "siteDataSettings",
+            l10nId: "sitedata-settings2",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids": `
+                site-data-settings-window.title,
+                site-data-column-host.label,
+                site-data-column-cookies.label,
+                site-data-column-storage.label,
+                site-data-settings-description,
+                site-data-remove-all.label,
+              `,
+            },
+          },
+          {
+            id: "cookieExceptions",
+            l10nId: "sitedata-cookies-exceptions2",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids": `
+                permissions-address,
+                permissions-block.label,
+                permissions-allow.label,
+                permissions-remove.label,
+                permissions-remove-all.label,
+                permissions-exceptions-cookie-desc
+              `,
+            },
+          },
+        ],
+      },
+      {
+        id: "deleteOnClose",
+        l10nId: "sitedata-delete-on-close",
+      },
+    ],
+  },
+  networkProxy: {
+    items: [
+      {
+        id: "connectionSettings",
+        l10nId: "network-proxy-connection-settings",
+        control: "moz-box-button",
+        controlAttrs: {
+          "search-l10n-ids":
+            "connection-window2.title,connection-proxy-option-no.label,connection-proxy-option-auto.label,connection-proxy-option-system.label,connection-proxy-option-wpad.label,connection-proxy-option-manual.label,connection-proxy-http,connection-proxy-https,connection-proxy-http-port,connection-proxy-socks,connection-proxy-socks4,connection-proxy-socks5,connection-proxy-noproxy,connection-proxy-noproxy-desc,connection-proxy-https-sharing.label,connection-proxy-autotype.label,connection-proxy-reload.label,connection-proxy-autologin-checkbox.label,connection-proxy-socks-remote-dns.label",
+        },
+        // Bug 1990552: due to how this lays out in the legacy page, we do not include a
+        // controllingExtensionInfo attribute here. We will want one in the redesigned page,
+        // using storeId: "proxy.settings".
+        controllingExtensionInfo: undefined,
+      },
+    ],
+  },
+  passwords: {
+    inProgress: true,
+    id: "passwordsGroup",
+    l10nId: "forms-passwords-header",
+    headingLevel: 2,
+    items: [
+      {
+        id: "savePasswords",
+        l10nId: "forms-ask-to-save-passwords",
+        items: [
+          {
+            id: "managePasswordExceptions",
+            l10nId: "forms-manage-password-exceptions",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids":
+                "permissions-address,permissions-exceptions-saved-passwords-window.title,permissions-exceptions-saved-passwords-desc,",
+            },
+          },
+          {
+            id: "fillUsernameAndPasswords",
+            l10nId: "forms-fill-usernames-and-passwords-2",
+            controlAttrs: {
+              "search-l10n-ids": "forms-saved-passwords-searchkeywords",
+            },
+          },
+          {
+            id: "suggestStrongPasswords",
+            l10nId: "forms-suggest-passwords",
+            supportPage: "how-generate-secure-password-firefox",
+          },
+        ],
+      },
+      {
+        id: "requireOSAuthForPasswords",
+        l10nId: "forms-os-reauth",
+      },
+      {
+        id: "manageSavedPasswords",
+        l10nId: "forms-saved-passwords-2",
+        control: "moz-box-button",
+      },
+      {
+        id: "additionalProtectionsGroup",
+        l10nId: "forms-additional-protections-header",
+        control: "moz-fieldset",
+        controlAttrs: {
+          headingLevel: 2,
+        },
+        items: [
+          {
+            id: "primaryPasswordNotSet",
+            control: "moz-box-group",
+            items: [
+              {
+                id: "usePrimaryPassword",
+                l10nId: "forms-primary-pw-use",
+                control: "moz-box-item",
+                supportPage: "primary-password-stored-logins",
+              },
+              {
+                id: "addPrimaryPassword",
+                l10nId: "forms-primary-pw-set",
+                control: "moz-box-button",
+              },
+            ],
+          },
+          {
+            id: "primaryPasswordSet",
+            control: "moz-box-group",
+            items: [
+              {
+                id: "statusPrimaryPassword",
+                l10nId: "forms-primary-pw-on",
+                control: "moz-box-item",
+                controlAttrs: {
+                  iconsrc: "chrome://global/skin/icons/check-filled.svg",
+                },
+                options: [
+                  {
+                    id: "turnOffPrimaryPassword",
+                    l10nId: "forms-primary-pw-turn-off",
+                    control: "moz-button",
+                    controlAttrs: {
+                      slot: "actions",
+                    },
+                  },
+                ],
+              },
+              {
+                id: "changePrimaryPassword",
+                l10nId: "forms-primary-pw-change-2",
+                control: "moz-box-button",
+              },
+            ],
+          },
+          {
+            id: "breachAlerts",
+            l10nId: "forms-breach-alerts",
+            supportPage: "lockwise-alerts",
+          },
+        ],
+      },
+    ],
+  },
+  history: {
+    items: [
+      {
+        id: "historyMode",
+        control: "moz-select",
+        options: [
+          {
+            value: "remember",
+            l10nId: "history-remember-option-all",
+          },
+          { value: "dontremember", l10nId: "history-remember-option-never" },
+          { value: "custom", l10nId: "history-remember-option-custom" },
+        ],
+        controlAttrs: {
+          "search-l10n-ids": `
+            history-remember-description2,
+            history-dontremember-description2,
+            history-private-browsing-permanent.label,
+            history-remember-browser-option.label,
+            history-remember-search-option.label,
+            history-clear-on-close-option.label,
+            history-clear-on-close-settings.label
+          `,
+        },
+      },
+      {
+        id: "privateBrowsingAutoStart",
+        l10nId: "history-private-browsing-permanent",
+      },
+      {
+        id: "rememberHistory",
+        l10nId: "history-remember-browser-option",
+      },
+      {
+        id: "rememberForms",
+        l10nId: "history-remember-search-option",
+      },
+      {
+        id: "alwaysClear",
+        l10nId: "history-clear-on-close-option",
+      },
+      {
+        id: "clearDataSettings",
+        l10nId: "history-clear-on-close-settings",
+        control: "moz-box-button",
+        controlAttrs: {
+          "search-l10n-ids": `
+            clear-data-settings-label,
+            history-section-label,
+            item-history-and-downloads.label,
+            item-cookies.label,
+            item-active-logins.label,
+            item-cache.label,
+            item-form-search-history.label,
+            data-section-label,
+            item-site-settings.label,
+            item-offline-apps.label
+          `,
+        },
+      },
+      {
+        id: "clearHistoryButton",
+        l10nId: "history-clear-button",
+        control: "moz-box-button",
+      },
+    ],
+  },
+  permissions: {
+    id: "permissions",
+    l10nId: "permissions-header2",
+    headingLevel: 2,
+    items: [
+      {
+        id: "permissionBox",
+        control: "moz-box-group",
+        controlAttrs: {
+          type: "list",
+        },
+        items: [
+          {
+            id: "locationSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-location2",
+            controlAttrs: {
+              ".iconSrc": "chrome://browser/skin/notification-icons/geo.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-location-window2.title,permissions-site-location-desc,permissions-site-location-disable-label,permissions-site-location-disable-desc",
+            },
+          },
+          {
+            id: "cameraSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-camera2",
+            controlAttrs: {
+              ".iconSrc": "chrome://browser/skin/notification-icons/camera.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-camera-window2.title,permissions-site-camera-desc,permissions-site-camera-disable-label,permissions-site-camera-disable-desc,",
+            },
+          },
+          {
+            id: "localHostSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-localhost2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/local-host.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-localhost-window.title,permissions-site-localhost-desc,permissions-site-localhost-disable-label,permissions-site-localhost-disable-desc,",
+            },
+          },
+          {
+            id: "localNetworkSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-local-network2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/local-network.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-local-network-window.title,permissions-site-local-network-desc,permissions-site-local-network-disable-label,permissions-site-local-network-disable-desc,",
+            },
+          },
+          {
+            id: "microphoneSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-microphone2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/microphone.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-microphone-window2.title,permissions-site-microphone-desc,permissions-site-microphone-disable-label,permissions-site-microphone-disable-desc,",
+            },
+          },
+          {
+            id: "speakerSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-speaker2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/speaker.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-speaker-window.title,permissions-site-speaker-desc,",
+            },
+          },
+          {
+            id: "notificationSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-notification2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/desktop-notification.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-notification-window2.title,permissions-site-notification-desc,permissions-site-notification-disable-label,permissions-site-notification-disable-desc,",
+            },
+          },
+          {
+            id: "autoplaySettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-autoplay2",
+            controlAttrs: {
+              ".iconSrc":
+                "chrome://browser/skin/notification-icons/autoplay-media.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-autoplay-window2.title,permissions-site-autoplay-desc,",
+            },
+          },
+          {
+            id: "xrSettingsButton",
+            control: "moz-box-button",
+            l10nId: "permissions-xr2",
+            controlAttrs: {
+              ".iconSrc": "chrome://browser/skin/notification-icons/xr.svg",
+              "search-l10n-ids":
+                "permissions-remove.label,permissions-remove-all.label,permissions-site-xr-window2.title,permissions-site-xr-desc,permissions-site-xr-disable-label,permissions-site-xr-disable-desc,",
+            },
+          },
+        ],
+      },
+      {
+        id: "popupPolicy",
+        l10nId: "permissions-block-popups2",
+        items: [
+          {
+            id: "popupPolicyButton",
+            l10nId: "permissions-block-popups-exceptions-button2",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids":
+                "permissions-address,permissions-exceptions-popup-window3.title,permissions-exceptions-popup-desc2",
+            },
+          },
+        ],
+      },
+      {
+        id: "warnAddonInstall",
+        l10nId: "permissions-addon-install-warning2",
+        items: [
+          {
+            id: "addonExceptions",
+            l10nId: "permissions-addon-exceptions2",
+            control: "moz-box-button",
+            controlAttrs: {
+              "search-l10n-ids":
+                "permissions-address,permissions-allow.label,permissions-remove.label,permissions-remove-all.label,permissions-exceptions-addons-window2.title,permissions-exceptions-addons-desc",
+            },
+          },
+        ],
+      },
+      {
+        id: "notificationsDoNotDisturb",
+        l10nId: "permissions-notification-pause",
+      },
+    ],
+  },
+  dnsOverHttps: {
+    inProgress: true,
+    items: [
+      {
+        id: "dohBox",
+        control: "moz-box-group",
+        items: [
+          {
+            id: "dohModeBoxItem",
+            control: "moz-box-item",
+          },
+          {
+            id: "dohAdvancedButton",
+            l10nId: "preferences-doh-advanced-button",
+            control: "moz-box-button",
+          },
+        ],
+      },
+    ],
+  },
+  dnsOverHttpsAdvanced: {
+    inProgress: true,
+    l10nId: "preferences-doh-advanced-section",
+    supportPage: "dns-over-https",
+    headingLevel: 2,
+    items: [
+      {
+        id: "dohStatusBox",
+        control: "moz-message-bar",
+      },
+      {
+        id: "dohRadioGroup",
+        control: "moz-radio-group",
+        options: [
+          {
+            id: "dohRadioDefault",
+            value: "default",
+            l10nId: "preferences-doh-radio-default",
+          },
+          {
+            id: "dohRadioCustom",
+            value: "custom",
+            l10nId: "preferences-doh-radio-custom",
+            items: [
+              {
+                id: "dohFallbackIfCustom",
+                l10nId: "preferences-doh-fallback-label",
+              },
+              {
+                id: "dohProviderSelect",
+                l10nId: "preferences-doh-select-resolver-label",
+                control: "moz-select",
+              },
+              {
+                id: "dohCustomProvider",
+                control: "moz-input-text",
+                l10nId: "preferences-doh-custom-provider-label",
+              },
+            ],
+          },
+          {
+            id: "dohRadioOff",
+            value: "off",
+            l10nId: "preferences-doh-radio-off",
+          },
+        ],
+      },
+      {
+        id: "dohExceptionsButton",
+        l10nId: "preferences-doh-manage-exceptions2",
+        control: "moz-box-button",
+        controlAttrs: {
+          "search-l10n-ids":
+            "permissions-doh-entry-field,permissions-doh-add-exception.label,permissions-doh-remove.label,permissions-doh-remove-all.label,permissions-exceptions-doh-window.title,permissions-exceptions-manage-doh-desc,",
+        },
+      },
+    ],
+  },
+  managePayments: {
+    items: [
+      {
+        id: "add-payment-button",
+        control: "moz-button",
+        l10nId: "autofill-payment-methods-add-button",
+      },
+      {
+        id: "payments-list",
+        control: "moz-box-group",
+        l10nId: "payments-list-header",
+        controlAttrs: {
+          hasHeader: true,
+          type: "list",
+        },
+      },
+    ],
+  },
+});
 
+/**
+ * @param {string} id - ID of {@link SettingGroup} custom element.
+ */
 function initSettingGroup(id) {
+  /** @type {SettingGroup} */
   let group = document.querySelector(`setting-group[groupid=${id}]`);
-  if (group && SETTINGS_CONFIG[id]) {
-    group.config = SETTINGS_CONFIG[id];
+  const config = SettingGroupManager.get(id);
+  if (group && config) {
+    if (config.inProgress && !srdSectionEnabled(id)) {
+      group.remove();
+      return;
+    }
+
+    let legacySections = document.querySelectorAll(`[data-srd-groupid=${id}]`);
+    for (let section of legacySections) {
+      section.hidden = true;
+      section.removeAttribute("data-category");
+      section.setAttribute("data-hidden-from-search", "true");
+    }
+    group.config = config;
     group.getSetting = Preferences.getSetting.bind(Preferences);
   }
 }
@@ -483,71 +2433,22 @@ var gMainPane = {
     return (this._filter = document.getElementById("filter"));
   },
 
-  _backoffIndex: 0,
-
   /**
    * Initialization of gMainPane.
    */
   init() {
+    /**
+     * @param {string} aId
+     * @param {string} aEventType
+     * @param {(ev: Event) => void} aCallback
+     */
     function setEventListener(aId, aEventType, aCallback) {
       document
         .getElementById(aId)
         .addEventListener(aEventType, aCallback.bind(gMainPane));
     }
 
-    if (AppConstants.HAVE_SHELL_SERVICE) {
-      this.updateSetDefaultBrowser();
-      let win = Services.wm.getMostRecentWindow("navigator:browser");
-
-      // Exponential backoff mechanism will delay the polling times if user doesn't
-      // trigger SetDefaultBrowser for a long time.
-      let backoffTimes = [
-        1000, 1000, 1000, 1000, 2000, 2000, 2000, 5000, 5000, 10000,
-      ];
-
-      let pollForDefaultBrowser = () => {
-        let uri = win.gBrowser.currentURI.spec;
-
-        if (
-          (uri == "about:preferences" ||
-            uri == "about:preferences#general" ||
-            uri == "about:settings" ||
-            uri == "about:settings#general") &&
-          document.visibilityState == "visible"
-        ) {
-          this.updateSetDefaultBrowser();
-        }
-
-        // approximately a "requestIdleInterval"
-        window.setTimeout(
-          () => {
-            window.requestIdleCallback(pollForDefaultBrowser);
-          },
-          backoffTimes[
-            this._backoffIndex + 1 < backoffTimes.length
-              ? this._backoffIndex++
-              : backoffTimes.length - 1
-          ]
-        );
-      };
-
-      window.setTimeout(() => {
-        window.requestIdleCallback(pollForDefaultBrowser);
-      }, backoffTimes[this._backoffIndex]);
-    }
-
     this.initBrowserContainers();
-    this.buildContentProcessCountMenuList();
-
-    this.updateDefaultPerformanceSettingsPref();
-
-    let defaultPerformancePref = Preferences.get(
-      "browser.preferences.defaultPerformanceSettings.enabled"
-    );
-    defaultPerformancePref.on("change", () => {
-      this.updatePerformanceSettingsBox({ duringChangeEvent: true });
-    });
-    this.updatePerformanceSettingsBox({ duringChangeEvent: false });
     this.displayUseSystemLocale();
     this.updateProxySettingsUI();
     initializeProxyUI(gMainPane);
@@ -563,7 +2464,15 @@ var gMainPane = {
 
     gMainPane.initTranslations();
 
+    // Initialize settings groups from the config object.
+    initSettingGroup("appearance");
+    initSettingGroup("downloads");
+    initSettingGroup("drm");
     initSettingGroup("browsing");
+    initSettingGroup("zoom");
+    initSettingGroup("performance");
+    initSettingGroup("startup");
+    initSettingGroup("networkProxy");
 
     if (AppConstants.platform == "win") {
       // Functionality for "Show tabs in taskbar" on Windows 7 and up.
@@ -645,53 +2554,6 @@ var gMainPane = {
       });
     }
 
-    // Startup pref
-    setEventListener(
-      "browserRestoreSession",
-      "command",
-      gMainPane.onBrowserRestoreSessionChange
-    );
-    if (AppConstants.platform == "win") {
-      setEventListener(
-        "windowsLaunchOnLogin",
-        "command",
-        gMainPane.onWindowsLaunchOnLoginChange
-      );
-      if (
-        Services.prefs.getBoolPref(
-          "browser.startup.windowsLaunchOnLogin.enabled",
-          false
-        )
-      ) {
-        document.getElementById("windowsLaunchOnLoginBox").hidden = false;
-        NimbusFeatures.windowsLaunchOnLogin.recordExposureEvent({
-          once: true,
-        });
-      }
-    }
-    gMainPane.updateBrowserStartupUI =
-      gMainPane.updateBrowserStartupUI.bind(gMainPane);
-    Preferences.get("browser.privatebrowsing.autostart").on(
-      "change",
-      gMainPane.updateBrowserStartupUI
-    );
-    Preferences.get("browser.startup.page").on(
-      "change",
-      gMainPane.updateBrowserStartupUI
-    );
-    Preferences.get("browser.startup.homepage").on(
-      "change",
-      gMainPane.updateBrowserStartupUI
-    );
-    gMainPane.updateBrowserStartupUI();
-
-    if (AppConstants.HAVE_SHELL_SERVICE) {
-      setEventListener(
-        "setDefaultButton",
-        "command",
-        gMainPane.setDefaultBrowser
-      );
-    }
     setEventListener(
       "disableContainersExtension",
       "command",
@@ -715,15 +2577,6 @@ var gMainPane = {
       gMainPane.updateColorsButton.bind(gMainPane)
     );
     gMainPane.updateColorsButton();
-    Preferences.get("layers.acceleration.disabled").on(
-      "change",
-      gMainPane.updateHardwareAcceleration.bind(gMainPane)
-    );
-    setEventListener(
-      "connectionSettings",
-      "command",
-      gMainPane.showConnections
-    );
     setEventListener(
       "browserContainersCheckbox",
       "command",
@@ -738,11 +2591,6 @@ var gMainPane = {
       "data-migration",
       "command",
       gMainPane.onMigrationButtonCommand
-    );
-    setEventListener(
-      "deletePrivate",
-      "command",
-      gMainPane.onDeletePrivateChanged
     );
 
     document
@@ -761,13 +2609,6 @@ var gMainPane = {
 
     if (Services.policies && !Services.policies.isAllowed("profileImport")) {
       document.getElementById("dataMigrationGroup").remove();
-    }
-
-    if (
-      Services.prefs.getBoolPref("browser.backup.preferences.ui.enabled", false)
-    ) {
-      let backupGroup = document.getElementById("dataBackupGroup");
-      backupGroup.removeAttribute("data-hidden-from-search");
     }
 
     if (!SelectableProfileService.isEnabled) {
@@ -791,19 +2632,6 @@ var gMainPane = {
       fxtranslationRow.hidden = false;
     }
 
-    let emeUIEnabled = Services.prefs.getBoolPref("browser.eme.ui.enabled");
-    // Force-disable/hide on WinXP:
-    if (navigator.platform.toLowerCase().startsWith("win")) {
-      emeUIEnabled =
-        emeUIEnabled && parseFloat(Services.sysinfo.get("version")) >= 6;
-    }
-    if (!emeUIEnabled) {
-      // Don't want to rely on .hidden for the toplevel groupbox because
-      // of the pane hiding/showing code potentially interfering:
-      document
-        .getElementById("drmGroup")
-        .setAttribute("style", "display: none !important");
-    }
     // Initialize the Firefox Updates section.
     let version = AppConstants.MOZ_APP_VERSION_DISPLAY;
 
@@ -914,43 +2742,6 @@ var gMainPane = {
       }
 
       if (AppConstants.platform == "win") {
-        // Check for a launch on login registry key
-        // This accounts for if a user manually changes it in the registry
-        // Disabling in Task Manager works outside of just deleting the registry key
-        // in HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
-        // but it is not possible to change it back to enabled as the disabled value is just a random
-        // hexadecimal number
-        let launchOnLoginCheckbox = document.getElementById(
-          "windowsLaunchOnLogin"
-        );
-
-        let startWithLastProfile = Cc[
-          "@mozilla.org/toolkit/profile-service;1"
-        ].getService(Ci.nsIToolkitProfileService).startWithLastProfile;
-
-        // Grey out the launch on login checkbox if startWithLastProfile is false
-        document.getElementById(
-          "windowsLaunchOnLoginDisabledProfileBox"
-        ).hidden = startWithLastProfile;
-        launchOnLoginCheckbox.disabled = !startWithLastProfile;
-
-        if (!startWithLastProfile) {
-          launchOnLoginCheckbox.checked = false;
-        } else {
-          WindowsLaunchOnLogin.getLaunchOnLoginEnabled().then(enabled => {
-            launchOnLoginCheckbox.checked = enabled;
-          });
-
-          WindowsLaunchOnLogin.getLaunchOnLoginApproved().then(
-            approvedByWindows => {
-              launchOnLoginCheckbox.disabled = !approvedByWindows;
-              document.getElementById(
-                "windowsLaunchOnLoginDisabledBox"
-              ).hidden = approvedByWindows;
-            }
-          );
-        }
-
         // On Windows, the Application Update setting is an installation-
         // specific preference, not a profile-specific one. Show a warning to
         // inform users of this.
@@ -973,16 +2764,6 @@ var gMainPane = {
     setEventListener("filter", "MozInputSearch:search", gMainPane.filter);
     setEventListener("typeColumn", "click", gMainPane.sort);
     setEventListener("actionColumn", "click", gMainPane.sort);
-    setEventListener("chooseFolder", "command", gMainPane.chooseFolder);
-    Preferences.get("browser.download.folderList").on(
-      "change",
-      gMainPane.displayDownloadDirPref.bind(gMainPane)
-    );
-    Preferences.get("browser.download.dir").on(
-      "change",
-      gMainPane.displayDownloadDirPref.bind(gMainPane)
-    );
-    gMainPane.displayDownloadDirPref();
 
     // Listen for window unload so we can remove our preference observers.
     window.addEventListener("unload", this);
@@ -1011,8 +2792,6 @@ var gMainPane = {
       ].map(ContextualIdentityService.formatContextLabel)
     );
 
-    AppearanceChooser.init();
-
     // Notify observers that the UI is now ready
     Services.obs.notifyObservers(window, "main-pane-loaded");
 
@@ -1029,10 +2808,6 @@ var gMainPane = {
       () => this.writeCheckSpelling()
     );
     Preferences.addSyncFromPrefListener(
-      document.getElementById("alwaysAsk"),
-      () => this.readUseDownloadDir()
-    );
-    Preferences.addSyncFromPrefListener(
       document.getElementById("linkTargeting"),
       () => this.readLinkTarget()
     );
@@ -1041,14 +2816,17 @@ var gMainPane = {
       () => this.writeLinkTarget()
     );
     Preferences.addSyncFromPrefListener(
+      document.getElementById("openAppLinksNextToActiveTab"),
+      () => this.readExternalLinkNextToActiveTab()
+    );
+    Preferences.addSyncToPrefListener(
+      document.getElementById("openAppLinksNextToActiveTab"),
+      inputElement => this.writeExternalLinkNextToActiveTab(inputElement)
+    );
+    Preferences.addSyncFromPrefListener(
       document.getElementById("browserContainersCheckbox"),
       () => this.readBrowserContainersCheckbox()
     );
-
-    if (!Services.prefs.getBoolPref("browser.download.enableDeletePrivate")) {
-      let deletePrivateCheckbox = document.getElementById("deletePrivate");
-      deletePrivateCheckbox.hidden = true;
-    }
 
     this.setInitialized();
   },
@@ -1211,26 +2989,6 @@ var gMainPane = {
   },
 
   /**
-   * Hide/show the "Show my windows and tabs from last time" option based
-   * on the value of the browser.privatebrowsing.autostart pref.
-   */
-  updateBrowserStartupUI() {
-    const pbAutoStartPref = Preferences.get(
-      "browser.privatebrowsing.autostart"
-    );
-    const startupPref = Preferences.get("browser.startup.page");
-
-    let newValue;
-    let checkbox = document.getElementById("browserRestoreSession");
-    checkbox.disabled = pbAutoStartPref.value || startupPref.locked;
-    newValue = pbAutoStartPref.value
-      ? false
-      : startupPref.value === this.STARTUP_PREF_RESTORE_SESSION;
-    if (checkbox.checked !== newValue) {
-      checkbox.checked = newValue;
-    }
-  },
-  /**
    * Fetch the existing default zoom value, initialise and unhide
    * the preferences menu. This method also establishes a listener
    * to ensure handleDefaultZoomChange is called on future menu
@@ -1305,7 +3063,7 @@ var gMainPane = {
        * The fully initialized state.
        *
        * @param {Object} supportedLanguages
-       * @param {Array<{ langTag: string, displayName: string}} languageList
+       * @param {Array<{ langTag: string, displayName: string}>} languageList
        * @param {Map<string, DownloadPhase>} downloadPhases
        */
       constructor(supportedLanguages, languageList, downloadPhases) {
@@ -1341,8 +3099,8 @@ var gMainPane = {
       /**
        * Determine the download phase of each language file.
        *
-       * @param {Array<{ langTag: string, displayName: string}} languageList.
-       * @returns {Map<string, DownloadPhase>} Map the language tag to whether it is downloaded.
+       * @param {Array<{ langTag: string, displayName: string}>} languageList
+       * @returns {Promise<Map<string, DownloadPhase>>} Map the language tag to whether it is downloaded.
        */
       static async createDownloadPhases(languageList) {
         const downloadPhases = new Map();
@@ -1532,6 +3290,7 @@ var gMainPane = {
 
       /**
        * Update the DownloadPhase for a single langTag.
+       *
        * @param {string} langTag
        * @param {DownloadPhase} downloadPhase
        */
@@ -1552,6 +3311,7 @@ var gMainPane = {
 
       /**
        * Set all the downloads.
+       *
        * @param {DownloadPhase} downloadPhase
        */
       markAllDownloadPhases(downloadPhase) {
@@ -1613,7 +3373,7 @@ var gMainPane = {
           case "loading":
             downloadButton.hidden = false;
             deleteButton.hidden = true;
-            downloadButton.setAttribute("disabled", true);
+            downloadButton.setAttribute("disabled", "true");
             break;
         }
       }
@@ -1916,44 +3676,6 @@ var gMainPane = {
     cps2.setGlobal(win.FullZoom.name, newZoom, nonPrivateLoadContext);
   },
 
-  onBrowserRestoreSessionChange(event) {
-    const value = event.target.checked;
-    const startupPref = Preferences.get("browser.startup.page");
-    let newValue;
-
-    if (value) {
-      // We need to restore the blank homepage setting in our other pref
-      if (startupPref.value === this.STARTUP_PREF_BLANK) {
-        HomePage.safeSet("about:blank");
-      }
-      newValue = this.STARTUP_PREF_RESTORE_SESSION;
-    } else {
-      newValue = this.STARTUP_PREF_HOMEPAGE;
-    }
-    startupPref.value = newValue;
-  },
-
-  async onWindowsLaunchOnLoginChange(event) {
-    if (AppConstants.platform !== "win") {
-      return;
-    }
-    if (event.target.checked) {
-      // windowsLaunchOnLogin has been checked: create registry key or shortcut
-      // The shortcut is created with the same AUMID as Firefox itself. However,
-      // this is not set during browser tests and the fallback of checking the
-      // registry fails. As such we pass an arbitrary AUMID for the purpose
-      // of testing.
-      await WindowsLaunchOnLogin.createLaunchOnLogin();
-      Services.prefs.setBoolPref(
-        "browser.startup.windowsLaunchOnLogin.disableLaunchOnLoginPrompt",
-        true
-      );
-    } else {
-      // windowsLaunchOnLogin has been unchecked: delete registry key and shortcut
-      await WindowsLaunchOnLogin.removeLaunchOnLogin();
-    }
-  },
-
   // TABS
 
   /*
@@ -2002,76 +3724,48 @@ var gMainPane = {
     var linkTargeting = document.getElementById("linkTargeting");
     return linkTargeting.checked ? 3 : 2;
   },
-  /*
-   * Preferences:
-   *
-   * browser.shell.checkDefault
-   * - true if a default-browser check (and prompt to make it so if necessary)
-   *   occurs at startup, false otherwise
-   */
 
   /**
-   * Show button for setting browser as default browser or information that
-   * browser is already the default browser.
+   * @returns {boolean}
+   *   Whether the "Open links in tabs instead of new windows" settings
+   *   checkbox should be checked. Should only be checked if the
+   *   `browser.link.open_newwindow.override.external` pref is set to the
+   *   value of 7 (nsIBrowserDOMWindow.OPEN_NEWTAB_AFTER_CURRENT).
    */
-  updateSetDefaultBrowser() {
-    if (AppConstants.HAVE_SHELL_SERVICE) {
-      let shellSvc = getShellService();
-      let defaultBrowserBox = document.getElementById("defaultBrowserBox");
-      let isInFlatpak = gGIOService?.isRunningUnderFlatpak;
-      // Flatpak does not support setting nor detection of default browser
-      if (!shellSvc || isInFlatpak) {
-        defaultBrowserBox.hidden = true;
-        return;
-      }
-      let isDefault = shellSvc.isDefaultBrowser(false, true);
-      let setDefaultPane = document.getElementById("setDefaultPane");
-      setDefaultPane.classList.toggle("is-default", isDefault);
-      let alwaysCheck = document.getElementById("alwaysCheckDefault");
-      let alwaysCheckPref = Preferences.get(
-        "browser.shell.checkDefaultBrowser"
-      );
-      alwaysCheck.disabled = alwaysCheckPref.locked || isDefault;
-    }
+  readExternalLinkNextToActiveTab() {
+    const externalLinkOpenOverride = Preferences.get(
+      "browser.link.open_newwindow.override.external"
+    );
+
+    return (
+      externalLinkOpenOverride.value ==
+      Ci.nsIBrowserDOMWindow.OPEN_NEWTAB_AFTER_CURRENT
+    );
   },
 
   /**
-   * Set browser as the operating system default browser.
+   * This pref has at least 8 valid values but we are offering a checkbox
+   * to set one specific value (`7`).
+   *
+   * @param {HTMLInputElement} inputElement
+   * @returns {number}
+   *   - `7` (`nsIBrowserDOMWindow.OPEN_NEWTAB_AFTER_CURRENT`) if checked
+   *   - the default value of
+   *     `browser.link.open_newwindow.override.external` if not checked
    */
-  async setDefaultBrowser() {
-    if (AppConstants.HAVE_SHELL_SERVICE) {
-      let alwaysCheckPref = Preferences.get(
-        "browser.shell.checkDefaultBrowser"
-      );
-      alwaysCheckPref.value = true;
-
-      // Reset exponential backoff delay time in order to do visual update in pollForDefaultBrowser.
-      this._backoffIndex = 0;
-
-      let shellSvc = getShellService();
-      if (!shellSvc) {
-        return;
-      }
-
-      // Disable the set default button, so that the user doesn't try to hit it again
-      // while awaiting on setDefaultBrowser
-      let setDefaultButton = document.getElementById("setDefaultButton");
-      setDefaultButton.disabled = true;
-
-      try {
-        await shellSvc.setDefaultBrowser(false);
-      } catch (ex) {
-        console.error(ex);
-        return;
-      } finally {
-        // Make sure to re-enable the default button when we're finished, regardless of the outcome
-        setDefaultButton.disabled = false;
-      }
-
-      let isDefault = shellSvc.isDefaultBrowser(false, true);
-      let setDefaultPane = document.getElementById("setDefaultPane");
-      setDefaultPane.classList.toggle("is-default", isDefault);
-    }
+  writeExternalLinkNextToActiveTab(inputElement) {
+    const externalLinkOpenOverride = Preferences.get(
+      "browser.link.open_newwindow.override.external"
+    );
+    Glean.linkHandling.openNextToActiveTabSettingsEnabled.set(
+      inputElement.checked
+    );
+    Glean.linkHandling.openNextToActiveTabSettingsChange.record({
+      checked: inputElement.checked,
+    });
+    return inputElement.checked
+      ? Ci.nsIBrowserDOMWindow.OPEN_NEWTAB_AFTER_CURRENT
+      : externalLinkOpenOverride.defaultValue;
   },
 
   /**
@@ -2103,7 +3797,7 @@ var gMainPane = {
    * The search mode is only available from the menu to change the primary browser
    * language.
    *
-   * @param {{ search: boolean }}
+   * @param {{ search: boolean }} search
    */
   showBrowserLanguagesSubDialog({ search }) {
     // Record the telemetry event with an id to associate related actions.
@@ -2370,20 +4064,15 @@ var gMainPane = {
     gotoPref("containers");
   },
 
-  updateHardwareAcceleration() {
-    // Placeholder for restart on change
-  },
-
   // FONTS
 
   /**
    * Populates the default font list in UI.
    */
   _rebuildFonts() {
-    var langGroupPref = Preferences.get("font.language.group");
-    var isSerif =
-      this._readDefaultFontTypeForLanguage(langGroupPref.value) == "serif";
-    this._selectDefaultLanguageGroup(langGroupPref.value, isSerif);
+    var langGroup = Services.locale.fontLanguageGroup;
+    var isSerif = this._readDefaultFontTypeForLanguage(langGroup) == "serif";
+    this._selectDefaultLanguageGroup(langGroup, isSerif);
   },
 
   /**
@@ -2486,10 +4175,6 @@ var gMainPane = {
     });
   },
 
-  onDeletePrivateChanged() {
-    Services.prefs.setBoolPref("browser.download.deletePrivate.chosen", true);
-  },
-
   /**
    * Displays the migration wizard dialog in an HTML dialog.
    */
@@ -2571,77 +4256,6 @@ var gMainPane = {
       return 1;
     }
     return 0;
-  },
-
-  updateDefaultPerformanceSettingsPref() {
-    let defaultPerformancePref = Preferences.get(
-      "browser.preferences.defaultPerformanceSettings.enabled"
-    );
-    let processCountPref = Preferences.get("dom.ipc.processCount");
-    let accelerationPref = Preferences.get("layers.acceleration.disabled");
-    if (
-      processCountPref.value != processCountPref.defaultValue ||
-      accelerationPref.value != accelerationPref.defaultValue
-    ) {
-      defaultPerformancePref.value = false;
-    }
-  },
-
-  updatePerformanceSettingsBox() {
-    let defaultPerformancePref = Preferences.get(
-      "browser.preferences.defaultPerformanceSettings.enabled"
-    );
-    let performanceSettings = document.getElementById("performanceSettings");
-    let processCountPref = Preferences.get("dom.ipc.processCount");
-    if (defaultPerformancePref.value) {
-      let accelerationPref = Preferences.get("layers.acceleration.disabled");
-      // Unset the value so process count will be decided by the platform.
-      processCountPref.value = processCountPref.defaultValue;
-      accelerationPref.value = accelerationPref.defaultValue;
-      performanceSettings.hidden = true;
-    } else {
-      performanceSettings.hidden = false;
-    }
-  },
-
-  buildContentProcessCountMenuList() {
-    if (Services.appinfo.fissionAutostart) {
-      document.getElementById("limitContentProcess").hidden = true;
-      document.getElementById("contentProcessCount").hidden = true;
-      document.getElementById("contentProcessCountEnabledDescription").hidden =
-        true;
-      document.getElementById("contentProcessCountDisabledDescription").hidden =
-        true;
-      return;
-    }
-    if (Services.appinfo.browserTabsRemoteAutostart) {
-      let processCountPref = Preferences.get("dom.ipc.processCount");
-      let defaultProcessCount = processCountPref.defaultValue;
-
-      let contentProcessCount =
-        document.querySelector(`#contentProcessCount > menupopup >
-                                menuitem[value="${defaultProcessCount}"]`);
-
-      document.l10n.setAttributes(
-        contentProcessCount,
-        "performance-default-content-process-count",
-        { num: defaultProcessCount }
-      );
-
-      document.getElementById("limitContentProcess").disabled = false;
-      document.getElementById("contentProcessCount").disabled = false;
-      document.getElementById("contentProcessCountEnabledDescription").hidden =
-        false;
-      document.getElementById("contentProcessCountDisabledDescription").hidden =
-        true;
-    } else {
-      document.getElementById("limitContentProcess").disabled = true;
-      document.getElementById("contentProcessCount").disabled = true;
-      document.getElementById("contentProcessCountEnabledDescription").hidden =
-        true;
-      document.getElementById("contentProcessCountDisabledDescription").hidden =
-        false;
-    }
   },
 
   _minUpdatePrefDisableTime: 1000,
@@ -2869,8 +4483,6 @@ var gMainPane = {
       this._translationsView.destroy();
       this._translationsView = null;
     }
-
-    AppearanceChooser.destroy();
   },
 
   // nsISupports
@@ -3698,335 +5310,6 @@ var gMainPane = {
 
     return "";
   },
-
-  // DOWNLOADS
-
-  /*
-   * Preferences:
-   *
-   * browser.download.useDownloadDir - bool
-   *   True - Save files directly to the folder configured via the
-   *   browser.download.folderList preference.
-   *   False - Always ask the user where to save a file and default to
-   *  browser.download.lastDir when displaying a folder picker dialog.
-   *  browser.download.deletePrivate - bool
-   *   True - Delete files that were downloaded in a private browsing session
-   *   on close of the session
-   *   False - Keep files that were downloaded in a private browsing
-   *   session
-   * browser.download.always_ask_before_handling_new_types - bool
-   *   Defines the default behavior for new file handlers.
-   *   True - When downloading a file that doesn't match any existing
-   *   handlers, ask the user whether to save or open the file.
-   *   False - Save the file. The user can change the default action in
-   *   the Applications section in the preferences UI.
-   * browser.download.dir - local file handle
-   *   A local folder the user may have selected for downloaded files to be
-   *   saved. Migration of other browser settings may also set this path.
-   *   This folder is enabled when folderList equals 2.
-   * browser.download.lastDir - local file handle
-   *   May contain the last folder path accessed when the user browsed
-   *   via the file save-as dialog. (see contentAreaUtils.js)
-   * browser.download.folderList - int
-   *   Indicates the location users wish to save downloaded files too.
-   *   It is also used to display special file labels when the default
-   *   download location is either the Desktop or the Downloads folder.
-   *   Values:
-   *     0 - The desktop is the default download location.
-   *     1 - The system's downloads folder is the default download location.
-   *     2 - The default download location is elsewhere as specified in
-   *         browser.download.dir.
-   * browser.download.downloadDir
-   *   deprecated.
-   * browser.download.defaultFolder
-   *   deprecated.
-   */
-
-  /**
-   * Disables the downloads folder field and Browse button if the default
-   * download directory pref is locked (e.g., by the DownloadDirectory or
-   * DefaultDownloadDirectory policies)
-   */
-  readUseDownloadDir() {
-    document.getElementById("downloadFolder").disabled =
-      document.getElementById("chooseFolder").disabled =
-      document.getElementById("saveTo").disabled =
-        Preferences.get("browser.download.dir").locked ||
-        Preferences.get("browser.download.folderList").locked;
-    // don't override the preference's value in UI
-    return undefined;
-  },
-
-  /**
-   * Displays a file picker in which the user can choose the location where
-   * downloads are automatically saved, updating preferences and UI in
-   * response to the choice, if one is made.
-   */
-  chooseFolder() {
-    return this.chooseFolderTask().catch(console.error);
-  },
-  async chooseFolderTask() {
-    let [title] = await document.l10n.formatValues([
-      { id: "choose-download-folder-title" },
-    ]);
-    let folderListPref = Preferences.get("browser.download.folderList");
-    let currentDirPref = await this._indexToFolder(folderListPref.value);
-    let defDownloads = await this._indexToFolder(1);
-    let fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
-
-    fp.init(window.browsingContext, title, Ci.nsIFilePicker.modeGetFolder);
-    fp.appendFilters(Ci.nsIFilePicker.filterAll);
-    // First try to open what's currently configured
-    if (currentDirPref && currentDirPref.exists()) {
-      fp.displayDirectory = currentDirPref;
-    } else if (defDownloads && defDownloads.exists()) {
-      // Try the system's download dir
-      fp.displayDirectory = defDownloads;
-    } else {
-      // Fall back to Desktop
-      fp.displayDirectory = await this._indexToFolder(0);
-    }
-
-    let result = await new Promise(resolve => fp.open(resolve));
-    if (result != Ci.nsIFilePicker.returnOK) {
-      return;
-    }
-
-    let downloadDirPref = Preferences.get("browser.download.dir");
-    downloadDirPref.value = fp.file;
-    folderListPref.value = await this._folderToIndex(fp.file);
-    // Note, the real prefs will not be updated yet, so dnld manager's
-    // userDownloadsDirectory may not return the right folder after
-    // this code executes. displayDownloadDirPref will be called on
-    // the assignment above to update the UI.
-  },
-
-  /**
-   * Initializes the download folder display settings based on the user's
-   * preferences.
-   */
-  displayDownloadDirPref() {
-    this.displayDownloadDirPrefTask().catch(console.error);
-
-    // don't override the preference's value in UI
-    return undefined;
-  },
-
-  async displayDownloadDirPrefTask() {
-    // We're async for localization reasons, and we can get called several
-    // times in the same turn of the event loop (!) because of how the
-    // preferences bindings work... but the speed of localization
-    // shouldn't impact what gets displayed to the user in the end - the
-    // last call should always win.
-    // To accomplish this, store a unique object when we enter this function,
-    // and if by the end of the function that stored object has been
-    // overwritten, don't update the UI but leave it to the last
-    // caller to this function to do.
-    let token = {};
-    this._downloadDisplayToken = token;
-
-    var downloadFolder = document.getElementById("downloadFolder");
-
-    let folderIndex = Preferences.get("browser.download.folderList").value;
-    // For legacy users using cloudstorage pref with folderIndex as 3 (See bug 1751093),
-    // compute folderIndex using the current directory pref
-    if (folderIndex == 3) {
-      let currentDirPref = Preferences.get("browser.download.dir");
-      folderIndex = currentDirPref.value
-        ? await this._folderToIndex(currentDirPref.value)
-        : 1;
-    }
-
-    // Display a 'pretty' label or the path in the UI.
-    let { folderDisplayName, file } =
-      await this._getSystemDownloadFolderDetails(folderIndex);
-    // Figure out an icon url:
-    let fph = Services.io
-      .getProtocolHandler("file")
-      .QueryInterface(Ci.nsIFileProtocolHandler);
-    let iconUrlSpec = fph.getURLSpecFromDir(file);
-
-    // Ensure that the last entry to this function always wins
-    // (see comment at the start of this method):
-    if (this._downloadDisplayToken != token) {
-      return;
-    }
-    // note: downloadFolder.value is not read elsewhere in the code, its only purpose is to display to the user
-    downloadFolder.value = folderDisplayName;
-    downloadFolder.style.backgroundImage = `image-set("moz-icon://${iconUrlSpec}?size=16&scale=1" 1x, "moz-icon://${iconUrlSpec}?size=16&scale=2" 2x, "moz-icon://${iconUrlSpec}?size=16&scale=3" 3x)`;
-  },
-
-  async _getSystemDownloadFolderDetails(folderIndex) {
-    let downloadsDir = await this._getDownloadsFolder("Downloads");
-    let desktopDir = await this._getDownloadsFolder("Desktop");
-    let currentDirPref = Preferences.get("browser.download.dir");
-
-    let file;
-    let firefoxLocalizedName;
-    if (folderIndex == 2 && currentDirPref.value) {
-      file = currentDirPref.value;
-      if (file.equals(downloadsDir)) {
-        folderIndex = 1;
-      } else if (file.equals(desktopDir)) {
-        folderIndex = 0;
-      }
-    }
-    switch (folderIndex) {
-      case 2: // custom path, handled above.
-        break;
-
-      case 1: {
-        // downloads
-        file = downloadsDir;
-        firefoxLocalizedName = await document.l10n.formatValues([
-          { id: "downloads-folder-name" },
-        ]);
-        break;
-      }
-
-      case 0:
-      // fall through
-      default: {
-        file = desktopDir;
-        firefoxLocalizedName = await document.l10n.formatValues([
-          { id: "desktop-folder-name" },
-        ]);
-      }
-    }
-
-    if (file) {
-      let displayName = file.path;
-
-      // Attempt to translate path to the path as exists on the host
-      // in case the provided path comes from the document portal
-      if (AppConstants.platform == "linux") {
-        try {
-          displayName = await file.hostPath();
-        } catch (error) {
-          /* ignored */
-        }
-
-        if (displayName) {
-          if (displayName == downloadsDir.path) {
-            firefoxLocalizedName = await document.l10n.formatValues([
-              { id: "downloads-folder-name" },
-            ]);
-          } else if (displayName == desktopDir.path) {
-            firefoxLocalizedName = await document.l10n.formatValues([
-              { id: "desktop-folder-name" },
-            ]);
-          }
-        }
-      }
-
-      if (firefoxLocalizedName) {
-        let folderDisplayName, leafName;
-        // Either/both of these can throw, so check for failures in both cases
-        // so we don't just break display of the download pref:
-        try {
-          folderDisplayName = file.displayName;
-        } catch (ex) {
-          /* ignored */
-        }
-        try {
-          leafName = file.leafName;
-        } catch (ex) {
-          /* ignored */
-        }
-
-        // If we found a localized name that's different from the leaf name,
-        // use that:
-        if (folderDisplayName && folderDisplayName != leafName) {
-          return { file, folderDisplayName };
-        }
-
-        // Otherwise, check if we've got a localized name ourselves.
-        if (firefoxLocalizedName) {
-          // You can't move the system download or desktop dir on macOS,
-          // so if those are in use just display them. On other platforms
-          // only do so if the folder matches the localized name.
-          if (
-            AppConstants.platform == "macosx" ||
-            leafName == firefoxLocalizedName
-          ) {
-            return { file, folderDisplayName: firefoxLocalizedName };
-          }
-        }
-      }
-
-      // If we get here, attempts to use a "pretty" name failed. Just display
-      // the full path:
-      // Force the left-to-right direction when displaying a custom path.
-      return { file, folderDisplayName: `\u2066${displayName}\u2069` };
-    }
-
-    // Don't even have a file - fall back to desktop directory for the
-    // use of the icon, and an empty label:
-    file = desktopDir;
-    return { file, folderDisplayName: "" };
-  },
-
-  /**
-   * Returns the Downloads folder.  If aFolder is "Desktop", then the Downloads
-   * folder returned is the desktop folder; otherwise, it is a folder whose name
-   * indicates that it is a download folder and whose path is as determined by
-   * the XPCOM directory service via the download manager's attribute
-   * defaultDownloadsDirectory.
-   *
-   * @throws if aFolder is not "Desktop" or "Downloads"
-   */
-  async _getDownloadsFolder(aFolder) {
-    switch (aFolder) {
-      case "Desktop":
-        return Services.dirsvc.get("Desk", Ci.nsIFile);
-      case "Downloads": {
-        let downloadsDir = await Downloads.getSystemDownloadsDirectory();
-        return new FileUtils.File(downloadsDir);
-      }
-    }
-    throw new Error(
-      "ASSERTION FAILED: folder type should be 'Desktop' or 'Downloads'"
-    );
-  },
-
-  /**
-   * Determines the type of the given folder.
-   *
-   * @param   aFolder
-   *          the folder whose type is to be determined
-   * @returns integer
-   *          0 if aFolder is the Desktop or is unspecified,
-   *          1 if aFolder is the Downloads folder,
-   *          2 otherwise
-   */
-  async _folderToIndex(aFolder) {
-    if (!aFolder || aFolder.equals(await this._getDownloadsFolder("Desktop"))) {
-      return 0;
-    } else if (aFolder.equals(await this._getDownloadsFolder("Downloads"))) {
-      return 1;
-    }
-    return 2;
-  },
-
-  /**
-   * Converts an integer into the corresponding folder.
-   *
-   * @param   aIndex
-   *          an integer
-   * @returns the Desktop folder if aIndex == 0,
-   *          the Downloads folder if aIndex == 1,
-   *          the folder stored in browser.download.dir
-   */
-  _indexToFolder(aIndex) {
-    switch (aIndex) {
-      case 0:
-        return this._getDownloadsFolder("Desktop");
-      case 1:
-        return this._getDownloadsFolder("Downloads");
-    }
-    var currentDirPref = Preferences.get("browser.download.dir");
-    return currentDirPref.value;
-  },
 };
 
 gMainPane.initialized = new Promise(res => {
@@ -4521,104 +5804,3 @@ class ViewableInternallyHandlerInfoWrapper extends InternalHandlerInfoWrapper {
     return DownloadIntegration.shouldViewDownloadInternally(this.type);
   }
 }
-
-const AppearanceChooser = {
-  // NOTE: This order must match the values of the
-  // layout.css.prefers-color-scheme.content-override
-  // preference.
-  choices: ["dark", "light", "auto"],
-  chooser: null,
-  radios: null,
-  warning: null,
-
-  init() {
-    this.chooser = document.getElementById("web-appearance-chooser");
-    this.radios = [...this.chooser.querySelectorAll("input")];
-    for (let radio of this.radios) {
-      radio.addEventListener("change", e => {
-        let index = this.choices.indexOf(e.target.value);
-        // The pref change callback will update state if needed.
-        if (index >= 0) {
-          Services.prefs.setIntPref(PREF_CONTENT_APPEARANCE, index);
-        } else {
-          // Shouldn't happen but let's do something sane...
-          Services.prefs.clearUserPref(PREF_CONTENT_APPEARANCE);
-        }
-      });
-    }
-
-    let webAppearanceSettings = document.getElementById(
-      "webAppearanceSettings"
-    );
-    webAppearanceSettings.addEventListener("click", this);
-
-    this.warning = document.getElementById("web-appearance-override-warning");
-
-    FORCED_COLORS_QUERY.addEventListener("change", this);
-    Services.obs.addObserver(this, "look-and-feel-changed");
-    this._update();
-  },
-
-  _update() {
-    this._updateWarning();
-    this._updateOptions();
-  },
-
-  handleEvent(e) {
-    if (e.type == "click") {
-      switch (e.target.id) {
-        case "web-appearance-manage-themes-link":
-          window.browsingContext.topChromeWindow.BrowserAddonUI.openAddonsMgr(
-            "addons://list/theme"
-          );
-          e.preventDefault();
-          break;
-        default:
-          break;
-      }
-    }
-    this._update();
-  },
-
-  observe() {
-    this._update();
-  },
-
-  destroy() {
-    Services.obs.removeObserver(this, "look-and-feel-changed");
-    FORCED_COLORS_QUERY.removeEventListener("change", this);
-  },
-
-  _isValueDark(value) {
-    switch (value) {
-      case "light":
-        return false;
-      case "dark":
-        return true;
-      case "auto":
-        return Services.appinfo.contentThemeDerivedColorSchemeIsDark;
-    }
-    throw new Error("Unknown value");
-  },
-
-  _updateOptions() {
-    let index = Services.prefs.getIntPref(PREF_CONTENT_APPEARANCE);
-    if (index < 0 || index >= this.choices.length) {
-      index = Services.prefs
-        .getDefaultBranch(null)
-        .getIntPref(PREF_CONTENT_APPEARANCE);
-    }
-    let value = this.choices[index];
-    for (let radio of this.radios) {
-      let checked = radio.value == value;
-      let isDark = this._isValueDark(radio.value);
-
-      radio.checked = checked;
-      radio.closest("label").classList.toggle("dark", isDark);
-    }
-  },
-
-  _updateWarning() {
-    this.warning.hidden = !FORCED_COLORS_QUERY.matches;
-  },
-};

@@ -8,7 +8,6 @@
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerTypeTraits.h"
 
-#include <iterator>
 #include <type_traits>
 
 #include "jit/ABIFunctions.h"
@@ -713,7 +712,7 @@ class JitABICall final : public JSAPIRuntimeTest, public DefineCheckArgs<Sig> {
     Register base = r8;
     regs.take(base);
 #elif defined(JS_CODEGEN_MIPS64)
-    Register base = t1;
+    Register base = t5;
     regs.take(base);
 #elif defined(JS_CODEGEN_LOONG64)
     Register base = t0;

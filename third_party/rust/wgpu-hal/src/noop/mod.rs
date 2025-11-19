@@ -137,9 +137,11 @@ pub fn adapter_info() -> wgt::AdapterInfo {
         vendor: 0,
         device: 0,
         device_type: wgt::DeviceType::Cpu,
+        device_pci_bus_id: String::new(),
         driver: String::from("wgpu"),
         driver_info: String::new(),
         backend: wgt::Backend::Noop,
+        transient_saves_memory: false,
     }
 }
 
@@ -192,15 +194,17 @@ pub const CAPABILITIES: crate::Capabilities = {
             max_push_constant_size: ALLOC_MAX_U32,
             max_non_sampler_bindings: ALLOC_MAX_U32,
 
-            max_task_workgroup_total_count: 0,
-            max_task_workgroups_per_dimension: 0,
-            max_mesh_multiview_count: 0,
-            max_mesh_output_layers: 0,
+            max_task_workgroup_total_count: ALLOC_MAX_U32,
+            max_task_workgroups_per_dimension: ALLOC_MAX_U32,
+            max_mesh_multiview_view_count: ALLOC_MAX_U32,
+            max_mesh_output_layers: ALLOC_MAX_U32,
 
             max_blas_primitive_count: ALLOC_MAX_U32,
             max_blas_geometry_count: ALLOC_MAX_U32,
             max_tlas_instance_count: ALLOC_MAX_U32,
             max_acceleration_structures_per_shader_stage: ALLOC_MAX_U32,
+
+            max_multiview_view_count: ALLOC_MAX_U32,
         },
         alignments: crate::Alignments {
             // All maximally permissive
@@ -429,7 +433,7 @@ impl crate::Device for Context {
         &self,
         fence: &Fence,
         value: crate::FenceValue,
-        timeout_ms: u32,
+        timeout: Option<Duration>,
     ) -> DeviceResult<bool> {
         // The relevant commands must have already been submitted, and noop-backend commands are
         // executed synchronously, so there is no waiting — either it is already done,

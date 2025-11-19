@@ -16,7 +16,7 @@ XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "OSPermissions",
   "@mozilla.org/ospermissionrequest;1",
-  "nsIOSPermissionRequest"
+  Ci.nsIOSPermissionRequest
 );
 
 export class WebRTCParent extends JSWindowActorParent {
@@ -493,6 +493,7 @@ function prompt(aActor, aBrowser, aRequest) {
     sharingScreen,
     sharingAudio,
     requestTypes,
+    isHandlingUserInput,
   } = aRequest;
 
   let principal =
@@ -531,6 +532,18 @@ function prompt(aActor, aBrowser, aRequest) {
       }
       return;
     }
+  }
+
+  // If the request comes from a sidebar,
+  // the user already gave a persistent permission, skip showing a notification
+  // otherwise deny request.
+  if (isSidebar(aBrowser)) {
+    if (!aActor.checkRequestAllowed(aRequest, principal, aBrowser)) {
+      aActor.denyRequest(aRequest);
+      return;
+    }
+
+    return;
   }
 
   // If the user has already denied access once in this tab,
@@ -789,6 +802,14 @@ function prompt(aActor, aBrowser, aRequest) {
         focusElement.focus();
       }
 
+      const isRequestingCamera = reqVideoInput === "Camera";
+
+      if (aTopic == "shown") {
+        if (!notification.wasDismissed && isRequestingCamera) {
+          onCameraPromptShown(doc, isHandlingUserInput);
+        }
+      }
+
       if (aTopic != "showing") {
         return false;
       }
@@ -805,6 +826,7 @@ function prompt(aActor, aBrowser, aRequest) {
 
       /**
        * Prepare the device selector for one kind of device.
+       *
        * @param {Object[]} devices - available devices of this kind.
        * @param {string} IDPrefix - indicating kind of device and so
        *   associated UI elements.
@@ -1052,7 +1074,6 @@ function prompt(aActor, aBrowser, aRequest) {
         return item;
       }
 
-      let isRequestingCamera = reqVideoInput === "Camera";
       doc.getElementById("webRTC-selectCamera").hidden = !isRequestingCamera;
       doc.getElementById("webRTC-selectWindowOrScreen").hidden =
         reqVideoInput !== "Screen";
@@ -1449,6 +1470,7 @@ function getPromptMessageId(
 /**
  * Checks whether we have a microphone/camera in use by checking the activePerms map
  * or if we have an allow permission for a microphone/camera in sitePermissions
+ *
  * @param {Browser} browser - Browser to find all active and allowed microphone and camera devices for
  * @return true if one of the above conditions is met
  */
@@ -1502,6 +1524,7 @@ function removePrompt(aBrowser, aCallId) {
 
 /**
  * Clears temporary permission grants used for WebRTC device grace periods.
+ *
  * @param browser - Browser element to clear permissions for.
  * @param {boolean} clearCamera - Clear camera grants.
  * @param {boolean} clearMicrophone - Clear microphone grants.
@@ -1561,6 +1584,7 @@ function persistGrantOrPromptPermission(principal, permissionName, remember) {
 
 /**
  * Clears any persisted PROMPT (aka Always Ask) permission.
+ *
  * @param principal - Principal to remove permission from.
  * @param {string} permissionName - name of permission.
  * @param browser - Browser element to clear permission for.
@@ -1582,6 +1606,7 @@ function maybeClearAlwaysAsk(principal, permissionName, browser) {
 
 /**
  * Helper for lazily creating the webrtc-preview element.
+ *
  * @param {Document} chromeDoc - The chrome document to create the webrtc-preview element in.
  * @returns {HTMLElement} The webrtc-preview element which has been inserted into the DOM.
  */
@@ -1594,4 +1619,52 @@ function getOrCreateWebRTCPreviewEl(chromeDoc) {
     previewSection.insertBefore(previewEl, previewSection.firstChild);
   }
   return previewEl;
+}
+
+/**
+ * On prompt "shown", if a camera permission request was made as the result of
+ * user interaction start the camera preview automatically.
+ * While websites don't have access to the camera preview, giving websites the
+ * ability to turn on the users camera without any user interaction can be
+ * scary. If there is no user input we offer the user to start the preview
+ * manually.
+ *
+ * @param {Document} doc - The chrome document containing the prompt.
+ * @param {boolean} isHandlingUserInput - Whether the prompt is shown as a
+ * result of user interaction.
+ */
+function onCameraPromptShown(doc, isHandlingUserInput) {
+  // Skip if the request was made without user input.
+  if (!isHandlingUserInput) {
+    return;
+  }
+
+  // Skip if the entire preview section is hidden.
+  if (doc.getElementById("webRTC-preview-section").hidden) {
+    return;
+  }
+
+  // Skip if no device is selected.
+  let cameraMenuPopup = doc.getElementById("webRTC-selectCamera-menupopup");
+  let deviceId = cameraMenuPopup?.querySelector("[selected]")?.deviceId;
+  if (!deviceId) {
+    return;
+  }
+
+  let webrtcPreview = doc.getElementById("webRTC-preview");
+  // Pass deviceId and mediaSource to make sure they're up to date,
+  // matching the user selection.
+  webrtcPreview?.startPreview({ deviceId, mediaSource: "camera" });
+}
+
+function isSidebar(browser) {
+  const sidebarBrowser =
+    browser.browsingContext?.topChromeWindow?.SidebarController?.browser;
+  if (!sidebarBrowser) {
+    return false;
+  }
+
+  const nestedBrowsers =
+    sidebarBrowser.contentDocument.querySelectorAll("browser");
+  return Array.from(nestedBrowsers).some(b => b === browser);
 }

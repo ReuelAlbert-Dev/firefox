@@ -12,7 +12,6 @@ const {
 const {
   LongStringActor,
 } = require("resource://devtools/server/actors/string.js");
-const TrackChangeEmitter = require("resource://devtools/server/actors/utils/track-change-emitter.js");
 
 const {
   style: { ELEMENT_STYLE },
@@ -153,8 +152,6 @@ class PageStyleActor extends Actor {
         // expected support of font-stretch at CSS Fonts Level 4.
         fontWeightLevel4:
           CSS.supports("font-weight: 1") && CSS.supports("font-stretch: 100%"),
-        // @backward-compat { version 144 } This trait can be removed when 144 reaches release
-        newInactiveCssDataShape: true,
       },
     };
   }
@@ -581,6 +578,7 @@ class PageStyleActor extends Actor {
 
   /**
    * Get the set of styles that apply to a given node.
+   *
    * @param NodeActor node
    * @param object options
    *   `filter`: A string filter that affects the "matched" handling.
@@ -653,6 +651,7 @@ class PageStyleActor extends Actor {
   /**
    * Helper function for getApplied, gets all the rules from a given
    * element. See getApplied for documentation on parameters.
+   *
    * @param NodeActor node
    * @param bool inherited
    * @param object options
@@ -893,6 +892,7 @@ class PageStyleActor extends Actor {
   /**
    * Helper function for _getAllElementRules, returns the rules from a given
    * element. See getApplied for documentation on parameters.
+   *
    * @param DOMNode node
    * @param string pseudo
    * @param DOMNode inherited
@@ -1002,6 +1002,7 @@ class PageStyleActor extends Actor {
   /**
    * Helper function for getApplied that fetches a set of style properties that
    * apply to the given node and associated rules
+   *
    * @param NodeActor node
    * @param object options
    *   `filter`: A string filter that affects the "matched" handling.
@@ -1094,6 +1095,7 @@ class PageStyleActor extends Actor {
    * This method returns an object with properties giving information about
    * the node's margin, border, padding and content region sizes, as well
    * as information about the type of box, its position, z-index, etc...
+   *
    * @param {NodeActor} node
    * @param {Object} options The only available option is autoMargins.
    * If set to true, the element's margins will receive an extra check to see
@@ -1205,6 +1207,7 @@ class PageStyleActor extends Actor {
   /**
    * Helper function for adding a new rule and getting its applied style
    * properties
+   *
    * @param NodeActor node
    * @param CSSStyleRule rule
    * @returns Array containing its applied style properties
@@ -1218,6 +1221,7 @@ class PageStyleActor extends Actor {
 
   /**
    * Adds a new rule, and returns the new StyleRuleActor.
+   *
    * @param {NodeActor} node
    * @param {String} pseudoClasses The list of pseudo classes to append to the
    *        new selector.
@@ -1263,7 +1267,7 @@ class PageStyleActor extends Actor {
     const cssRule = sheet.cssRules.item(index);
     const ruleActor = this._styleRef(cssRule, null, true);
 
-    TrackChangeEmitter.trackChange({
+    this.inspector.targetActor.emit("track-css-change", {
       ...ruleActor.metadata,
       type: "rule-add",
       add: null,

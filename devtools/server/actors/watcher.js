@@ -218,7 +218,7 @@ exports.WatcherActor = class WatcherActor extends Actor {
     super.destroy();
   }
 
-  /*
+  /**
    * Get the list of the currently watched resources for this watcher.
    *
    * @return Array<String>
@@ -339,6 +339,7 @@ exports.WatcherActor = class WatcherActor extends Actor {
   /**
    * Flush any early iframe targets relating to this top level
    * window target.
+   *
    * @param {number} topInnerWindowID
    */
   _flushIframeTargets(topInnerWindowID) {
@@ -577,7 +578,7 @@ exports.WatcherActor = class WatcherActor extends Actor {
     );
 
     switch (this.sessionContext.type) {
-      case "all":
+      case "all": {
         const parentProcessTargetActor = actors.find(
           actor => actor.typeName === "parentProcessTarget"
         );
@@ -585,6 +586,7 @@ exports.WatcherActor = class WatcherActor extends Actor {
           return new Set([parentProcessTargetActor]);
         }
         return new Set();
+      }
       case "browser-element":
       case "webextension":
         // All target actors for browser-element and webextension sessions

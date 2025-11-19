@@ -82,8 +82,8 @@ class MockAudioReceiveStream : public webrtc::AudioReceiveStreamInterface {
   void SetRtcpMode(webrtc::RtcpMode mode) override {}
 
   virtual void SetDepacketizerToDecoderFrameTransformer(
-      webrtc::scoped_refptr<webrtc::FrameTransformerInterface> frame_transformer)
-      override {
+      webrtc::scoped_refptr<webrtc::FrameTransformerInterface>
+          frame_transformer) override {
     MOZ_CRASH(
         "Unimplemented after webrtc.org e2561e17e2 removed the Reconfigure "
         "method.");
@@ -139,6 +139,7 @@ class MockVideoSendStream : public webrtc::VideoSendStream {
     return std::vector<webrtc::scoped_refptr<webrtc::Resource>>();
   }
 
+  void SetCsrcs(webrtc::ArrayView<const uint32_t> csrcs) override {}
   void GenerateKeyFrame(const std::vector<std::string>& rids) override {}
 
   virtual ~MockVideoSendStream() {}
@@ -170,8 +171,8 @@ class MockVideoReceiveStream : public webrtc::VideoReceiveStreamInterface {
                              frame_decryptor) override {}
 
   void SetDepacketizerToDecoderFrameTransformer(
-      webrtc::scoped_refptr<webrtc::FrameTransformerInterface> frame_transformer)
-      override {}
+      webrtc::scoped_refptr<webrtc::FrameTransformerInterface>
+          frame_transformer) override {}
 
   RecordingState SetAndGetRecordingState(RecordingState state,
                                          bool generate_key_frame) override {
@@ -308,18 +309,17 @@ class MockCall : public webrtc::Call {
     mEncoderInfo = aInfo;
   }
 
-  void EnableSendCongestionControlFeedbackAccordingToRfc8888() override {}
-  int FeedbackAccordingToRfc8888Count() override { return 0; }
-  int FeedbackAccordingToTransportCcCount() override { return 0; }
+  void SetPreferredRtcpCcAckType(
+      webrtc::RtcpFeedbackType preferred_rtcp_cc_ack_type) override {}
+  std::optional<int> FeedbackAccordingToRfc8888Count() override { return 0; }
+  std::optional<int> FeedbackAccordingToTransportCcCount() override {
+    return 0;
+  }
 
   std::vector<webrtc::VideoStream> CreateEncoderStreams(int width, int height) {
     mVideoSendEncoderConfig->video_stream_factory->SetEncoderInfo(mEncoderInfo);
     return mVideoSendEncoderConfig->video_stream_factory->CreateEncoderStreams(
         mUnusedConfig, width, height, *mVideoSendEncoderConfig);
-  }
-
-  virtual const webrtc::FieldTrialsView& trials() const override {
-    return mUnusedConfig;
   }
 
   virtual webrtc::TaskQueueBase* network_thread() const override {

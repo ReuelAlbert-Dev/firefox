@@ -65,7 +65,6 @@
 #if LIBAVCODEC_VERSION_MAJOR > 58
 #  define AV_PIX_FMT_VAAPI_VLD AV_PIX_FMT_VAAPI
 #endif
-#include "mozilla/PodOperations.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/TaskQueue.h"
@@ -124,7 +123,7 @@ typedef mozilla::layers::BufferRecycleBin BufferRecycleBin;
 namespace mozilla {
 
 #if defined(MOZ_USE_HWDECODE) && defined(MOZ_WIDGET_GTK)
-MOZ_RUNINIT nsTArray<AVCodecID>
+MOZ_CONSTINIT nsTArray<AVCodecID>
     FFmpegVideoDecoder<LIBAV_VER>::mAcceleratedFormats;
 #endif
 
@@ -650,6 +649,11 @@ void FFmpegVideoDecoder<LIBAV_VER>::InitHWDecoderIfAllowed() {
 }
 #endif  // MOZ_USE_HWDECODE
 
+static bool ShouldEnable8BitConversion(const struct AVCodec* aCodec) {
+  return 0 == strncmp(aCodec->name, "libdav1d", 8) ||
+         0 == strncmp(aCodec->name, "vp9", 3);
+}
+
 RefPtr<MediaDataDecoder::InitPromise> FFmpegVideoDecoder<LIBAV_VER>::Init() {
   AUTO_PROFILER_LABEL("FFmpegVideoDecoder::Init", MEDIA_PLAYBACK);
   FFMPEG_LOG("FFmpegVideoDecoder, init, IsHardwareAccelerated=%d\n",
@@ -662,11 +666,9 @@ RefPtr<MediaDataDecoder::InitPromise> FFmpegVideoDecoder<LIBAV_VER>::Init() {
   if (NS_FAILED(rv)) {
     return InitPromise::CreateAndReject(rv, __func__);
   }
-  // Enable 8-bit conversion only for dav1d.
-  m8BitOutput =
-      m8BitOutput && 0 == strncmp(mCodecContext->codec->name, "libdav1d", 8);
+  m8BitOutput = m8BitOutput && ShouldEnable8BitConversion(mCodecContext->codec);
   if (m8BitOutput) {
-    FFMPEG_LOG("Enable 8-bit output for dav1d");
+    FFMPEG_LOG("Enable 8-bit output for %s", mCodecContext->codec->name);
     m8BitRecycleBin = MakeRefPtr<BufferRecycleBin>();
   }
   return InitPromise::CreateAndResolve(TrackInfo::kVideoTrack, __func__);
@@ -1580,6 +1582,30 @@ gfx::SurfaceFormat FFmpegVideoDecoder<LIBAV_VER>::GetSurfaceFormat() const {
   }
 }
 
+#if defined(MOZ_WIDGET_GTK) && defined(MOZ_USE_HWDECODE)
+// Convert AVChromaLocation to
+// wp_color_representation_surface_v1_chroma_location
+static uint32_t AVChromaLocationToWPChromaLocation(uint32_t aAVChromaLocation) {
+  switch (aAVChromaLocation) {
+    case AVCHROMA_LOC_UNSPECIFIED:
+    default:
+      return 0;  // No chroma location specified
+    case AVCHROMA_LOC_LEFT:
+      return 1;
+    case AVCHROMA_LOC_CENTER:
+      return 2;
+    case AVCHROMA_LOC_TOPLEFT:
+      return 3;
+    case AVCHROMA_LOC_TOP:
+      return 4;
+    case AVCHROMA_LOC_BOTTOMLEFT:
+      return 5;
+    case AVCHROMA_LOC_BOTTOM:
+      return 6;
+  }
+}
+#endif
+
 MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
     int64_t aOffset, int64_t aPts, int64_t aDuration,
     MediaDataDecoder::DecodedData& aResults) {
@@ -1664,6 +1690,11 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
   // MacIOSurfaceImage, then we could use it for HDR.
   requiresCopy = (b.mColorDepth != gfx::ColorDepth::COLOR_8);
 #  endif
+#  ifdef MOZ_WIDGET_ANDROID
+  // Some Android devices can only render 8-bit images and cannot use high
+  // bit-depth decoded data directly.
+  requiresCopy = m8BitOutput && b.mColorDepth != gfx::ColorDepth::COLOR_8;
+#  endif
   if (mIsUsingShmemBufferForDecode && *mIsUsingShmemBufferForDecode &&
       !requiresCopy) {
     RefPtr<ImageBufferWrapper> wrapper = static_cast<ImageBufferWrapper*>(
@@ -1695,6 +1726,8 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImage(
         if (mInfo.mTransferFunction) {
           surface->SetTransferFunction(mInfo.mTransferFunction.value());
         }
+        surface->SetWPChromaLocation(
+            AVChromaLocationToWPChromaLocation(mFrame->chroma_location));
         FFMPEG_LOGV(
             "Uploaded frame DMABuf surface UID %d HDR %d color space %s/%s "
             "transfer %s",
@@ -2269,6 +2302,20 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageD3D11(
     return MediaResult(NS_ERROR_DOM_MEDIA_DECODE_ERR, msg);
   }
 
+  D3D11_TEXTURE2D_DESC desc;
+  texture->GetDesc(&desc);
+
+  auto format = [&]() {
+    if (desc.Format == DXGI_FORMAT_P010) {
+      return gfx::SurfaceFormat::P010;
+    }
+    if (desc.Format == DXGI_FORMAT_P016) {
+      return gfx::SurfaceFormat::P016;
+    }
+    MOZ_ASSERT(desc.Format == DXGI_FORMAT_NV12);
+    return gfx::SurfaceFormat::NV12;
+  }();
+
   RefPtr<Image> image;
   gfx::IntRect pictureRegion =
       mInfo.ScaledImageRect(mFrame->width, mFrame->height);
@@ -2280,7 +2327,7 @@ MediaResult FFmpegVideoDecoder<LIBAV_VER>::CreateImageD3D11(
                 mNumOfHWTexturesInUse.load());
     hr = mDXVA2Manager->WrapTextureWithImage(
         new D3D11TextureWrapper(
-            mFrame, mLib, texture, index,
+            mFrame, mLib, texture, format, index,
             [self = RefPtr<FFmpegVideoDecoder>(this), this]() {
               MOZ_ASSERT(mNumOfHWTexturesInUse > 0);
               mNumOfHWTexturesInUse--;

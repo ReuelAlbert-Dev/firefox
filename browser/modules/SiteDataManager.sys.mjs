@@ -56,7 +56,7 @@ export var SiteDataManager = {
    *        updated. This can be used to e.g. fill a UI that lists sites without
    *        blocking on the entire update to finish.
    * @returns a Promise that resolves when updating is done.
-   **/
+   */
   async updateSites(entryUpdatedCallback) {
     Services.obs.notifyObservers(null, "sitedatamanager:updating-sites");
     // Clear old data and requests first
@@ -68,6 +68,7 @@ export var SiteDataManager = {
 
   /**
    * Get the base domain of a host on a best-effort basis.
+   *
    * @param {string} host - Host to convert.
    * @returns {string} Computed base domain. If the base domain cannot be
    * determined, because the host is an IP address or does not have enough

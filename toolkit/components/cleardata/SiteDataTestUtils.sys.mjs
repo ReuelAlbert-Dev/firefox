@@ -12,7 +12,7 @@ XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "swm",
   "@mozilla.org/serviceworkers/manager;1",
-  "nsIServiceWorkerManager"
+  Ci.nsIServiceWorkerManager
 );
 
 /**
@@ -71,6 +71,7 @@ export var SiteDataTestUtils = {
   /**
    * Adds a new cookie for the specified origin or host + path + oa, with the
    * specified contents. The cookie will be valid for one day.
+   *
    * @param {object} options
    * @param {String} [options.origin] - Origin of the site to add test data for.
    * If set, overrides host, path and originAttributes args.

@@ -27,6 +27,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   Marionette: "chrome://remote/content/components/Marionette.sys.mjs",
   MarionettePrefs: "chrome://remote/content/marionette/prefs.sys.mjs",
   modal: "chrome://remote/content/shared/Prompt.sys.mjs",
+  NavigableManager: "chrome://remote/content/shared/NavigableManager.sys.mjs",
   navigate: "chrome://remote/content/marionette/navigate.sys.mjs",
   permissions: "chrome://remote/content/shared/Permissions.sys.mjs",
   pprint: "chrome://remote/content/shared/Format.sys.mjs",
@@ -157,10 +158,12 @@ class ActionsHelper {
    */
   dispatchEvent(eventName, browsingContext, details) {
     if (
-      eventName === "synthesizeWheelAtPoint" &&
-      lazy.actions.useAsyncWheelEvents
+      (eventName === "synthesizeWheelAtPoint" &&
+        lazy.actions.useAsyncWheelEvents) ||
+      (eventName == "synthesizeMouseAtPoint" &&
+        lazy.actions.useAsyncMouseEvents)
     ) {
-      browsingContext = browsingContext.topChromeWindow.browsingContext;
+      browsingContext = browsingContext.topChromeWindow?.browsingContext;
       details.eventData.asyncEnabled = true;
     }
 
@@ -172,12 +175,16 @@ class ActionsHelper {
    *
    * @param {BrowsingContext} browsingContext
    *     The browsing context to dispatch the event to.
-   *
-   * @returns {Promise}
-   *     Promise that resolves when the finalization is done.
    */
-  finalizeAction(browsingContext) {
-    return this.#getActor(browsingContext).finalizeAction();
+  async finalizeAction(browsingContext) {
+    try {
+      await this.#getActor(browsingContext).finalizeAction();
+    } catch (e) {
+      // Ignore the error if the underlying browsing context is already gone.
+      if (e.name !== lazy.error.NoSuchWindowError.name) {
+        throw e;
+      }
+    }
   }
 
   /**
@@ -333,6 +340,14 @@ export function GeckoDriver(server) {
   this._actionsHelper = new ActionsHelper(this);
 }
 
+GeckoDriver.prototype._trace = function (message, browsingContext = null) {
+  if (browsingContext !== null) {
+    lazy.logger.trace(`[${browsingContext.id}] ${message}`);
+  } else {
+    lazy.logger.trace(message);
+  }
+};
+
 /**
  * The current context decides if commands are executed in chrome- or
  * content space.
@@ -409,7 +424,14 @@ GeckoDriver.prototype.QueryInterface = ChromeUtils.generateQI([
  * Callback used to observe the closing of modal dialogs
  * during the session's lifetime.
  */
-GeckoDriver.prototype.handleClosedModalDialog = function () {
+GeckoDriver.prototype.handleClosedModalDialog = function (_eventName, data) {
+  const { contentBrowser, detail } = data;
+
+  this._trace(
+    `Prompt closed (type: "${detail.promptType}", accepted: "${detail.accepted}")`,
+    contentBrowser.browsingContext
+  );
+
   this.dialog = null;
 };
 
@@ -417,12 +439,24 @@ GeckoDriver.prototype.handleClosedModalDialog = function () {
  * Callback used to observe the creation of new modal dialogs
  * during the session's lifetime.
  */
-GeckoDriver.prototype.handleOpenModalDialog = function (eventName, data) {
-  this.dialog = data.prompt;
+GeckoDriver.prototype.handleOpenModalDialog = function (_eventName, data) {
+  const { contentBrowser, prompt } = data;
+
+  prompt.getText().then(text => {
+    // We need the text to identify a user prompt when it gets
+    // randomly opened. Because on Android the text is asynchronously
+    // retrieved lets delay the logging without making the handler async.
+    this._trace(
+      `Prompt opened (type: "${prompt.promptType}", text: "${text}")`,
+      contentBrowser.browsingContext
+    );
+  });
+
+  this.dialog = prompt;
 
   if (this.dialog.promptType === "beforeunload" && !this.currentSession?.bidi) {
     // Only implicitly accept the prompt when its not a BiDi session.
-    lazy.logger.trace(`Implicitly accepted "beforeunload" prompt`);
+    this._trace(`Implicitly accepted "beforeunload" prompt`);
     this.dialog.accept();
     return;
   }
@@ -960,8 +994,10 @@ GeckoDriver.prototype.getContext = function () {
  *     If an {@link Error} was thrown whilst evaluating the script.
  * @throws {NoSuchElementError}
  *     If an element that was passed as part of <var>args</var> is unknown.
+ * @throws {NoSuchFrameError}
+ *     Child browsing context has been discarded.
  * @throws {NoSuchWindowError}
- *     Browsing context has been discarded.
+ *     Top-level browsing context has been discarded.
  * @throws {ScriptTimeoutError}
  *     If the script was interrupted due to reaching the session's
  *     script timeout.
@@ -1033,8 +1069,10 @@ GeckoDriver.prototype.executeScript = function (cmd) {
  *     If an Error was thrown whilst evaluating the script.
  * @throws {NoSuchElementError}
  *     If an element that was passed as part of <var>args</var> is unknown.
+ * @throws {NoSuchFrameError}
+ *     Child browsing context has been discarded.
  * @throws {NoSuchWindowError}
- *     Browsing context has been discarded.
+ *     Top-level browsing context has been discarded.
  * @throws {ScriptTimeoutError}
  *     If the script was interrupted due to reaching the session's
  *     script timeout.
@@ -1357,7 +1395,8 @@ GeckoDriver.prototype.getWindowHandle = function () {
   if (this.context == lazy.Context.Chrome) {
     return lazy.windowManager.getIdForWindow(this.curBrowser.window);
   }
-  return lazy.TabManager.getIdForBrowser(this.curBrowser.contentBrowser);
+
+  return this.curBrowser.contentBrowserId;
 };
 
 /**
@@ -1378,7 +1417,10 @@ GeckoDriver.prototype.getWindowHandles = function () {
   if (this.context == lazy.Context.Chrome) {
     return lazy.windowManager.chromeWindowHandles.map(String);
   }
-  return lazy.TabManager.allBrowserUniqueIds.map(String);
+
+  return lazy.TabManager.getBrowsers({ unloaded: true }).map(browser =>
+    lazy.NavigableManager.getIdForBrowser(browser)
+  );
 };
 
 /**
@@ -2706,7 +2748,7 @@ GeckoDriver.prototype.newWindow = async function (cmd) {
     }
   );
 
-  const id = lazy.TabManager.getIdForBrowser(contentBrowser);
+  const id = lazy.NavigableManager.getIdForBrowser(contentBrowser);
 
   return { handle: id.toString(), type };
 };
@@ -2747,7 +2789,9 @@ GeckoDriver.prototype.close = async function () {
   await this.curBrowser.closeTab();
   this.currentSession.contentBrowsingContext = null;
 
-  return lazy.TabManager.allBrowserUniqueIds.map(String);
+  return lazy.TabManager.getBrowsers({ unloaded: true }).map(browser =>
+    lazy.NavigableManager.getIdForBrowser(browser)
+  );
 };
 
 /**
@@ -3608,6 +3652,25 @@ GeckoDriver.prototype.print = async function (cmd) {
   return btoa(binaryString);
 };
 
+GeckoDriver.prototype.getGlobalPrivacyControl = function () {
+  const gpc = Services.prefs.getBoolPref(
+    "privacy.globalprivacycontrol.enabled",
+    true
+  );
+  return { gpc };
+};
+
+GeckoDriver.prototype.setGlobalPrivacyControl = function (cmd) {
+  const { gpc } = cmd.parameters;
+  if (typeof gpc != "boolean") {
+    throw new lazy.error.InvalidArgumentError(
+      "Value of `gpc` should be of type 'boolean'"
+    );
+  }
+  Services.prefs.setBoolPref("privacy.globalprivacycontrol.enabled", gpc);
+  return { gpc };
+};
+
 GeckoDriver.prototype.addVirtualAuthenticator = function (cmd) {
   const {
     protocol,
@@ -3947,6 +4010,10 @@ GeckoDriver.prototype.commands = {
   "WebDriver:SwitchToParentFrame": GeckoDriver.prototype.switchToParentFrame,
   "WebDriver:SwitchToWindow": GeckoDriver.prototype.switchToWindow,
   "WebDriver:TakeScreenshot": GeckoDriver.prototype.takeScreenshot,
+  "WebDriver:GetGlobalPrivacyControl":
+    GeckoDriver.prototype.getGlobalPrivacyControl,
+  "WebDriver:SetGlobalPrivacyControl":
+    GeckoDriver.prototype.setGlobalPrivacyControl,
 
   // WebAuthn
   "WebAuthn:AddVirtualAuthenticator":

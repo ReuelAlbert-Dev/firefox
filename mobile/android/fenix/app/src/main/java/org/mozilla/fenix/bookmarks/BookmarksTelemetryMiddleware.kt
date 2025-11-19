@@ -15,7 +15,7 @@ private val LIST_SCREEN_METRIC_SOURCE = MetricsUtils.BookmarkAction.Source.BOOKM
 
 internal class BookmarksTelemetryMiddleware : Middleware<BookmarksState, BookmarksAction> {
 
-    @Suppress("LongMethod", "ComplexMethod")
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
     override fun invoke(
         context: MiddlewareContext<BookmarksState, BookmarksAction>,
         next: (BookmarksAction) -> Unit,
@@ -117,6 +117,7 @@ internal class BookmarksTelemetryMiddleware : Middleware<BookmarksState, Bookmar
             is BookmarksListMenuAction.Folder.DeleteClicked,
             CloseClicked,
             AddFolderClicked,
+            is SelectFolderAction.SortMenu,
             is BookmarkLongClicked,
             is BookmarksListMenuAction.Bookmark.DeleteClicked,
             is BookmarksListMenuAction.Bookmark.EditClicked,
