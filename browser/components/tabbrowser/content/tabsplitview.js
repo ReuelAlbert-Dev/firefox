@@ -22,6 +22,15 @@
     }
 
     /**
+     * @returns {MozTabbrowserGroup}
+     */
+    get group() {
+      return gBrowser.isTabGroup(this.parentElement)
+        ? this.parentElement
+        : null;
+    }
+
+    /**
      * @param {boolean} val
      */
     set hasActiveTab(val) {
@@ -55,6 +64,11 @@
       this.#tabChangeObserver?.disconnect();
       this.ownerGlobal.removeEventListener("TabSelect", this);
       this.#deactivate();
+      this.dispatchEvent(
+        new CustomEvent("SplitViewRemoved", {
+          bubbles: true,
+        })
+      );
     }
 
     #observeTabChanges() {

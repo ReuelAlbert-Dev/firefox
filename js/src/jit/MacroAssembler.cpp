@@ -3244,24 +3244,72 @@ void MacroAssembler::extractCurrentIndexAndKindFromIterator(Register iterator,
                          PropertyIteratorObject::offsetOfIteratorSlot());
   loadPrivate(nativeIterAddr, outIndex);
 
-  // Compute offset of propertyCursor_ from propertiesBegin()
-  loadPtr(Address(outIndex, NativeIterator::offsetOfPropertyCursor()), outKind);
-  subPtr(Address(outIndex, NativeIterator::offsetOfShapesEnd()), outKind);
+  // Load the property count into outKind.
+  load32(Address(outIndex, NativeIterator::offsetOfPropertyCount()), outKind);
 
-  // Compute offset of current index from indicesBegin(). Note that because
-  // propertyCursor has already been incremented, this is actually the offset
-  // of the next index. We adjust accordingly below.
-  size_t indexAdjustment =
-      sizeof(GCPtr<JSLinearString*>) / sizeof(PropertyIndex);
-  if (indexAdjustment != 1) {
-    MOZ_ASSERT(indexAdjustment == 2);
-    rshift32(Imm32(1), outKind);
+  // We need two bits of wiggle room in a u32 here for the logic below.
+  static_assert(NativeIterator::PropCountLimit <= 1 << 30);
+
+  // Shift up the property count on 64 bit. Ultimately we want
+  // sizeof(IteratorProperty) * count + sizeof(PropertyIndex) * cursor.
+  // If we shift up our count to be on the same scale as cursor right now,
+  // we can do this all with one register.
+  static_assert(sizeof(IteratorProperty) == sizeof(PropertyIndex) ||
+                sizeof(IteratorProperty) == sizeof(PropertyIndex) * 2);
+  if constexpr (sizeof(IteratorProperty) > sizeof(PropertyIndex)) {
+    lshift32(Imm32(1), outKind);
   }
 
-  // Load current index.
-  loadPtr(Address(outIndex, NativeIterator::offsetOfPropertiesEnd()), outIndex);
-  load32(BaseIndex(outIndex, outKind, Scale::TimesOne,
-                   -int32_t(sizeof(PropertyIndex))),
+  // Add the current cursor. This is a uint32_t which has already been
+  // incremented in iteration to index the *next* property, so we'll want to
+  // keep that in mind in our final address calculation.
+  add32(Address(outIndex, NativeIterator::offsetOfPropertyCursor()), outKind);
+
+  // outKind holds the offset in u32's to our PropertyIndex, so just multiply
+  // by four, add it to the offset of the first property, and subtract a
+  // PropertyIndex since we know we already incremented.
+  load32(BaseIndex(outIndex, outKind, Scale::TimesFour,
+                   NativeIterator::offsetOfFirstProperty() -
+                       int32_t(sizeof(PropertyIndex))),
+         outIndex);
+
+  // Extract kind.
+  rshift32(Imm32(PropertyIndex::KindShift), outIndex, outKind);
+
+  // Extract index.
+  and32(Imm32(PropertyIndex::IndexMask), outIndex);
+}
+
+void MacroAssembler::extractIndexAndKindFromIteratorByIterIndex(
+    Register iterator, Register inIndex, Register outKind, Register outIndex) {
+  // Load iterator object
+  Address nativeIterAddr(iterator,
+                         PropertyIteratorObject::offsetOfIteratorSlot());
+  loadPrivate(nativeIterAddr, outIndex);
+
+  // Load the property count into outKind.
+  load32(Address(outIndex, NativeIterator::offsetOfPropertyCount()), outKind);
+
+  // We need two bits of wiggle room in a u32 here for the logic below.
+  static_assert(NativeIterator::PropCountLimit <= 1 << 30);
+
+  // Shift up the property count on 64 bit. Ultimately we want
+  // sizeof(IteratorProperty) * count + sizeof(PropertyIndex) * cursor.
+  // If we shift up our count to be on the same scale as cursor right now,
+  // we can do this all with one register.
+  static_assert(sizeof(IteratorProperty) == sizeof(PropertyIndex) ||
+                sizeof(IteratorProperty) == sizeof(PropertyIndex) * 2);
+  if constexpr (sizeof(IteratorProperty) > sizeof(PropertyIndex)) {
+    lshift32(Imm32(1), outKind);
+  }
+
+  // Add the index
+  add32(inIndex, outKind);
+
+  // outKind holds the offset in u32's to our PropertyIndex, so just multiply
+  // by four and add it to the offset of the first property
+  load32(BaseIndex(outIndex, outKind, Scale::TimesFour,
+                   NativeIterator::offsetOfFirstProperty()),
          outIndex);
 
   // Extract kind.
@@ -4886,6 +4934,7 @@ void MacroAssembler::setupAlignedABICall() {
   dynamicAlignment_ = false;
 }
 
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
 void MacroAssembler::wasmCheckUnsafeCallWithABIPre() {
   // Set the JSContext::inUnsafeCallWithABI flag.
   loadPtr(Address(InstanceReg, wasm::Instance::offsetOfCx()),
@@ -4895,7 +4944,6 @@ void MacroAssembler::wasmCheckUnsafeCallWithABIPre() {
   store32(Imm32(1), flagAddr);
 }
 
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
 void MacroAssembler::wasmCheckUnsafeCallWithABIPost() {
   // Check JSContext::inUnsafeCallWithABI was cleared as expected.
   Label ok;
@@ -4987,6 +5035,7 @@ void MacroAssembler::callWithABINoProfiler(void* fun, ABIType result,
   uint32_t stackAdjust;
   callWithABIPre(&stackAdjust);
 
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   if (check == CheckUnsafeCallWithABI::Check) {
     // Set the JSContext::inUnsafeCallWithABI flag.
     push(ReturnReg);
@@ -4997,6 +5046,7 @@ void MacroAssembler::callWithABINoProfiler(void* fun, ABIType result,
     // On arm64, SP may be < PSP now (that's OK).
     // eg testcase: tests/bug1375074.js
   }
+#endif
 
   call(ImmPtr(fun));
 
@@ -5028,9 +5078,13 @@ CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
 
   // The instance register is used in builtin thunks and must be set.
   bool needsBuiltinThunk = wasm::NeedsBuiltinThunk(imm);
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   // The builtin thunk exits the JIT activation, if we don't have one we must
   // use AutoUnsafeCallWithABI inside the builtin and check that here.
   bool checkUnsafeCallWithABI = !needsBuiltinThunk;
+#else
+  bool checkUnsafeCallWithABI = false;
+#endif
   if (needsBuiltinThunk || checkUnsafeCallWithABI) {
     if (instanceOffset) {
       loadPtr(Address(getStackPointer(), *instanceOffset + stackAdjust),
@@ -5040,9 +5094,11 @@ CodeOffset MacroAssembler::callWithABI(wasm::BytecodeOffset bytecode,
     }
   }
 
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   if (checkUnsafeCallWithABI) {
     wasmCheckUnsafeCallWithABIPre();
   }
+#endif
 
   CodeOffset raOffset = call(
       wasm::CallSiteDesc(bytecode.offset(), wasm::CallSiteKind::Symbolic), imm);
@@ -6384,12 +6440,14 @@ CodeOffset MacroAssembler::wasmCallBuiltinInstanceMethod(
     MOZ_CRASH("Unknown abi passing style for pointer");
   }
 
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   // The builtin thunk exits the JIT activation, if we don't have one we must
   // use AutoUnsafeCallWithABI inside the builtin and check that here.
   bool checkUnsafeCallWithABI = !wasm::NeedsBuiltinThunk(builtin);
   if (checkUnsafeCallWithABI) {
     wasmCheckUnsafeCallWithABIPre();
   }
+#endif
 
   CodeOffset ret = call(desc, builtin);
 
@@ -6866,15 +6924,16 @@ BranchWasmRefIsSubtypeRegisters MacroAssembler::regsForBranchWasmRefIsSubtype(
   }
 }
 
-void MacroAssembler::branchWasmRefIsSubtype(
+FaultingCodeOffset MacroAssembler::branchWasmRefIsSubtype(
     Register ref, wasm::MaybeRefType sourceType, wasm::RefType destType,
-    Label* label, bool onSuccess, Register superSTV, Register scratch1,
-    Register scratch2) {
+    Label* label, bool onSuccess, bool signalNullChecks, Register superSTV,
+    Register scratch1, Register scratch2) {
+  FaultingCodeOffset result = FaultingCodeOffset();
   switch (destType.hierarchy()) {
     case wasm::RefTypeHierarchy::Any: {
-      branchWasmRefIsSubtypeAny(ref, sourceType.valueOr(wasm::RefType::any()),
-                                destType, label, onSuccess, superSTV, scratch1,
-                                scratch2);
+      result = branchWasmRefIsSubtypeAny(
+          ref, sourceType.valueOr(wasm::RefType::any()), destType, label,
+          onSuccess, signalNullChecks, superSTV, scratch1, scratch2);
     } break;
     case wasm::RefTypeHierarchy::Func: {
       branchWasmRefIsSubtypeFunc(ref, sourceType.valueOr(wasm::RefType::func()),
@@ -6893,12 +6952,14 @@ void MacroAssembler::branchWasmRefIsSubtype(
     default:
       MOZ_CRASH("unknown type hierarchy for wasm cast");
   }
+  MOZ_ASSERT_IF(!signalNullChecks, !result.isValid());
+  return result;
 }
 
-void MacroAssembler::branchWasmRefIsSubtypeAny(
+FaultingCodeOffset MacroAssembler::branchWasmRefIsSubtypeAny(
     Register ref, wasm::RefType sourceType, wasm::RefType destType,
-    Label* label, bool onSuccess, Register superSTV, Register scratch1,
-    Register scratch2) {
+    Label* label, bool onSuccess, bool signalNullChecks, Register superSTV,
+    Register scratch1, Register scratch2) {
   MOZ_ASSERT(sourceType.isValid());
   MOZ_ASSERT(destType.isValid());
   MOZ_ASSERT(sourceType.isAnyHierarchy());
@@ -6928,8 +6989,53 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
     bind(&fallthrough);
   };
 
+  // We can omit the null check, and catch nulls in signal handling, if the dest
+  // type is non-nullable and the cast process will attempt to load from the
+  // (null) ref. This logic must be kept in sync with the flow of checks below;
+  // this will be checked by fcoLogicCheck.
+  bool willLoadShape =
+      // Dest type is a GC object
+      (wasm::RefType::isSubTypeOf(destType, wasm::RefType::eq()) &&
+       !destType.isI31() && !destType.isNone()) &&
+      // Source type is not already known to be a GC object
+      !(wasm::RefType::isSubTypeOf(sourceType, wasm::RefType::struct_()) ||
+        wasm::RefType::isSubTypeOf(sourceType, wasm::RefType::array()));
+  bool willLoadSTV =
+      // Dest type is struct or array or concrete type
+      (wasm::RefType::isSubTypeOf(destType, wasm::RefType::struct_()) ||
+       wasm::RefType::isSubTypeOf(destType, wasm::RefType::array())) &&
+      !destType.isNone();
+  bool canOmitNullCheck = signalNullChecks && !destType.isNullable() &&
+                          (willLoadShape || willLoadSTV);
+
+  FaultingCodeOffset fco = FaultingCodeOffset();
+  auto trackFCO = [&](FaultingCodeOffset newFco) {
+    if (signalNullChecks && !destType.isNullable() && !fco.isValid()) {
+      fco = newFco;
+    }
+  };
+  auto fcoLogicCheck = mozilla::DebugOnly(mozilla::MakeScopeExit([&]() {
+    // When we think we can omit the null check, we should get a valid FCO, and
+    // vice versa. These are asserted to match because:
+    //  - If we think we cannot omit the null check, but get a valid FCO, then
+    //    we wasted an optimization opportunity.
+    //  - If we think we *can* omit the null check, but do not get a valid FCO,
+    //    then we will segfault.
+    // We could ignore the former check, but better to be precise and ensure
+    // that we are getting the optimizations we expect.
+    MOZ_ASSERT_IF(signalNullChecks && fco.isValid(), canOmitNullCheck);
+    MOZ_ASSERT_IF(signalNullChecks && !fco.isValid(), !canOmitNullCheck);
+
+    // We should never get a valid FCO if the caller doesn't expect signal
+    // handling. This simplifies life for the caller.
+    MOZ_ASSERT_IF(!signalNullChecks, !fco.isValid());
+  }));
+
+  // -----------------------------------
+  // Actual test/cast logic begins here.
+
   // Check for null.
-  if (sourceType.isNullable()) {
+  if (sourceType.isNullable() && !canOmitNullCheck) {
     branchWasmAnyRefIsNull(true, ref, nullLabel);
   }
 
@@ -6937,13 +7043,15 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
   // not-null.
   if (destType.isNone()) {
     finishFail();
-    return;
+    MOZ_ASSERT(!willLoadShape && !willLoadSTV);
+    return fco;
   }
 
   if (destType.isAny()) {
     // No further checks for 'any'
     finishSuccess();
-    return;
+    MOZ_ASSERT(!willLoadShape && !willLoadSTV);
+    return fco;
   }
 
   // 'type' is now 'eq' or lower, which currently will either be a gc object or
@@ -6957,7 +7065,8 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
     if (destType.isI31()) {
       // No further checks for 'i31'
       finishFail();
-      return;
+      MOZ_ASSERT(!willLoadShape && !willLoadSTV);
+      return fco;
     }
   }
 
@@ -6966,13 +7075,18 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
   if (!wasm::RefType::isSubTypeOf(sourceType, wasm::RefType::struct_()) &&
       !wasm::RefType::isSubTypeOf(sourceType, wasm::RefType::array())) {
     branchWasmAnyRefIsObjectOrNull(false, ref, failLabel);
-    branchObjectIsWasmGcObject(false, ref, scratch1, failLabel);
+
+    MOZ_ASSERT(willLoadShape);
+    trackFCO(branchObjectIsWasmGcObject(false, ref, scratch1, failLabel));
+  } else {
+    MOZ_ASSERT(!willLoadShape);
   }
 
   if (destType.isEq()) {
     // No further checks for 'eq'
     finishSuccess();
-    return;
+    MOZ_ASSERT(!willLoadSTV);
+    return fco;
   }
 
   // 'type' is now 'struct', 'array', or a concrete type. (Bottom types and i31
@@ -6983,14 +7097,16 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
   // requires loading the object's superTypeVector->typeDef->kind, and checking
   // that it is correct.
 
-  loadPtr(Address(ref, int32_t(WasmGcObject::offsetOfSuperTypeVector())),
-          scratch1);
+  MOZ_ASSERT(willLoadSTV);
+  trackFCO(
+      loadPtr(Address(ref, int32_t(WasmGcObject::offsetOfSuperTypeVector())),
+              scratch1));
   if (destType.isTypeRef()) {
     // Concrete type, do superTypeVector check.
     branchWasmSTVIsSubtype(scratch1, superSTV, scratch2, destType.typeDef(),
                            label, onSuccess);
     bind(&fallthrough);
-    return;
+    return fco;
   }
 
   // Abstract type, do kind check
@@ -7002,6 +7118,7 @@ void MacroAssembler::branchWasmRefIsSubtypeAny(
   branch32(onSuccess ? Assembler::Equal : Assembler::NotEqual, scratch1,
            Imm32(int32_t(destType.typeDefKind())), label);
   bind(&fallthrough);
+  return fco;
 }
 
 void MacroAssembler::branchWasmRefIsSubtypeFunc(
@@ -7433,19 +7550,22 @@ void MacroAssembler::convertStringToWasmAnyRef(Register src, Register dest) {
   orPtr(Imm32(int32_t(wasm::AnyRefTag::String)), src, dest);
 }
 
-void MacroAssembler::branchObjectIsWasmGcObject(bool isGcObject, Register src,
-                                                Register scratch,
-                                                Label* label) {
+FaultingCodeOffset MacroAssembler::branchObjectIsWasmGcObject(bool isGcObject,
+                                                              Register src,
+                                                              Register scratch,
+                                                              Label* label) {
   constexpr uint32_t ShiftedMask = (Shape::kindMask() << Shape::kindShift());
   constexpr uint32_t ShiftedKind =
       (uint32_t(Shape::Kind::WasmGC) << Shape::kindShift());
   MOZ_ASSERT(src != scratch);
 
-  loadPtr(Address(src, JSObject::offsetOfShape()), scratch);
+  FaultingCodeOffset fco =
+      loadPtr(Address(src, JSObject::offsetOfShape()), scratch);
   load32(Address(scratch, Shape::offsetOfImmutableFlags()), scratch);
   and32(Imm32(ShiftedMask), scratch);
   branch32(isGcObject ? Assembler::Equal : Assembler::NotEqual, scratch,
            Imm32(ShiftedKind), label);
+  return fco;
 }
 
 void MacroAssembler::wasmNewStructObject(Register instance, Register result,
@@ -9350,7 +9470,7 @@ void MacroAssembler::branchIfResizableArrayBufferViewInBounds(Register obj,
 void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
                                                        Label* notReusable) {
   // See NativeIterator::isReusable.
-  Address flagsAddr(ni, NativeIterator::offsetOfFlagsAndCount());
+  Address flagsAddr(ni, NativeIterator::offsetOfFlags());
 
 #ifdef DEBUG
   Label niIsInitialized;
@@ -9364,17 +9484,6 @@ void MacroAssembler::branchIfNativeIteratorNotReusable(Register ni,
 
   branchTest32(Assembler::NonZero, flagsAddr,
                Imm32(NativeIterator::Flags::NotReusable), notReusable);
-}
-
-void MacroAssembler::branchNativeIteratorIndices(Condition cond, Register ni,
-                                                 Register temp,
-                                                 NativeIteratorIndices kind,
-                                                 Label* label) {
-  Address iterFlagsAddr(ni, NativeIterator::offsetOfFlagsAndCount());
-  load32(iterFlagsAddr, temp);
-  and32(Imm32(NativeIterator::IndicesMask), temp);
-  uint32_t shiftedKind = uint32_t(kind) << NativeIterator::IndicesShift;
-  branch32(cond, temp, Imm32(shiftedKind), label);
 }
 
 static void LoadNativeIterator(MacroAssembler& masm, Register obj,
@@ -9406,8 +9515,8 @@ static void LoadNativeIterator(MacroAssembler& masm, Register obj,
 // Otherwise, jump to |failure|.
 void MacroAssembler::maybeLoadIteratorFromShape(Register obj, Register dest,
                                                 Register temp, Register temp2,
-                                                Register temp3,
-                                                Label* failure) {
+                                                Register temp3, Label* failure,
+                                                bool exclusive) {
   // Register usage:
   // obj: always contains the input object
   // temp: walks the obj->shape->baseshape->proto->shape->... chain
@@ -9443,18 +9552,30 @@ void MacroAssembler::maybeLoadIteratorFromShape(Register obj, Register dest,
   // Load the native iterator and verify that it's reusable.
   andPtr(Imm32(~ShapeCachePtr::MASK), dest);
   LoadNativeIterator(*this, dest, nativeIterator);
-  branchIfNativeIteratorNotReusable(nativeIterator, failure);
+
+  if (exclusive) {
+    branchIfNativeIteratorNotReusable(nativeIterator, failure);
+  }
+
+  Label skipIndices;
+  load32(Address(nativeIterator, NativeIterator::offsetOfPropertyCount()),
+         temp3);
+  branchTest32(Assembler::Zero,
+               Address(nativeIterator, NativeIterator::offsetOfFlags()),
+               Imm32(NativeIterator::Flags::IndicesAllocated), &skipIndices);
+
+  computeEffectiveAddress(BaseIndex(nativeIterator, temp3, Scale::TimesFour),
+                          nativeIterator);
+
+  bind(&skipIndices);
+  computeEffectiveAddress(BaseIndex(nativeIterator, temp3, ScalePointer,
+                                    NativeIterator::offsetOfFirstProperty()),
+                          nativeIterator);
+
+  Register expectedProtoShape = nativeIterator;
 
   // We have to compare the shapes in the native iterator with the shapes on the
-  // proto chain to ensure the cached iterator is still valid. The shape array
-  // always starts at a fixed offset from the base of the NativeIterator, so
-  // instead of using an instruction outside the loop to initialize a pointer to
-  // the shapes array, we can bake it into the offset and reuse the pointer to
-  // the NativeIterator. We add |sizeof(Shape*)| to start at the second shape.
-  // (The first shape corresponds to the object itself. We don't have to check
-  // it, because we got the iterator via the shape.)
-  size_t nativeIteratorProtoShapeOffset =
-      NativeIterator::offsetOfFirstShape() + sizeof(Shape*);
+  // proto chain to ensure the cached iterator is still valid.
 
   // Loop over the proto chain. At the head of the loop, |shape| is the shape of
   // the current object, and |iteratorShapes| points to the expected shape of
@@ -9481,11 +9602,11 @@ void MacroAssembler::maybeLoadIteratorFromShape(Register obj, Register dest,
 
   // Compare the shape of the proto to the expected shape.
   loadPtr(Address(shapeAndProto, JSObject::offsetOfShape()), shapeAndProto);
-  loadPtr(Address(nativeIterator, nativeIteratorProtoShapeOffset), temp3);
+  loadPtr(Address(expectedProtoShape, 0), temp3);
   branchPtr(Assembler::NotEqual, shapeAndProto, temp3, failure);
 
   // Increment |iteratorShapes| and jump back to the top of the loop.
-  addPtr(Imm32(sizeof(Shape*)), nativeIterator);
+  addPtr(Imm32(sizeof(Shape*)), expectedProtoShape);
   jump(&protoLoop);
 
 #ifdef DEBUG
@@ -9507,15 +9628,17 @@ void MacroAssembler::iteratorMore(Register obj, ValueOperand output,
   Label iterDone, restart;
   bind(&restart);
   Address cursorAddr(outputScratch, NativeIterator::offsetOfPropertyCursor());
-  Address cursorEndAddr(outputScratch, NativeIterator::offsetOfPropertiesEnd());
-  loadPtr(cursorAddr, temp);
-  branchPtr(Assembler::BelowOrEqual, cursorEndAddr, temp, &iterDone);
+  Address cursorEndAddr(outputScratch, NativeIterator::offsetOfPropertyCount());
+  load32(cursorAddr, temp);
+  branch32(Assembler::BelowOrEqual, cursorEndAddr, temp, &iterDone);
 
   // Get next string.
-  loadPtr(Address(temp, 0), temp);
+  BaseIndex propAddr(outputScratch, temp, ScalePointer,
+                     NativeIterator::offsetOfFirstProperty());
+  loadPtr(propAddr, temp);
 
   // Increase the cursor.
-  addPtr(Imm32(sizeof(IteratorProperty)), cursorAddr);
+  addPtr(Imm32(1), cursorAddr);
 
   // Check if the property has been deleted while iterating. Skip it if so.
   branchTestPtr(Assembler::NonZero, temp,
@@ -9530,11 +9653,34 @@ void MacroAssembler::iteratorMore(Register obj, ValueOperand output,
   bind(&done);
 }
 
+void MacroAssembler::iteratorLength(Register obj, Register output) {
+  LoadNativeIterator(*this, obj, output);
+  load32(Address(output, NativeIterator::offsetOfOwnPropertyCount()), output);
+}
+
+void MacroAssembler::iteratorLoadElement(Register obj, Register index,
+                                         Register output) {
+  LoadNativeIterator(*this, obj, output);
+  loadPtr(BaseIndex(output, index, ScalePointer,
+                    NativeIterator::offsetOfFirstProperty()),
+          output);
+  andPtr(Imm32(int32_t(~IteratorProperty::DeletedBit)), output);
+}
+
+void MacroAssembler::iteratorLoadElement(Register obj, int32_t index,
+                                         Register output) {
+  LoadNativeIterator(*this, obj, output);
+  loadPtr(Address(output, index * sizeof(IteratorProperty) +
+                              NativeIterator::offsetOfFirstProperty()),
+          output);
+  andPtr(Imm32(int32_t(~IteratorProperty::DeletedBit)), output);
+}
+
 void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
                                    Register temp3) {
   LoadNativeIterator(*this, obj, temp1);
 
-  Address flagsAddr(temp1, NativeIterator::offsetOfFlagsAndCount());
+  Address flagsAddr(temp1, NativeIterator::offsetOfFlags());
 
   // The shared iterator used for for-in with null/undefined is immutable and
   // unlinked. See NativeIterator::isEmptyIteratorSingleton.
@@ -9548,8 +9694,7 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
   storePtr(ImmPtr(nullptr), iterObjAddr);
 
   // Reset property cursor.
-  loadPtr(Address(temp1, NativeIterator::offsetOfShapesEnd()), temp2);
-  storePtr(temp2, Address(temp1, NativeIterator::offsetOfPropertyCursor()));
+  store32(Imm32(0), Address(temp1, NativeIterator::offsetOfPropertyCursor()));
 
   // Clear deleted bits (only if we have unvisited deletions)
   Label clearDeletedLoopStart, clearDeletedLoopEnd;
@@ -9557,7 +9702,13 @@ void MacroAssembler::iteratorClose(Register obj, Register temp1, Register temp2,
                Imm32(NativeIterator::Flags::HasUnvisitedPropertyDeletion),
                &clearDeletedLoopEnd);
 
-  loadPtr(Address(temp1, NativeIterator::offsetOfPropertiesEnd()), temp3);
+  load32(Address(temp1, NativeIterator::offsetOfPropertyCount()), temp3);
+
+  computeEffectiveAddress(BaseIndex(temp1, temp3, ScalePointer,
+                                    NativeIterator::offsetOfFirstProperty()),
+                          temp3);
+  computeEffectiveAddress(
+      Address(temp1, NativeIterator::offsetOfFirstProperty()), temp2);
 
   bind(&clearDeletedLoopStart);
   and32(Imm32(~uint32_t(IteratorProperty::DeletedBit)), Address(temp2, 0));

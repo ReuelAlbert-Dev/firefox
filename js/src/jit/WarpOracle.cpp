@@ -862,12 +862,6 @@ bool WarpOracle::addFuseDependency(RealmFuses::FuseIndex fuseIndex,
                               CompilationDependency::Type::RegExpPrototype>;
       return addIfStillValid(Dependency());
     }
-    case RealmFuses::FuseIndex::OptimizeStringPrototypeSymbolsFuse: {
-      using Dependency = RealmFuseDependency<
-          &RealmFuses::optimizeStringPrototypeSymbolsFuse,
-          CompilationDependency::Type::StringPrototypeSymbols>;
-      return addIfStillValid(Dependency());
-    }
     default:
       MOZ_ASSERT(!RealmFuses::isInvalidatingFuse(fuseIndex));
       *stillValid = true;
@@ -1332,9 +1326,8 @@ AbortReasonOr<bool> WarpScriptOracle::maybeInlineCall(
 
   // This is just a cheap check to limit the damage we can do to ourselves if
   // we try to monomorphically inline an indirectly recursive call.
-  const uint32_t maxInliningDepth = 8;
   if (!isTrialInlined &&
-      info_->inlineScriptTree()->depth() > maxInliningDepth) {
+      info_->inlineScriptTree()->depth() > InlineScriptTree::MaxDepth) {
     return false;
   }
 
@@ -1409,6 +1402,7 @@ AbortReasonOr<bool> WarpScriptOracle::maybeInlineCall(
           icScript_->removeInlinedChild(loc.bytecodeToOffset(script_));
         }
         fallbackStub->setTrialInliningState(TrialInliningState::Failure);
+        oracle_->ignoreFailedICHash();
         return false;
       }
       case AbortReason::Error:

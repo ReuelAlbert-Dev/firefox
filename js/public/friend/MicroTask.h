@@ -42,9 +42,12 @@ namespace JS {
 // run by calling RunJSMicroTask, while in the realm specified by the
 // global returned by GetExecutionGlobalFromJSMicroTask, e.g
 //
-//    AutoRealm ar(cx, JS::GetExecutionGlobalFromJSMicroTask(job));
-//    if (!JS::RunJSMicroTask(cx, job)) {
-//      ...
+//    JSObject* global = JS::GetExecutionGlobalFromJSMicroTask(job);
+//    if (global) {
+//      AutoRealm ar(cx, global);
+//      if (!JS::RunJSMicroTask(cx, job)) {
+//        ...
+//      }
 //    }
 
 // A MicroTask is a JS::Value. Using this MicroTask system allows
@@ -126,7 +129,8 @@ JS_PUBLIC_API bool HasRegularMicroTasks(JSContext* cx);
 // Returns the length of the regular microtask queue.
 JS_PUBLIC_API size_t GetRegularMicroTaskCount(JSContext* cx);
 
-// This is the global associated with the realm RunJSMicroTask expects to be in.
+// This is the global associated with the realm RunJSMicroTask expects to be
+// in.  Returns nullptr if a dead wrapper is found.
 JS_PUBLIC_API JSObject* GetExecutionGlobalFromJSMicroTask(JSMicroTask* entry);
 
 // To handle cases where the queue needs to be set aside for some reason
@@ -153,12 +157,15 @@ JS_PUBLIC_API void RestoreMicroTaskQueue(
 // Via the following API functions various host defined data is exposed to the
 // embedder (see JobQueue::getHostDefinedData).
 //
-// All of these may return null if there's no data, or if there's a
-// security error.
-JS_PUBLIC_API JSObject* MaybeGetHostDefinedDataFromJSMicroTask(
-    JSMicroTask* entry);
-JS_PUBLIC_API JSObject* MaybeGetAllocationSiteFromJSMicroTask(
-    JSMicroTask* entry);
+// These return true on success and false on failure. They return false if
+// there are any unwrapping issues (e.g., dead wrappers), and true with nullptr
+// if there just isn't any data.
+//
+// This disambiguates between no-data and the dead wrapper case
+JS_PUBLIC_API bool MaybeGetHostDefinedDataFromJSMicroTask(
+    JSMicroTask* entry, MutableHandleObject out);
+JS_PUBLIC_API bool MaybeGetAllocationSiteFromJSMicroTask(
+    JSMicroTask* entry, MutableHandleObject out);
 
 // In some circumstances an entry may not have host defined data but may
 // still have a host defined global;

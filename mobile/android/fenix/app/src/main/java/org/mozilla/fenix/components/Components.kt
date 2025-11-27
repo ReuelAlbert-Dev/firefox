@@ -48,7 +48,6 @@ import org.mozilla.fenix.distributions.DefaultDistributionBrowserStoreProvider
 import org.mozilla.fenix.distributions.DefaultDistributionProviderChecker
 import org.mozilla.fenix.distributions.DefaultDistributionSettings
 import org.mozilla.fenix.distributions.DistributionIdManager
-import org.mozilla.fenix.distributions.LegacyDistributionProviderChecker
 import org.mozilla.fenix.ext.asRecentTabs
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.filterState
@@ -74,6 +73,7 @@ import org.mozilla.fenix.perf.lazyMonitored
 import org.mozilla.fenix.reviewprompt.ReviewPromptMiddleware
 import org.mozilla.fenix.settings.settingssearch.DefaultFenixSettingsIndexer
 import org.mozilla.fenix.termsofuse.TermsOfUseManager
+import org.mozilla.fenix.termsofuse.store.DefaultTermsOfUsePromptRepository
 import org.mozilla.fenix.utils.Settings
 import org.mozilla.fenix.utils.isLargeScreenSize
 import org.mozilla.fenix.wifi.WifiConnectionMonitor
@@ -348,13 +348,12 @@ class Components(private val context: Context) {
             packageManager = context.packageManagerWrapper,
             browserStoreProvider = DefaultDistributionBrowserStoreProvider(core.store),
             distributionProviderChecker = DefaultDistributionProviderChecker(context),
-            legacyDistributionProviderChecker = LegacyDistributionProviderChecker(context),
             distributionSettings = DefaultDistributionSettings(settings),
         )
     }
 
     val termsOfUseManager by lazyMonitored {
-        TermsOfUseManager(settings)
+        TermsOfUseManager(DefaultTermsOfUsePromptRepository(settings))
     }
 
     val settingsIndexer by lazyMonitored {

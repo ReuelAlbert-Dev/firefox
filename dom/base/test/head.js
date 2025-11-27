@@ -1,15 +1,22 @@
-async function newFocusedWindow(trigger) {
+async function newFocusedWindow(trigger, isInitialBlank = false) {
   let winPromise = BrowserTestUtils.domWindowOpenedAndLoaded();
   let delayedStartupPromise = BrowserTestUtils.waitForNewWindow();
 
   await trigger();
 
   let win = await winPromise;
-  // New windows get focused after the first paint, see bug 1262946
-  await BrowserTestUtils.waitForContentEvent(
-    win.gBrowser.selectedBrowser,
-    "MozAfterPaint"
-  );
+  // New windows get focused after the first paint, see bug 1262946,
+  // but this is racy for the initial about:blank
+  if (!isInitialBlank) {
+    await BrowserTestUtils.waitForContentEvent(
+      win.gBrowser.selectedBrowser,
+      "MozAfterPaint"
+    );
+  } else {
+    await new Promise(res =>
+      win.requestAnimationFrame(() => win.requestAnimationFrame(res))
+    );
+  }
   await delayedStartupPromise;
   return win;
 }
@@ -37,6 +44,22 @@ function optional_ev(...args) {
 }
 
 async function jsCacheContentTask(test, item) {
+  const defaultSkippedEvents = test.skippedEvents ?? [
+    // The compilation is not target of this test.
+    "compile:main thread",
+    // This is triggered by 'invalidateMemory' below, but we don't have to
+    // track it.
+    "memorycache:invalidate",
+    // The disk cache handling for the in-memory cache can happen multiple
+    // times depending on the scheduling and speed
+    // (e.g. debug vs opt, verify mode).
+    "diskcache:noschedule",
+  ];
+  const nonSkippedEvents = test.nonSkippedEvents ?? [];
+  const skippedEvents = defaultSkippedEvents.filter(
+    ev => !nonSkippedEvents.includes(ev)
+  );
+
   function match(param, event) {
     if (event.event !== param.event) {
       return false;
@@ -102,21 +125,12 @@ async function jsCacheContentTask(test, item) {
       param[m[1]] = m[2];
     }
 
-    if (param.event === "compile:main thread") {
-      return;
-    }
-
     if (consumeIfMatched(param, item.events)) {
       dump("@@@ Got expected event: " + data + "\n");
       if (item.events.length === 0) {
         resolve();
       }
-    } else if (param.event === "diskcache:noschedule") {
-      // The disk cache handling for the in-memory cache can happen multiple
-      // times depending on the scheduling and speed
-      // (e.g. debug vs opt, verify mode).
-      //
-      // Ignore any unmatching message here.
+    } else if (skippedEvents.includes(param.event)) {
       dump("@@@ Ignoring: " + data + "\n");
     } else {
       dump("@@@ Got unexpected event: " + data + "\n");

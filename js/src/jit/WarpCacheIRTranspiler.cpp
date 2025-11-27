@@ -482,7 +482,6 @@ bool WarpCacheIRTranspiler::emitGuardFuse(RealmFuses::FuseIndex fuseIndex) {
     case RealmFuses::FuseIndex::OptimizeArraySpeciesFuse:
     case RealmFuses::FuseIndex::OptimizeTypedArraySpeciesFuse:
     case RealmFuses::FuseIndex::OptimizeRegExpPrototypeFuse:
-    case RealmFuses::FuseIndex::OptimizeStringPrototypeSymbolsFuse:
       // This is a no-op because WarpOracle has added a compilation dependency.
       MOZ_ASSERT(RealmFuses::isInvalidatingFuse(fuseIndex));
       return true;
@@ -4328,10 +4327,12 @@ bool WarpCacheIRTranspiler::emitArrayJoinResult(ObjOperandId objId,
   return resumeAfter(join);
 }
 
-bool WarpCacheIRTranspiler::emitObjectKeysResult(ObjOperandId objId) {
+bool WarpCacheIRTranspiler::emitObjectKeysResult(ObjOperandId objId,
+                                                 uint32_t resultShapeOffset) {
   MDefinition* obj = getOperand(objId);
+  Shape* resultShape = shapeStubField(resultShapeOffset);
 
-  auto* join = MObjectKeys::New(alloc(), obj);
+  auto* join = MObjectKeys::New(alloc(), obj, resultShape);
   addEffectful(join);
 
   pushResult(join);

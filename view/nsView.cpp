@@ -27,14 +27,8 @@
 using namespace mozilla;
 using namespace mozilla::widget;
 
-nsView::nsView(nsViewManager* aViewManager)
-    : mViewManager(aViewManager), mForcedRepaint(false) {
+nsView::nsView(nsViewManager* aViewManager) : mViewManager(aViewManager) {
   MOZ_COUNT_CTOR(nsView);
-
-  // Views should be transparent by default. Not being transparent is
-  // a promise that the view will paint all its pixels opaquely. Views
-  // should make this promise explicitly by calling
-  // SetViewContentTransparency.
 }
 
 nsView::~nsView() {
@@ -54,27 +48,10 @@ nsView::~nsView() {
   }
 
   // Destroy and release the widget
-  DestroyWidget();
+  DetachWidget();
 }
 
-class DestroyWidgetRunnable : public Runnable {
- public:
-  NS_DECL_NSIRUNNABLE
-
-  explicit DestroyWidgetRunnable(nsIWidget* aWidget)
-      : mozilla::Runnable("DestroyWidgetRunnable"), mWidget(aWidget) {}
-
- private:
-  nsCOMPtr<nsIWidget> mWidget;
-};
-
-NS_IMETHODIMP DestroyWidgetRunnable::Run() {
-  mWidget->Destroy();
-  mWidget = nullptr;
-  return NS_OK;
-}
-
-void nsView::DestroyWidget() {
+void nsView::DetachWidget() {
   if (mWindow) {
     // If we are not attached to a base window, we're going to tear down our
     // widget here. However, if we're attached to somebody elses widget, we
@@ -89,69 +66,6 @@ void nsView::Destroy() {
   this->~nsView();
   mozWritePoison(this, sizeof(*this));
   nsView::operator delete(this);
-}
-
-struct WidgetViewBounds {
-  nsRect mBounds;
-  int32_t mRoundTo = 1;
-};
-
-static WidgetViewBounds CalcWidgetViewBounds(const nsRect& aBounds,
-                                             int32_t aAppUnitsPerDevPixel,
-                                             nsIFrame* aParentFrame,
-                                             nsIWidget* aThisWidget,
-                                             WindowType aType) {
-  nsRect viewBounds(aBounds);
-  nsIWidget* parentWidget = nullptr;
-  if (aParentFrame) {
-    nsPoint offset;
-    parentWidget = aParentFrame->GetNearestWidget(offset);
-    // make viewBounds be relative to the parent widget, in appunits
-    viewBounds += offset;
-
-    if (parentWidget && aType == WindowType::Popup) {
-      // put offset into screen coordinates. (based on client area origin)
-      LayoutDeviceIntPoint screenPoint = parentWidget->WidgetToScreenOffset();
-      viewBounds +=
-          nsPoint(NSIntPixelsToAppUnits(screenPoint.x, aAppUnitsPerDevPixel),
-                  NSIntPixelsToAppUnits(screenPoint.y, aAppUnitsPerDevPixel));
-    }
-  }
-
-  nsIWidget* widget = parentWidget ? parentWidget : aThisWidget;
-  int32_t roundTo = widget ? widget->RoundsWidgetCoordinatesTo() : 1;
-  return {viewBounds, roundTo};
-}
-
-static LayoutDeviceIntRect WidgetViewBoundsToDevicePixels(
-    const WidgetViewBounds& aViewBounds, int32_t aAppUnitsPerDevPixel,
-    WindowType aType, TransparencyMode aTransparency) {
-  // Compute widget bounds in device pixels
-  // TODO(emilio): We should probably use outside pixels for transparent
-  // windows (not just popups) as well.
-  if (aType != WindowType::Popup) {
-    return LayoutDeviceIntRect::FromUnknownRect(
-        aViewBounds.mBounds.ToNearestPixels(aAppUnitsPerDevPixel));
-  }
-  // We use outside pixels for transparent windows if possible, so that we
-  // don't truncate the contents. For opaque popups, we use nearest pixels
-  // which prevents having pixels not drawn by the frame.
-  const bool opaque = aTransparency == TransparencyMode::Opaque;
-  const auto idealBounds = LayoutDeviceIntRect::FromUnknownRect(
-      opaque ? aViewBounds.mBounds.ToNearestPixels(aAppUnitsPerDevPixel)
-             : aViewBounds.mBounds.ToOutsidePixels(aAppUnitsPerDevPixel));
-
-  return nsIWidget::MaybeRoundToDisplayPixels(idealBounds, aTransparency,
-                                              aViewBounds.mRoundTo);
-}
-
-LayoutDeviceIntRect nsView::CalcWidgetBounds(
-    const nsRect& aBounds, int32_t aAppUnitsPerDevPixel, nsIFrame* aParentFrame,
-    nsIWidget* aThisWidget, WindowType aType, TransparencyMode aTransparency) {
-  auto viewBounds = CalcWidgetViewBounds(aBounds, aAppUnitsPerDevPixel,
-                                         aParentFrame, aThisWidget, aType);
-  return WidgetViewBoundsToDevicePixels(viewBounds, aAppUnitsPerDevPixel, aType,
-                                        aTransparency);
 }
 
 // Attach to a top level widget and start receiving mirrored events.
@@ -172,10 +86,6 @@ void nsView::AttachToTopLevelWidget(nsIWidget* aWidget) {
       oldView->DetachFromTopLevelWidget();
     }
   }
-
-  // Note, the previous device context will be released. Detaching
-  // will not restore the old one.
-  aWidget->AttachViewToTopLevel(!nsIWidget::UsePuppetWidgets());
 
   mWindow = aWidget;
 
@@ -223,24 +133,11 @@ void nsView::List(FILE* out, int32_t aIndent) const {
 }
 #endif  // DEBUG
 
-bool nsView::IsRoot() const {
-  NS_ASSERTION(mViewManager != nullptr,
-               " View manager is null in nsView::IsRoot()");
-  return mViewManager->GetRootView() == this;
-}
-
 PresShell* nsView::GetPresShell() { return GetViewManager()->GetPresShell(); }
 
 bool nsView::WindowResized(nsIWidget* aWidget, int32_t aWidth,
                            int32_t aHeight) {
-  // The root view may not be set if this is the resize associated with
-  // window creation
-  SetForcedRepaint(true);
-  if (this != mViewManager->GetRootView()) {
-    return false;
-  }
-
-  PresShell* ps = mViewManager->GetPresShell();
+  PresShell* ps = GetPresShell();
   if (!ps) {
     return false;
   }
@@ -336,9 +233,9 @@ void nsView::WillPaintWindow(nsIWidget* aWidget) {
   vm->WillPaintWindow(aWidget);
 }
 
-bool nsView::PaintWindow(nsIWidget* aWidget, LayoutDeviceIntRegion aRegion) {
+bool nsView::PaintWindow(nsIWidget* aWidget, LayoutDeviceIntRegion) {
   RefPtr<nsViewManager> vm = mViewManager;
-  vm->Refresh(this, aRegion);
+  vm->PaintWindow(aWidget);
   return true;
 }
 
@@ -350,7 +247,7 @@ void nsView::DidPaintWindow() {
 void nsView::DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
                                 const TimeStamp& aCompositeStart,
                                 const TimeStamp& aCompositeEnd) {
-  PresShell* presShell = mViewManager->GetPresShell();
+  PresShell* presShell = GetPresShell();
   if (!presShell) {
     return;
   }
@@ -367,24 +264,12 @@ void nsView::DidCompositeWindow(mozilla::layers::TransactionId aTransactionId,
                                        aCompositeEnd);
 }
 
-nsEventStatus nsView::HandleEvent(WidgetGUIEvent* aEvent,
-                                  bool aUseAttachedEvents) {
+nsEventStatus nsView::HandleEvent(WidgetGUIEvent* aEvent) {
   MOZ_ASSERT(aEvent->mWidget, "null widget ptr");
 
   nsEventStatus result = nsEventStatus_eIgnore;
-  auto* listener = [&]() -> nsIWidgetListener* {
-    if (!aUseAttachedEvents) {
-      if (auto* l = aEvent->mWidget->GetWidgetListener()) {
-        return l;
-      }
-    }
-    return aEvent->mWidget->GetAttachedWidgetListener();
-  }();
-  if (NS_WARN_IF(!listener)) {
-    return result;
-  }
   nsViewManager::MaybeUpdateLastUserEventTime(aEvent);
-  if (RefPtr<PresShell> ps = listener->GetPresShell()) {
+  if (RefPtr<PresShell> ps = GetPresShell()) {
     if (nsIFrame* root = ps->GetRootFrame()) {
       ps->HandleEvent(root, aEvent, false, &result);
     }
@@ -394,11 +279,7 @@ nsEventStatus nsView::HandleEvent(WidgetGUIEvent* aEvent,
 
 void nsView::SafeAreaInsetsChanged(
     const LayoutDeviceIntMargin& aSafeAreaInsets) {
-  if (!IsRoot()) {
-    return;
-  }
-
-  PresShell* presShell = mViewManager->GetPresShell();
+  PresShell* presShell = GetPresShell();
   if (!presShell) {
     return;
   }
@@ -430,7 +311,7 @@ bool nsView::IsPrimaryFramePaintSuppressed() const {
 
 void nsView::CallOnAllRemoteChildren(
     const std::function<CallState(dom::BrowserParent*)>& aCallback) {
-  PresShell* presShell = mViewManager->GetPresShell();
+  PresShell* presShell = GetPresShell();
   if (!presShell) {
     return;
   }

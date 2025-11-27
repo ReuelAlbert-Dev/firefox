@@ -185,26 +185,42 @@ LazyLogModule& GetLoggerByProcess();
  */
 struct ActiveScrolledRoot {
   // TODO: Just have one function with an extra ASRKind parameter
-  static already_AddRefed<ActiveScrolledRoot> CreateASRForFrame(
+  static already_AddRefed<ActiveScrolledRoot> GetOrCreateASRForFrame(
       const ActiveScrolledRoot* aParent,
-      ScrollContainerFrame* aScrollContainerFrame
-#ifdef DEBUG
-      ,
-      const nsTArray<RefPtr<ActiveScrolledRoot>>& aActiveScrolledRoots
-#endif
-  );
-  static already_AddRefed<ActiveScrolledRoot> CreateASRForStickyFrame(
-      const ActiveScrolledRoot* aParent, nsIFrame* aStickyFrame
-#ifdef DEBUG
-      ,
-      const nsTArray<RefPtr<ActiveScrolledRoot>>& aActiveScrolledRoots
-#endif
-  );
+      ScrollContainerFrame* aScrollContainerFrame,
+      nsTArray<RefPtr<ActiveScrolledRoot>>& aActiveScrolledRoots);
+  static already_AddRefed<ActiveScrolledRoot> GetOrCreateASRForStickyFrame(
+      const ActiveScrolledRoot* aParent, nsIFrame* aStickyFrame,
+      nsTArray<RefPtr<ActiveScrolledRoot>>& aActiveScrolledRoots);
 
   static const ActiveScrolledRoot* PickAncestor(
       const ActiveScrolledRoot* aOne, const ActiveScrolledRoot* aTwo) {
     MOZ_ASSERT(IsAncestor(aOne, aTwo) || IsAncestor(aTwo, aOne));
     return Depth(aOne) <= Depth(aTwo) ? aOne : aTwo;
+  }
+
+  static const ActiveScrolledRoot* LowestCommonAncestor(
+      const ActiveScrolledRoot* aOne, const ActiveScrolledRoot* aTwo) {
+    uint32_t depth1 = Depth(aOne);
+    uint32_t depth2 = Depth(aTwo);
+    if (depth1 > depth2) {
+      for (uint32_t i = 0; i < (depth1 - depth2); ++i) {
+        MOZ_ASSERT(aOne);
+        aOne = aOne->mParent;
+      }
+    } else if (depth1 < depth2) {
+      for (uint32_t i = 0; i < (depth2 - depth1); ++i) {
+        MOZ_ASSERT(aTwo);
+        aTwo = aTwo->mParent;
+      }
+    }
+    while (aOne != aTwo) {
+      MOZ_ASSERT(aOne);
+      MOZ_ASSERT(aTwo);
+      aOne = aOne->mParent;
+      aTwo = aTwo->mParent;
+    }
+    return aOne;
   }
 
   static const ActiveScrolledRoot* PickDescendant(
@@ -256,11 +272,12 @@ struct ActiveScrolledRoot {
   static const ActiveScrolledRoot* GetStickyASRFromFrame(
       nsIFrame* aStickyFrame);
 
-  enum class ASRKind { Root, Scroll, Sticky };
+  enum class ASRKind { Scroll, Sticky };
 
   RefPtr<const ActiveScrolledRoot> mParent;
   nsIFrame* mFrame = nullptr;
-  ASRKind mKind = ASRKind::Root;
+  // This gets updated by both functions that can create this struct.
+  ASRKind mKind = ASRKind::Scroll;
 
   NS_INLINE_DECL_REFCOUNTING(ActiveScrolledRoot)
 
@@ -984,13 +1001,13 @@ class nsDisplayListBuilder {
   }
 
   /**
-   * Allocate a new ActiveScrolledRoot in the arena. Will be cleaned up
-   * automatically when the arena goes away.
+   * Get an existing or allocate a new ActiveScrolledRoot in the arena. Will be
+   * cleaned up automatically when the arena goes away.
    */
-  ActiveScrolledRoot* AllocateActiveScrolledRoot(
+  ActiveScrolledRoot* GetOrCreateActiveScrolledRoot(
       const ActiveScrolledRoot* aParent,
       ScrollContainerFrame* aScrollContainerFrame);
-  ActiveScrolledRoot* AllocateActiveScrolledRootForSticky(
+  ActiveScrolledRoot* GetOrCreateActiveScrolledRootForSticky(
       const ActiveScrolledRoot* aParent, nsIFrame* aStickyFrame);
 
   /**
@@ -1244,7 +1261,7 @@ class nsDisplayListBuilder {
 
     void EnterScrollFrame(ScrollContainerFrame* aScrollContainerFrame) {
       MOZ_ASSERT(!mUsed);
-      ActiveScrolledRoot* asr = mBuilder->AllocateActiveScrolledRoot(
+      ActiveScrolledRoot* asr = mBuilder->GetOrCreateActiveScrolledRoot(
           mBuilder->mCurrentActiveScrolledRoot, aScrollContainerFrame);
       mBuilder->mCurrentActiveScrolledRoot = asr;
       mUsed = true;

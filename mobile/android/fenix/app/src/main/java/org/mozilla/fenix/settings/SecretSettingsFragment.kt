@@ -95,6 +95,21 @@ class SecretSettingsFragment : PreferenceFragmentCompat() {
                             context.settings().shouldShowToolbarCustomization = false
                         }
                     }
+                    requirePreference<SwitchPreference>(R.string.pref_key_should_show_custom_tab_extensions).apply {
+                        val shouldEnableCustomTabExtensions = newOption || context.settings().enableMenuRedesign
+                        isEnabled = shouldEnableCustomTabExtensions
+                        when (shouldEnableCustomTabExtensions) {
+                            true -> {
+                                summary = null
+                            }
+
+                            false -> {
+                                isChecked = false
+                                summary = getString(R.string.preferences_debug_settings_custom_tab_extensions_summary)
+                                context.settings().shouldShowCustomTabExtensions = false
+                            }
+                        }
+                    }
                 }
                 true
             }
@@ -160,6 +175,38 @@ class SecretSettingsFragment : PreferenceFragmentCompat() {
         requirePreference<SwitchPreference>(R.string.pref_key_enable_menu_redesign).apply {
             isVisible = Config.channel.isNightlyOrDebug
             isChecked = context.settings().enableMenuRedesign
+            onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
+                (newValue as? Boolean)?.let { newOption ->
+                    context.settings().enableMenuRedesign = newOption
+                    requirePreference<SwitchPreference>(R.string.pref_key_should_show_custom_tab_extensions).apply {
+                        val shouldEnableCustomTabExtensions = newOption || context.settings().shouldUseComposableToolbar
+                        isEnabled = shouldEnableCustomTabExtensions
+                        when (shouldEnableCustomTabExtensions) {
+                            true -> {
+                                summary = null
+                            }
+
+                            false -> {
+                                isChecked = false
+                                summary = getString(R.string.preferences_debug_settings_custom_tab_extensions_summary)
+                                context.settings().shouldShowCustomTabExtensions = false
+                            }
+                        }
+                    }
+                }
+                true
+            }
+        }
+
+        requirePreference<SwitchPreference>(R.string.pref_key_should_show_custom_tab_extensions).apply {
+            isVisible = Config.channel.isDebug
+            isChecked = context.settings().shouldShowCustomTabExtensions
+            val newOption = context.settings().enableMenuRedesign || context.settings().shouldUseComposableToolbar
+            isEnabled = newOption
+            summary = when (newOption) {
+                true -> null
+                false -> getString(R.string.preferences_debug_settings_custom_tab_extensions_summary)
+            }
             onPreferenceChangeListener = SharedPreferenceUpdater()
         }
 
@@ -186,15 +233,21 @@ class SecretSettingsFragment : PreferenceFragmentCompat() {
             onPreferenceChangeListener = SharedPreferenceUpdater()
         }
 
-        requirePreference<SwitchPreference>(R.string.pref_key_enable_private_browsing_mode_redesign).apply {
-            isVisible = Config.channel.isNightlyOrDebug
-            isChecked = context.settings().enablePrivateBrowsingModeRedesign
-            onPreferenceChangeListener = SharedPreferenceUpdater()
-        }
-
         requirePreference<SwitchPreference>(R.string.pref_key_enable_unified_trust_panel).apply {
             isChecked = context.settings().enableUnifiedTrustPanel
             onPreferenceChangeListener = SharedPreferenceUpdater()
+        }
+
+        requirePreference<SwitchPreference>(R.string.pref_key_enable_lna_feature_enabled).apply {
+            isVisible = Config.channel.isNightlyOrDebug
+            isChecked = context.settings().isLnaFeatureEnabled
+            onPreferenceChangeListener = object : SharedPreferenceUpdater() {
+                override fun onPreferenceChange(preference: Preference, newValue: Any?): Boolean {
+                    context.components.core.engine.settings.lnaFeatureEnabled =
+                        newValue as Boolean
+                    return super.onPreferenceChange(preference, newValue)
+                }
+            }
         }
 
         requirePreference<SwitchPreference>(R.string.pref_key_enable_lna_blocking_enabled).apply {
@@ -203,6 +256,18 @@ class SecretSettingsFragment : PreferenceFragmentCompat() {
             onPreferenceChangeListener = object : SharedPreferenceUpdater() {
                 override fun onPreferenceChange(preference: Preference, newValue: Any?): Boolean {
                     context.components.core.engine.settings.lnaBlockingEnabled =
+                        newValue as Boolean
+                    return super.onPreferenceChange(preference, newValue)
+                }
+            }
+        }
+
+        requirePreference<SwitchPreference>(R.string.pref_key_enable_lna_tracker_blocking_enabled).apply {
+            isVisible = Config.channel.isNightlyOrDebug
+            isChecked = context.settings().isLnaTrackerBlockingEnabled
+            onPreferenceChangeListener = object : SharedPreferenceUpdater() {
+                override fun onPreferenceChange(preference: Preference, newValue: Any?): Boolean {
+                    context.components.core.engine.settings.lnaTrackerBlockingEnabled =
                         newValue as Boolean
                     return super.onPreferenceChange(preference, newValue)
                 }

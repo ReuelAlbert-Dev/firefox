@@ -497,7 +497,7 @@ class Settings(
 
     val appIconSelection by lazyFeatureFlagPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_app_icon_selection_enabled),
-        featureFlag = FeatureFlags.APP_ICON_SELECTION,
+        featureFlag = true,
         default = { FxNimbus.features.appIconSelection.value().enabled },
     )
 
@@ -613,6 +613,15 @@ class Settings(
     var isTermsOfUsePromptEnabled by lazyFeatureFlagPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_terms_prompt_enabled),
         default = { FxNimbus.features.termsOfUsePrompt.value().enabled },
+        featureFlag = true,
+    )
+
+    /**
+     * Returns true if the nimbus flag for showing the terms of use drag handle is true.
+     */
+    var shouldShowTermsOfUsePromptDragHandle by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_terms_prompt_drag_handle_enabled),
+        default = { FxNimbus.features.termsOfUsePrompt.value().enableDragToDismiss },
         featureFlag = true,
     )
 
@@ -840,13 +849,32 @@ class Settings(
     )
 
     /**
-     * Indicates if the LNA (Local Network Access / Local Device Access) blocking is enabled
-     *
-     * This refers to whether or not we are blocking or allowing requests that originate from
-     * remote origins targeting either localhost addresses or local network addresses.
+     * Indicates if the request blocking feature for Local Network / Local Device Access blocking is enabled.
      */
     var isLnaBlockingEnabled by lazyFeatureFlagPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_blocking_enabled),
+        featureFlag = true,
+        default = { FxNimbus.features.lnaBlocking.value().blocking },
+    )
+
+    /**
+     * Indicates if the Local Network / Local Device Access tracker blocking feature is enabled.
+     */
+    var isLnaTrackerBlockingEnabled by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_tracker_blocking_enabled),
+        featureFlag = true,
+        default = { FxNimbus.features.lnaBlocking.value().blockTrackers },
+    )
+
+    /**
+     * Indicates if the overall Local Network / Local Device Access feature is enabled.
+     *
+     * Local Network / Local Device Access blocking refers to whether or not we are blocking or
+     * allowing requests that originate from remote origins targeting either localhost addresses or
+     * local network addresses.
+     */
+    var isLnaFeatureEnabled by lazyFeatureFlagPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_feature_enabled),
         featureFlag = true,
         default = { FxNimbus.features.lnaBlocking.value().enabled },
     )
@@ -1401,13 +1429,41 @@ class Settings(
             return touchExplorationIsEnabled || switchServiceIsEnabled
         }
 
+    /**
+     * Checks if a specific type of browsing data is configured to be deleted on quit.
+     *
+     * @param type The [DeleteBrowsingDataOnQuitType] to check.
+     * @return `true` if the data type is set to be deleted on quit, `false` otherwise.
+     */
     fun getDeleteDataOnQuit(type: DeleteBrowsingDataOnQuitType): Boolean =
         preferences.getBoolean(type.getPreferenceKey(appContext), false)
 
+    /**
+     * Sets whether a specific type of browsing data should be deleted on quit.
+     *
+     * This function is used to configure the "Delete browsing data on quit" feature.
+     * It writes the user's choice to `SharedPreferences` for the given data type.
+     * The value is later retrieved by `getDeleteDataOnQuit`.
+     *
+     * @param type The [DeleteBrowsingDataOnQuitType] to configure.
+     * @param value `true` to enable deletion for this type on quit, `false` to disable it.
+     */
     fun setDeleteDataOnQuit(type: DeleteBrowsingDataOnQuitType, value: Boolean) {
         preferences.edit { putBoolean(type.getPreferenceKey(appContext), value) }
     }
 
+    /**
+     * Checks if any browsing data type is configured to be deleted on quit.
+     *
+     * This function provides a quick way to determine if the "Delete browsing data on quit"
+     * feature is active in any capacity. It iterates through all possible data types
+     * and returns `true` if at least one of them is set for deletion.
+     *
+     * This is useful for UI components that need to know whether to display a general
+     * indicator that the feature is enabled, without needing to know the specific details.
+     *
+     * @return `true` if one or more data types are set to be deleted on quit, `false` otherwise.
+     */
     fun shouldDeleteAnyDataOnQuit() =
         DeleteBrowsingDataOnQuitType.entries.any { getDeleteDataOnQuit(it) }
 
@@ -1996,6 +2052,16 @@ class Settings(
     )
 
     /**
+     * Stores the user choice from the "Autofill" settings for whether
+     * credit cards should be synced across devices or not, when the user is authenticated.
+     * If set to `true`, then the credit cards will be synced across devices.
+     */
+    var shouldSyncCreditCardsAcrossDevices by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_credit_cards_sync_cards_across_devices),
+        default = false,
+    )
+
+    /**
      * Stores the user choice from the "Autofill Addresses" settings for whether
      * save and autofill addresses should be enabled or not.
      * If set to `true` when the user focuses on address fields in a webpage an Android prompt is shown,
@@ -2004,6 +2070,16 @@ class Settings(
     var shouldAutofillAddressDetails by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_addresses_save_and_autofill_addresses),
         default = true,
+    )
+
+    /**
+     * Stores the user choice from the "Autofill" settings for whether
+     * addresses should be synced across devices or not, when the user is authenticated.
+     * If set to `true`, then the addresses will be synced across devices.
+     */
+    var shouldSyncAddressesAcrossDevices by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_addresses_sync_cards_across_devices),
+        default = false,
     )
 
     /**
@@ -2246,6 +2322,14 @@ class Settings(
     )
 
     /**
+     * Indicates if the extensions status should be shown in the menu opened for custom tabs.
+     */
+    var shouldShowCustomTabExtensions by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_should_show_custom_tab_extensions),
+        default = false,
+    )
+
+    /**
      * Indicates if the Homepage as a New Tab is enabled.
      */
     var enableHomepageAsNewTab by lazyFeatureFlagPreference(
@@ -2269,14 +2353,6 @@ class Settings(
     var enableDiscoverMoreStories by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_discover_more_stories),
         default = FeatureFlags.DISCOVER_MORE_STORIES,
-    )
-
-    /**
-     * Indicates if the private browsing mode redesign is enabled.
-     */
-    var enablePrivateBrowsingModeRedesign by booleanPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_enable_private_browsing_mode_redesign),
-        default = FeatureFlags.PRIVATE_BROWSING_MODE_REDESIGN,
     )
 
     /**
@@ -2581,6 +2657,14 @@ class Settings(
     var loginsListSortOrder by stringPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_logins_list_sort_order),
         default = "",
+    )
+
+    /**
+     * Indicates whether or not we should use the new compose autofill settings UI
+     */
+    var enableComposeAutofillSettings by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_compose_logins),
+        default = false,
     )
 
     /**

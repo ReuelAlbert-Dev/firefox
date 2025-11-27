@@ -82,7 +82,7 @@
     %1$s is the name of the app (for example "Firefox").
     %2$s is a link using felt_privacy_info_card_subtitle_link_text as text
   -->
-  <string name="felt_privacy_info_card_subtitle_2">%1$s는 모든 사생활 보호 탭을 닫을 때 쿠키, 기록 및 사이트 데이터를 삭제합니다. %2$s</string>
+  <string name="felt_privacy_info_card_subtitle_2" tools:ignore="UnusedResources" moz:removedIn="147">%1$s는 모든 사생활 보호 탭을 닫을 때 쿠키, 기록 및 사이트 데이터를 삭제합니다. %2$s</string>
   <!--
     Description of private browsing mode displayed to users on the homepage when they enable private mode.
     %1$s is the name of the app (for example "Firefox").
@@ -1062,6 +1062,8 @@
   <string name="restart_warning_dialog_button_positive_2">아이콘 변경</string>
   <!-- Dialog button text for cancelling app icon change -->
   <string name="restart_warning_dialog_button_negative">취소</string>
+  <!-- Error message snackbar shown after the user tried to apply the new icon but the Android OS threw an error while updating existing app shortcuts (e.g. private mode shortcut) -->
+  <string name="shortcuts_update_error">앱 아이콘을 업데이트하는데 실패했습니다. 기존의 바로 가기를 제거하고 다시 시도하세요.</string>
   <!--
     Add-ons general availability nimbus message
 

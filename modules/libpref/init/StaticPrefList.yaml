@@ -263,6 +263,13 @@
   value: true
   mirror: always
 
+# Whether to enable automatic details relationships for
+# anchor positioned content.
+- name: accessibility.anchorPositionedAsDetails.enabled
+  type: bool
+  value: false
+  mirror: always
+
 # Whether to enable all accessibility cache domains on startup.
 #  * false: enable domains as needed
 #  * true:  enable all domains regardless of need (cache everything)
@@ -403,10 +410,12 @@
   value: true
   mirror: always
 
+#ifdef XP_MACOSX
 - name: apz.mac.enable_double_tap_zoom_touchpad_gesture
   type: RelaxedAtomicBool
   value: true
   mirror: always
+#endif
 
 - name: apz.allow_immediate_handoff
   type: RelaxedAtomicBool
@@ -433,6 +442,7 @@
   value: false
   mirror: always
 
+#ifdef ANDROID
 - name: apz.android.chrome_fling_physics.friction
   type: AtomicFloat
   value: 0.015f
@@ -447,6 +457,7 @@
   type: AtomicFloat
   value: 0.1f
   mirror: always
+#endif
 
 - name: apz.autoscroll.enabled
   type: RelaxedAtomicBool
@@ -872,6 +883,7 @@
   value: 100
   mirror: always
 
+#ifdef XP_WIN
 - name: apz.windows.force_disable_direct_manipulation
   type: RelaxedAtomicBool
   value: false
@@ -881,6 +893,7 @@
   type: RelaxedAtomicBool
   value: true
   mirror: always
+#endif
 
 - name: apz.x_skate_highmem_adjust
   type: AtomicFloat
@@ -939,6 +952,12 @@
   type: bool
   value: false
   mirror: always
+
+# Whether to async scroll CSS anchor pos.
+- name: apz.async_scroll_css_anchor_pos
+  type: bool
+  value: true
+  mirror: once
 
 #---------------------------------------------------------------------------
 # Prefs starting with "beacon."
@@ -1937,13 +1956,6 @@
 - name: browser.tabs.inTitlebar
   type: int32_t
   value: 2
-  mirror: always
-
-# If set, use DocumentChannel to directly initiate loads entirely
-# from parent-process BrowsingContexts
-- name: browser.tabs.documentchannel.parent-controlled
-  type: bool
-  value: false
   mirror: always
 
 # If set, middle clicking on a link opens the link in a new tab.
@@ -2947,26 +2959,12 @@
   value: true
   mirror: always
 
-# Control whether clipboard.read(), clipboard.write() and ClipboardItem are exposed
-# to content.
-- name: dom.events.asyncClipboard.clipboardItem
-  type: bool
-  value: true
-  mirror: always
-
 # Skips checking permission and user activation when accessing the clipboard.
 # Should only be enabled in tests.
 # Access with Clipboard::IsTestingPrefEnabled().
 - name: dom.events.testing.asyncClipboard
   type: bool
   value: false
-  mirror: always
-  do_not_use_directly: true
-
-# Control whether `navigator.clipboard.readText()` is exposed to content.
-- name: dom.events.asyncClipboard.readText
-  type: bool
-  value: true
   mirror: always
   do_not_use_directly: true
 
@@ -3408,7 +3406,12 @@
 # Only used in fission; in e10s we use 1 always
 - name: dom.ipc.processPrelaunch.fission.number
   type: uint32_t
+#ifdef ANDROID
+  # Bug 1999950: Prelaunch 1 process on Android due to a performance regression.
+  value: 1
+#else
   value: 3
+#endif
   mirror: always
 
 # Limit preallocated processes below this memory size (in MB)
@@ -3526,14 +3529,6 @@
 #else
   value: true
 #endif
-  mirror: always
-
-# If this is true, TextEventDispatcher dispatches keydown and keyup events
-# even during composition (keypress events are never fired during composition
-# even if this is true).
-- name: dom.keyboardevent.dispatch_during_composition
-  type: bool
-  value: true
   mirror: always
 
 # Enable/disable KeyboardEvent.initKeyEvent function
@@ -3704,6 +3699,13 @@
 # Known issues can be guarded using this pref
 # to avoid crashing users while investigating the issue.
 - name: dom.navigation.api.strict.enabled
+  type: bool
+  value: false
+  mirror: always
+
+# For non-Navigation API navigations, create an internal method tracker
+# so that it's possible to await navigations being committed.
+- name: dom.navigation.api.internal_method_tracker
   type: bool
   value: false
   mirror: always
@@ -5543,6 +5545,13 @@
   value: true
   mirror: always
 
+# If true, when user selects a range, `Selection` will split the range to
+# exclude unselectable content from the range.
+- name: dom.selection.exclude_non_selectable_nodes
+  type: bool
+  value: false
+  mirror: always
+
 # Mimic Chrome's window.getSelection().toString() behaviour
 - name: dom.selection.mimic_chrome_tostring.enabled
   type: bool
@@ -5767,12 +5776,6 @@
 #else
   value: 1000
 #endif
-  mirror: always
-
-# Always treat icon URLs as UTF8 instead of document charset
-- name: dom.webnotifications.icon_encoding_utf8.enabled
-  type: RelaxedAtomicBool
-  value: true
   mirror: always
 
 # Forcing all notification requests do storage cleanup.
@@ -6625,12 +6628,6 @@
 # Prefs starting with "gfx."
 #---------------------------------------------------------------------------
 
-# Allow 24-bit colour when the hardware supports it.
-- name: gfx.android.rgb16.force
-  type: bool
-  value: false
-  mirror: once
-
 - name: gfx.apitrace.enabled
   type: bool
   value: false
@@ -6931,23 +6928,21 @@
   value: true # Match naive behavior, but hopefully we can stop soon!
   mirror: always
 
+#ifdef XP_MACOSX
 # Whether GL contexts can be migrated to a different GPU (to match the one the
 # OS is using for composition).
-#
-# 0 = force disable migration
-# 1 = use migration where in safe configurations (the default)
-# 2 = force enable migration (for testing)
 - name: gfx.compositor.gpu-migration
-  type: RelaxedAtomicInt32
-  value: 1
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
+#endif
 
+#ifdef XP_DARWIN
 - name: gfx.core-animation.tint-opaque
   type: RelaxedAtomicBool
   value: false
   mirror: always
 
-#ifdef XP_DARWIN
   # Create specialized video-only layers for video content in
   # fullscreen windows. Consistently works well on Apple Silicon,
   # some issues remain on Intel hardware.
@@ -7035,7 +7030,7 @@
   value: -1
   mirror: once
 
-
+#ifdef XP_WIN
 - name: gfx.direct3d11.reuse-decoder-device
   type: bool
   value: true
@@ -7070,6 +7065,7 @@
   type: int32_t
   value: 0
   mirror: once
+#endif
 
 # Rate by which the frame rate is divided. I.e. at a number higher than 1 we
 # will only refresh every <x> frames.
@@ -7419,21 +7415,27 @@
   value: false
   mirror: once
 
+#ifdef XP_MACOSX
 - name: gfx.use-iosurface-textures
   type: bool
   value: false
   mirror: once
+#endif
 
+#ifdef XP_WIN
 - name: gfx.use-mutex-on-present
   type: bool
   value: false
   mirror: once
+#endif
 
+#ifdef MOZ_WIDGET_ANDROID
 # Use SurfaceTextures as preferred backend for TextureClient/Host.
 - name: gfx.use-surfacetexture-textures
   type: bool
   value: false
   mirror: once
+#endif
 
 - name: gfx.vsync.compositor.unobserve-count
   type: int32_t
@@ -8010,12 +8012,20 @@
   value: false
   mirror: once
 
+#ifdef XP_WIN
 # Whether to use the D3D11 RenderCompositor when using WebRender software backend
 - name: gfx.webrender.software.d3d11
   type: bool
   value: true
   mirror: once
 
+- name: gfx.webrender.software.d3d11.upload-mode
+  type: RelaxedAtomicInt32
+  value: 4
+  mirror: always
+#endif
+
+#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GTK)
 - name: gfx.webrender.software.opengl
   type: bool
 #if defined(MOZ_WIDGET_ANDROID)
@@ -8024,11 +8034,7 @@
   value: false
 #endif
   mirror: once
-
-- name: gfx.webrender.software.d3d11.upload-mode
-  type: RelaxedAtomicInt32
-  value: 4
-  mirror: always
+#endif
 
 # Whether to force widgets to don't support acceleration to use WebRender
 # despite that
@@ -8127,7 +8133,7 @@
 - name: gfx.webrender.precise-radial-gradients-swgl
   type: bool
   rust: true
-  value: true
+  value: false
   mirror: once
 
 # Use a more precise method for sampling gradients when *not* using SWGL .
@@ -8141,7 +8147,7 @@
 - name: gfx.webrender.precise-conic-gradients-swgl
   type: bool
   rust: true
-  value: true
+  value: false
   mirror: once
 
 # Use vsync events generated by hardware
@@ -9024,21 +9030,14 @@
   mirror: always
   set_spidermonkey_pref: startup
 
-  # Experimental support for Iterator Chunking in JavaScript.
+ # Experimental support for Iterator Chunking in JavaScript.
 - name: javascript.options.experimental.iterator_chunking
   type: bool
   value: false
   mirror: always
   set_spidermonkey_pref: startup
 
- #endif  // NIGHTLY_BUILD
-
-  # Capture stack traces for OOM
-- name: javascript.options.experimental.capture_oom_stack_trace
-  type: bool
-  value: @IS_NIGHTLY_BUILD@
-  mirror: always
-  set_spidermonkey_pref: startup
+#endif  // NIGHTLY_BUILD
 
 # Whether to Baseline-compile self-hosted functions the first time they are
 # used and cache the result.
@@ -9410,9 +9409,11 @@
   do_not_use_directly: true
 
 # Use the JS microtask queue for Promise jobs and other microtasks.
+# DO NOT TURN THIS ON BY DEFAULT WITHOUT THE BUGS BLOCKING
+# BUG 1990841 being fixed (especially Bug 1990842).
 - name: javascript.options.use_js_microtask_queue
   type: RelaxedAtomicBool
-  value: true
+  value: false
   # Changing this mid process will break invariants and crash, however
   # making this mirror: once, and set_spidermonkey_pref: startup is
   # broken: See Bug 1989094
@@ -9695,10 +9696,12 @@
   value: true
   mirror: once
 
+#ifdef XP_DARWIN
 - name: layers.iosurfaceimage.recycle-limit
   type: RelaxedAtomicUint32
   value: 15
   mirror: always
+#endif
 
 #---------------------------------------------------------------------------
 # Prefs starting with "layout."
@@ -9859,6 +9862,16 @@
   mirror: always
   rust: true
 
+# Whether to enable generalized CSS Attr Support. If this pref is set to false
+# we treat attr as a regular function with support only for the `content` css
+# property. If it is set to true, attr is parsed as a subtitution function.
+# https://drafts.csswg.org/css-values-5/#attr-notation
+- name: layout.css.attr.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+  rust: true
+
 # Whether to enable CSS @custom-media
 # https://drafts.csswg.org/mediaqueries-5/
 # TODO(emilio): Needs more tests before enabling.
@@ -9872,7 +9885,7 @@
 # https://html.spec.whatwg.org/#creating-a-css-module-script
 - name: layout.css.module-scripts.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: true
   mirror: always
 
 # Override DPI. A value of -1 means use the maximum of 96 and the system DPI.
@@ -11086,6 +11099,18 @@
 #else
   value: false
 #endif
+  mirror: always
+
+# Enable the support to position absoluetly positioned frames properly across
+# fragmentainers (Bug 1994316).
+#
+# Note: Layout code should use
+# nsPresContext::FragmentainerAwarePositioningEnabled() rather than checking
+# this pref directly. This ensures a given frame tree handles abspos
+# fragmentation consistently even if the actual pref value changes.
+- name: layout.abspos.fragmentainer-aware-positioning.enabled
+  type: bool
+  value: false
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -13273,13 +13298,6 @@
   value: false
   mirror: always
 
-# Whether to show anti-spoof confirmation prompts when navigating to a url
-# with userinfo
-- name: network.auth.confirmAuth.enabled
-  type: bool
-  value: false
-  mirror: always
-
 # Whether to display auth prompts if X-Frame-Options header will block loading
 # page
 - name: network.auth.supress_auth_prompt_for_XFO_failures
@@ -14363,19 +14381,23 @@
   value: false
   mirror: always
 
+#ifdef MOZ_WIDGET_ANDROID
 # When resolving a native HTTPS query with native APIs
 # the Android implementation has a max timeout
 - name: network.dns.native_https_timeout_android
   type: RelaxedAtomicInt32
   value: 20000
   mirror: always
+#endif
 
+#ifdef XP_MACOSX
 # When resolving a native HTTPS query with native APIs
 # the MacOS implementation has a max timeout
 - name: network.dns.native_https_timeout_mac_msec
   type: RelaxedAtomicInt32
   value: 5000
   mirror: always
+#endif
 
 # When this pref is true, we copy the host name to a fresh string before
 # calling into getaddrinfo.
@@ -14571,6 +14593,16 @@
   value: true
   mirror: always
 
+# When true, benchmarking IP addresses 198.18.X.X is treated as local
+# Depending on how this ends up being treated in the LNA spec, we might
+# change it to be in the private space, but for now it's disabled to
+# match Chrome LNA behaviour.
+- name: network.lna.benchmarking-is-local
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+
 # The proxy type. See nsIProtocolProxyService.idl
 #     PROXYCONFIG_DIRECT   = 0
 #     PROXYCONFIG_MANUAL   = 1
@@ -14756,7 +14788,7 @@
 # If true, retry TRR for recoverable errors once.
 - name: network.trr.retry_on_recoverable_errors
   type: RelaxedAtomicBool
-  value: true
+  value: false
   mirror: always
 
 # If true, don't fallback to native DNS upon network errors.
@@ -15835,7 +15867,7 @@
 # to a fallback domain that hosts the same content.
 - name: network.essential_domains_fallback
   type: RelaxedAtomicBool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Enable HTTP Compression Dictionary support
@@ -16209,6 +16241,14 @@
   type: RelaxedAtomicUint32
   value: 2
   mirror: always
+
+#ifdef MOZ_ENABLE_SKIA_PDF
+# Whether we should try to use skpdf for pdf output.
+- name: print.experimental.skpdf
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+#endif
 
 #---------------------------------------------------------------------------
 # Prefs starting with "privacy."
@@ -16885,12 +16925,6 @@
   value: 2
   mirror: always
 
-# nsHttpChannelAuthProvider#ConfirmAuth anti-phishing prompts.
-- name: prompts.modalType.confirmAuth
-  type: int32_t
-  value: 2
-  mirror: always
-
 #---------------------------------------------------------------------------
 # Prefs starting with "security."
 #---------------------------------------------------------------------------
@@ -17260,11 +17294,13 @@
   value: true
   mirror: always
 
+#ifdef XP_MACOSX
 # Dispatch WebAuthn requests to the macOS platform API
 - name: security.webauthn.enable_macos_passkeys
   type: RelaxedAtomicBool
   value: true
   mirror: always
+#endif
 
 # Dispatch WebAuthn requests to authenticator-rs
 - name: security.webauth.webauthn_enable_usbtoken
@@ -19019,11 +19055,6 @@
   value: false
   mirror: always
 
-- name: widget.window-transforms.disabled
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
 # When looking for a recent window (for example, when a link is clicked
 # on from an external application), whether to prefer windows on the
 # current virtual desktop (aka workspace). For now this only applies on Windows.
@@ -19055,6 +19086,11 @@
   mirror: always
 
 - name: widget.macos.titlebar-blend-mode.behind-window
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+- name: widget.macos.window-transforms.disabled
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -19647,13 +19683,13 @@
   mirror: always
 #endif
 
+#ifdef ANDROID
 # Whether to render in to a child SurfaceControl rather than directly into the SurfaceView
 - name: widget.android.use-surfacecontrol
   type: bool
   value: false
   mirror: once
 
-#ifdef ANDROID
 # A threshold value for double click by mouse.
 - name: widget.double-click.threshold
   type: RelaxedAtomicInt32

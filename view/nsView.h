@@ -142,12 +142,8 @@ class nsView final : public nsIWidgetListener {
    */
   nsSize GetSize() const { return mSize; }
 
-  /**
-   * Destroys the associated widget for this view.  If this method is
-   * not called explicitly, the widget when be destroyed when its
-   * view gets destroyed.
-   */
-  void DestroyWidget();
+  // Stops listening to mWidget and clears it.
+  void DetachWidget();
 
   /**
    * Attach/detach a top level widget from this view. When attached, the view
@@ -177,10 +173,6 @@ class nsView final : public nsIWidgetListener {
    */
   bool HasWidget() const { return mWindow != nullptr; }
 
-  void SetForcedRepaint(bool aForceRepaint) { mForcedRepaint = aForceRepaint; }
-
-  void SetNeedsWindowPropertiesSync();
-
 #ifdef DEBUG
   /**
    * Output debug info to FILE
@@ -191,19 +183,6 @@ class nsView final : public nsIWidgetListener {
    */
   virtual void List(FILE* out, int32_t aIndent = 0) const;
 #endif  // DEBUG
-
-  /**
-   * @result true iff this is the root view for its view manager
-   */
-  bool IsRoot() const;
-
-  static LayoutDeviceIntRect CalcWidgetBounds(
-      const nsRect& aBounds, int32_t aAppUnitsPerDevPixel,
-      nsIFrame* aParentFrame, nsIWidget* aThisWidget,
-      mozilla::widget::WindowType, mozilla::widget::TransparencyMode);
-
-  LayoutDeviceIntRect CalcWidgetBounds(mozilla::widget::WindowType,
-                                       mozilla::widget::TransparencyMode);
 
   // nsIWidgetListener
   mozilla::PresShell* GetPresShell() override;
@@ -229,8 +208,7 @@ class nsView final : public nsIWidgetListener {
                           const mozilla::TimeStamp& aCompositeStart,
                           const mozilla::TimeStamp& aCompositeEnd) override;
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  nsEventStatus HandleEvent(mozilla::WidgetGUIEvent* aEvent,
-                            bool aUseAttachedEvents) override;
+  nsEventStatus HandleEvent(mozilla::WidgetGUIEvent*) override;
   void SafeAreaInsetsChanged(const mozilla::LayoutDeviceIntMargin&) override;
 
   virtual ~nsView();
@@ -239,8 +217,6 @@ class nsView final : public nsIWidgetListener {
 
  private:
   explicit nsView(nsViewManager* = nullptr);
-
-  bool ForcedRepaint() { return mForcedRepaint; }
 
   void SetSize(const nsSize& aSize) { mSize = aSize; }
 
@@ -252,8 +228,6 @@ class nsView final : public nsIWidgetListener {
   nsCOMPtr<nsIWidget> mWindow;
   nsCOMPtr<nsIWidget> mPreviousWindow;
   nsSize mSize;
-  bool mForcedRepaint;
-  bool mIsDirty = false;
 };
 
 #endif

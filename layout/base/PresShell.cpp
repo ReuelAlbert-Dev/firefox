@@ -69,6 +69,7 @@
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/StartupTimeline.h"
 #include "mozilla/StaticAnalysisFunctions.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -1727,9 +1728,15 @@ nsresult PresShell::Initialize() {
     // fires, if painting is still locked down, then we will go ahead and
     // trigger a full invalidate and allow painting to proceed normally.
     mPaintingSuppressed = true;
-    // Don't suppress painting if the document isn't loading.
-    Document::ReadyState readyState = mDocument->GetReadyStateEnum();
-    if (readyState != Document::READYSTATE_COMPLETE) {
+    // Don't suppress painting if the document isn't loading. However,
+    // the initial about:blank appears not to be loading, but we still
+    // want to suppress painting.
+    nsIDocShell* docShell = mDocument->GetDocShell();
+    if ((docShell &&
+         !nsDocShell::Cast(docShell)
+              ->HasStartedLoadingOtherThanInitialBlankURI() &&
+         mDocument->IsInitialDocument()) ||
+        mDocument->GetReadyStateEnum() != Document::READYSTATE_COMPLETE) {
       mPaintSuppressionTimer = NS_NewTimer();
     }
     if (!mPaintSuppressionTimer) {
@@ -4249,17 +4256,9 @@ bool PresShell::IsSafeToFlush() const {
   if (mIsReflowing || mChangeNestCount || mIsDestroying) {
     return false;
   }
-
-  // Not safe if we are painting
-  if (nsViewManager* viewManager = GetViewManager()) {
-    bool isPainting = false;
-    viewManager->IsPainting(isPainting);
-    if (isPainting) {
-      return false;
-    }
-  }
-
-  return true;
+  // Not safe either if we're painting.
+  // TODO(emilio): What could call us while painting now?
+  return !mIsPainting;
 }
 
 void PresShell::NotifyFontFaceSetOnRefresh() {
@@ -4475,12 +4474,6 @@ void PresShell::DoFlushPendingNotifications(mozilla::ChangesToFlush aFlush) {
     // scroll-timeline is active), and this depends on the readiness of the
     // scrollable frame and the primary frame of the scroll container.
     TriggerPendingScrollTimelineAnimations(mDocument);
-  }
-
-  if (flushType >= FlushType::Layout) {
-    if (!mIsDestroying) {
-      viewManager->UpdateWidgetGeometry();
-    }
   }
 }
 
@@ -5603,21 +5596,15 @@ struct PaintParams {
 
 WindowRenderer* PresShell::GetWindowRenderer() {
   NS_ASSERTION(mViewManager, "Should have view manager");
-  if (nsView* rootView = mViewManager->GetRootView()) {
-    if (nsIWidget* widget = rootView->GetWidget()) {
-      return widget->GetWindowRenderer();
-    }
+  if (nsIWidget* widget = GetOwnWidget()) {
+    return widget->GetWindowRenderer();
   }
   return nullptr;
 }
 
 nsIWidget* PresShell::GetNearestWidget() const {
-  if (mViewManager) {
-    if (auto* root = mViewManager->GetRootView()) {
-      if (nsIWidget* widget = root->GetWidget()) {
-        return widget;
-      }
-    }
+  if (auto* widget = GetOwnWidget()) {
+    return widget;
   }
   if (auto* embedder = GetInProcessEmbedderFrame()) {
     return embedder->GetNearestWidget();
@@ -5625,13 +5612,19 @@ nsIWidget* PresShell::GetNearestWidget() const {
   return GetRootWidget();
 }
 
+nsIWidget* PresShell::GetOwnWidget() const {
+  if (!mViewManager) {
+    return nullptr;
+  }
+  if (auto* root = mViewManager->GetRootView()) {
+    return root->GetWidget();
+  }
+  return nullptr;
+}
+
 bool PresShell::AsyncPanZoomEnabled() {
-  NS_ASSERTION(mViewManager, "Should have view manager");
-  nsView* rootView = mViewManager->GetRootView();
-  if (rootView) {
-    if (nsIWidget* widget = rootView->GetWidget()) {
-      return widget->AsyncPanZoomEnabled();
-    }
+  if (nsIWidget* widget = GetOwnWidget()) {
+    return widget->AsyncPanZoomEnabled();
   }
   return gfxPlatform::AsyncPanZoomEnabled();
 }
@@ -5757,12 +5750,11 @@ void PresShell::ProcessSynthMouseMoveEvent(bool aFromScroll) {
     mSynthMouseMoveEvent.Forget();
   });
   // If drag session has started, we shouldn't synthesize mousemove event.
-  nsView* rootView = mViewManager ? mViewManager->GetRootView() : nullptr;
-  if (!rootView || !rootView->HasWidget()) {
+  nsIWidget* widget = GetOwnWidget();
+  if (!widget) {
     return;
   }
-  nsCOMPtr<nsIDragSession> dragSession =
-      nsContentUtils::GetDragSession(rootView->GetWidget());
+  nsCOMPtr<nsIDragSession> dragSession = nsContentUtils::GetDragSession(widget);
   if (dragSession) {
     // Don't forget it.  We need to synthesize a mouse move when the drag
     // session ends.
@@ -5843,11 +5835,11 @@ void PresShell::ProcessSynthMouseOrPointerMoveEvent(
   // widget we will put in the event we dispatch, in widgetAPD appunits
   nsPoint refpoint(0, 0);
 
-  nsView* const rootView = mViewManager ? mViewManager->GetRootView() : nullptr;
-  if (!rootView || !rootView->HasWidget()) {
+  nsIWidget* ownWidget = GetOwnWidget();
+  if (!ownWidget) {
     return;
   }
-  MOZ_ASSERT(!nsCOMPtr{nsContentUtils::GetDragSession(rootView->GetWidget())});
+  MOZ_ASSERT(!nsCOMPtr{nsContentUtils::GetDragSession(ownWidget)});
 
   // We need a widget to put in the event we are going to dispatch so we look
   // for a view that has a widget and the mouse location is over. We first look
@@ -5865,7 +5857,7 @@ void PresShell::ProcessSynthMouseOrPointerMoveEvent(
 
   // We either dispatch the event to a popup, or a view.
   nsMenuPopupFrame* popupFrame =
-      FindPopupFrame(mPresContext, rootView->GetWidget(),
+      FindPopupFrame(mPresContext, ownWidget,
                      LayoutDeviceIntPoint::FromAppUnitsToNearest(
                          aPointerInfo.mLastRefPointInRootDoc, APD));
   if (popupFrame) {
@@ -5880,7 +5872,7 @@ void PresShell::ProcessSynthMouseOrPointerMoveEvent(
     MOZ_ASSERT(result == nsLayoutUtils::TRANSFORM_SUCCEEDED);
   }
   if (!widget) {
-    widget = rootView->GetWidget();
+    widget = ownWidget;
     widgetAPD = APD;
     pointShell = this;
     refpoint = aPointerInfo.mLastRefPointInRootDoc;
@@ -12021,12 +12013,8 @@ nsIWidget* PresShell::GetRootWidget() const {
     return nullptr;
   }
   for (nsPresContext* pc = mPresContext; pc; pc = pc->GetParentPresContext()) {
-    if (auto* vm = pc->PresShell()->GetViewManager()) {
-      if (auto* view = vm->GetRootView()) {
-        if (auto* widget = view->GetWidget()) {
-          return widget;
-        }
-      }
+    if (auto* widget = pc->PresShell()->GetOwnWidget()) {
+      return widget;
     }
   }
   return nullptr;
@@ -12196,10 +12184,13 @@ void PresShell::ResetVisualViewportSize() {
 }
 
 void PresShell::SetNeedsWindowPropertiesSync() {
-  mNeedsWindowPropertiesSync = true;
-  if (mViewManager) {
-    mViewManager->PostPendingUpdate();
+  if (XRE_IsContentProcess() || !IsRoot()) {
+    // Window properties are only relevant to top level widgets in the parent
+    // process
+    return;
   }
+  mNeedsWindowPropertiesSync = true;
+  SchedulePaint();
 }
 
 bool PresShell::SetVisualViewportOffset(const nsPoint& aScrollOffset,
@@ -12477,8 +12468,42 @@ PresShell::WindowSizeConstraints PresShell::GetWindowSizeConstraints() {
   return {minSize, maxSize};
 }
 
-void PresShell::SyncWindowProperties() {
-  if (!mNeedsWindowPropertiesSync || XRE_IsContentProcess()) {
+void PresShell::PaintSynchronously() {
+  MOZ_ASSERT(!mIsPainting, "re-entrant paint?");
+  if (IsNeverPainting() || IsPaintingSuppressed() || !IsVisible() ||
+      MOZ_UNLIKELY(NS_WARN_IF(mIsPainting))) {
+    return;
+  }
+  RefPtr widget = GetOwnWidget();
+  if (NS_WARN_IF(!widget)) {
+    // We were asked to paint a non-root pres shell, or an already-detached
+    // shell.
+    return;
+  }
+  MOZ_ASSERT(widget->IsTopLevelWidget());
+  if (!widget->NeedsPaint()) {
+    return;
+  }
+
+  // FIXME: This might not be needed now except for widget paints
+  // (WillPaintWindow) and maybe FlushWillPaintObservers.
+  WillPaint();
+
+  if (MOZ_UNLIKELY(mIsDestroying)) {
+    return;
+  }
+
+  mViewManager->FlushDelayedResize();
+
+  mIsPainting = true;
+  auto cleanUpPaintingBit = MakeScopeExit([&] { mIsPainting = false; });
+  nsAutoScriptBlocker blocker;
+  RefPtr<WindowRenderer> renderer = widget->GetWindowRenderer();
+  PaintAndRequestComposite(GetRootFrame(), renderer, PaintFlags::None);
+}
+
+void PresShell::SyncWindowPropertiesIfNeeded() {
+  if (!mNeedsWindowPropertiesSync) {
     return;
   }
 

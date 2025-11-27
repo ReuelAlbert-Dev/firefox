@@ -42,11 +42,13 @@ void StylePropertyMap::Set(
     ErrorResult& aRv) {
   // Step 2.
 
-  NonCustomCSSPropertyId propId = nsCSSProps::LookupProperty(aProperty);
-  if (propId == eCSSProperty_UNKNOWN) {
+  NonCustomCSSPropertyId id = nsCSSProps::LookupProperty(aProperty);
+  if (id == eCSSProperty_UNKNOWN) {
     aRv.ThrowTypeError("Invalid property: "_ns + aProperty);
     return;
   }
+
+  auto propertyId = CSSPropertyId::FromIdOrCustomProperty(id, aProperty);
 
   if (aValues.Length() != 1) {
     aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
@@ -62,17 +64,26 @@ void StylePropertyMap::Set(
 
   CSSStyleValue& styleValue = styleValueOrString.GetAsCSSStyleValue();
 
-  nsAutoCString value;
+  // Step 4
+
+  const auto valuePropertyId = styleValue.GetPropertyId();
+
+  if (valuePropertyId && *valuePropertyId != propertyId) {
+    aRv.ThrowTypeError("Invalid type for property"_ns);
+    return;
+  }
+
+  nsAutoCString cssText;
 
   if (styleValue.IsCSSUnsupportedValue()) {
     CSSUnsupportedValue& unsupportedValue =
         styleValue.GetAsCSSUnsupportedValue();
 
-    unsupportedValue.GetValue(value);
+    unsupportedValue.ToCssTextWithProperty(propertyId, cssText);
   } else if (styleValue.IsCSSKeywordValue()) {
     CSSKeywordValue& keywordValue = styleValue.GetAsCSSKeywordValue();
 
-    keywordValue.GetValue(value);
+    keywordValue.ToCssTextWithProperty(propertyId, cssText);
   } else {
     aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
     return;
@@ -88,7 +99,7 @@ void StylePropertyMap::Set(
 
   nsCOMPtr<nsDOMCSSDeclaration> declaration = styledElement->Style();
 
-  declaration->SetProperty(aProperty, value, ""_ns, aRv);
+  declaration->SetProperty(aProperty, cssText, ""_ns, aRv);
 }
 
 void StylePropertyMap::Append(

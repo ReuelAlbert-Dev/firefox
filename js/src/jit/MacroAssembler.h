@@ -221,8 +221,6 @@ namespace js {
 class StaticStrings;
 class FixedLengthTypedArrayObject;
 
-enum class NativeIteratorIndices : uint32_t;
-
 namespace wasm {
 class CalleeDesc;
 class CallSiteDesc;
@@ -838,9 +836,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void callWithABIPost(uint32_t stackAdjust, ABIType result,
                        bool callFromWasm = false) PER_ARCH;
 
+#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   // Set the JSContext::inUnsafeCallWithABI flag using InstanceReg.
   void wasmCheckUnsafeCallWithABIPre();
-#ifdef JS_CHECK_UNSAFE_CALL_WITH_ABI
   // Check JSContext::inUnsafeCallWithABI was cleared as expected.
   void wasmCheckUnsafeCallWithABIPost();
 #endif
@@ -1114,6 +1112,7 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // explicitly requested. Instead use branch(Add|Sub|Mul|Neg) to test for
   // condition flags after performing arithmetic operations.
 
+  inline void add32(const Address& src, Register dest) PER_SHARED_ARCH;
   inline void add32(Register src, Register dest) PER_SHARED_ARCH;
   inline void add32(Imm32 imm, Register dest) PER_SHARED_ARCH;
   inline void add32(Imm32 imm, Register src, Register dest) PER_SHARED_ARCH;
@@ -3986,10 +3985,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // Will select one of the other branchWasmRefIsSubtype* functions depending on
   // destType. See each function for the register allocation requirements, as
   // well as which registers will be preserved.
-  void branchWasmRefIsSubtype(Register ref, wasm::MaybeRefType sourceType,
-                              wasm::RefType destType, Label* label,
-                              bool onSuccess, Register superSTV,
-                              Register scratch1, Register scratch2);
+  //
+  // If this function returns a valid FaultingCodeOffset, then you must emit a
+  // trap site to catch the bad cast. It will never return a valid
+  // FaultingCodeOffset when signalNullChecks is false.
+  FaultingCodeOffset branchWasmRefIsSubtype(
+      Register ref, wasm::MaybeRefType sourceType, wasm::RefType destType,
+      Label* label, bool onSuccess, bool signalNullChecks, Register superSTV,
+      Register scratch1, Register scratch2);
 
   // Perform a subtype check that `ref` is a subtype of `type`, branching to
   // `label` depending on `onSuccess`. `type` must be in the `any` hierarchy.
@@ -4002,10 +4005,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
   //
   // `ref` and `superSTV` are preserved. Scratch registers are
   // clobbered.
-  void branchWasmRefIsSubtypeAny(Register ref, wasm::RefType sourceType,
-                                 wasm::RefType destType, Label* label,
-                                 bool onSuccess, Register superSTV,
-                                 Register scratch1, Register scratch2);
+  //
+  // If this function returns a valid FaultingCodeOffset, then you must emit a
+  // trap site to catch the bad cast. It will never return a valid
+  // FaultingCodeOffset when signalNullChecks is false.
+  FaultingCodeOffset branchWasmRefIsSubtypeAny(
+      Register ref, wasm::RefType sourceType, wasm::RefType destType,
+      Label* label, bool onSuccess, bool signalNullChecks, Register superSTV,
+      Register scratch1, Register scratch2);
 
   // Perform a subtype check that `ref` is a subtype of `type`, branching to
   // `label` depending on `onSuccess`. `type` must be in the `func` hierarchy.
@@ -4110,8 +4117,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                 const Address& dst, Register scratch);
 
   // Branch if the object `src` is or is not a WasmGcObject.
-  void branchObjectIsWasmGcObject(bool isGcObject, Register src,
-                                  Register scratch, Label* label);
+  FaultingCodeOffset branchObjectIsWasmGcObject(bool isGcObject, Register src,
+                                                Register scratch, Label* label);
 
   // `typeDefData` will be preserved. `instance` and `result` may be the same
   // register, in which case `instance` will be clobbered.
@@ -5395,16 +5402,17 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                                 Label* label);
 
   void branchIfNativeIteratorNotReusable(Register ni, Label* notReusable);
-  void branchNativeIteratorIndices(Condition cond, Register ni, Register temp,
-                                   NativeIteratorIndices kind, Label* label);
 
   void maybeLoadIteratorFromShape(Register obj, Register dest, Register temp,
                                   Register temp2, Register temp3,
-                                  Label* failure);
+                                  Label* failure, bool exclusive);
 
   void iteratorMore(Register obj, ValueOperand output, Register temp);
   void iteratorClose(Register obj, Register temp1, Register temp2,
                      Register temp3);
+  void iteratorLength(Register obj, Register output);
+  void iteratorLoadElement(Register obj, Register index, Register output);
+  void iteratorLoadElement(Register obj, int32_t index, Register output);
   void registerIterator(Register enumeratorsList, Register iter, Register temp);
 
   void prepareOOBStoreElement(Register object, Register index,
@@ -5723,6 +5731,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void extractCurrentIndexAndKindFromIterator(Register iterator,
                                               Register outIndex,
                                               Register outKind);
+  void extractIndexAndKindFromIteratorByIterIndex(Register iterator,
+                                                  Register inOutIndex,
+                                                  Register outKind,
+                                                  Register scratch);
 
   template <typename IdType>
 #ifdef JS_CODEGEN_X86

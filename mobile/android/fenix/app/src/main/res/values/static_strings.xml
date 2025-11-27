@@ -77,10 +77,12 @@
     <string name="preferences_debug_settings_mozilla_ads_client" translatable="false">Enable Mozilla Ads Client</string>
     <!-- Label for enabling Discover more stories -->
     <string name="preferences_debug_settings_discover_more_stories" translatable="false">Enable Discover More Stories</string>
-    <!-- Label for enabling Private Browsing Mode redesign -->
-    <string name="preferences_debug_settings_private_browsing_mode_redesign" translatable="false">Enable Private Browsing Mode redesign</string>
     <!-- Label for enabling the menu redesign -->
     <string name="preferences_debug_settings_menu_redesign" translatable="false">Enable Menu Redesign</string>
+    <!-- Label for enabling the custom tab extension -->
+    <string name="preferences_debug_settings_custom_tab_extensions" translatable="false">Enable Custom Tab Extension List</string>
+    <!-- Label for a longer description of the custom tab extensions depending on the menu redesign or composable toolbar feature -->
+    <string name="preferences_debug_settings_custom_tab_extensions_summary" translatable="false">This needs the Menu Redesign or Composable Toolbar feature enabled</string>
     <!-- Label for enabling Firefox Suggest -->
     <string name="preferences_debug_settings_fxsuggest" translatable="false">Enable Firefox Suggest</string>
     <!-- Label for enabling the composable toolbar -->
@@ -127,7 +129,9 @@
     <string name="preferences_terms_of_use_debug_timer" translatable="false">30s ToU timer enabled</string>
 
     <!-- Label for enabling LNA blocking -->
-    <string name="preferences_debug_settings_enable_lna_blocking" translatable="false">Enable LNA blocking</string>
+    <string name="preferences_debug_settings_enable_lna_blocking" translatable="false">Enable LNA request blocking</string>
+    <string name="preferences_debug_settings_enable_lna_tracker_blocking" translatable="false">Enable LNA tracker blocking</string>
+    <string name="preferences_debug_settings_enable_lna_feature" translatable="false">Enable LNA blocking feature overall (required for anything LNA)</string>
 
     <!-- Label for enabling isolated content processes in secret settings. -->
     <string name="preferences_debug_settings_isolated_process" translatable="false">Enable Isolated Content Process (requires restart)</string>

@@ -137,8 +137,7 @@ export class UrlbarInput extends HTMLElement {
                       data-l10n-id="urlbar-placeholder"/>
         </moz-input-box>
         <moz-urlbar-slot name="revert-button"> </moz-urlbar-slot>
-        <image id="urlbar-go-button"
-               class="urlbar-icon urlbar-go-button"
+        <image class="urlbar-icon urlbar-go-button"
                role="button"
                data-l10n-id="urlbar-go-button"/>
         <moz-urlbar-slot name="page-actions" hidden=""> </moz-urlbar-slot>
@@ -236,6 +235,11 @@ export class UrlbarInput extends HTMLElement {
     this.isPrivate = lazy.PrivateBrowsingUtils.isWindowPrivate(this.window);
 
     lazy.UrlbarPrefs.addObserver(this);
+    window.addEventListener("unload", () => {
+      // Stop listening to pref changes to make sure we don't init the new
+      // searchbar in closed windows that have not been gc'd yet.
+      lazy.UrlbarPrefs.removeObserver(this);
+    });
   }
 
   /**
@@ -276,7 +280,7 @@ export class UrlbarInput extends HTMLElement {
   /**
    * Initialization that happens once on the first connect.
    */
-  #init() {
+  #initOnce() {
     this.#sapName = this.getAttribute("sap-name");
     this.#isAddressbar = this.#sapName == "urlbar";
 
@@ -351,8 +355,19 @@ export class UrlbarInput extends HTMLElement {
   }
 
   connectedCallback() {
+    if (
+      this.sapName == "searchbar" &&
+      !lazy.UrlbarPrefs.get("browser.search.widget.new")
+    ) {
+      return;
+    }
+
+    this.#init();
+  }
+
+  #init() {
     if (!this.controller) {
-      this.#init();
+      this.#initOnce();
     }
 
     // Don't attach event listeners if the toolbar is not visible
@@ -434,8 +449,21 @@ export class UrlbarInput extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.inputField.controllers.removeController(this._copyCutController);
-    delete this._copyCutController;
+    if (
+      this.sapName == "searchbar" &&
+      !lazy.UrlbarPrefs.get("browser.search.widget.new")
+    ) {
+      return;
+    }
+
+    this.#uninit();
+  }
+
+  #uninit() {
+    if (this._copyCutController) {
+      this.inputField.controllers.removeController(this._copyCutController);
+      delete this._copyCutController;
+    }
 
     for (let event of UrlbarInput.#inputFieldEvents) {
       this.inputField.removeEventListener(event, this);
@@ -563,12 +591,14 @@ export class UrlbarInput extends HTMLElement {
         );
         break;
       case "browser.search.widget.new": {
-        if (
-          this.#sapName == "searchbar" &&
-          lazy.UrlbarPrefs.get("browser.search.widget.new")
-        ) {
-          // Update dimensions because the searchbar was invisible before.
-          this.#updateLayoutBreakout();
+        if (this.sapName == "searchbar" && this.isConnected) {
+          if (lazy.UrlbarPrefs.get("browser.search.widget.new")) {
+            // The connectedCallback was skipped. Init now.
+            this.#init();
+          } else {
+            // Uninit now, the disconnectedCallback will be skipped.
+            this.#uninit();
+          }
         }
       }
     }
@@ -663,29 +693,27 @@ export class UrlbarInput extends HTMLElement {
   /**
    * Sets the URI to display in the location bar.
    *
-   * @param {nsIURI} [uri]
+   * @param {object} [options]
+   * @param {?nsIURI} [options.uri]
    *        If this is unspecified, the current URI will be used.
-   * @param {boolean} [dueToTabSwitch]
-   *        True if this is being called due to switching tabs and false
-   *        otherwise.
-   * @param {boolean} [dueToSessionRestore]
-   *        True if this is being called due to session restore and false
-   *        otherwise.
-   * @param {boolean} [hideSearchTerms]
+   * @param {boolean} [options.dueToTabSwitch=false]
+   *        Whether this is being called due to switching tabs.
+   * @param {boolean} [options.dueToSessionRestore=false]
+   *        Whether this is being called due to session restore.
+   * @param {boolean} [options.hideSearchTerms=false]
    *        True if userTypedValue should not be overidden by search terms
    *        and false otherwise.
-   * @param {boolean} [isSameDocument]
-   *        True if the caller of setURI loaded a new document and false
-   *        otherwise (e.g. the location change was from an anchor scroll
-   *        or a pushState event).
+   * @param {boolean} [options.isSameDocument=false]
+   *        Whether the caller loaded a new document or not (e.g. location
+   *        change from an anchor scroll or a pushState event).
    */
-  setURI(
+  setURI({
     uri = null,
     dueToTabSwitch = false,
     dueToSessionRestore = false,
     hideSearchTerms = false,
-    isSameDocument = false
-  ) {
+    isSameDocument = false,
+  } = {}) {
     if (!this.#isAddressbar) {
       throw new Error(
         "Cannot set URI for UrlbarInput that is not an address bar"
@@ -1227,7 +1255,10 @@ export class UrlbarInput extends HTMLElement {
     // Nullify search mode before setURI so it won't try to restore it.
     this.searchMode = null;
     if (this.#isAddressbar) {
-      this.setURI(null, true, false, true);
+      this.setURI({
+        dueToTabSwitch: true,
+        hideSearchTerms: true,
+      });
     } else {
       this.value = "";
     }
@@ -3847,6 +3878,9 @@ export class UrlbarInput extends HTMLElement {
   }
 
   _initCopyCutController() {
+    if (this._copyCutController) {
+      return;
+    }
     this._copyCutController = new CopyCutController(this);
     this.inputField.controllers.insertControllerAt(0, this._copyCutController);
   }
@@ -4217,18 +4251,13 @@ export class UrlbarInput extends HTMLElement {
       this._searchModeIndicatorTitle.removeAttribute("data-l10n-id");
     }
 
-    if (this.#isAddressbar) {
-      if (!engineName && !source) {
-        try {
-          // This will throw before DOMContentLoaded in
-          // PrivateBrowsingUtils.privacyContextFromWindow because
-          // aWindow.docShell is null.
-          this.initPlaceHolder(true);
-        } catch (ex) {}
-        this.removeAttribute("searchmode");
-        return;
-      }
+    if (!engineName && !source) {
+      this.removeAttribute("searchmode");
+      this.initPlaceHolder(true);
+      return;
+    }
 
+    if (this.#isAddressbar) {
       if (engineName) {
         // Set text content for the search mode indicator.
         this._searchModeIndicatorTitle.textContent = engineName;
@@ -4537,7 +4566,7 @@ export class UrlbarInput extends HTMLElement {
    * Determines if we should select all the text in the Urlbar based on the
    *  Urlbar state, and whether the selection is empty.
    */
-  _maybeSelectAll() {
+  #maybeSelectAll() {
     if (
       !this._preventClickSelectsAll &&
       this.#compositionState != lazy.UrlbarUtils.COMPOSITION.COMPOSING &&
@@ -4639,29 +4668,35 @@ export class UrlbarInput extends HTMLElement {
   }
 
   _on_click(event) {
-    if (
-      event.target == this.inputField ||
-      event.target == this._inputContainer
-    ) {
-      this._maybeSelectAll();
-      this.#maybeUntrimUrl();
-    }
+    switch (event.target) {
+      case this.inputField:
+      case this._inputContainer:
+        this.#maybeSelectAll();
+        this.#maybeUntrimUrl();
+        break;
 
-    if (event.target == this._searchModeIndicatorClose && event.button != 2) {
-      this.searchMode = null;
-      if (this.view.oneOffSearchButtons) {
-        this.view.oneOffSearchButtons.selectedButton = null;
-      }
-      if (this.view.isOpen) {
-        this.startQuery({
-          event,
-        });
-      }
-    }
+      case this._searchModeIndicatorClose:
+        if (event.button != 2) {
+          this.searchMode = null;
+          if (this.view.oneOffSearchButtons) {
+            this.view.oneOffSearchButtons.selectedButton = null;
+          }
+          if (this.view.isOpen) {
+            this.startQuery({
+              event,
+            });
+          }
+        }
+        break;
 
-    if (event.target == this._revertButton) {
-      this.handleRevert();
-      this.select();
+      case this._revertButton:
+        this.handleRevert();
+        this.select();
+        break;
+
+      case this.goButton:
+        this.handleCommand(event);
+        break;
     }
   }
 
@@ -4673,7 +4708,7 @@ export class UrlbarInput extends HTMLElement {
       return;
     }
 
-    this._maybeSelectAll();
+    this.#maybeSelectAll();
   }
 
   _on_focus(event) {
@@ -4722,7 +4757,7 @@ export class UrlbarInput extends HTMLElement {
       }
 
       if (this.inputField.hasAttribute("refocused-by-panel")) {
-        this._maybeSelectAll();
+        this.#maybeSelectAll();
       }
     }
 
@@ -5039,6 +5074,13 @@ export class UrlbarInput extends HTMLElement {
       this._setValue(value, { valueIsTyped: true });
       this.userTypedValue = value;
 
+      // Since we prevent the default paste event, we have to ensure the
+      // pageproxystate is updated. The paste event replaces the actual current
+      // page's URL with user-typed content, so we should set pageproxystate to
+      // invalid.
+      if (this.getAttribute("pageproxystate") == "valid") {
+        this.setPageProxyState("invalid");
+      }
       this.toggleAttribute("usertyping", this._untrimmedValue);
 
       // Fix up cursor/selection:
@@ -5424,7 +5466,7 @@ export class UrlbarInput extends HTMLElement {
         // url until an onLocationChange happens.
         // See the handling in `setURI` for further details.
         this.userTypedValue = null;
-        this.setURI(null, true);
+        this.setURI({ dueToTabSwitch: true });
       }
     }
   }

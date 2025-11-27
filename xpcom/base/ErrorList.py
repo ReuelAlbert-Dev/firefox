@@ -356,9 +356,6 @@ with modules["NETWORK"]:
     errors["NS_ERROR_BAD_HSTS_CERT"] = FAILURE(89)
     # Error parsing the status line of an HTTP response
     errors["NS_ERROR_PARSING_HTTP_STATUS_LINE"] = FAILURE(90)
-    # The user refused to navigate to a potentially unsafe URL with
-    # embedded credentials/superfluos authentication.
-    errors["NS_ERROR_SUPERFLUOS_AUTH"] = FAILURE(91)
     # The user attempted basic HTTP authentication while
     # the basic_http_auth pref is disabled
     errors["NS_ERROR_BASIC_HTTP_AUTH_DISABLED"] = FAILURE(92)
@@ -963,8 +960,7 @@ with modules["URILOADER"]:
     # doesn't need to be reparsed from the original source.
     errors["NS_ERROR_PARSED_DATA_CACHED"] = FAILURE(33)
 
-    # When browser.tabs.documentchannel.parent-controlled pref and SHIP
-    # are enabled and a load gets cancelled due to another one
+    # When SHIP is enabled and a load gets cancelled due to another one
     # starting, the error is NS_BINDING_CANCELLED_OLD_LOAD.
     errors["NS_BINDING_CANCELLED_OLD_LOAD"] = FAILURE(39)
 

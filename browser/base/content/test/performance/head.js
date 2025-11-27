@@ -489,7 +489,10 @@ async function recordFrames(testPromise, win = window) {
   win.addEventListener("MozAfterPaint", afterPaintListener);
 
   // If the test is using an existing window, capture a frame immediately.
-  if (win.document.readyState == "complete") {
+  if (
+    win.document.readyState == "complete" &&
+    win.location.href != "about:blank"
+  ) {
     afterPaintListener();
   }
 
@@ -747,9 +750,9 @@ async function withPerfObserver(testFn, exceptions = {}, win = window) {
  *
  * @param {bool} keyed
  *        Pass true to synthesize typing the search string one key at a time.
- * @param {array} expectedReflowsFirstOpen
+ * @param {Array} expectedReflowsFirstOpen
  *        The array of expected reflow stacks when the panel is first opened.
- * @param {array} [expectedReflowsSecondOpen]
+ * @param {Array} [expectedReflowsSecondOpen]
  *        The array of expected reflow stacks when the panel is subsequently
  *        opened, if you're testing opening the panel twice.
  */
@@ -1013,7 +1016,7 @@ async function checkLoadedScripts({
 // window for some reason. See bug 1445161. This function allows to deal with
 // that in a central place.
 function isLikelyFocusChange(rects, frame) {
-  if (rects.length > 3 && rects.every(r => r.y2 < 100)) {
+  if (rects.length >= 3 && rects.every(r => r.y2 < 100)) {
     // There are at least 4 areas that changed near the top of the screen.
     // Note that we need a bit more leeway than the titlebar height, because on
     // OSX other toolbarbuttons in the navigation toolbar also get disabled

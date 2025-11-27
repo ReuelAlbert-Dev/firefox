@@ -1327,33 +1327,6 @@ static bool AreAllEarlierInFlowFramesEmpty(nsIFrame* aFrame,
   return true;
 }
 
-static bool AxisPolarityFlipped(LogicalAxis aThisAxis, WritingMode aThisWm,
-                                WritingMode aOtherWm) {
-  if (MOZ_LIKELY(aThisWm == aOtherWm)) {
-    // Dedicated short circuit for the common case.
-    return false;
-  }
-  LogicalAxis otherAxis = aThisWm.IsOrthogonalTo(aOtherWm)
-                              ? GetOrthogonalAxis(aThisAxis)
-                              : aThisAxis;
-  NS_ASSERTION(
-      aThisWm.PhysicalAxis(aThisAxis) == aOtherWm.PhysicalAxis(otherAxis),
-      "Physical axes must match!");
-  Side thisStartSide =
-      aThisWm.PhysicalSide(MakeLogicalSide(aThisAxis, LogicalEdge::Start));
-  Side otherStartSide =
-      aOtherWm.PhysicalSide(MakeLogicalSide(otherAxis, LogicalEdge::Start));
-  return thisStartSide != otherStartSide;
-}
-
-static bool InlinePolarityFlipped(WritingMode aThisWm, WritingMode aOtherWm) {
-  return AxisPolarityFlipped(LogicalAxis::Inline, aThisWm, aOtherWm);
-}
-
-static bool BlockPolarityFlipped(WritingMode aThisWm, WritingMode aOtherWm) {
-  return AxisPolarityFlipped(LogicalAxis::Block, aThisWm, aOtherWm);
-}
-
 // In the code below, |aCBReflowInput->mFrame| is the absolute containing block,
 // while |blockContainer| is the nearest block container of the placeholder
 // frame, which may be different from the absolute containing block.
@@ -1592,13 +1565,15 @@ void ReflowInput::CalculateHypotheticalPosition(
   // padding edge and our current values are relative to the border edge, so
   // translate.
   const LogicalMargin border = aCBReflowInput->ComputedLogicalBorder(wm);
-  if (hypotheticalPosWillUseCbwm && InlinePolarityFlipped(wm, cbwm)) {
+  if (hypotheticalPosWillUseCbwm &&
+      !wm.ParallelAxisStartsOnSameSide(LogicalAxis::Inline, cbwm)) {
     aHypotheticalPos.mIStart += border.IEnd(wm);
   } else {
     aHypotheticalPos.mIStart -= border.IStart(wm);
   }
 
-  if (hypotheticalPosWillUseCbwm && BlockPolarityFlipped(wm, cbwm)) {
+  if (hypotheticalPosWillUseCbwm &&
+      !wm.ParallelAxisStartsOnSameSide(LogicalAxis::Block, cbwm)) {
     aHypotheticalPos.mBStart += border.BEnd(wm);
   } else {
     aHypotheticalPos.mBStart -= border.BStart(wm);
@@ -2131,15 +2106,6 @@ static nscoord CalcQuirkContainingBlockHeight(
 
 LogicalSize ReflowInput::ComputeContainingBlockRectangle(
     nsPresContext* aPresContext, const ReflowInput* aContainingBlockRI) const {
-  MOZ_ASSERT(!mFrame->IsAbsolutelyPositioned(mStyleDisplay) ||
-                 // XXX: We have a hack putting abspos continuations in overflow
-                 // container lists (bug 154892), so they are not reflowed by
-                 // AbsoluteContainingBlock until we revisit the abspos
-                 // continuations handling.
-                 mFrame->GetPrevInFlow(),
-             "AbsoluteContainingBlock always provides a containing-block size "
-             "when creating ReflowInput for its children!");
-
   LogicalSize cbSize = aContainingBlockRI->ComputedSize();
   WritingMode wm = aContainingBlockRI->GetWritingMode();
 
@@ -2153,11 +2119,13 @@ LogicalSize ReflowInput::ComputeContainingBlockRectangle(
   }
 
   auto IsQuirky = [](const StyleSize& aSize) -> bool {
-    return aSize.ConvertsToPercentage();
+    return aSize.ConvertsToPercentage() ||
+           aSize.BehavesLikeStretchOnBlockAxis();
   };
   const auto anchorResolutionParams = AnchorPosResolutionParams::From(this);
-  // an element in quirks mode gets a containing block based on looking for a
-  // parent with a non-auto height if the element has a percent height.
+  // In quirks mode, if an element has a percent height (or a 'stretch' height,
+  // which is kinda like a special version of 100%), then it gets its
+  // containing block by looking for an ancestor with a non-auto height.
   // Note: We don't emulate this quirk for percents in calc(), or in vertical
   // writing modes, or if the containing block is a flex or grid item.
   if (!wm.IsVertical() && NS_UNCONSTRAINEDSIZE == cbSize.BSize(wm)) {
@@ -2220,6 +2188,19 @@ void ReflowInput::InitConstraints(
     // If we weren't given a containing block size, then compute one.
     if (aContainingBlockSize.isNothing()) {
       cbSize = ComputeContainingBlockRectangle(aPresContext, cbri);
+    } else if (aPresContext->FragmentainerAwarePositioningEnabled() &&
+               mFrame->IsAbsolutelyPositioned(mStyleDisplay) &&
+               mFrame->GetPrevInFlow()) {
+      // AbsoluteContainingBlock always provides a containing-block size to
+      // ReflowInput. However, if the delegating frame is a continuation or an
+      // overflow container (i.e. it has zero block-size), we'll need a
+      // containing-block size (padding-box size) suitable for resolving the
+      // abspos continuation's percentage block-size.
+      //
+      // Bug 1998818 is to fix the containing-block size for resolving
+      // percentage block-size for abspos's first-in-flow.
+      cbSize = ComputeContainingBlockRectangle(aPresContext, cbri) +
+               cbri->ComputedLogicalPadding(wm).Size(wm);
     }
 
     // See if the containing block height is based on the size of its
@@ -2244,8 +2225,23 @@ void ReflowInput::InitConstraints(
                 mComputeSizeFlags, aBorder, aPadding, mStyleDisplay);
 
     // For calculating the size of this box, we use its own writing mode
-    const auto blockSize =
+    auto blockSize =
         mStylePosition->BSize(wm, AnchorPosResolutionParams::From(this));
+    if (blockSize->BehavesLikeStretchOnBlockAxis()) {
+      // Resolve 'stretch' to either 'auto' or the stretched bsize, depending
+      // on whether our containing block has a definite bsize.
+      // TODO(dholbert): remove this in bug 2000035.
+      if (NS_UNCONSTRAINEDSIZE == cbSize.BSize(wm)) {
+        blockSize = AnchorResolvedSizeHelper::Auto();
+      } else {
+        nscoord stretchBSize = nsLayoutUtils::ComputeStretchBSize(
+            cbSize.BSize(wm), ComputedLogicalMargin(wm).BStartEnd(wm),
+            ComputedLogicalBorderPadding(wm).BStartEnd(wm),
+            mStylePosition->mBoxSizing);
+        blockSize = AnchorResolvedSizeHelper::LengthPercentage(
+            StyleLengthPercentage::FromAppUnits(stretchBSize));
+      }
+    }
     bool isAutoBSize = blockSize->BehavesLikeInitialValueOnBlockAxis();
 
     // Check for a percentage based block size and a containing block
@@ -2368,8 +2364,8 @@ void ReflowInput::InitConstraints(
       mComputedMaxSize.SizeTo(mWritingMode, NS_UNCONSTRAINEDSIZE,
                               NS_UNCONSTRAINEDSIZE);
     } else if (mFrame->IsAbsolutelyPositioned(mStyleDisplay) &&
-               // XXXfr hack for making frames behave properly when in overflow
-               // container lists, see bug 154892; need to revisit later
+               // The absolute constraints are needed only for abspos
+               // first-in-flow, not continuations.
                !mFrame->GetPrevInFlow()) {
       InitAbsoluteConstraints(cbri,
                               cbSize.ConvertTo(cbri->GetWritingMode(), wm));

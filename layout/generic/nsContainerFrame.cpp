@@ -181,8 +181,8 @@ void nsContainerFrame::RemoveFrame(DestroyContext& aContext,
 }
 
 void nsContainerFrame::DestroyAbsoluteFrames(DestroyContext& aContext) {
-  if (IsAbsoluteContainer()) {
-    GetAbsoluteContainingBlock()->DestroyFrames(aContext);
+  if (auto* absCB = GetAbsoluteContainingBlock()) {
+    absCB->DestroyFrames(aContext);
     MarkAsNotAbsoluteContainingBlock();
   }
 }
@@ -494,8 +494,10 @@ void nsContainerFrame::DisplaySelectionOverlay(nsDisplayListBuilder* aBuilder,
       newContent ? newContent->ComputeIndexOf_Deprecated(mContent) : 0;
 
   // look up to see what selection(s) are on this frame
-  UniquePtr<SelectionDetails> details =
-      frameSelection->LookUpSelection(newContent, offset, 1, false);
+  UniquePtr<SelectionDetails> details = frameSelection->LookUpSelection(
+      newContent, offset, 1,
+      IsSelectable() ? nsFrameSelection::IgnoreNormalSelection::No
+                     : nsFrameSelection::IgnoreNormalSelection::Yes);
   if (!details) {
     return;
   }
@@ -844,21 +846,22 @@ void nsContainerFrame::ReflowAbsoluteFrames(nsPresContext* aPresContext,
                                             ReflowOutput& aDesiredSize,
                                             const ReflowInput& aReflowInput,
                                             nsReflowStatus& aStatus) {
-  if (HasAbsolutelyPositionedChildren()) {
-    AbsoluteContainingBlock* absoluteContainer = GetAbsoluteContainingBlock();
-
+  auto* absoluteContainer = GetAbsoluteContainingBlock();
+  if (absoluteContainer && absoluteContainer->PrepareAbsoluteFrames(this)) {
     // The containing block for the abs pos kids is formed by our padding edge.
-    nsMargin usedBorder = GetUsedBorder();
-    nsRect containingBlock(nsPoint{}, aDesiredSize.PhysicalSize());
-    containingBlock.Deflate(usedBorder);
+    const auto wm = GetWritingMode();
+    LogicalRect cbRect(wm, LogicalPoint(wm), aDesiredSize.Size(wm));
+    cbRect.Deflate(wm, GetLogicalUsedBorder(wm).ApplySkipSides(
+                           PreReflowBlockLevelLogicalSkipSides()));
     // XXX: To optimize the performance, set the flags only when the CB width or
     // height actually changes.
     AbsPosReflowFlags flags{AbsPosReflowFlag::AllowFragmentation,
                             AbsPosReflowFlag::CBWidthChanged,
                             AbsPosReflowFlag::CBHeightChanged};
-    absoluteContainer->Reflow(this, aPresContext, aReflowInput, aStatus,
-                              containingBlock, flags,
-                              &aDesiredSize.mOverflowAreas);
+    absoluteContainer->Reflow(
+        this, aPresContext, aReflowInput, aStatus,
+        cbRect.GetPhysicalRect(wm, aDesiredSize.PhysicalSize()), flags,
+        &aDesiredSize.mOverflowAreas);
   }
 }
 
@@ -1009,6 +1012,15 @@ void nsContainerFrame::DisplayOverflowContainers(
     nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists) {
   if (nsFrameList* overflowconts = GetOverflowContainers()) {
     for (nsIFrame* frame : *overflowconts) {
+      BuildDisplayListForChild(aBuilder, frame, aLists);
+    }
+  }
+}
+
+void nsContainerFrame::DisplayAbsoluteContinuations(
+    nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists) {
+  for (nsIFrame* frame : GetChildList(FrameChildListID::Absolute)) {
+    if (frame->GetPrevInFlow()) {
       BuildDisplayListForChild(aBuilder, frame, aLists);
     }
   }
@@ -2038,7 +2050,6 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
   FillCB inlineFillCB = FillCB::No;  // fill CB behavior in the inline axis
   FillCB blockFillCB = FillCB::No;   // fill CB behavior in the block axis
 
-  const bool isOrthogonal = aWM.IsOrthogonalTo(parentFrame->GetWritingMode());
   const LogicalSize fallbackIntrinsicSize(aWM, kFallbackIntrinsicSize);
   const Maybe<nscoord>& maybeIntrinsicISize = aIntrinsicSize.ISize(aWM);
   const bool hasIntrinsicISize = maybeIntrinsicISize.isSome();
@@ -2063,9 +2074,9 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
     if (cbSize != NS_UNCONSTRAINEDSIZE) {
       if (!StyleMargin()->HasInlineAxisAuto(
               aWM, AnchorPosResolutionParams::From(this))) {
-        auto inlineAxisAlignment =
-            isOrthogonal ? stylePos->UsedAlignSelf(GetParent()->Style())._0
-                         : stylePos->UsedJustifySelf(GetParent()->Style())._0;
+        auto inlineAxisAlignment = stylePos->UsedSelfAlignment(
+            aWM, LogicalAxis::Inline, parentFrame->GetWritingMode(),
+            parentFrame->Style());
         if (inlineAxisAlignment == StyleAlignFlags::STRETCH) {
           inlineFillCB = FillCB::Stretch;
         }
@@ -2125,9 +2136,9 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
     if (cbSize != NS_UNCONSTRAINEDSIZE) {
       if (!StyleMargin()->HasBlockAxisAuto(
               aWM, AnchorPosResolutionParams::From(this))) {
-        auto blockAxisAlignment =
-            !isOrthogonal ? stylePos->UsedAlignSelf(GetParent()->Style())._0
-                          : stylePos->UsedJustifySelf(GetParent()->Style())._0;
+        auto blockAxisAlignment = stylePos->UsedSelfAlignment(
+            aWM, LogicalAxis::Block, parentFrame->GetWritingMode(),
+            parentFrame->Style());
         if (blockAxisAlignment == StyleAlignFlags::STRETCH) {
           blockFillCB = FillCB::Stretch;
         }
@@ -2491,10 +2502,7 @@ StyleAlignFlags nsContainerFrame::CSSAlignmentForAbsPosChild(
   // For computing the static position of an absolutely positioned box,
   // `auto` takes from parent's `align-items`.
   StyleAlignFlags alignment =
-      (aLogicalAxis == LogicalAxis::Inline)
-          ? aChildRI.mStylePosition->UsedJustifySelf(Style())._0
-          : aChildRI.mStylePosition->UsedAlignSelf(Style())._0;
-
+      aChildRI.mStylePosition->UsedSelfAlignment(aLogicalAxis, Style());
   return MapCSSAlignment(alignment, aChildRI, aLogicalAxis, GetWritingMode());
 }
 
@@ -2508,9 +2516,7 @@ nsContainerFrame::CSSAlignmentForAbsPosChildWithinContainingBlock(
   // When determining the position of absolutely-positioned boxes,
   // `auto` behaves as `normal`.
   StyleAlignFlags alignment =
-      (aLogicalAxis == LogicalAxis::Inline)
-          ? aChildRI.mStylePosition->UsedJustifySelf(nullptr)._0
-          : aChildRI.mStylePosition->UsedAlignSelf(nullptr)._0;
+      aChildRI.mStylePosition->UsedSelfAlignment(aLogicalAxis, nullptr);
 
   // Check if position-area is set - if so, it determines the default alignment
   // https://drafts.csswg.org/css-anchor-position/#position-area-alignment
@@ -2831,9 +2837,10 @@ void nsContainerFrame::SanityCheckChildListsBeforeReflow() const {
   const auto didPushItemsBit = IsFlexContainerFrame()
                                    ? NS_STATE_FLEX_DID_PUSH_ITEMS
                                    : NS_STATE_GRID_DID_PUSH_ITEMS;
-  ChildListIDs absLists = {FrameChildListID::Absolute, FrameChildListID::Fixed,
-                           FrameChildListID::OverflowContainers,
-                           FrameChildListID::ExcessOverflowContainers};
+  ChildListIDs absLists = {
+      FrameChildListID::Absolute, FrameChildListID::PushedAbsolute,
+      FrameChildListID::Fixed, FrameChildListID::OverflowContainers,
+      FrameChildListID::ExcessOverflowContainers};
   ChildListIDs itemLists = {FrameChildListID::Principal,
                             FrameChildListID::Overflow};
   for (const nsIFrame* f = this; f; f = f->GetNextInFlow()) {

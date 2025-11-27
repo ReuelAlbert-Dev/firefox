@@ -2371,6 +2371,43 @@ nsresult nsHttpChannel::CallOnStartRequest() {
     return NS_BINDING_ABORTED;
   }
 
+  // We must ensure that any dcb/dcz content is decompressed in the parent
+  // process, and removed from the Content-Encoding before it's sent down
+  // to the content process.  In most (all?) cases, this should have occurred
+  // before this.
+  if (mResponseHead && XRE_IsParentProcess() && !LoadHasAppliedConversion()) {
+    nsAutoCString contentEncoding;
+    (void)mResponseHead->GetHeader(nsHttp::Content_Encoding, contentEncoding);
+    // Note: doesn't handle multiple compressors: "dcb, gzip" or
+    // "gzip, dcb" (etc)
+    if (contentEncoding.Equals("dcb") || contentEncoding.Equals("dcz")) {
+      LOG_DICTIONARIES(
+          ("Still had %s encoding at CallOnStartRequest, converting",
+           contentEncoding.get()));
+      nsCOMPtr<nsIStreamListener> listener;
+      MOZ_DIAGNOSTIC_ASSERT(LoadHasAppliedConversion() == false);
+      // Insist we install a converter.  This should never be the case, but
+      // if somehow it is, we need a converter; content can't be allowed
+      // to see dcb/dcz since it can't convert them
+      StoreHasAppliedConversion(false);
+      rv = DoApplyContentConversions(mListener, getter_AddRefs(listener),
+                                     nullptr);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+      if (listener) {
+        MOZ_ASSERT(!LoadDataSentToChildProcess(),
+                   "DataSentToChildProcess being true means ODAs are sent to "
+                   "the child process directly. We MUST NOT apply content "
+                   "converter in this case.");
+        mListener = listener;
+        mCompressListener = listener;
+
+        StoreHasAppliedConversion(true);
+      }
+    }
+  }
+
   // Allow consumers to override our content type
   if (mLoadFlags & LOAD_CALL_CONTENT_SNIFFERS) {
     // NOTE: We can have both a txn pump and a cache pump when the cache
@@ -3098,20 +3135,7 @@ nsresult nsHttpChannel::ContinueProcessResponse1(
     return NS_ERROR_CORRUPTED_CONTENT;
   }
 
-  // handle unused username and password in url (see bug 232567)
   if (httpStatus != 401 && httpStatus != 407) {
-    if (!mAuthRetryPending) {
-      MOZ_DIAGNOSTIC_ASSERT(mAuthProvider);
-      rv = mAuthProvider ? mAuthProvider->CheckForSuperfluousAuth()
-                         : NS_ERROR_UNEXPECTED;
-      if (NS_FAILED(rv)) {
-        mStatus = rv;
-        LOG(("  CheckForSuperfluousAuth failed (%08x)",
-             static_cast<uint32_t>(rv)));
-      }
-    }
-    if (mCanceled) return CallOnStartRequest();
-
     // reset the authentication's current continuation state because ourvr
     // last authentication attempt has been completed successfully
     MOZ_DIAGNOSTIC_ASSERT(mAuthProvider);
@@ -3225,12 +3249,27 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
       break;
     case 301:
     case 302:
+    case 303:
     case 307:
     case 308:
-    case 303:
 #if 0
     case 305: // disabled as a security measure (see bug 187996).
 #endif
+      // RFC 9110: 303 responses are cacheable, but only with explicit
+      // freshness information (max-age or Expires). Without these directives,
+      // 303 should not be cached.
+      if (httpStatus == 303) {
+        uint32_t freshnessLifetime = 0;
+        bool hasFreshness =
+            (NS_SUCCEEDED(
+                 mResponseHead->ComputeFreshnessLifetime(&freshnessLifetime)) &&
+             freshnessLifetime > 0) ||
+            mResponseHead->HasHeader(nsHttp::Expires);
+        if (mResponseHead->NoStore() || mResponseHead->NoCache() ||
+            !hasFreshness) {
+          CloseCacheEntry(false);
+        }
+      }
       // don't store the response body for redirects
       MaybeInvalidateCacheEntryForSubsequentGet();
       PushRedirectAsyncFunc(&nsHttpChannel::ContinueProcessResponse4);
@@ -3341,15 +3380,6 @@ nsresult nsHttpChannel::ContinueProcessResponse3(nsresult rv) {
         }
         if (rv == NS_ERROR_BASIC_HTTP_AUTH_DISABLED) {
           mStatus = rv;
-        } else if (!mAuthRetryPending) {
-          MOZ_DIAGNOSTIC_ASSERT(mAuthProvider);
-          rv = mAuthProvider ? mAuthProvider->CheckForSuperfluousAuth()
-                             : NS_ERROR_UNEXPECTED;
-          if (NS_FAILED(rv)) {
-            mStatus = rv;
-            LOG(("CheckForSuperfluousAuth failed [rv=%x]\n",
-                 static_cast<uint32_t>(rv)));
-          }
         }
         rv = ProcessNormal();
       } else {
@@ -3570,11 +3600,12 @@ nsresult nsHttpChannel::ContinueProcessNormal(nsresult rv) {
 
   // We may need to install the cache listener before CallonStartRequest,
   // since InstallCacheListener can modify the Content-Encoding to remove
-  // dcb/dcz (and perhaps others), and CallOnStartRequest() sends the
-  // Content-Encoding to the content process.  If this doesn't install a
-  // listener (because this isn't a dictionary or dictionary-compressed),
-  // call it after CallOnStartRequest so that we save the compressed data
-  // in the cache, and run the decompressor in the content process.
+  // dcb/dcz (and perhaps others), and CallOnStartRequest() copies
+  // Content-Encoding to send to the content process.  If this doesn't
+  // install a listener (because this isn't a dictionary or
+  // dictionary-compressed), call it after CallOnStartRequest so that we
+  // save the compressed data in the cache, and run the decompressor in the
+  // content process.
   bool isDictionaryCompressed = false;
   nsAutoCString contentEncoding;
   (void)mResponseHead->GetHeader(nsHttp::Content_Encoding, contentEncoding);
@@ -9227,24 +9258,6 @@ nsresult nsHttpChannel::ContinueOnStartRequest3(nsresult result) {
     // channel.  It will now be canceled by the redirect handling code
     // that called this function.
     return NS_OK;
-  }
-
-  return ContinueOnStartRequest4(NS_OK);
-}
-
-nsresult nsHttpChannel::ContinueOnStartRequest4(nsresult result) {
-  LOG(("nsHttpChannel::ContinueOnStartRequest4 [this=%p]", this));
-
-  if (NS_SUCCEEDED(mStatus) && mResponseHead && mAuthProvider) {
-    uint32_t httpStatus = mResponseHead->Status();
-    if (httpStatus != 401 && httpStatus != 407) {
-      nsresult rv = mAuthProvider->CheckForSuperfluousAuth();
-      if (NS_FAILED(rv)) {
-        mStatus = rv;
-        LOG(("  CheckForSuperfluousAuth failed (%08x)",
-             static_cast<uint32_t>(rv)));
-      }
-    }
   }
 
   return CallOnStartRequest();

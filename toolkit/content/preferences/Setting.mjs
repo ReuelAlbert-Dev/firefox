@@ -104,7 +104,7 @@ import { Preferences } from "chrome://global/content/preferences/Preferences.mjs
  */
 
 /**
- * @typedef {Object} SettingControllingExtensionInfo
+ * @typedef {object} SettingControllingExtensionInfo
  * @property {string} storeId The ExtensionSettingsStore id that controls this setting.
  * @property {string} l10nId A fluent id to show in a controlled by extension message.
  * @property {string} [name] The controlling extension's name.
@@ -352,20 +352,7 @@ export class Setting extends EventEmitter {
     }
   }
 
-  /**
-   * @param {any} _
-   * @param {{ key: string, type: string }} setting ExtensionSettingsStore setting
-   */
-  _observeExtensionSettingChanged = (_, setting) => {
-    if (
-      setting.key == this.config.controllingExtensionInfo.storeId &&
-      setting.type == "prefs"
-    ) {
-      this._checkForControllingExtension();
-    }
-  };
-
-  async _checkForControllingExtension() {
+  _checkForControllingExtension = async () => {
     // Make sure all settings API modules are loaded
     // and the extension controlling settings metadata
     // loaded from the ExtensionSettingsStore backend.
@@ -387,7 +374,7 @@ export class Setting extends EventEmitter {
       }
     }
     this._clearControllingExtensionInfo();
-  }
+  };
 
   _clearControllingExtensionInfo() {
     delete this.controllingExtensionInfo.id;
@@ -399,8 +386,8 @@ export class Setting extends EventEmitter {
 
   watchExtensionPrefChange() {
     lazy.Management.on(
-      "extension-setting-changed",
-      this._observeExtensionSettingChanged
+      `extension-setting-changed:${this.config.controllingExtensionInfo?.storeId}`,
+      this._checkForControllingExtension
     );
   }
 
@@ -412,8 +399,8 @@ export class Setting extends EventEmitter {
 
     if (this.config.controllingExtensionInfo?.storeId) {
       lazy.Management.off(
-        "extension-setting-changed",
-        this._observeExtensionSettingChanged
+        `extension-setting-changed:${this.config.controllingExtensionInfo?.storeId}`,
+        this._checkForControllingExtension
       );
     }
   }

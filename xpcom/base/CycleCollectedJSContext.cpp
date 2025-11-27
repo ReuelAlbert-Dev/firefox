@@ -1013,10 +1013,22 @@ static void MOZ_CAN_RUN_SCRIPT RunMicroTask(
 
   JS::RootedField<JSObject*, 0> callbackGlobal(
       roots, aMicroTask.get().GetExecutionGlobalFromJSMicroTask(aCx));
-  JS::RootedField<JSObject*, 1> hostDefinedData(
-      roots, aMicroTask.get().MaybeGetHostDefinedDataFromJSMicroTask());
-  JS::RootedField<JSObject*, 2> allocStack(
-      roots, aMicroTask.get().MaybeGetAllocationSiteFromJSMicroTask());
+  if (!callbackGlobal) {
+    return;
+  }
+  JS::RootedField<JSObject*, 1> hostDefinedData(roots);
+  JS::RootedField<JSObject*, 2> allocStack(roots);
+
+  // Don't run if we fail to unwrap the host defined data.
+  if (!aMicroTask.get().MaybeGetHostDefinedDataFromJSMicroTask(
+          &hostDefinedData)) {
+    return;
+  }
+
+  // Don't run if we fail to unwrap the stack.
+  if (!aMicroTask.get().MaybeGetAllocationSiteFromJSMicroTask(&allocStack)) {
+    return;
+  }
 
   nsIGlobalObject* incumbentGlobal = nullptr;
 

@@ -5,15 +5,16 @@
 package org.mozilla.fenix.iconpicker.ui
 
 import android.content.ComponentName
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.fragment.compose.content
 import androidx.navigation.fragment.findNavController
+import mozilla.components.lib.state.helpers.StoreProvider.Companion.storeProvider
 import mozilla.components.support.base.feature.UserInteractionHandler
 import org.mozilla.fenix.R
-import org.mozilla.fenix.components.StoreProvider
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.showToolbar
 import org.mozilla.fenix.iconpicker.AppIconMiddleware
@@ -23,7 +24,6 @@ import org.mozilla.fenix.iconpicker.AppIconStore
 import org.mozilla.fenix.iconpicker.AppIconUpdater
 import org.mozilla.fenix.iconpicker.DefaultAppIconRepository
 import org.mozilla.fenix.iconpicker.DefaultPackageManagerWrapper
-import org.mozilla.fenix.iconpicker.SystemAction
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.utils.ShortcutManagerWrapperDefault
 import org.mozilla.fenix.utils.ShortcutsUpdaterDefault
@@ -48,9 +48,9 @@ class AppIconSelectionFragment : Fragment(), UserInteractionHandler {
     ) = content {
         FirefoxTheme {
             AppIconSelection(
-                store = StoreProvider.get(this) {
+                store = storeProvider.get { restoredState ->
                     AppIconStore(
-                        initialState = AppIconState(
+                        initialState = restoredState ?: AppIconState(
                             currentAppIcon = appIconRepository.selectedAppIcon,
                             groupedIconOptions = appIconRepository.groupedAppIcons,
                         ),
@@ -60,13 +60,8 @@ class AppIconSelectionFragment : Fragment(), UserInteractionHandler {
                             ),
                         ),
                     )
-                }.also {
-                    it.dispatch(
-                        SystemAction.EnvironmentRehydrated(
-                            appIconUpdater = updateAppIcon(),
-                        ),
-                    )
                 },
+                shortcutRemovalWarning = { shouldWarnAboutShortcutRemoval() },
             )
         }
     }
@@ -82,6 +77,14 @@ class AppIconSelectionFragment : Fragment(), UserInteractionHandler {
                 crashReporter = components.analytics.crashReporter,
             )
         }
+    }
+
+    private fun shouldWarnAboutShortcutRemoval(): Boolean {
+        // Android versions older than 10 will remove existing shortcuts when activity alias changes,
+        // which is the underlying mechanics of changing the app icon on android.
+        val willRemoveShortcuts = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+        val hasShortcuts = ShortcutManagerWrapperDefault(requireContext()).getPinnedShortcuts().isNotEmpty()
+        return willRemoveShortcuts && hasShortcuts
     }
 
     override fun onResume() {

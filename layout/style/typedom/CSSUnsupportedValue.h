@@ -33,7 +33,10 @@ class CSSUnsupportedValue final : public CSSStyleValue {
                       const CSSPropertyId& aPropertyId,
                       RefPtr<DeclarationBlock> aDeclarations);
 
-  void GetValue(nsACString& aRetVal) const;
+  const CSSPropertyId& GetPropertyId() const { return mPropertyId; }
+
+  void ToCssTextWithProperty(const CSSPropertyId& aPropertyId,
+                             nsACString& aDest) const;
 
  private:
   virtual ~CSSUnsupportedValue() = default;

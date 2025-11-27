@@ -24,7 +24,11 @@ const BACKUP_DIR_PREF_NAME = "browser.backup.location";
 const BACKUP_ERROR_CODE_PREF_NAME = "browser.backup.errorCode";
 const SCHEDULED_BACKUPS_ENABLED_PREF_NAME = "browser.backup.scheduled.enabled";
 const BACKUP_ARCHIVE_ENABLED_PREF_NAME = "browser.backup.archive.enabled";
+const BACKUP_ARCHIVE_ENABLED_OVERRIDE_PREF_NAME =
+  "browser.backup.archive.overridePlatformCheck";
 const BACKUP_RESTORE_ENABLED_PREF_NAME = "browser.backup.restore.enabled";
+const BACKUP_RESTORE_ENABLED_OVERRIDE_PREF_NAME =
+  "browser.backup.restore.overridePlatformCheck";
 const IDLE_THRESHOLD_SECONDS_PREF_NAME =
   "browser.backup.scheduled.idle-threshold-seconds";
 const MINIMUM_TIME_BETWEEN_BACKUPS_SECONDS_PREF_NAME =
@@ -187,6 +191,19 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "maximumNumberOfUnremovableStagingItems",
   MAXIMUM_NUMBER_OF_UNREMOVABLE_STAGING_ITEMS_PREF_NAME,
   5
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "backupErrorCode",
+  BACKUP_ERROR_CODE_PREF_NAME,
+  0,
+  function onUpdateBackupErrorCode(_pref, _prevVal, newVal) {
+    let bs = BackupService.get();
+    if (bs) {
+      bs.onUpdateBackupErrorCode(newVal);
+    }
+  }
 );
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -620,7 +637,17 @@ export class BackupService extends EventTarget {
     // Check if disabled by Nimbus killswitch.
     const archiveKillswitchTriggered =
       lazy.NimbusFeatures.backupService.getVariable("archiveKillswitch");
-    if (archiveKillswitchTriggered) {
+    const archiveOverrideEnabled = Services.prefs.getBoolPref(
+      BACKUP_ARCHIVE_ENABLED_OVERRIDE_PREF_NAME,
+      false
+    );
+    // This is explicitly checking for archiveKillswitchTriggered !== false because
+    // we now also (potentially) want to use this nimbus setting for doing staged rollout
+    // of the feature. What this means is that if the value is:
+    //     - true: feature is turned off ("killed")
+    //     - undefined: feature is turned off (not launched yet)
+    //     - false: feature is turned on
+    if (archiveKillswitchTriggered !== false && !archiveOverrideEnabled) {
       return {
         enabled: false,
         reason: "Archiving a profile disabled remotely.",
@@ -662,6 +689,20 @@ export class BackupService extends EventTarget {
       };
     }
 
+    if (
+      !this.#osSupportsBackup &&
+      !Services.prefs.getBoolPref(
+        BACKUP_ARCHIVE_ENABLED_OVERRIDE_PREF_NAME,
+        false
+      )
+    ) {
+      return {
+        enabled: false,
+        reason: "Backup creation not enabled on this os version yet",
+        internalReason: "os version",
+      };
+    }
+
     return { enabled: true };
   }
 
@@ -674,7 +715,17 @@ export class BackupService extends EventTarget {
     // Check if disabled by Nimbus killswitch.
     const restoreKillswitchTriggered =
       lazy.NimbusFeatures.backupService.getVariable("restoreKillswitch");
-    if (restoreKillswitchTriggered) {
+    const restoreOverrideEnabled = Services.prefs.getBoolPref(
+      BACKUP_RESTORE_ENABLED_OVERRIDE_PREF_NAME,
+      false
+    );
+    // This is explicitly checking for restoreKillswitchTriggered !== false because
+    // we now also (potentially) want to use this nimbus setting for doing staged rollout
+    // of the feature. What this means is that if the value is:
+    //     - true: feature is turned off ("killed")
+    //     - undefined: feature is turned off (not launched yet)
+    //     - false: feature is turned on
+    if (restoreKillswitchTriggered !== false && !restoreOverrideEnabled) {
       return {
         enabled: false,
         reason: "Restore from backup disabled remotely.",
@@ -713,6 +764,19 @@ export class BackupService extends EventTarget {
         reason:
           "Restoring a profile is disabled because the user has created selectable profiles.",
         internalReason: "selectable profiles",
+      };
+    }
+    if (
+      !this.#osSupportsRestore &&
+      !Services.prefs.getBoolPref(
+        BACKUP_RESTORE_ENABLED_OVERRIDE_PREF_NAME,
+        false
+      )
+    ) {
+      return {
+        enabled: false,
+        reason: "Backup restore not enabled on this os version yet",
+        internalReason: "os version",
       };
     }
 
@@ -762,6 +826,19 @@ export class BackupService extends EventTarget {
   }
 
   /**
+   * Sets the persisted options between screens for embedded components.
+   * This is specifically used in the Spotlight onboarding experience.
+   *
+   * This data is flushed upon creating a backup or exiting the backup flow.
+   *
+   * @param {object} data - data to persist between screens.
+   */
+  setEmbeddedComponentPersistentData(data) {
+    this.#_state.embeddedComponentPersistentData = { ...data };
+    this.stateUpdate();
+  }
+
+  /**
    * An object holding the current state of the BackupService instance, for
    * the purposes of representing it in the user interface. Ideally, this would
    * be named #state instead of #_state, but sphinx-js seems to be fairly
@@ -782,7 +859,6 @@ export class BackupService extends EventTarget {
     lastBackupFileName: "",
     supportBaseLink: Services.urlFormatter.formatURLPref("app.support.baseURL"),
     recoveryInProgress: false,
-    recoveryErrorCode: 0,
     /**
      * Every file we load successfully is going to get a restore ID which is
      * basically the identifier for that profile restore event. If we actually
@@ -791,6 +867,10 @@ export class BackupService extends EventTarget {
      * restored.
      */
     restoreID: null,
+    /** Utilized by the spotlight to persist information between screens */
+    embeddedComponentPersistentData: {},
+    recoveryErrorCode: ERRORS.NONE,
+    backupErrorCode: lazy.backupErrorCode,
   };
 
   /**
@@ -1199,6 +1279,17 @@ export class BackupService extends EventTarget {
     return this.#instance;
   }
 
+  static checkOsSupportsBackup(osParams) {
+    // Currently we only want to show Backup on Windows 10 devices.
+    // The first build of Windows 11 is 22000
+    return (
+      osParams.name == "Windows_NT" &&
+      osParams.version == "10.0" &&
+      osParams.build &&
+      Number(osParams.build) < 22000
+    );
+  }
+
   /**
    * Create a BackupService instance.
    *
@@ -1259,7 +1350,24 @@ export class BackupService extends EventTarget {
       }
       Glean.browserBackup.restoredProfileData.set(payload);
     });
+    const osParams = {
+      name: Services.sysinfo.getProperty("name"),
+      version: Services.sysinfo.getProperty("version"),
+      build: Services.sysinfo.getProperty("build"),
+    };
+    this.#osSupportsBackup = BackupService.checkOsSupportsBackup(osParams);
+    this.#osSupportsRestore = true;
+    this.#lastSeenArchiveStatus = this.archiveEnabledStatus;
+    this.#lastSeenRestoreStatus = this.restoreEnabledStatus;
   }
+
+  // Backup is currently limited to Windows 10. Will be populated by constructor
+  #osSupportsBackup = false;
+  // Restore is not limited, but leaving this in place if restrictions are needed.
+  #osSupportsRestore = true;
+  // Remembering status allows us to notify observers when the status changes
+  #lastSeenArchiveStatus = false;
+  #lastSeenRestoreStatus = false;
 
   /**
    * Returns a reference to a Promise that will resolve with undefined once
@@ -1696,6 +1804,7 @@ export class BackupService extends EventTarget {
             })
           );
 
+          this.stateUpdate();
           throw e;
         } finally {
           this.#backupInProgress = false;
@@ -3525,6 +3634,20 @@ export class BackupService extends EventTarget {
   }
 
   /**
+   * Updates backupErrorCode in the backup service state. Should be called every time
+   * the value for browser.backup.errorCode changes.
+   *
+   * @param {number} newErrorCode
+   *    Any of the ERROR code's from backup-constants.mjs
+   */
+  onUpdateBackupErrorCode(newErrorCode) {
+    lazy.logConsole.debug(`Updating backup error code to ${newErrorCode}`);
+
+    this.#_state.backupErrorCode = newErrorCode;
+    this.stateUpdate();
+  }
+
+  /**
    * Returns the moz-icon URL of a file. To get the moz-icon URL, the
    * file path is convered to a fileURI. If there is a problem retreiving
    * the moz-icon due to an invalid file path, return null instead.
@@ -3560,6 +3683,9 @@ export class BackupService extends EventTarget {
     if (shouldEnableScheduledBackups) {
       // reset the error states when reenabling backup
       Services.prefs.setIntPref(BACKUP_ERROR_CODE_PREF_NAME, ERRORS.NONE);
+
+      // flush the embedded component's persistent data
+      this.setEmbeddedComponentPersistentData({});
     } else {
       // set user-disabled pref if backup is being disabled
       Services.prefs.setBoolPref(
@@ -4090,12 +4216,47 @@ export class BackupService extends EventTarget {
    * 2. If archive is disabled, clean up any backup files
    */
   #handleStatusChange() {
-    this.#notifyStatusObservers();
+    const archiveStatus = this.archiveEnabledStatus;
+    const restoreStatus = this.restoreEnabledStatus;
+    // Update the BackupService state before notifying observers about the
+    // state change
+    this.#_state.archiveEnabledStatus = this.archiveEnabledStatus.enabled;
+    this.#_state.restoreEnabledStatus = this.restoreEnabledStatus.enabled;
 
-    if (!this.archiveEnabledStatus.enabled) {
+    this.#updateGleanEnablement(archiveStatus, restoreStatus);
+    if (
+      archiveStatus.enabled != this.#lastSeenArchiveStatus ||
+      restoreStatus.enabled != this.#lastSeenRestoreStatus
+    ) {
+      this.#lastSeenArchiveStatus = archiveStatus.enabled;
+      this.#lastSeenRestoreStatus = restoreStatus.enabled;
+      this.#notifyStatusObservers();
+    }
+    if (!archiveStatus.enabled) {
       // We won't wait for this promise to accept/reject since rejections are
       // ignored anyways
       this.cleanupBackupFiles();
+    }
+  }
+
+  #updateGleanEnablement(archiveStatus, restoreStatus) {
+    Glean.browserBackup.archiveEnabled.set(archiveStatus.enabled);
+    Glean.browserBackup.restoreEnabled.set(restoreStatus.enabled);
+    if (!archiveStatus.enabled) {
+      this.#wasArchivePreviouslyDisabled = true;
+      Glean.browserBackup.archiveDisabledReason.set(
+        archiveStatus.internalReason
+      );
+    } else if (this.#wasArchivePreviouslyDisabled) {
+      Glean.browserBackup.archiveDisabledReason.set("reenabled");
+    }
+    if (!restoreStatus.enabled) {
+      this.#wasRestorePreviouslyDisabled = true;
+      Glean.browserBackup.restoreDisabledReason.set(
+        restoreStatus.internalReason
+      );
+    } else if (this.#wasRestorePreviouslyDisabled) {
+      Glean.browserBackup.restoreDisabledReason.set("reenabled");
     }
   }
 
@@ -4109,24 +4270,6 @@ export class BackupService extends EventTarget {
     );
 
     Services.obs.notifyObservers(null, "backup-service-status-updated");
-
-    let status = this.archiveEnabledStatus;
-    Glean.browserBackup.archiveEnabled.set(status.enabled);
-    if (!status.enabled) {
-      this.#wasArchivePreviouslyDisabled = true;
-      Glean.browserBackup.archiveDisabledReason.set(status.internalReason);
-    } else if (this.#wasArchivePreviouslyDisabled) {
-      Glean.browserBackup.archiveDisabledReason.set("reenabled");
-    }
-
-    status = this.restoreEnabledStatus;
-    Glean.browserBackup.restoreEnabled.set(status.enabled);
-    if (!status.enabled) {
-      this.#wasRestorePreviouslyDisabled = true;
-      Glean.browserBackup.restoreDisabledReason.set(status.internalReason);
-    } else if (this.#wasRestorePreviouslyDisabled) {
-      Glean.browserBackup.restoreDisabledReason.set("reenabled");
-    }
   }
 
   async cleanupBackupFiles() {
