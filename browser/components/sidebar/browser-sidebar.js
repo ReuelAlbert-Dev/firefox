@@ -99,6 +99,10 @@ var SidebarController = {
     this.promiseInitialized.then(() => updateMenus(sidebar.visible));
   },
 
+  isAIWindow() {
+    return this.AIWindow.isAIWindowActive(window);
+  },
+
   get sidebars() {
     if (this._sidebars) {
       return this._sidebars;
@@ -169,23 +173,25 @@ var SidebarController = {
       ],
     ]);
 
-    this.registerPrefSidebar(
-      "browser.ml.chat.enabled",
-      "viewGenaiChatSidebar",
-      {
-        name: "aichat",
-        elementId: "sidebar-switcher-genai-chat",
-        url: "chrome://browser/content/genai/chat.html",
-        keyId: "viewGenaiChatSidebarKb",
-        menuId: "menu_genaiChatSidebar",
-        menuL10nId: "menu-view-genai-chat",
-        // Bug 1900915 to expose as conditional tool
-        revampL10nId: "sidebar-menu-genai-chat-label",
-        iconUrl: "chrome://global/skin/icons/highlights.svg",
-        gleanClickEvent: Glean.sidebar.chatbotIconClick,
-        toolContextMenuId: "aichat",
-      }
-    );
+    if (!this.isAIWindow()) {
+      this.registerPrefSidebar(
+        "browser.ml.chat.enabled",
+        "viewGenaiChatSidebar",
+        {
+          name: "aichat",
+          elementId: "sidebar-switcher-genai-chat",
+          url: "chrome://browser/content/genai/chat.html",
+          keyId: "viewGenaiChatSidebarKb",
+          menuId: "menu_genaiChatSidebar",
+          menuL10nId: "menu-view-genai-chat",
+          // Bug 1900915 to expose as conditional tool
+          revampL10nId: "sidebar-menu-genai-chat-label",
+          iconUrl: "chrome://global/skin/icons/highlights.svg",
+          gleanClickEvent: Glean.sidebar.chatbotIconClick,
+          toolContextMenuId: "aichat",
+        }
+      );
+    }
 
     this.registerPrefSidebar(
       "browser.ml.pageAssist.enabled",
@@ -794,23 +800,12 @@ var SidebarController = {
     // First reset all ordinals to match DOM ordering.
     let contentArea = document.getElementById("tabbrowser-tabbox");
     let browser = document.getElementById("browser");
-    [...browser.children].forEach((node, i) => {
-      node.style.order = i + 1;
+    [...browser.children].forEach((node, i, children) => {
+      node.style.order = this._positionStart ? i + 1 : children.length - i;
     });
     let sidebarContainer = document.getElementById("sidebar-main");
     let sidebarMain = document.querySelector("sidebar-main");
-    if (!this._positionStart) {
-      // DOM ordering is:     sidebar-main | launcher-splitter | sidebar-box | splitter | tabbrowser-tabbox
-      // Want to display as:  tabbrowser-tabbox | splitter |  sidebar-box  | launcher-splitter | sidebar-main
-      // First switch order of sidebar-main and tabbrowser-tabbox
-      let mainOrdinal = this.sidebarContainer.style.order;
-      this.sidebarContainer.style.order = contentArea.style.order;
-      contentArea.style.order = mainOrdinal;
-      // Then swap launcher-splitter and splitter
-      let splitterOrdinal = this._splitter.style.order;
-      this._splitter.style.order = this._launcherSplitter.style.order;
-      this._launcherSplitter.style.order = splitterOrdinal;
-    }
+
     // Indicate we've switched ordering to the box
     this._box.toggleAttribute("sidebar-positionend", !this._positionStart);
     sidebarMain.toggleAttribute("sidebar-positionend", !this._positionStart);
@@ -1769,6 +1764,8 @@ var SidebarController = {
     sidebar.label = label;
 
     const updateAttributes = el => {
+      // TODO Bug 1996762 - Add support for dark-theme sidebar icons
+      // --webextension-menuitem-image-dark is used in dark themes
       el.style.setProperty("--webextension-menuitem-image", sidebar.icon);
       el.setAttribute("label", sidebar.label);
     };
@@ -2306,18 +2303,12 @@ var SidebarController = {
     switch (e.type) {
       case "popupshown":
         /* Temporarily remove MousePosTracker listener when a context menu is open */
-        if (
-          e.composedTarget.id !== "tab-preview-panel" &&
-          e.composedTarget.tagName !== "tooltip"
-        ) {
+        if (e.composedTarget.tagName !== "tooltip") {
           this._addHoverStateBlocker();
         }
         break;
       case "popuphidden":
-        if (
-          e.composedTarget.id !== "tab-preview-panel" &&
-          e.composedTarget.tagName !== "tooltip"
-        ) {
+        if (e.composedTarget.tagName !== "tooltip") {
           await this._removeHoverStateBlocker();
         }
         break;
@@ -2414,6 +2405,8 @@ var SidebarController = {
 };
 
 ChromeUtils.defineESModuleGetters(SidebarController, {
+  AIWindow:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   SidebarManager:
     "moz-src:///browser/components/sidebar/SidebarManager.sys.mjs",
   SidebarState: "moz-src:///browser/components/sidebar/SidebarState.sys.mjs",

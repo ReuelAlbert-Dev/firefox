@@ -428,9 +428,9 @@ add_task(async function dismissals_amp() {
         full_keyword: "full keyword 2",
       },
       expected: {
-        // dismissal key should be the `full_keyword` value
-        dismissalKey: "full keyword 2",
-        notDismissalKeys: ["https://example.com/2"],
+        // dismissal key should be the `url` value
+        dismissalKey: "https://example.com/2",
+        notDismissalKeys: ["full keyword 2"],
       },
     },
     {
@@ -439,9 +439,9 @@ add_task(async function dismissals_amp() {
         full_keyword: "full keyword 3",
       },
       expected: {
-        // dismissal key should be the `full_keyword` value
-        dismissalKey: "full keyword 3",
-        notDismissalKeys: [`https://example.com/3-${TIMESTAMP_TEMPLATE}`],
+        // dismissal key should be the `url` value
+        dismissalKey: `https://example.com/3-${TIMESTAMP_TEMPLATE}`,
+        notDismissalKeys: ["full keyword 3"],
       },
     },
     {
@@ -525,18 +525,18 @@ add_task(async function dismissals_amp() {
       heuristic: false,
       payload: {
         provider: suggestion.provider,
-        title: suggestion.title,
+        title: suggestion.full_keyword
+          ? `${suggestion.full_keyword} — ${suggestion.title}`
+          : suggestion.title,
         url: suggestion.url,
         originalUrl: suggestion.original_url || suggestion.url,
-        displayUrl: suggestion.url.replace(/^https:\/\//, ""),
-        dismissalKey: expected.dismissalKey,
+        dismissalKey: suggestion.dismissal_key,
         requestId: suggestion.request_id,
         sponsoredImpressionUrl: suggestion.impression_url,
         sponsoredClickUrl: suggestion.click_url,
         sponsoredBlockId: suggestion.block_id,
         sponsoredAdvertiser: suggestion.advertiser,
         sponsoredIabCategory: suggestion.iab_category,
-        qsSuggestion: suggestion.full_keyword,
         isBlockable: true,
         isManageable: true,
         isSponsored: true,
@@ -559,7 +559,6 @@ add_task(async function dismissals_amp() {
       conditionalPayloadProperties: {
         url: { ignore: true },
         urlTimestampIndex: { ignore: true },
-        displayUrl: { ignore: true },
       },
     });
 
@@ -616,7 +615,6 @@ add_task(async function dismissals_amp() {
       conditionalPayloadProperties: {
         url: { ignore: true },
         urlTimestampIndex: { ignore: true },
-        displayUrl: { ignore: true },
       },
     });
   }
@@ -693,10 +691,8 @@ add_task(async function dismissals_unmanaged_1() {
       heuristic: false,
       payload: {
         provider,
-        title: "example.com",
         url: suggestion.url,
         originalUrl: suggestion.original_url,
-        displayUrl: suggestion.url.replace(/^https:\/\//, ""),
         dismissalKey: suggestion.dismissal_key,
         source: "merino",
         isSponsored: false,
@@ -815,9 +811,7 @@ add_task(async function dismissals_unmanaged_2() {
     heuristic: false,
     payload: {
       provider,
-      title: "example.com",
       url: "https://example.com/url",
-      displayUrl: "example.com/url",
       source: "merino",
       isSponsored: false,
       shouldShowUrl: true,
@@ -992,14 +986,12 @@ add_task(async function bestMatch() {
         heuristic: false,
         payload: {
           telemetryType: provider,
-          title: "title",
+          title: "full_keyword — title",
           url: "url",
           icon: null,
-          qsSuggestion: "full_keyword",
           isSponsored: false,
           isBlockable: true,
           isManageable: true,
-          displayUrl: "url",
           source: "merino",
           provider,
         },
@@ -1091,7 +1083,6 @@ async function doUnmanagedTest({ pref, suggestion, shouldBeAdded }) {
     payload: {
       title: suggestion.title,
       url: suggestion.url,
-      displayUrl: suggestion.url.substring("https://".length),
       provider: suggestion.provider,
       telemetryType: suggestion.provider,
       isSponsored: !!suggestion.is_sponsored,

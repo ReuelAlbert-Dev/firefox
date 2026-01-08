@@ -175,8 +175,9 @@ class AbsoluteContainingBlock {
   void ReflowAbsoluteFrame(
       nsContainerFrame* aDelegatingFrame, nsPresContext* aPresContext,
       const ReflowInput& aReflowInput,
-      const nsRect& aOriginalContainingBlockRect, AbsPosReflowFlags aFlags,
-      nsIFrame* aKidFrame, nsReflowStatus& aStatus,
+      const nsRect& aOriginalContainingBlockRect,
+      const nsRect& aOriginalScrollableContainingBlockRect,
+      AbsPosReflowFlags aFlags, nsIFrame* aKidFrame, nsReflowStatus& aStatus,
       OverflowAreas* aOverflowAreas,
       mozilla::AnchorPosResolutionCache* aAnchorPosResolutionCache = nullptr);
 
@@ -192,6 +193,15 @@ class AbsoluteContainingBlock {
    * Remove aFrame from one of our frame lists without destroying it.
    */
   void StealFrame(nsIFrame* aFrame);
+
+  /**
+   * Move any frame in our pushed absolute list into our absolute child list, if
+   * it is a first-in-flow, or if its prev-in-flow is not present in our
+   * absolute child list.
+   *
+   * @param aDelegatingFrame the frame that owns us.
+   */
+  void DrainPushedChildList(const nsIFrame* aDelegatingFrame);
 
   // Stores the abspos frames that have been placed in this containing block.
   nsFrameList mAbsoluteFrames;

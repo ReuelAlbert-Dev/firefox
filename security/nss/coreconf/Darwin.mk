@@ -29,14 +29,17 @@ CC              += -arch i386
 CCC             += -arch i386
 override CPU_ARCH	= x86
 endif
-else
-ifeq (arm,$(CPU_ARCH))
-# Nothing set for arm currently.
-else
+else ifeq (,$(filter-out aarch64 arm,$(CPU_ARCH)))
+CC              += -arch arm64
+CCC             += -arch arm64
+override CPU_ARCH	= aarch64
+else ifeq (powerpc,$(CPU_ARCH))
 OS_REL_CFLAGS	= -Dppc
 CC              += -arch ppc
 CCC             += -arch ppc
-endif
+override CPU_ARCH	= ppc
+else
+   $(error Unknown CPU architecture)
 endif
 
 ifneq (,$(MACOS_SDK_DIR))

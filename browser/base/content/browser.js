@@ -13,6 +13,8 @@ var { AppConstants } = ChromeUtils.importESModule(
 // lazy module getters
 
 ChromeUtils.defineESModuleGetters(this, {
+  AIWindow:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   AMTelemetry: "resource://gre/modules/AddonManager.sys.mjs",
   AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   AboutReaderParent: "resource:///actors/AboutReaderParent.sys.mjs",
@@ -623,9 +625,9 @@ customElements.setElementCreationCallback("screenshots-buttons", () => {
   );
 });
 
-customElements.setElementCreationCallback("fxa-menu-message", () => {
+customElements.setElementCreationCallback("menu-message", () => {
   ChromeUtils.importESModule(
-    "chrome://browser/content/asrouter/components/fxa-menu-message.mjs",
+    "chrome://browser/content/asrouter/components/menu-message.mjs",
     { global: "current" }
   );
 });
@@ -713,6 +715,7 @@ async function gLazyFindCommand(cmd, ...args) {
 var gPageIcons = {
   "about:home": "chrome://branding/content/icon32.png",
   "about:newtab": "chrome://branding/content/icon32.png",
+  "about:opentabs": "chrome://branding/content/icon32.png",
   "about:welcome": "chrome://branding/content/icon32.png",
   "about:privatebrowsing": "chrome://browser/skin/privatebrowsing/favicon.svg",
 };
@@ -722,6 +725,7 @@ var gInitialPages = [
   "about:home",
   "about:firefoxview",
   "about:newtab",
+  "about:opentabs",
   "about:privatebrowsing",
   "about:sessionrestore",
   "about:welcome",
@@ -1254,7 +1258,7 @@ function HandleAppCommandEvent(evt) {
       BrowserCommands.reloadSkipCache();
       break;
     case "Stop":
-      if (XULBrowserWindow.stopCommand.getAttribute("disabled") != "true") {
+      if (XULBrowserWindow.stopCommand.hasAttribute("disabled")) {
         BrowserCommands.stop();
       }
       break;
@@ -1677,20 +1681,18 @@ function toOpenWindowByType(inType, uri, features) {
     );
   }
 }
-
 /**
  * Open a new browser window. See `BrowserWindowTracker.openWindow` for
  * options.
  *
  * @return a reference to the new window.
  */
-function OpenBrowserWindow(options = {}) {
+function OpenBrowserWindow(options) {
   let timerId = Glean.browserTimings.newWindow.start();
+  options ??= {};
+  options.openerWindow ??= window;
 
-  let win = BrowserWindowTracker.openWindow({
-    openerWindow: window,
-    ...options,
-  });
+  let win = BrowserWindowTracker.openWindow(options);
 
   win.addEventListener(
     "MozAfterPaint",
@@ -1859,6 +1861,16 @@ let gFileMenu = {
       );
     }
     PrintUtils.updatePrintSetupMenuHiddenState();
+
+    const aiWindowMenu = event.target.querySelector("#menu_newAIWindow");
+    const classicWindowMenu = event.target.querySelector(
+      "#menu_newClassicWindow"
+    );
+
+    aiWindowMenu.hidden =
+      !AIWindow.isAIWindowEnabled() || AIWindow.isAIWindowActive(window);
+    classicWindowMenu.hidden =
+      !AIWindow.isAIWindowEnabled() || !AIWindow.isAIWindowActive(window);
   },
 };
 
@@ -2203,16 +2215,19 @@ var XULBrowserWindow = {
       aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SESSION_STORE
     );
 
-    // We want to update the popup visibility if we received this notification
-    // via simulated locationchange events such as switching between tabs, however
-    // if this is a document navigation then PopupNotifications will be updated
-    // via TabsProgressListener.onLocationChange and we do not want it called twice
-    gURLBar.setURI({
-      uri: aLocationURI,
-      dueToTabSwitch: aIsSimulated,
-      dueToSessionRestore: isSessionRestore,
-      isSameDocument,
-    });
+    // Don't update URL for document PiP window as it shows its opener url
+    if (!window.browsingContext.isDocumentPiP) {
+      // We want to update the popup visibility if we received this notification
+      // via simulated locationchange events such as switching between tabs, however
+      // if this is a document navigation then PopupNotifications will be updated
+      // via TabsProgressListener.onLocationChange and we do not want it called twice
+      gURLBar.setURI({
+        uri: aLocationURI,
+        dueToTabSwitch: aIsSimulated,
+        dueToSessionRestore: isSessionRestore,
+        isSameDocument,
+      });
+    }
 
     BookmarkingUI.onLocationChange();
     // If we've actually changed document, update the toolbar visibility.
@@ -2236,7 +2251,7 @@ var XULBrowserWindow = {
 
     // Ensure we close any remaining open locationspecific panels
     if (!isSameDocument) {
-      closeOpenPanels("panel[locationspecific='true']");
+      closeOpenPanels(":is(panel, menupopup)[locationspecific='true']");
     }
 
     gPermissionPanel.onLocationChange();
@@ -2530,6 +2545,13 @@ var XULBrowserWindow = {
       aState |= Ci.nsIWebProgressListener.STATE_IDENTITY_ASSOCIATED;
     }
 
+    if (window.browsingContext.isDocumentPiP) {
+      gURLBar.setURI({
+        uri,
+        isSameDocument: true,
+      });
+    }
+
     try {
       uri = Services.io.createExposableURI(uri);
     } catch (e) {}
@@ -2683,7 +2705,7 @@ var CombinedStopReload = {
     }
 
     this._initialized = true;
-    if (XULBrowserWindow.stopCommand.getAttribute("disabled") != "true") {
+    if (!XULBrowserWindow.stopCommand.hasAttribute("disabled")) {
       reload.setAttribute("displaystop", "true");
     }
     stop.addEventListener("click", this);
@@ -2811,7 +2833,7 @@ var CombinedStopReload = {
       this._stopClicked = false;
       this._cancelTransition();
       this.reload.disabled =
-        XULBrowserWindow.reloadCommand.getAttribute("disabled") == "true";
+        XULBrowserWindow.reloadCommand.hasAttribute("disabled");
       return;
     }
 
@@ -2826,7 +2848,7 @@ var CombinedStopReload = {
       function (self) {
         self._timer = 0;
         self.reload.disabled =
-          XULBrowserWindow.reloadCommand.getAttribute("disabled") == "true";
+          XULBrowserWindow.reloadCommand.hasAttribute("disabled");
       },
       650,
       this
@@ -3007,7 +3029,7 @@ function onViewToolbarCommand(aEvent) {
   } else {
     menuId = node.parentNode.id;
     toolbarId = node.getAttribute("toolbarId");
-    isVisible = node.getAttribute("checked") == "true";
+    isVisible = node.hasAttribute("checked");
   }
   CustomizableUI.setToolbarVisibility(toolbarId, isVisible);
   BrowserUsageTelemetry.recordToolbarVisibility(toolbarId, isVisible, menuId);
@@ -3113,7 +3135,7 @@ function updateToggleControlLabel(control) {
   if (!control.hasAttribute("label-unchecked")) {
     control.setAttribute("label-unchecked", control.getAttribute("label"));
   }
-  let prefix = control.getAttribute("checked") == "true" ? "" : "un";
+  let prefix = control.hasAttribute("checked") ? "" : "un";
   control.setAttribute("label", control.getAttribute(`label-${prefix}checked`));
 }
 
@@ -3331,12 +3353,12 @@ const DynamicShortcutTooltip = {
 /**
  * Extracts linkNode and href for the current click target.
  *
+ * Note: linkNode will be null if the click wasn't on an anchor
+ * element (or XLink).
+ *
  * @param event
  *        The click event.
  * @return [href, linkNode].
- *
- * @note linkNode will be null if the click wasn't on an anchor
- *       element (or XLink).
  */
 function hrefAndLinkNodeForClickEvent(event) {
   function isHTMLLink(aNode) {
@@ -3386,11 +3408,12 @@ function hrefAndLinkNodeForClickEvent(event) {
 /**
  * Called whenever the user clicks in the content area.
  *
+ * Note: the default event is prevented if the click is handled.
+ *
  * @param event
  *        The click event.
  * @param isPanelClick
  *        Whether the event comes from an extension panel.
- * @note default event is prevented if the click is handled.
  */
 function contentAreaClick(event, isPanelClick) {
   if (!event.isTrusted || event.defaultPrevented || event.button != 0) {
@@ -3731,11 +3754,8 @@ var BrowserOffline = {
   _uiElement: null,
   _updateOfflineUI(aOffline) {
     var offlineLocked = Services.prefs.prefIsLocked("network.online");
-    if (offlineLocked) {
-      this._uiElement.setAttribute("disabled", "true");
-    }
-
-    this._uiElement.setAttribute("checked", aOffline);
+    this._uiElement.toggleAttribute("disabled", !!offlineLocked);
+    this._uiElement.toggleAttribute("checked", aOffline);
   },
 };
 
@@ -4745,7 +4765,7 @@ var gDialogBox = {
         continue;
       }
       if (!shouldBeEnabled) {
-        if (element.getAttribute("disabled") != "true") {
+        if (!element.hasAttribute("disabled")) {
           element.setAttribute("disabled", true);
         } else {
           element.setAttribute("wasdisabled", true);

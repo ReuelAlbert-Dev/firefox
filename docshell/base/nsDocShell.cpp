@@ -138,7 +138,6 @@
 #include "nsILoadURIDelegate.h"
 #include "nsIMultiPartChannel.h"
 #include "nsINestedURI.h"
-#include "nsINetworkPredictor.h"
 #include "nsINode.h"
 #include "nsINSSErrorsService.h"
 #include "nsIObserverService.h"
@@ -234,8 +233,6 @@
 #include "nsSubDocumentFrame.h"
 #include "nsURILoader.h"
 #include "nsURLHelper.h"
-#include "nsView.h"
-#include "nsViewManager.h"
 #include "nsViewSourceHandler.h"
 #include "nsWebBrowserFind.h"
 #include "nsWhitespaceTokenizer.h"
@@ -446,7 +443,11 @@ nsresult nsDocShell::InitWindow(nsIWidget* aParentWidget, int32_t aX,
                                 mozilla::dom::WindowGlobalChild* aWindowActor) {
   SetParentWidget(aParentWidget);
   SetPositionAndSize(aX, aY, aWidth, aHeight, 0);
-  NS_ENSURE_TRUE(Initialize(aOpenWindowInfo, aWindowActor), NS_ERROR_FAILURE);
+  if (!Initialize(aOpenWindowInfo, aWindowActor)) {
+    // Since bug 543435, Initialize can fail and propagating this would
+    // cause callers to crash when they didn't previously (bug 2003244).
+    NS_WARNING("Failed to initialize docshell");
+  }
 
   return NS_OK;
 }
@@ -2487,6 +2488,36 @@ void nsDocShell::MaybeCreateInitialClientSource(nsIPrincipal* aPrincipal) {
   MaybeInheritController(mInitialClientSource.get(), principal);
 }
 
+void VerifyCientPrincipalInfosMatch(const mozilla::ipc::PrincipalInfo& aLeft,
+                                    const mozilla::ipc::PrincipalInfo& aRight) {
+  // Inheriting a controller when the principals don't match would cause a
+  // crash. Let's do the checks earlier to crash here already instead of
+  // ClientSource::SetController. And assert each condition separately. See bug
+  // 1880012.
+  MOZ_RELEASE_ASSERT(aLeft.type() == aRight.type());
+
+  switch (aLeft.type()) {
+    case mozilla::ipc::PrincipalInfo::TContentPrincipalInfo: {
+      const mozilla::ipc::ContentPrincipalInfo& leftContent =
+          aLeft.get_ContentPrincipalInfo();
+      const mozilla::ipc::ContentPrincipalInfo& rightContent =
+          aRight.get_ContentPrincipalInfo();
+      MOZ_RELEASE_ASSERT(leftContent.attrs() == rightContent.attrs() &&
+                         leftContent.originNoSuffix() ==
+                             rightContent.originNoSuffix());
+      return;
+    }
+    case mozilla::ipc::PrincipalInfo::TNullPrincipalInfo: {
+      // null principal never matches
+      MOZ_RELEASE_ASSERT(false, "Clients have null principals");
+      return;
+    }
+    default: {
+      break;
+    }
+  }
+}
+
 void nsDocShell::MaybeInheritController(
     mozilla::dom::ClientSource* aClientSource, nsIPrincipal* aPrincipal) {
   nsCOMPtr<nsIDocShell> parent = GetInProcessParentDocshell();
@@ -2513,6 +2544,8 @@ void nsDocShell::MaybeInheritController(
     return;
   }
 
+  VerifyCientPrincipalInfosMatch(aClientSource->Info().PrincipalInfo(),
+                                 controller->PrincipalInfo());
   aClientSource->InheritController(controller.ref());
 }
 
@@ -3567,6 +3600,7 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
   } else if (NS_ERROR_PHISHING_URI == aError ||
              NS_ERROR_MALWARE_URI == aError ||
              NS_ERROR_UNWANTED_URI == aError ||
+             NS_ERROR_HARMFULADDON_URI == aError ||
              NS_ERROR_HARMFUL_URI == aError) {
     nsAutoCString host;
     aURI->GetHost(host);
@@ -3589,6 +3623,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
       error = "unwantedBlocked";
     } else if (NS_ERROR_HARMFUL_URI == aError) {
       error = "harmfulBlocked";
+    } else if (NS_ERROR_HARMFULADDON_URI == aError) {
+      error = "addonBlocked";
     }
 
     cssClass.AssignLiteral("blacklist");
@@ -3928,6 +3964,18 @@ nsresult nsDocShell::LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
 
   errorPageUrl.AppendLiteral("&d=");
   errorPageUrl.AppendASCII(escapedDescription.get());
+
+  nsCOMPtr<nsIWritablePropertyBag2> props(do_QueryInterface(aFailedChannel));
+  if (props) {
+    nsAutoCString addonName;
+    props->GetPropertyAsACString(u"blockedExtension"_ns, addonName);
+
+    nsCString escapedAddonName;
+    SAFE_ESCAPE(escapedAddonName, addonName, url_Path);
+
+    errorPageUrl.AppendLiteral("&a=");
+    errorPageUrl.AppendASCII(escapedAddonName.get());
+  }
 
   nsCOMPtr<nsIURI> errorPageURI;
   nsresult rv = NS_NewURI(getter_AddRefs(errorPageURI), errorPageUrl);
@@ -5039,8 +5087,7 @@ nsresult nsDocShell::SetCurScrollPosEx(int32_t aCurHorizontalPos,
   ScrollContainerFrame* sf = GetRootScrollContainerFrame();
   NS_ENSURE_TRUE(sf, NS_ERROR_FAILURE);
 
-  ScrollMode scrollMode =
-      sf->IsSmoothScroll() ? ScrollMode::SmoothMsd : ScrollMode::Instant;
+  ScrollMode scrollMode = sf->ScrollModeForScrollBehavior();
 
   nsPoint targetPos(aCurHorizontalPos, aCurVerticalPos);
   sf->ScrollTo(targetPos, scrollMode);
@@ -6346,6 +6393,7 @@ nsresult nsDocShell::FilterStatusForErrorPage(
        aStatus == NS_ERROR_PROXY_AUTHENTICATION_FAILED ||
        aStatus == NS_ERROR_PROXY_TOO_MANY_REQUESTS ||
        aStatus == NS_ERROR_MALFORMED_URI ||
+       aStatus == NS_ERROR_HARMFULADDON_URI ||
        aStatus == NS_ERROR_BLOCKED_BY_POLICY ||
        aStatus == NS_ERROR_DOM_COOP_FAILED ||
        aStatus == NS_ERROR_DOM_COEP_FAILED ||
@@ -6560,10 +6608,6 @@ nsresult nsDocShell::EndPageLoad(nsIWebProgress* aProgress,
           nsContentUtils::eDOM_PROPERTIES, "UnknownProtocolNavigationPrevented",
           params);
     }
-  } else {
-    // If we have a host
-    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
-    PredictorLearnRedirect(url, aChannel, loadInfo->GetOriginAttributes());
   }
 
   if (hadErrorStatus) {
@@ -6600,9 +6644,14 @@ bool nsDocShell::VerifyDocumentViewer() {
   if (mIsBeingDestroyed) {
     return false;
   }
-  // The viewer should be created during docshell initialization. So unless
-  // we're being destroyed, there always needs to be a viewer.
-  MOZ_ASSERT_UNREACHABLE("The content viewer should've been created eagerly.");
+  if (!mInitialized) {
+    // The viewer should be created during docshell initialization. If something
+    // wants a viewer or document, it has to initialize the docshell first.
+    MOZ_ASSERT_UNREACHABLE(
+        "The docshell should be initialized to get a viewer.");
+  } else {
+    NS_WARNING("No document viewer, docshell failed to initialize.");
+  }
   return false;
 }
 
@@ -6655,6 +6704,80 @@ nsresult nsDocShell::CreateInitialDocumentViewer(
   }
 
   return rv;
+}
+
+// Location.ancestorOrigins for about:blank, need special case handling.
+// Particularly in the case for initial about:blank, which does not go through
+// normal code that happen with navigations.
+static void CreateAboutBlankAncestorOriginsForNonTopLevel(Document* aDoc) {
+  BrowsingContext* bc = aDoc->GetBrowsingContext();
+  MOZ_ASSERT(bc && !bc->IsDiscarded() && bc->GetEmbedderElement());
+  // We're not even going to attempt to deal with location.ancestorOrigins stuff
+  // in the parent process.
+  if (!XRE_IsContentProcess()) {
+    return;
+  }
+
+  const auto* frame = bc->GetEmbedderElement();
+  const auto referrerPolicy = frame->GetReferrerPolicyAsEnum();
+  // Inform the parent process that it needs to create an internal ancestor
+  // origins list for this browsing context `bc`
+  (void)ContentChild::GetSingleton()->SendUpdateAncestorOriginsList(bc);
+
+  const bool masked = referrerPolicy == ReferrerPolicy::No_referrer;
+  BrowsingContext* parent = bc->GetParent();
+  MOZ_DIAGNOSTIC_ASSERT(parent && parent->IsInProcess() &&
+                        parent->GetExtantDocument());
+
+  nsTArray<nsCOMPtr<nsIPrincipal>> ancestorPrincipals;
+  constexpr auto getPrincipal =
+      [](const BrowsingContext* ctx) -> nsIPrincipal* {
+    if (!ctx) {
+      return nullptr;
+    }
+    auto* doc = ctx->GetExtantDocument();
+    return doc ? doc->GetPrincipal() : nullptr;
+  };
+  BrowsingContext* ancestorContextToCopyAncestorListFrom = parent;
+
+  // about:blank is different from normal docs.
+  // We only care about in-process, same-origin ancestors.
+  // Therefore run the algorithm all the way up to the last same-origin doc
+  // add that origin to the list, and then append that origin's ancestor origins
+  // list
+  if (masked) {
+    ancestorPrincipals.AppendElement(nullptr);
+    // 16.1.1. If ancestorOrigin is same origin with parentDoc's origin, then
+    // append a new opaque origin to output.
+    auto* parentDocPrincipal = getPrincipal(parent);
+    for (auto* ancestor = parent->GetParent(); ancestor;
+         ancestor = ancestor->GetParent()) {
+      auto* principal = getPrincipal(ancestor);
+      if (principal && principal->Equals(parentDocPrincipal)) {
+        // same principal, same process, adding nullptr for
+        // parentContextToCopyAncestorListFrom
+        ancestorContextToCopyAncestorListFrom = ancestor;
+        ancestorPrincipals.AppendElement(nullptr);
+      } else {
+        // 16.1.2 Otherwise, append ancestorOrigin to output and set masked to
+        // false.
+        // Note: But in the case of about:blank, ancestorOrigin can
+        // potentially live in another process. So we stop right before it, and
+        // just copy `ancestorContextToCopyAncestorListFrom` list, since the
+        // masking steps should finish here.
+        break;
+      }
+    }
+  } else {
+    ancestorPrincipals.AppendElement(getPrincipal(parent));
+  }
+
+  nsTArray<nsString> list = ProduceAncestorOriginsList(ancestorPrincipals);
+  Document* ancestorDoc =
+      ancestorContextToCopyAncestorListFrom->GetExtantDocument();
+  MOZ_DIAGNOSTIC_ASSERT(ancestorDoc);
+  list.AppendElements(ancestorDoc->GetAncestorOriginsList());
+  aDoc->SetAncestorOriginsList(std::move(list));
 }
 
 nsresult nsDocShell::CreateAboutBlankDocumentViewer(
@@ -6891,6 +7014,12 @@ nsresult nsDocShell::CreateAboutBlankDocumentViewer(
         blankDoc->InitFeaturePolicy(AsVariant(embedderElement));
       } else {
         blankDoc->InitFeaturePolicy(AsVariant(Nothing{}));
+      }
+
+      // Perform redacted location.ancestorOrigins algorithm for about:blank
+      if (BrowsingContext* bc = GetBrowsingContext();
+          bc && bc->GetEmbedderElement()) {
+        CreateAboutBlankAncestorOriginsForNonTopLevel(blankDoc);
       }
     }
   }
@@ -7735,9 +7864,6 @@ nsresult nsDocShell::RestoreFromHistory() {
     pc->RecomputeBrowsingContextDependentData();
   }
 
-  nsViewManager* newVM = presShell ? presShell->GetViewManager() : nullptr;
-  nsView* newRootView = newVM ? newVM->GetRootView() : nullptr;
-
   nsCOMPtr<nsPIDOMWindowInner> privWinInner = privWin->GetCurrentInnerWindow();
 
   // If parent is suspended, increase suspension count.
@@ -7774,7 +7900,7 @@ nsresult nsDocShell::RestoreFromHistory() {
   // presentation.  If this is not the same size we showed it at last time,
   // then we need to resize the widget.
 
-  if (newRootView) {
+  if (presShell) {
     if (!newBounds.IsEmpty() &&
         !newBounds.ToUnknownRect().IsEqualEdges(oldBounds)) {
       MOZ_LOG(gPageCacheLog, LogLevel::Debug,
@@ -7786,11 +7912,6 @@ nsresult nsDocShell::RestoreFromHistory() {
       sf->PostScrolledAreaEventForCurrentArea();
     }
   }
-
-  // The FinishRestore call below can kill these, null them out so we don't
-  // have invalid pointer lying around.
-  newRootView = nullptr;
-  newVM = nullptr;
 
   // If the IsUnderHiddenEmbedderElement() state has been changed, we need to
   // update it.
@@ -7890,6 +8011,30 @@ nsresult nsDocShell::CreateDocumentViewer(const nsACString& aContentType,
   bool errorOnLocationChangeNeeded = false;
   nsCOMPtr<nsIChannel> failedChannel = mFailedChannel;
   nsCOMPtr<nsIURI> failedURI;
+
+  // https://html.spec.whatwg.org/#finalize-a-cross-document-navigation
+  // 9. If entryToReplace is null, then: ...
+  //    Otherwise: ...
+  //      4. If historyEntry's document state's origin is same origin with
+  //         entryToReplace's document state's origin, then set
+  //         historyEntry's navigation API key to entryToReplace's
+  //         navigation API key.
+  bool isReplace =
+      mActiveEntry && mLoadingEntry && IsValidLoadType(mLoadType) &&
+      NavigationUtils::NavigationTypeFromLoadType(mLoadType)
+          .map([](auto type) { return type == NavigationType::Replace; })
+          .valueOr(false);
+  if (isReplace) {
+    nsCOMPtr<nsIURI> uri = mActiveEntry->GetURIOrInheritedForAboutBlank();
+    nsCOMPtr<nsIURI> targetURI =
+        mLoadingEntry->mInfo.GetURIOrInheritedForAboutBlank();
+    bool sameOrigin =
+        NS_SUCCEEDED(nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
+            targetURI, uri, false, false));
+    if (sameOrigin) {
+      mLoadingEntry->mInfo.NavigationKey() = mActiveEntry->NavigationKey();
+    }
+  }
 
   if (mLoadType == LOAD_ERROR_PAGE) {
     // We need to set the SH entry and our current URI here and not
@@ -9318,10 +9463,31 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   nsCOMPtr<nsPIDOMWindowInner> win =
       scriptGlobal ? scriptGlobal->GetCurrentInnerWindow() : nullptr;
 
+  // https://html.spec.whatwg.org/#scroll-to-fragid
+  // 14. Update document for history step application given navigable's
+  //     active document, historyEntry, true, scriptHistoryIndex,
+  //     scriptHistoryLength, and historyHandling.
+  if (RefPtr navigation = win ? win->Navigation() : nullptr) {
+    MOZ_LOG(gNavigationAPILog, LogLevel::Debug,
+            ("nsDocShell %p triggering a navigation event from "
+             "HandleSameDocumentNavigation",
+             this));
+    // https://html.spec.whatwg.org/#update-document-for-history-step-application
+    // 6.4.2. Update the navigation API entries for a same-document
+    //        navigation given navigation, entry, and navigationType.
+    navigation->UpdateEntriesForSameDocumentNavigation(
+        mActiveEntry.get(),
+        NavigationUtils::NavigationTypeFromLoadType(mLoadType).valueOr(
+            NavigationType::Push));
+  }
+
   // The check for uninvoked directives must come before ScrollToAnchor() is
   // called.
   const bool hasTextDirectives =
       doc->FragmentDirective()->HasUninvokedDirectives();
+
+  // https://html.spec.whatwg.org/#scroll-to-fragid
+  // 15. Scroll to the fragment given navigable's active document.
 
   // ScrollToAnchor doesn't necessarily cause us to scroll the window;
   // the function decides whether a scroll is appropriate based on the
@@ -9356,19 +9522,6 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   // destroy the docshell, nulling out mScriptGlobal. Hold a stack
   // reference to avoid null derefs. See bug 914521.
   if (win) {
-    if (RefPtr navigation = win->Navigation()) {
-      MOZ_LOG(gNavigationAPILog, LogLevel::Debug,
-              ("nsDocShell %p triggering a navigation event from "
-               "HandleSameDocumentNavigation",
-               this));
-      // Corresponds to step 6.4.2 from the Updating the document algorithm:
-      // https://html.spec.whatwg.org/multipage/browsing-the-web.html#updating-the-document
-      navigation->UpdateEntriesForSameDocumentNavigation(
-          mActiveEntry.get(),
-          NavigationUtils::NavigationTypeFromLoadType(mLoadType).valueOr(
-              NavigationType::Push));
-    }
-
     // Fire a hashchange event URIs differ, and only in their hashes.
     // If the fragment contains a directive, compare hasRef.
     bool doHashchange = aState.mSameExceptHashes &&
@@ -10009,11 +10162,6 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
   OriginAttributes attrs = GetOriginAttributes();
   attrs.SetFirstPartyDomain(isTopLevelDoc, aLoadState->URI());
 
-  PredictorLearn(aLoadState->URI(), nullptr,
-                 nsINetworkPredictor::LEARN_LOAD_TOPLEVEL, attrs);
-  PredictorPredict(aLoadState->URI(), nullptr,
-                   nsINetworkPredictor::PREDICT_LOAD, attrs, nullptr);
-
   nsCOMPtr<nsIRequest> req;
   rv = DoURILoad(aLoadState, aCacheKey, getter_AddRefs(req));
 
@@ -10541,18 +10689,51 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
   return true;
 }
 
-bool nsDocShell::IsAboutBlankLoadOntoInitialAboutBlank(
-    nsIURI* aURI, nsIPrincipal* aPrincipalToInherit) {
+bool nsDocShell::ShouldDoInitialAboutBlankSyncLoad(
+    nsIURI* aURI, nsDocShellLoadState* aLoadState,
+    nsIPrincipal* aPrincipalToInherit) {
   MOZ_ASSERT(mDocumentViewer);
-  bool ret = !mHasStartedLoadingOtherThanInitialBlankURI &&
-             mDocumentViewer->GetDocument()->IsUncommittedInitialDocument() &&
-             NS_IsAboutBlankAllowQueryAndFragment(aURI);
-  if (ret && !aPrincipalToInherit) {
+
+  if (!NS_IsAboutBlankAllowQueryAndFragment(aURI)) {
+    return false;
+  }
+
+  if (aLoadState->IsInitialAboutBlankHandlingProhibited()) {
+    return false;
+  }
+
+  if (mHasStartedLoadingOtherThanInitialBlankURI ||
+      !mDocumentViewer->GetDocument()->IsUncommittedInitialDocument()) {
+    return false;
+  }
+
+  if (!aPrincipalToInherit) {
     MOZ_ASSERT(
         mDocumentViewer->GetDocument()->NodePrincipal()->GetIsNullPrincipal(),
         "Load looks like first load but does not want principal inheritance.");
+  } else {
+    if (XRE_IsContentProcess() &&
+        !ValidatePrincipalCouldPotentiallyBeLoadedBy(
+            aPrincipalToInherit, ContentChild::GetSingleton()->GetRemoteType(),
+            {})) {
+      // Principal doesn't match our remote type, so the we need the normal
+      // load path to do a process switch.
+      return false;
+    }
+
+    // If a page opens about:blank, it will have a content principal.
+    // If it is then restored after a restart, we might not have initialized
+    // UsesOAC for it. If this is the case, do a normal load (bug 2004165).
+    // XXX bug 2005205 tracks removing this workaround.
+    if (aLoadState->LoadIsFromSessionHistory() &&
+        !mBrowsingContext->Group()
+             ->UsesOriginAgentCluster(aPrincipalToInherit)
+             .isSome()) {
+      return false;
+    }
   }
-  return ret;
+
+  return true;
 }
 
 void nsDocShell::UnsuppressPaintingIfNoNavigationAwayFromAboutBlank(
@@ -10837,18 +11018,28 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
                     aLoadState->PrincipalToInherit(),
                 inheritPrincipal);
   // See https://bugzilla.mozilla.org/show_bug.cgi?id=1736570
-  const bool isAboutBlankLoadOntoInitialAboutBlank =
-      !aLoadState->IsInitialAboutBlankHandlingProhibited() &&
-      IsAboutBlankLoadOntoInitialAboutBlank(uri,
-                                            aLoadState->PrincipalToInherit());
+  const bool doInitialSyncLoad = ShouldDoInitialAboutBlankSyncLoad(
+      uri, aLoadState, aLoadState->PrincipalToInherit());
+
+  if (!doInitialSyncLoad) {
+    // https://wicg.github.io/document-picture-in-picture/#close-on-navigate
+    if (Document* doc = GetExtantDocument()) {
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+          "Close PIP window on navigate", [doc = RefPtr(doc)]() {
+            doc->CloseAnyAssociatedDocumentPiPWindows();
+          }));
+    }
+    if (GetBrowsingContext()->GetIsDocumentPiP()) {
+      return NS_OK;
+    }
+  }
 
   // FIXME We still have a ton of codepaths that don't pass through
   //       DocumentLoadListener, so probably need to create session history info
   //       in more places.
   if (aLoadState->GetLoadingSessionHistoryInfo()) {
     SetLoadingSessionHistoryInfo(*aLoadState->GetLoadingSessionHistoryInfo());
-  } else if (isAboutBlankLoadOntoInitialAboutBlank &&
-             mozilla::SessionHistoryInParent()) {
+  } else if (doInitialSyncLoad && mozilla::SessionHistoryInParent()) {
     // Materialize LoadingSessionHistoryInfo here, because DocumentChannel
     // loads have it, and later history behavior depends on it existing.
     UniquePtr<SessionHistoryInfo> entry = MakeUnique<SessionHistoryInfo>(
@@ -10978,7 +11169,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   }
   RefPtr<WindowContext> context = mBrowsingContext->GetCurrentWindowContext();
 
-  if (isAboutBlankLoadOntoInitialAboutBlank) {
+  if (doInitialSyncLoad) {
     // Stay on the eagerly created document and adjust it to match what we would
     // be loading.
     return CompleteInitialAboutBlankLoad(aLoadState, loadInfo);
@@ -11062,8 +11253,7 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
       mBrowsingContext, uriModified, Some(isEmbeddingBlockedError));
 
   nsCOMPtr<nsIChannel> channel;
-  if (DocumentChannel::CanUseDocumentChannel(uri) &&
-      !isAboutBlankLoadOntoInitialAboutBlank) {
+  if (DocumentChannel::CanUseDocumentChannel(uri)) {
     channel = DocumentChannel::CreateForDocument(
         aLoadState, loadInfo, loadFlags, this, cacheKey, uriModified,
         isEmbeddingBlockedError);
@@ -12821,7 +13011,7 @@ void nsDocShell::MaybeFireTraverseHistory(nsDocShellLoadState* aLoadState) {
                                     ->mInfo.GetURIOrInheritedForAboutBlank();
   if (NS_FAILED(nsContentUtils::GetSecurityManager()->CheckSameOriginURI(
           activeURI, loadingURI,
-          /*reportError=*/true,
+          /*reportError=*/false,
           /*fromPrivateWindow=*/false))) {
     return;
   }

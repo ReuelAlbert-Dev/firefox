@@ -984,6 +984,15 @@ static void MOZ_CAN_RUN_SCRIPT RunMicroTask(
     return;
   }
 
+  // After this point, if we fail to run, we
+  //
+  // 1. Know we have JS microtask
+  // 2. Can freely ignore it if we cannot execute it.
+  //
+  // Create a ScopeExit to handle this.
+  auto ignoreMicroTasks = mozilla::MakeScopeExit(
+      [&aMicroTask]() { aMicroTask.get().IgnoreJSMicroTask(); });
+
   // Avoid the overhead of GetFlowIdFromJSMicroTask in the common case
   // of not having the profiler enabled.
   mozilla::Maybe<AutoProfilerTerminatingFlowMarkerFlowOnly> terminatingMarker;
@@ -1025,10 +1034,8 @@ static void MOZ_CAN_RUN_SCRIPT RunMicroTask(
     return;
   }
 
-  // Don't run if we fail to unwrap the stack.
-  if (!aMicroTask.get().MaybeGetAllocationSiteFromJSMicroTask(&allocStack)) {
-    return;
-  }
+  // We do however still need to run if we can't unwrap the stack
+  (void)aMicroTask.get().MaybeGetAllocationSiteFromJSMicroTask(&allocStack);
 
   nsIGlobalObject* incumbentGlobal = nullptr;
 
@@ -1082,11 +1089,12 @@ static void MOZ_CAN_RUN_SCRIPT RunMicroTask(
                   "promise callback" /* Some tests care about this string. */,
                   dom::CallbackObject::eReportExceptions);
   if (!setup.GetContext()) {
-    // We can't run, so we must ignore here!
-    aMicroTask.get().IgnoreJSMicroTask();
-
     return;
   }
+
+  // At this point we will definitely consume the task, so we
+  // no longer need the scope exit.
+  ignoreMicroTasks.release();
 
   // Note: We're dropping the return value on the floor here, however
   // cleanup and exception handling are done as part of the CallSetup
@@ -1197,7 +1205,7 @@ bool CycleCollectedJSContext::PerformMicroTaskCheckPoint(bool aForce) {
     while (JS::HasAnyMicroTasks(cx)) {
       MOZ_ASSERT(mDebuggerMicroTaskQueue.empty());
       MOZ_ASSERT(mPendingMicroTaskRunnables.empty());
-      job = DequeueNextMicroTask(cx);
+      job.set(DequeueNextMicroTask(cx));
 
       // To avoid us accidentally re-enqueing a SuppressionMicroTaskList in
       // itself, we determine here if the job is actually the suppression task
@@ -1327,11 +1335,11 @@ void CycleCollectedJSContext::PerformDebuggerMicroTaskCheckpoint() {
 
   JSContext* cx = Context();
   if (StaticPrefs::javascript_options_use_js_microtask_queue()) {
+    JS::Rooted<MustConsumeMicroTask> job(cx);
     while (JS::HasDebuggerMicroTasks(cx)) {
       MOZ_ASSERT(mDebuggerMicroTaskQueue.empty());
       MOZ_ASSERT(mPendingMicroTaskRunnables.empty());
 
-      JS::Rooted<MustConsumeMicroTask> job(cx);
       job.set(DequeueNextDebuggerMicroTask(cx));
 
       RunMicroTask(cx, &job);

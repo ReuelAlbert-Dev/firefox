@@ -481,15 +481,13 @@ class _QuickSuggestTestUtils {
       source: lazy.UrlbarUtils.RESULT_SOURCE.SEARCH,
       heuristic: false,
       payload: {
-        title,
+        title: fullKeyword ? `${fullKeyword} — ${title}` : title,
         url,
         originalUrl,
         requestId,
         source,
         provider,
-        displayUrl: url.replace(/^https:\/\//, ""),
         isSponsored: true,
-        qsSuggestion: fullKeyword ?? keyword,
         sponsoredImpressionUrl: impressionUrl,
         sponsoredClickUrl: clickUrl,
         sponsoredBlockId: blockId,
@@ -526,7 +524,9 @@ class _QuickSuggestTestUtils {
       });
     } else {
       result.payload.icon = icon;
-      result.payload.dismissalKey = dismissalKey || fullKeyword || originalUrl;
+      if (typeof dismissalKey == "string") {
+        result.payload.dismissalKey = dismissalKey;
+      }
     }
 
     return result;
@@ -586,16 +586,14 @@ class _QuickSuggestTestUtils {
       source: lazy.UrlbarUtils.RESULT_SOURCE.SEARCH,
       heuristic: false,
       payload: {
-        title,
+        title: fullKeyword ? `${fullKeyword} — ${title}` : title,
         url,
         icon,
         iconBlob,
         source,
         provider,
         telemetryType,
-        displayUrl: url.replace(/^https:\/\//, ""),
         isSponsored: false,
-        qsSuggestion: fullKeyword ?? keyword,
         isBlockable: true,
         isManageable: true,
       },
@@ -939,7 +937,6 @@ class _QuickSuggestTestUtils {
         url,
         originalUrl,
         icon,
-        displayUrl: url.replace(/^https:\/\//, ""),
         isSponsored: false,
         shouldShowUrl: true,
         bottomTextL10n: {
@@ -994,7 +991,6 @@ class _QuickSuggestTestUtils {
         title,
         url: finalUrl.href,
         originalUrl: url,
-        displayUrl: finalUrl.href.replace(/^https:\/\//, ""),
         isSponsored: false,
         description,
         icon: "chrome://global/skin/icons/mdn.svg",

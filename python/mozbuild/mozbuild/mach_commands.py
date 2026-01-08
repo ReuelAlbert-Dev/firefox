@@ -22,6 +22,7 @@ from os import path
 from pathlib import Path
 
 import mozpack.path as mozpath
+import mozshellutil
 from gtest.reports import AggregatedGTestReport
 from gtest.suites import get_gtest_suites, suite_filters
 from mach.decorators import (
@@ -30,6 +31,7 @@ from mach.decorators import (
     CommandArgumentGroup,
     SubCommand,
 )
+from mozdebug import prepend_debugger_args
 from mozfile import load_source
 
 from mozbuild.base import (
@@ -426,6 +428,7 @@ def cargo_vet(command_context, arguments, stdout=None, env=os.environ):
     try:
         res = subprocess.run(
             [cargo, "vet"] + arguments,
+            check=False,
             cwd=cargo_vet_dir,
             stdout=stdout,
             env=env,
@@ -572,7 +575,9 @@ def clobber(command_context, what, full=False):
             ret = subprocess.call(cmd, cwd=topsrcdir)
         elif conditions.is_git(command_context) or conditions.is_jj(command_context):
             cmd = ["git", "clean", "-d", "-f", "-x", "*.py[cdo]", "*/__pycache__/*"]
-            result = subprocess.run(cmd, cwd=topsrcdir, stderr=subprocess.DEVNULL)
+            result = subprocess.run(
+                cmd, check=False, cwd=topsrcdir, stderr=subprocess.DEVNULL
+            )
             # We assume the `jj` repo is a colocated `git` repo, if not, fall back to a pure python approach
             if conditions.is_jj(command_context) and result.returncode != 0:
                 _pure_python_clean(topsrcdir)
@@ -682,7 +687,7 @@ def show_log(command_context, log_file=None):
         except OSError as os_error:
             # (POSIX)   errno.EPIPE: BrokenPipeError: [Errno 32] Broken pipe
             # (Windows) errno.EINVAL: OSError:        [Errno 22] Invalid argument
-            if os_error.errno == errno.EPIPE or os_error.errno == errno.EINVAL:
+            if os_error.errno in {errno.EPIPE, errno.EINVAL}:
                 # If the user manually terminates 'less' before the entire log file
                 # is piped (without scrolling close enough to the bottom) we will get
                 # one of these errors (depends on the OS) because the logger will still
@@ -1092,7 +1097,7 @@ def gtest(
     is_debugging = debug or debugger or debugger_args
 
     if is_debugging:
-        args = _prepend_debugger_args(args, debugger, debugger_args)
+        args = prepend_debugger_args(args, debugger, debugger_args)
         if not args:
             return 1
 
@@ -1278,8 +1283,7 @@ def gtest(
 
         # Clamp error code to 255 to prevent overflowing multiple of
         # 256 into 0
-        if exit_code > 255:
-            exit_code = 255
+        exit_code = min(exit_code, 255)
 
     # Show aggregated report information and any test errors.
     command_context.log(
@@ -1512,6 +1516,10 @@ def install(command_context, **kwargs):
 
         return 0
 
+    elif conditions.is_ios(command_context):
+        from mozrunner.devices.ios_device import verify_ios_device
+
+        ret = verify_ios_device(command_context, install=True, **kwargs) == 0
     else:
         ret = command_context._run_make(
             directory=".", target="install", ensure_exit_code=False
@@ -2159,13 +2167,13 @@ process attach {continue_flag}-p {pid!s}
                     )
                 )
 
-            our_debugger_args = "-s %s" % tmp_lldb_start_script
+            our_debugger_args = mozshellutil.quote("-s", tmp_lldb_start_script)
             if debugger_args:
                 full_debugger_args = " ".join([debugger_args, our_debugger_args])
             else:
                 full_debugger_args = our_debugger_args
 
-            args = _prepend_debugger_args([], debugger, full_debugger_args)
+            args = prepend_debugger_args([], debugger, full_debugger_args)
             if not args:
                 return 1
 
@@ -2179,6 +2187,38 @@ process attach {continue_flag}-p {pid!s}
         device.shell("pkill -f lldb-server", enable_run_as=True)
         if not use_existing_process:
             device.shell("am clear-debug-app")
+
+
+def _run_ios(command_context, no_install=None, debug=False):
+    from mozdevice.ios import IosDevice
+    from mozrunner.devices.ios_device import (
+        verify_ios_device,
+    )
+
+    app = "org.mozilla.ios.GeckoTestBrowser"
+
+    # `verify_ios_device` respects sets `DEVICE_UUID`
+    verify_ios_device(
+        command_context,
+        app=app,
+        install=not no_install,
+    )
+    device_serial = os.environ.get("DEVICE_UUID")
+    if not device_serial:
+        print("No iOS devices connected.")
+        return 1
+
+    device = IosDevice.select_device(conditions.is_ios_simulator(command_context))
+    if debug:
+        print("Application will pause after starting until a debugger is connected...")
+    proc = device.launch_process(
+        app,
+        wait_for_debugger=debug,
+        stdout=None,
+        stderr=None,
+    )
+    proc.run()
+    proc.wait()
 
 
 def _run_jsshell(command_context, params, debug, debugger, debugger_args):
@@ -2200,24 +2240,9 @@ def _run_jsshell(command_context, params, debug, debugger, debugger_args):
         if "INSIDE_EMACS" in os.environ:
             command_context.log_manager.terminal_handler.setLevel(logging.WARNING)
 
-        import mozdebug
-
-        if not debugger:
-            # No debugger name was provided. Look for the default ones on
-            # current OS.
-            debugger = mozdebug.get_default_debugger_name(
-                mozdebug.DebuggerSearch.KeepLooking
-            )
-
-        if debugger:
-            debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
-
-        if not debugger or not debuggerInfo:
-            print("Could not find a suitable debugger in your PATH.")
+        args = prepend_debugger_args(args, debugger, debugger_args)
+        if not args:
             return 1
-
-        # Prepend the debugger args.
-        args = [debuggerInfo.path] + debuggerInfo.args + args
 
     return command_context.run_process(
         args=args, ensure_exit_code=False, pass_thru=True, append_env=extra_env
@@ -2393,8 +2418,24 @@ def _run_desktop(
         if appdata is True:
             appdata = tmpdir
 
-        extra_env["MOZ_APP_DATA"] = os.path.join(appdata, "AppData", "Roaming")
-        extra_env["MOZ_LOCAL_APP_DATA"] = os.path.join(appdata, "Local")
+        extra_env["MOZ_APP_DATA"] = os.path.normpath(
+            os.path.join(appdata, "AppData", "Roaming")
+        )
+        command_context.log(
+            logging.INFO,
+            "run",
+            {"app_data": extra_env["MOZ_APP_DATA"]},
+            "Overriding application data directory to {app_data}",
+        )
+        extra_env["MOZ_LOCAL_APP_DATA"] = os.path.normpath(
+            os.path.join(appdata, "Local")
+        )
+        command_context.log(
+            logging.INFO,
+            "run",
+            {"local_app_data": extra_env["MOZ_LOCAL_APP_DATA"]},
+            "Overriding local application data directory to {local_app_data}",
+        )
 
     if not enable_crash_reporter:
         extra_env["MOZ_CRASHREPORTER_DISABLE"] = "1"
@@ -2411,38 +2452,9 @@ def _run_desktop(
         if "INSIDE_EMACS" in os.environ:
             command_context.log_manager.terminal_handler.setLevel(logging.WARNING)
 
-        import mozdebug
-
-        if not debugger:
-            # No debugger name was provided. Look for the default ones on
-            # current OS.
-            debugger = mozdebug.get_default_debugger_name(
-                mozdebug.DebuggerSearch.KeepLooking
-            )
-
-        if debugger:
-            debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
-
-        if not debugger or not debuggerInfo:
-            print("Could not find a suitable debugger in your PATH.")
+        args = prepend_debugger_args(args, debugger, debugger_args)
+        if not args:
             return 1
-
-        # Parameters come from the CLI. We need to convert them before
-        # their use.
-        if debugger_args:
-            from mozbuild import shellutil
-
-            try:
-                debugger_args = shellutil.split(debugger_args)
-            except shellutil.MetaCharacterException as e:
-                print(
-                    "The --debugger-args you passed require a real shell to parse them."
-                )
-                print("(We can't handle the %r character.)" % e.char)
-                return 1
-
-        # Prepend the debugger args.
-        args = [debuggerInfo.path] + debuggerInfo.args + args
 
     if dmd:
         dmd_params = []
@@ -3898,49 +3910,6 @@ def repackage_single_locales(command_context, verbose=False, locales=[], dest=No
         )
 
     return 0
-
-
-def _prepend_debugger_args(args, debugger, debugger_args):
-    """
-    Given an array with program arguments, prepend arguments to run it under a
-    debugger.
-
-    :param args: The executable and arguments used to run the process normally.
-    :param debugger: The debugger to use, or empty to use the default debugger.
-    :param debugger_args: Any additional parameters to pass to the debugger.
-    """
-
-    import mozdebug
-
-    if not debugger:
-        # No debugger name was provided. Look for the default ones on
-        # current OS.
-        debugger = mozdebug.get_default_debugger_name(
-            mozdebug.DebuggerSearch.KeepLooking
-        )
-
-    if debugger:
-        debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
-
-    if not debugger or not debuggerInfo:
-        print("Could not find a suitable debugger in your PATH.")
-        return None
-
-    # Parameters come from the CLI. We need to convert them before
-    # their use.
-    if debugger_args:
-        from mozbuild import shellutil
-
-        try:
-            debugger_args = shellutil.split(debugger_args)
-        except shellutil.MetaCharacterException as e:
-            print("The --debugger_args you passed require a real shell to parse them.")
-            print("(We can't handle the %r character.)" % e.char)
-            return None
-
-    # Prepend the debugger args.
-    args = [debuggerInfo.path] + debuggerInfo.args + args
-    return args
 
 
 @SubCommand(

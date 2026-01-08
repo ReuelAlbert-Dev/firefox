@@ -10,6 +10,19 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 /**
+ * @typedef {object} BrowsingContextDetails
+ *
+ * @property {number} browserId
+ *     Browser id for this browsing context.
+ * @property {number} browsingContextId
+ *     Internal id of the browsing context.
+ * @property {boolean} isTopBrowsingContext
+ *     Flag that indicates if the browsing context is top-level.
+ * @property {boolean} isContent
+ *     Flag that indicates if it is a content or a chrome browsing context.
+ */
+
+/**
  * A browsing context might be replaced before reaching the parent process,
  * instead we serialize enough information to retrieve the navigable in the
  * parent process.
@@ -24,17 +37,15 @@ ChromeUtils.defineESModuleGetters(lazy, {
  *
  * @param {BrowsingContext} browsingContext
  *     The browsing context for which we want to get details.
- * @returns {object}
- *     An object that returns the following properties:
- *       - browserId: browser id for this browsing context
- *       - browsingContextId: browsing context id
- *       - isTopBrowsingContext: flag that indicates if the browsing context is
- *         top level
+ *
+ * @returns {BrowsingContextDetails}
+ *     Details of the browsing context.
  */
 export function getBrowsingContextDetails(browsingContext) {
   return {
     browserId: browsingContext.browserId,
     browsingContextId: browsingContext.id,
+    isContent: browsingContext.isContent,
     isTopBrowsingContext: browsingContext.parent === null,
   };
 }
@@ -177,14 +188,19 @@ export function isBrowsingContextCompatible(browsingContext, options = {}) {
  *     The browsing context to wait for.
  *
  * @returns {Promise}
- *     Promise which resolves when `currentWindowGlobal` is set on the browsing
- *     context or throws a `DiscardedBrowsingContextError` error if it is still
- *     not available after 100ms.
+ *     Promise which resolves when `currentWindowGlobal` is available.
+ *
+ * @throws DiscardedBrowsingContextError
+ *     Browsing context is discarded or still no
+ *     `currentWindowGlobal` set after 100ms.
  */
 export async function waitForCurrentWindowGlobal(browsingContext) {
   await lazy.PollPromise(
     (resolve, reject) => {
-      if (browsingContext.currentWindowGlobal) {
+      if (browsingContext.currentWindowGlobal || browsingContext.isDiscarded) {
+        // If the browsing context is discarded while checking for
+        // the current window global, return early to avoid waiting
+        // unnecessarily until the timeout expires.
         resolve();
       } else {
         reject();

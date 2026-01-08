@@ -66,7 +66,7 @@ class nsTableWrapperFrame : public nsContainerFrame {
                          mozilla::IntrinsicISizeType aType) override;
 
   SizeComputationResult ComputeSize(
-      gfxContext* aRenderingContext, mozilla::WritingMode aWM,
+      const SizeComputationInput& aSizingInput, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin,
       const mozilla::LogicalSize& aBorderPadding,
@@ -74,7 +74,7 @@ class nsTableWrapperFrame : public nsContainerFrame {
       mozilla::ComputeSizeFlags aFlags) override;
 
   mozilla::LogicalSize ComputeAutoSize(
-      gfxContext* aRenderingContext, mozilla::WritingMode aWM,
+      const SizeComputationInput& aSizingInput, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
       const mozilla::LogicalSize& aMargin,
       const mozilla::LogicalSize& aBorderPadding,
@@ -185,8 +185,6 @@ class nsTableWrapperFrame : public nsContainerFrame {
   // having "physical" names.)
   MaybeCaptionSide GetCaptionSide() const;
 
-  mozilla::StyleVerticalAlignKeyword GetCaptionVerticalAlign() const;
-
   nscoord ComputeFinalBSize(const mozilla::LogicalSize& aInnerSize,
                             const mozilla::LogicalSize& aCaptionSize,
                             const mozilla::LogicalMargin& aCaptionMargin,
@@ -245,13 +243,13 @@ class nsTableWrapperFrame : public nsContainerFrame {
    * Note: CaptionShrinkWrapISize doesn't need StyleSizeOverrides parameter.
    */
   mozilla::LogicalSize InnerTableShrinkWrapSize(
-      gfxContext* aRenderingContext, nsTableFrame* aTableFrame,
+      const SizeComputationInput& aSizingInput, nsTableFrame* aTableFrame,
       mozilla::WritingMode aWM, const mozilla::LogicalSize& aCBSize,
       nscoord aAvailableISize,
       const mozilla::StyleSizeOverrides& aSizeOverrides,
       mozilla::ComputeSizeFlags aFlag) const;
   mozilla::LogicalSize CaptionShrinkWrapSize(
-      gfxContext* aRenderingContext, nsIFrame* aCaptionFrame,
+      const SizeComputationInput& aSizingInput, nsIFrame* aCaptionFrame,
       mozilla::WritingMode aWM, const mozilla::LogicalSize& aCBSize,
       nscoord aAvailableISize, mozilla::ComputeSizeFlags aFlag) const;
 

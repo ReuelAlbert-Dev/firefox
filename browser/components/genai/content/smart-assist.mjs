@@ -16,6 +16,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SpecialMessageActions:
     "resource://messaging-system/lib/SpecialMessageActions.sys.mjs",
+  AIWindowUI:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindowUI.sys.mjs",
 });
 
 const FULL_PAGE_URL = "chrome://browser/content/genai/smartAssistPage.html";
@@ -237,14 +239,18 @@ export class SmartAssist extends MozLitElement {
       {
         type: "FXA_SIGNIN_FLOW",
         data: {
-          entrypoint: "ai-window",
+          entrypoint: "aiwindow",
           extraParams: {
-            service: "ai-window",
+            service: "aiwindow",
           },
         },
       },
       window.browsingContext.topChromeWindow.gBrowser.selectedBrowser
     );
+  }
+
+  _toggleAIWindowSidebar() {
+    lazy.AIWindowUI.toggleSidebar(window.browsingContext.topChromeWindow);
   }
 
   render() {
@@ -358,6 +364,22 @@ export class SmartAssist extends MozLitElement {
                     ?checked=${this.overrideNewTab}
                   ></moz-checkbox>
                 </div>`
+              : ""
+          }
+
+          ${
+            this.mode === "tab"
+              ? html`
+                  <div class="footer">
+                    <moz-button
+                      type="primary"
+                      size="small"
+                      @click=${this._toggleAIWindowSidebar}
+                    >
+                      Open AI Window Sidebar
+                    </moz-button>
+                  </div>
+                `
               : ""
           }
         </div>

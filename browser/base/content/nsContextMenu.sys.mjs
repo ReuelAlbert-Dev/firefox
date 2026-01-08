@@ -91,13 +91,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "TEXT_FRAGMENTS_SHOW_CONTEXT_MENU",
-  "dom.text_fragments.create_text_fragment.enabled",
-  false
-);
-
 const PASSWORD_FIELDNAME_HINTS = ["current-password", "new-password"];
 const USERNAME_FIELDNAME_HINT = "username";
 
@@ -456,9 +449,7 @@ export class nsContextMenu {
 
   initTextFragmentItems() {
     const shouldShow =
-      lazy.TEXT_FRAGMENTS_SHOW_CONTEXT_MENU &&
       lazy.TEXT_FRAGMENTS_ENABLED &&
-      lazy.STRIP_ON_SHARE_ENABLED &&
       !(
         this.inPDFViewer ||
         this.inFrame ||
@@ -467,7 +458,10 @@ export class nsContextMenu {
       ) &&
       (this.hasTextFragments || this.isContentSelected);
     this.showItem("context-copy-link-to-highlight", shouldShow);
-    this.showItem("context-copy-clean-link-to-highlight", shouldShow);
+    this.showItem(
+      "context-copy-clean-link-to-highlight",
+      shouldShow && lazy.STRIP_ON_SHARE_ENABLED
+    );
 
     // disables both options by default, while API tries to build a text fragment
     this.setItemAttr("context-copy-link-to-highlight", "disabled", true);
@@ -479,12 +473,7 @@ export class nsContextMenu {
   }
 
   async getTextDirective() {
-    if (
-      !Services.prefs.getBoolPref(
-        "dom.text_fragments.create_text_fragment.enabled",
-        false
-      )
-    ) {
+    if (!lazy.TEXT_FRAGMENTS_ENABLED) {
       return;
     }
     this.textFragmentURL = await this.actor.getTextDirective();
@@ -992,7 +981,7 @@ export class nsContextMenu {
     this.showItem("spell-check-enabled", canSpell);
     document
       .getElementById("spell-check-enabled")
-      .setAttribute("checked", canSpell && InlineSpellCheckerUI.enabled);
+      .toggleAttribute("checked", canSpell && InlineSpellCheckerUI.enabled);
 
     this.showItem("spell-add-to-dictionary", onMisspelling);
     this.showItem("spell-undo-add-to-dictionary", showUndo);
@@ -1261,19 +1250,7 @@ export class nsContextMenu {
       }
 
       // Update sub-menu items.
-      let fragment = lazy.LoginManagerContextMenu.addLoginsToMenu(
-        this.targetIdentifier,
-        this.browser,
-        formOrigin
-      );
-
-      if (!fragment) {
-        return;
-      }
-
-      showUseSavedLogin = true;
-      let popup = document.getElementById("fill-login-popup");
-      popup.appendChild(fragment);
+      this.updatePasswordManagerSubMenuItems(document, formOrigin);
     } finally {
       const documentURI = this.contentData?.documentURIObject;
       const showRelay =
@@ -1297,6 +1274,25 @@ export class nsContextMenu {
           : true
       );
     }
+  }
+
+  async updatePasswordManagerSubMenuItems(document, formOrigin) {
+    const fragment = await lazy.LoginManagerContextMenu.addLoginsToMenu(
+      this.targetIdentifier,
+      this.browser,
+      formOrigin
+    );
+
+    if (!fragment) {
+      return;
+    }
+
+    let popup = document.getElementById("fill-login-popup");
+    popup.appendChild(fragment);
+
+    this.showItem("fill-login", true);
+
+    this.setItemAttr("passwordmgr-items-separator", "ensureHidden", null);
   }
 
   initSyncItems() {
@@ -1408,11 +1404,7 @@ export class nsContextMenu {
       let revealPassword = this.document.getElementById(
         "context-reveal-password"
       );
-      if (this.passwordRevealed) {
-        revealPassword.setAttribute("checked", "true");
-      } else {
-        revealPassword.removeAttribute("checked");
-      }
+      revealPassword.toggleAttribute("checked", this.passwordRevealed);
     }
     this.showItem("context-reveal-password", shouldShow);
   }
@@ -2353,15 +2345,25 @@ export class nsContextMenu {
   // nicely for the disabled attribute).
   setItemAttr(aID, aAttr, aVal) {
     var elem = this.document.getElementById(aID);
-    if (elem) {
-      if (aVal == null) {
-        // null indicates attr should be removed.
-        elem.removeAttribute(aAttr);
-      } else {
-        // Set attr=val.
-        elem.setAttribute(aAttr, aVal);
-      }
+    if (!elem) {
+      return;
     }
+    if (aVal == null) {
+      // null indicates attr should be removed.
+      elem.removeAttribute(aAttr);
+      return;
+    }
+    if (typeof aVal == "boolean") {
+      // TODO(emilio): Replace this with toggleAttribute, but needs test fixes.
+      if (aVal) {
+        elem.setAttribute(aAttr, aVal);
+      } else {
+        elem.removeAttribute(aAttr);
+      }
+      return;
+    }
+    // Set attr=val.
+    elem.setAttribute(aAttr, aVal);
   }
 
   // Temporary workaround for DOM api not yet implemented by XUL nodes.
@@ -2944,7 +2946,7 @@ export class nsContextMenu {
       engine,
       policyContainer,
       searchUrlType,
-      usePrivate,
+      usePrivateWindow: usePrivate,
       window: this.window,
       searchText: searchTerms,
       triggeringPrincipal: principal,

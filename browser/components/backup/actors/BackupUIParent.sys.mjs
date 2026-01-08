@@ -7,6 +7,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   BackupService: "resource:///modules/backup/BackupService.sys.mjs",
   ERRORS: "chrome://browser/content/backup/backup-constants.mjs",
+  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
 });
 
 ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
@@ -34,6 +35,13 @@ export class BackupUIParent extends JSWindowActorParent {
   #bs;
 
   /**
+   * Observer for "backup-service-status-updated" notifications.
+   * We want each BackupUIParent actor instance to be notified separately and
+   * to forward the state to its child.
+   */
+  #obs;
+
+  /**
    * Create a BackupUIParent instance. If a BackupUIParent is instantiated
    * before BrowserGlue has a chance to initialize the BackupService, this
    * constructor will cause it to initialize first.
@@ -44,6 +52,13 @@ export class BackupUIParent extends JSWindowActorParent {
     // about:preferences before the service has had a chance to init itself
     // via BrowserGlue.
     this.#bs = lazy.BackupService.init();
+
+    // Define the observer function to capture our this.
+    this.#obs = (_subject, topic) => {
+      if (topic == "backup-service-status-updated") {
+        this.sendState();
+      }
+    };
   }
 
   /**
@@ -51,7 +66,7 @@ export class BackupUIParent extends JSWindowActorParent {
    */
   actorCreated() {
     this.#bs.addEventListener("BackupService:StateUpdate", this);
-    Services.obs.addObserver(this.sendState, "backup-service-status-updated");
+    Services.obs.addObserver(this.#obs, "backup-service-status-updated");
     // Note that loadEncryptionState is an async function.
     // This function is no-op if the encryption state was already loaded.
     this.#bs.loadEncryptionState();
@@ -62,10 +77,7 @@ export class BackupUIParent extends JSWindowActorParent {
    */
   didDestroy() {
     this.#bs.removeEventListener("BackupService:StateUpdate", this);
-    Services.obs.removeObserver(
-      this.sendState,
-      "backup-service-status-updated"
-    );
+    Services.obs.removeObserver(this.#obs, "backup-service-status-updated");
   }
 
   /**
@@ -110,6 +122,22 @@ export class BackupUIParent extends JSWindowActorParent {
    *   Returns either a success object, a file details object, or null.
    */
   async receiveMessage(message) {
+    let currentWindowGlobal = this.browsingContext.currentWindowGlobal;
+    // The backup spotlights can be embedded in less privileged content pages, so let's
+    // make sure that any messages from content are coming from the privileged
+    // about content process type
+    if (
+      !currentWindowGlobal ||
+      (!currentWindowGlobal.isInProcess &&
+        this.browsingContext.currentRemoteType !=
+          lazy.E10SUtils.PRIVILEGEDABOUT_REMOTE_TYPE)
+    ) {
+      lazy.logConsole.debug(
+        "BackupUIParent: received message from the wrong content process type."
+      );
+      return null;
+    }
+
     if (message.name == "RequestState") {
       this.sendState();
     } else if (message.name == "TriggerCreateBackup") {
@@ -214,8 +242,13 @@ export class BackupUIParent extends JSWindowActorParent {
       return { success: true };
     } else if (message.name == "EnableEncryption") {
       try {
+        let wasEncrypted = this.#bs.state.encryptionEnabled;
         await this.#bs.enableEncryption(message.data.password);
-        Glean.browserBackup.passwordAdded.record();
+        if (wasEncrypted) {
+          Glean.browserBackup.passwordChanged.record();
+        } else {
+          Glean.browserBackup.passwordAdded.record();
+        }
       } catch (e) {
         lazy.logConsole.error(`Failed to enable encryption`, e);
         return { success: false, errorCode: e.cause || lazy.ERRORS.UNKNOWN };
@@ -228,19 +261,6 @@ export class BackupUIParent extends JSWindowActorParent {
         Glean.browserBackup.passwordRemoved.record();
       } catch (e) {
         lazy.logConsole.error(`Failed to disable encryption`, e);
-        return { success: false, errorCode: e.cause || lazy.ERRORS.UNKNOWN };
-      }
-
-      return await this.#triggerCreateBackup({ reason: "encryption" });
-    } else if (message.name == "RerunEncryption") {
-      try {
-        let { password } = message.data;
-
-        await this.#bs.disableEncryption();
-        await this.#bs.enableEncryption(password);
-        Glean.browserBackup.passwordChanged.record();
-      } catch (e) {
-        lazy.logConsole.error(`Failed to rerun encryption`, e);
         return { success: false, errorCode: e.cause || lazy.ERRORS.UNKNOWN };
       }
 

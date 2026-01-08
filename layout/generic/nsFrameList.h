@@ -45,7 +45,6 @@ enum class FrameChildListID {
   Float,
   Marker,
   PushedFloats,
-  Backdrop,
   // A special alias for FrameChildListID::Principal that suppress the reflow
   // request that is normally done when manipulating child lists.
   NoReflowPrincipal,
@@ -401,13 +400,8 @@ class nsFrameList {
       return ret;
     }
 
-    bool operator==(const Iterator<FrameTraversal>& aOther) const {
-      return mCurrent == aOther.mCurrent;
-    }
-
-    bool operator!=(const Iterator<FrameTraversal>& aOther) const {
-      return !(*this == aOther);
-    }
+    bool operator==(const Iterator<FrameTraversal>& aOther) const = default;
+    bool operator!=(const Iterator<FrameTraversal>& aOther) const = default;
 
    private:
     nsIFrame* mCurrent;

@@ -24,6 +24,8 @@
 @import url("chrome://browser/skin/places/editBookmarkPanel.css");
 @import url("chrome://browser/skin/searchbar.css");
 @import url("chrome://browser/skin/sidebar.css");
+@import url("chrome://browser/skin/smartbar.css");
+@import url("chrome://browser/skin/aiWindowSidebar.css");
 @import url("chrome://browser/skin/customizableui/customizeMode.css");
 @import url("chrome://browser/skin/UITour.css");
 @import url("chrome://browser/skin/formautofill-notification.css");
@@ -588,7 +590,7 @@ menupopup::part(drop-indicator) {
   list-style-image: none;
   height: 2px;
   margin-inline-end: -4em;
-  background-color: SelectedItem;
+  background-color: AccentColor;
   pointer-events: none;
 }
 
@@ -1291,8 +1293,8 @@ popupnotificationcontent {
 
 #historySwipeAnimationPreviousArrow,
 #historySwipeAnimationNextArrow {
-  --swipe-nav-icon-primary-color: SelectedItemText;
-  --swipe-nav-icon-accent-color: SelectedItem;
+  --swipe-nav-icon-primary-color: AccentColorText;
+  --swipe-nav-icon-accent-color: AccentColor;
 
   will-change: transform;
 

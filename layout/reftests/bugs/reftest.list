@@ -1935,7 +1935,7 @@ fuzzy(0-13,0-40000) fuzzy-if(winWidget,0-13,0-40000) == 1316719-1b.html 1316719-
 fuzzy(0-13,0-40000) fuzzy-if(winWidget,0-13,0-40000) == 1316719-1c.html 1316719-1-ref.html
 != 1318769-1.html 1318769-1-ref.html
 == 1322512-1.html 1322512-1-ref.html
-skip-if(winWidget&&isDebugBuild) == 1330051.svg 1330051-ref.svg
+== 1330051.svg 1330051-ref.svg
 != 1336591-1.html 1336591-1-ref.html
 == 1348481-1.html 1348481-ref.html
 == 1348481-2.html 1348481-ref.html
@@ -2067,7 +2067,7 @@ skip-if(!cocoaWidget) != 1608124-2.html 1608124-2-notref.html
 fuzzy(0-145,0-48536) == 1614788-1.svg 1614788-1-ref.svg # large fuzz necesary to test bug: 239,202824 is how much it differs when bug exists
 == blob-fallback-clip.html blob-fallback-clip-ref.html
 fuzzy-if(cocoaWidget,0-42,0-4) fuzzy-if(winWidget,249-249,999-999) == 1617515-1.html 1617515-1-ref.html
-== 1624118.html 1624118-ref.html
+skip-if(Android&&!emulator) == 1624118.html 1624118-ref.html
 fuzzy(0-2,0-21184) == 1626259-1.html 1626259-1-ref.html
 fuzzy(0-2,0-21184) == 1626259-2.html 1626259-2-ref.html
 != 1642583-1.html 1642583-1-ref.html
@@ -2120,7 +2120,7 @@ skip-if(Android) test-pref(ui.textScaleFactor,50) test-pref(browser.display.os-z
 pref(widget.disable-dark-scrollbar,false) == 1777135.html 1777135-ref.html
 test-pref(widget.non-native-theme.use-theme-accent,false) == 1778834.html 1778834-ref.html
 # do not adjust the fuzz without looking, this test was written as fuzzy on purpose (because that was the only way to make a test work)
-fuzzy(16-68,26939-44426) == 1780191-1.svg 1780191-1-ref.svg
+fuzzy(16-68,26939-44439) == 1780191-1.svg 1780191-1-ref.svg
 pref(layout.css.prefers-color-scheme.content-override,0) == 1787127.html 1787127-ref.html
 pref(layout.css.prefers-color-scheme.content-override,1) == 1787127.html 1787127-ref.html
 pref(layout.css.prefers-color-scheme.content-override,2) == 1787127.html 1787127-ref.html

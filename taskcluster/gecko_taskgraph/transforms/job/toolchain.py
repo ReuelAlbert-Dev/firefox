@@ -8,7 +8,7 @@ Support for running toolchain-building jobs via dedicated scripts
 import os
 
 import taskgraph
-from mozbuild.shellutil import quote as shell_quote
+from mozshellutil import quote as shell_quote
 from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by
 from voluptuous import Any, Optional, Required
 
@@ -82,6 +82,9 @@ def get_digest_data(config, run, taskdesc):
     tooltool_manifest = env.get("TOOLTOOL_MANIFEST")
     if tooltool_manifest:
         files.append(tooltool_manifest)
+
+    # Store resources as an attribute for verification
+    taskdesc.setdefault("attributes", {})["toolchain-resources"] = sorted(files)
 
     # Accumulate dependency hashes for index generation.
     data = [hash_paths(GECKO, files)]

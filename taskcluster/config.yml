@@ -105,6 +105,7 @@ treeherder:
         'BM': 'Beetmover'
         'BMR': 'Beetmover repackages'
         'BM-apt': 'Beetmover .deb packages'
+        'BM-rpm': 'Beetmover .rpm packages'
         'c-Up': 'Balrog submission of complete updates'
         'css': 'Checksum signing for source'
         'rs': 'Repackage signing'
@@ -294,6 +295,7 @@ treeherder:
         'samples-crash': 'samples-crash'
         'samples-dataprotect': 'samples-dataprotect'
         'samples-firefox-accounts': 'samples-firefox-accounts'
+        'samples-firefox-relay': 'samples-firefox-relay'
         'samples-glean-library': 'samples-glean-library'
         'samples-glean': 'samples-glean'
         'samples-sync-logins': 'samples-sync-logins'
@@ -529,7 +531,7 @@ taskgraph:
 
 workers:
     aliases:
-        b-linux.*:
+        b-linux(|-docker(|-x?large)-amd|-medium|-aarch64|-xlarge|-kvm):
             provisioner: '{trust-domain}-{level}'
             implementation: docker-worker
             os: linux
@@ -540,6 +542,11 @@ workers:
             os: windows
             worker-type: '{alias}-azure'
         b-win2022:
+            provisioner: '{trust-domain}-{level}'
+            implementation: generic-worker
+            os: windows
+            worker-type: '{alias}'
+        b-win2022-xxlarge:
             provisioner: '{trust-domain}-{level}'
             implementation: generic-worker
             os: windows
@@ -843,7 +850,7 @@ workers:
             provisioner: '{trust-domain}-t'
             implementation: docker-worker
             os: linux
-            worker-type: misc-gcp
+            worker-type: misc
 
 
 mac-signing:

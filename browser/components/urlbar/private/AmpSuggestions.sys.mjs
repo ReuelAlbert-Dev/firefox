@@ -92,49 +92,22 @@ export class AmpSuggestions extends SuggestProvider {
   }
 
   makeResult(queryContext, suggestion) {
-    let originalUrl;
-    if (suggestion.source == "rust") {
-      // The Rust backend replaces URL timestamp templates for us, and it
-      // includes the original URL as `rawUrl`.
-      originalUrl = suggestion.rawUrl;
-    } else {
-      // Replace URL timestamp templates, but first save the original URL.
-      originalUrl = suggestion.url;
-      this.#replaceSuggestionTemplates(suggestion);
-
-      // Normalize the Merino suggestion so it has camelCased properties like
-      // Rust suggestions.
-      suggestion.fullKeyword = suggestion.full_keyword;
-      suggestion.impressionUrl = suggestion.impression_url;
-      suggestion.clickUrl = suggestion.click_url;
-      suggestion.blockId = suggestion.block_id;
-      suggestion.iabCategory = suggestion.iab_category;
-      suggestion.requestId = suggestion.request_id;
-      suggestion.dismissalKey = suggestion.dismissal_key;
-    }
-
-    let payload = {
-      originalUrl,
-      url: suggestion.url,
-      title: suggestion.title,
-      requestId: suggestion.requestId,
-      urlTimestampIndex: suggestion.urlTimestampIndex,
-      sponsoredImpressionUrl: suggestion.impressionUrl,
-      sponsoredClickUrl: suggestion.clickUrl,
-      sponsoredBlockId: suggestion.blockId,
-      sponsoredAdvertiser: suggestion.advertiser,
-      sponsoredIabCategory: suggestion.iabCategory,
-      isBlockable: true,
-      isManageable: true,
-    };
-
-    // AMP suggestions are dismissed by their full keyword, not by URL like
-    // usual. For Rust suggestions, the Rust component handles that for us, no
-    // need to do anything here. For Merino suggestions, Merino should include
-    // `dismissal_key`, but fall back to the full keyword in case it doesn't.
+    let normalized = Object.assign({}, suggestion);
     if (suggestion.source == "merino") {
-      payload.dismissalKey =
-        suggestion.dismissalKey || suggestion.fullKeyword || originalUrl;
+      // Normalize the Merino suggestion so it has the same properties as Rust
+      // AMP suggestions: camelCased properties plus a `rawUrl` property whose
+      // value is `url` without replacing the timestamp template.
+      normalized.rawUrl = suggestion.url;
+      normalized.fullKeyword = suggestion.full_keyword;
+      normalized.impressionUrl = suggestion.impression_url;
+      normalized.clickUrl = suggestion.click_url;
+      normalized.blockId = suggestion.block_id;
+      normalized.iabCategory = suggestion.iab_category;
+      normalized.requestId = suggestion.request_id;
+
+      // Replace URL timestamp templates inline. This isn't necessary for Rust
+      // AMP suggestions because the Rust component handles it.
+      this.#replaceSuggestionTemplates(normalized);
     }
 
     let isTopPick =
@@ -142,12 +115,30 @@ export class AmpSuggestions extends SuggestProvider {
       lazy.UrlbarPrefs.get("quickSuggestAmpTopPickCharThreshold") <=
         queryContext.trimmedLowerCaseSearchString.length;
 
-    payload.qsSuggestion = [
-      suggestion.fullKeyword,
-      isTopPick
-        ? lazy.UrlbarUtils.HIGHLIGHT.TYPED
-        : lazy.UrlbarUtils.HIGHLIGHT.SUGGESTED,
-    ];
+    let { value: title, highlights: titleHighlights } =
+      lazy.QuickSuggest.getFullKeywordTitleAndHighlights({
+        tokens: queryContext.tokens,
+        highlightType: isTopPick
+          ? lazy.UrlbarUtils.HIGHLIGHT.TYPED
+          : lazy.UrlbarUtils.HIGHLIGHT.SUGGESTED,
+        fullKeyword: normalized.fullKeyword,
+        title: normalized.title,
+      });
+
+    let payload = {
+      url: normalized.url,
+      originalUrl: normalized.rawUrl,
+      title,
+      requestId: normalized.requestId,
+      urlTimestampIndex: normalized.urlTimestampIndex,
+      sponsoredImpressionUrl: normalized.impressionUrl,
+      sponsoredClickUrl: normalized.clickUrl,
+      sponsoredBlockId: normalized.blockId,
+      sponsoredAdvertiser: normalized.advertiser,
+      sponsoredIabCategory: normalized.iabCategory,
+      isBlockable: true,
+      isManageable: true,
+    };
 
     let resultParams = {};
     if (isTopPick) {
@@ -170,10 +161,10 @@ export class AmpSuggestions extends SuggestProvider {
       source: lazy.UrlbarUtils.RESULT_SOURCE.SEARCH,
       isRichSuggestion: true,
       ...resultParams,
-      ...lazy.UrlbarResult.payloadAndSimpleHighlights(
-        queryContext.tokens,
-        payload
-      ),
+      payload,
+      highlights: {
+        title: titleHighlights,
+      },
     });
   }
 
@@ -365,7 +356,7 @@ export class AmpSuggestions extends SuggestProvider {
     let timestamp = timestampParts
       .map(n => n.toString().padStart(2, "0"))
       .join("");
-    for (let key of ["url", "click_url"]) {
+    for (let key of ["url", "clickUrl"]) {
       let value = suggestion[key];
       if (!value) {
         continue;

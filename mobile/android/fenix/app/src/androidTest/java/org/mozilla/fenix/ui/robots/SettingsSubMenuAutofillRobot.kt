@@ -92,7 +92,6 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
             saveAndAutofillCreditCardsOption(),
             saveAndAutofillCreditCardsSummary(),
             syncCreditCardsAcrossDevicesButton(),
-
         )
 
         if (userHasSavedCreditCard) {
@@ -281,6 +280,7 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
         Log.i(TAG, "clickAddAddressButton: Trying to click the \"Add address\" button")
         addAddressButton().click()
         Log.i(TAG, "clickAddAddressButton: Clicked the \"Add address\" button")
+        waitForAppWindowToBeUpdated()
     }
     fun clickManageAddressesButton() {
         Log.i(TAG, "clickManageAddressesButton: Trying to click the \"Manage addresses\" button")
@@ -329,6 +329,7 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
         Log.i(TAG, "clickCountryDropdown: Trying to close the keyboard.")
         closeSoftKeyboard()
         Log.i(TAG, "clickCountryDropdown: Closed the keyboard.")
+        waitForAppWindowToBeUpdated()
         Log.i(TAG, "clickCountryDropdown: Trying to click \"Country or region\" dropdown")
         composeTestRule.countryDropDown().performClick()
         Log.i(TAG, "clickCountryDropdown: Clicked \"Country or region\" dropdown")
@@ -349,6 +350,7 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
 
     @OptIn(ExperimentalTestApi::class)
     fun fillAndSaveAddress(
+        composeTestRule: ComposeTestRule,
         navigateToAutofillSettings: Boolean,
         isAddressAutofillEnabled: Boolean = true,
         userHasSavedAddress: Boolean = false,
@@ -362,9 +364,9 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
         emailAddress: String,
     ) {
         if (navigateToAutofillSettings) {
-            homeScreen {
+            homeScreen(composeTestRule) {
             }.openThreeDotMenu {
-            }.openSettings {
+            }.clickSettingsButton {
             }.openAutofillSubMenu(composeTestRule) {
                 verifyAddressAutofillSection(isAddressAutofillEnabled, userHasSavedAddress)
                 clickAddAddressButton()
@@ -403,9 +405,15 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
         Log.i(TAG, "fillAndSaveAddress: Trying to set \"Phone\" to $phoneNumber")
         composeTestRule.phoneTextInput().performTextInput(phoneNumber)
         Log.i(TAG, "fillAndSaveAddress: \"Phone\" was set to $phoneNumber")
+        Log.i(TAG, "fillAndSaveAddress: Trying to close the keyboard.")
+        closeSoftKeyboard()
+        Log.i(TAG, "fillAndSaveAddress: Closed the keyboard.")
         Log.i(TAG, "fillAndSaveAddress: Trying to set \"Email\" to $emailAddress")
         composeTestRule.emailTextInput().performTextInput(emailAddress)
         Log.i(TAG, "fillAndSaveAddress: \"Email\" was set to $emailAddress")
+        Log.i(TAG, "fillAndSaveAddress: Trying to close the keyboard.")
+        closeSoftKeyboard()
+        Log.i(TAG, "fillAndSaveAddress: Closed the keyboard.")
         Log.i(TAG, "fillAndSaveAddress: Trying to click the \"Save\" button")
         if (composeTestRule.saveButton().isNotDisplayed()) {
             composeTestRule.saveButton().performScrollTo()
@@ -672,13 +680,13 @@ class SettingsSubMenuAutofillRobot(private val composeTestRule: ComposeTestRule)
             return SettingsSubMenuAutofillRobot.Transition(composeTestRule)
         }
 
-        fun goBackToBrowser(interact: BrowserRobot.() -> Unit): BrowserRobot.Transition {
+        fun goBackToBrowser(composeTestRule: ComposeTestRule, interact: BrowserRobot.() -> Unit): BrowserRobot.Transition {
             Log.i(TAG, "goBackToBrowser: Trying to click the device back button")
             mDevice.pressBack()
             Log.i(TAG, "goBackToBrowser: Clicked the device back button")
 
-            BrowserRobot().interact()
-            return BrowserRobot.Transition()
+            BrowserRobot(composeTestRule).interact()
+            return BrowserRobot.Transition(composeTestRule)
         }
     }
 }

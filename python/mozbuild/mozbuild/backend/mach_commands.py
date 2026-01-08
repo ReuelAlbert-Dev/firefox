@@ -49,7 +49,9 @@ def run(command_context, ide, no_interactive, args):
 
     if ide == "vscode":
         result = subprocess.run(
-            [sys.executable, "mach", "configure"], cwd=command_context.topsrcdir
+            [sys.executable, "mach", "configure"],
+            check=False,
+            cwd=command_context.topsrcdir,
         )
         if result.returncode:
             return result.returncode
@@ -59,6 +61,7 @@ def run(command_context, ide, no_interactive, args):
         # export target, because we can't do anything better.
         result = subprocess.run(
             [sys.executable, "mach", "build", "pre-export", "export", "pre-compile"],
+            check=False,
             cwd=command_context.topsrcdir,
         )
         if result.returncode:
@@ -68,7 +71,9 @@ def run(command_context, ide, no_interactive, args):
         # probably more correct but it's also nice having a single target to get a fully
         # built and indexed project (gives a easy target to use before go out to lunch).
         result = subprocess.run(
-            [sys.executable, "mach", "build"], cwd=command_context.topsrcdir
+            [sys.executable, "mach", "build"],
+            check=False,
+            cwd=command_context.topsrcdir,
         )
         if result.returncode:
             return result.returncode
@@ -78,7 +83,7 @@ def run(command_context, ide, no_interactive, args):
         backend = "CppEclipse"
     elif ide == "visualstudio":
         backend = "VisualStudio"
-    elif ide == "vscode" or ide == "vscodium":
+    elif ide in {"vscode", "vscodium"}:
         if not command_context.config_environment.is_artifact_build:
             backend = "Clangd"
 
@@ -86,6 +91,7 @@ def run(command_context, ide, no_interactive, args):
         # Generate or refresh the IDE backend.
         result = subprocess.run(
             [sys.executable, "mach", "build-backend", "-b", backend],
+            check=False,
             cwd=command_context.topsrcdir,
         )
         if result.returncode:
@@ -97,7 +103,7 @@ def run(command_context, ide, no_interactive, args):
     elif ide == "visualstudio":
         visual_studio_workspace_dir = get_visualstudio_workspace_path(command_context)
         subprocess.call(["explorer.exe", visual_studio_workspace_dir])
-    elif ide == "vscode" or ide == "vscodium":
+    elif ide in {"vscode", "vscodium"}:
         return setup_vscode_or_vscodium(ide, command_context, interactive)
 
 
@@ -241,6 +247,7 @@ def setup_vscode_or_vscodium(ide, command_context, interactive):
             "[javascript][javascriptreact][typescript][typescriptreact][json]",
             "[javascript][javascriptreact][typescript][typescriptreact][json][html]",
             "[javascript][javascriptreact][typescript][typescriptreact][json][jsonc][html]",
+            "rust-analyzer.server.extraEnv",
         ]
         for entry in deprecated:
             if entry in old_settings:
@@ -343,11 +350,10 @@ def setup_clangd_rust_in_vscode(command_context):
             cargo_check_command = [sys.executable, "../../mach"]
         else:
             cargo_check_command = ["../../mach"]
+    elif sys.platform == "win32":
+        cargo_check_command = [sys.executable, "mach"]
     else:
-        if sys.platform == "win32":
-            cargo_check_command = [sys.executable, "mach"]
-        else:
-            cargo_check_command = ["./mach"]
+        cargo_check_command = ["./mach"]
 
     cargo_check_command += [
         "--log-no-times",
@@ -403,7 +409,7 @@ def setup_clangd_rust_in_vscode(command_context):
             "--clang-tidy",
             "--header-insertion=never",
         ],
-        "rust-analyzer.server.extraEnv": {
+        "rust-analyzer.cargo.extraEnv": {
             # Point rust-analyzer at the real target directory used by our
             # build, so it can discover the files created when we run `./mach
             # cargo check`.

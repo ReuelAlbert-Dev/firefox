@@ -496,3 +496,25 @@ export function filterUniqueValueTestVariants(valueTestVariants) {
 export function makeValueTestVariant(base, variant) {
   return base * variant.mult + variant.add;
 }
+
+/**
+ * Use instead of features.has because feature's has takes any string
+ * and we want to prevent typos.
+ */
+export function hasFeature(features, feature) {
+
+  return features.has(feature);
+}
+
+/** Convenience helper for combinations of 1-2 usage bits from a list of usage bits. */
+export function combinationsOfOneOrTwoUsages(usages) {
+  const combinations = [];
+  for (const usage0 of usages) {
+    for (const usage1 of usages) {
+      if (usage0 <= usage1) {
+        combinations.push(usage0 | usage1);
+      }
+    }
+  }
+  return combinations;
+}

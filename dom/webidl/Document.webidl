@@ -176,7 +176,7 @@ partial interface Document {
   boolean queryCommandIndeterm(DOMString commandId);
   [Throws]
   boolean queryCommandState(DOMString commandId);
-  [Throws, NeedsCallerType]
+  [Throws, NeedsSubjectPrincipal]
   boolean queryCommandSupported(DOMString commandId);
   [Throws]
   DOMString queryCommandValue(DOMString commandId);
@@ -593,6 +593,10 @@ partial interface Document {
 partial interface Document {
   [ChromeOnly] readonly attribute PolicyContainer? policyContainer;
   [ChromeOnly] readonly attribute DOMString cspJSON;
+};
+
+partial interface Document {
+  [ChromeOnly] readonly attribute URI? tlsCertificateBindingURI;
 };
 
 partial interface Document {

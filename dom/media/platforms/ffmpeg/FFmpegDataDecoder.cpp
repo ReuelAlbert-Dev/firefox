@@ -29,7 +29,7 @@ namespace mozilla {
 
 StaticMutex FFmpegDataDecoder<LIBAV_VER>::sMutex;
 
-FFmpegDataDecoder<LIBAV_VER>::FFmpegDataDecoder(FFmpegLibWrapper* aLib,
+FFmpegDataDecoder<LIBAV_VER>::FFmpegDataDecoder(const FFmpegLibWrapper* aLib,
                                                 AVCodecID aCodecID,
                                                 PRemoteCDMActor* aCDM)
     : mLib(aLib),
@@ -161,6 +161,11 @@ MediaResult FFmpegDataDecoder<LIBAV_VER>::MaybeAttachCDM() {
     return NS_OK;
   }
 
+  if (!(mCodecContext->codec->capabilities & AV_CODEC_CAP_HARDWARE)) {
+    return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
+                       RESULT_DETAIL("CDM requires MediaCodec decoder"));
+  }
+
   mCrypto = mCDM->GetCrypto();
   if (NS_WARN_IF(!mCrypto)) {
     return MediaResult(NS_ERROR_DOM_MEDIA_FATAL_ERR,
@@ -221,6 +226,14 @@ MediaResult FFmpegDataDecoder<LIBAV_VER>::InitDecoder(AVCodec* aCodec,
 #if LIBAVCODEC_VERSION_MAJOR < 57
   if (aCodec->capabilities & CODEC_CAP_DR1) {
     mCodecContext->flags |= CODEC_FLAG_EMU_EDGE;
+  }
+#endif
+
+#if defined(MOZ_WIDGET_ANDROID) && defined(USING_MOZFFVPX)
+  ret = MaybeAttachCDM();
+  if (NS_FAILED(ret)) {
+    ReleaseCodecContext();
+    return ret;
   }
 #endif
 
@@ -424,7 +437,7 @@ AVFrame* FFmpegDataDecoder<LIBAV_VER>::PrepareFrame() {
 }
 
 /* static */ AVCodec* FFmpegDataDecoder<LIBAV_VER>::FindSoftwareAVCodec(
-    FFmpegLibWrapper* aLib, AVCodecID aCodec) {
+    const FFmpegLibWrapper* aLib, AVCodecID aCodec) {
   MOZ_ASSERT(aLib);
 
   // We use this instead of MOZ_USE_HWDECODE because it is possible to disable
@@ -491,7 +504,8 @@ AVFrame* FFmpegDataDecoder<LIBAV_VER>::PrepareFrame() {
 
 #ifdef MOZ_USE_HWDECODE
 /* static */ AVCodec* FFmpegDataDecoder<LIBAV_VER>::FindHardwareAVCodec(
-    FFmpegLibWrapper* aLib, AVCodecID aCodec, AVHWDeviceType aDeviceType) {
+    const FFmpegLibWrapper* aLib, AVCodecID aCodec,
+    AVHWDeviceType aDeviceType) {
   AVCodec* fallbackCodec = nullptr;
   void* opaque = nullptr;
   const bool ignoreDeviceType = aDeviceType == AV_HWDEVICE_TYPE_NONE;

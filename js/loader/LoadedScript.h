@@ -148,7 +148,6 @@ class LoadedScript : public nsIMemoryReporter {
 
   bool IsUnknownDataType() const { return mDataType == DataType::eUnknown; }
   bool IsTextSource() const { return mDataType == DataType::eTextSource; }
-  bool IsSource() const { return IsTextSource(); }
   bool IsSerializedStencil() const {
     return mDataType == DataType::eSerializedStencil;
   }
@@ -209,12 +208,6 @@ class LoadedScript : public nsIMemoryReporter {
   nsresult GetScriptSource(JSContext* aCx, MaybeSourceText* aMaybeSource,
                            LoadContextBase* aMaybeLoadContext);
 
-  void ClearScriptSource() {
-    if (IsTextSource()) {
-      ClearScriptText();
-    }
-  }
-
   void ClearScriptText() {
     MOZ_ASSERT(IsTextSource());
     return IsUTF16Text() ? ScriptText<char16_t>().clearAndFree()
@@ -233,7 +226,7 @@ class LoadedScript : public nsIMemoryReporter {
 
   // ---- For SRI-only consumers ----
 
-  bool CanHaveSRIOnly() const { return IsSource() || IsCachedStencil(); }
+  bool CanHaveSRIOnly() const { return IsTextSource() || IsCachedStencil(); }
 
   bool HasSRI() {
     MOZ_ASSERT(CanHaveSRIOnly());
@@ -308,19 +301,22 @@ class LoadedScript : public nsIMemoryReporter {
 
   // Check the reference to the cache info channel, which is used by the disk
   // cache.
-  bool HasDiskCacheReference() const { return !!mCacheInfo; }
+  bool HasDiskCacheReference() const { return !!mCacheEntry; }
 
   // Drop the reference to the cache info channel.
-  void DropDiskCacheReference() { mCacheInfo = nullptr; }
+  void DropDiskCacheReference() { mCacheEntry = nullptr; }
 
   void DropDiskCacheReferenceAndSRI() {
     DropDiskCacheReference();
-    if (IsSource()) {
+    if (IsTextSource()) {
       DropSRI();
     }
   }
 
   // ==== Other methods ====
+
+  void SetTookLongInPreviousRuns() { mTookLongInPreviousRuns = true; }
+  bool TookLongInPreviousRuns() const { return mTookLongInPreviousRuns; }
 
   /*
    * Set the mBaseURL, based on aChannel.
@@ -407,7 +403,18 @@ class LoadedScript : public nsIMemoryReporter {
   //   * this is cached in SharedScriptCache
   //   * A behavior around the network request is modified, and
   //     the cache needs validation on the necko side
-  bool mIsDirty : 1;
+  //
+  // NOTE: In order to pack this with the mCacheEntryId above on windows,
+  //       this must be uint64_t.
+  uint64_t mIsDirty : 1;
+
+  // Set to true if executing the top-level script takes long.
+  // This can be used for scheduling the script execution in subsequent loads.
+  // The threshold of "takes long" is user-defined.
+  // See dom::ScriptLoader::EvaluateScript for the example case
+  //
+  // TODO: Move this into JS::Stencil, and save to the disk cache (bug 2005128)
+  uint64_t mTookLongInPreviousRuns : 1;
 
   RefPtr<ScriptFetchOptions> mFetchOptions;
   nsCOMPtr<nsIURI> mURI;
@@ -442,7 +449,7 @@ class LoadedScript : public nsIMemoryReporter {
   // This field is populated if the cache is enabled and this is either
   // IsTextSource() or IsCachedStencil(), and it's cleared after saving to the
   // necko cache, and thus, this field is used only once.
-  nsCOMPtr<nsICacheInfoChannel> mCacheInfo;
+  nsCOMPtr<nsICacheEntryWriteHandle> mCacheEntry;
 };
 
 // Provide accessors for any classes `Derived` which is providing the
@@ -465,12 +472,6 @@ class LoadedScriptDelegate {
   template <typename Unit>
   using ScriptTextBuffer = LoadedScript::ScriptTextBuffer<Unit>;
   using MaybeSourceText = LoadedScript::MaybeSourceText;
-
-  bool IsModuleScript() const { return GetLoadedScript()->IsModuleScript(); }
-  bool IsEventScript() const { return GetLoadedScript()->IsEventScript(); }
-  bool IsImportMapScript() const {
-    return GetLoadedScript()->IsImportMapScript();
-  }
 
   mozilla::dom::ReferrerPolicy ReferrerPolicy() const {
     return GetLoadedScript()->ReferrerPolicy();
@@ -497,7 +498,6 @@ class LoadedScriptDelegate {
     return GetLoadedScript()->IsUnknownDataType();
   }
   bool IsTextSource() const { return GetLoadedScript()->IsTextSource(); }
-  bool IsSource() const { return GetLoadedScript()->IsSource(); }
   bool IsSerializedStencil() const {
     return GetLoadedScript()->IsSerializedStencil();
   }
@@ -510,8 +510,6 @@ class LoadedScriptDelegate {
   }
 
   void SetSerializedStencil() { GetLoadedScript()->SetSerializedStencil(); }
-
-  void ConvertToCachedStencil() { GetLoadedScript()->ConvertToCachedStencil(); }
 
   bool IsUTF16Text() const { return GetLoadedScript()->IsUTF16Text(); }
   bool IsUTF8Text() const { return GetLoadedScript()->IsUTF8Text(); }
@@ -546,8 +544,6 @@ class LoadedScriptDelegate {
     return GetLoadedScript()->GetScriptSource(aCx, aMaybeSource, aLoadContext);
   }
 
-  void ClearScriptSource() { GetLoadedScript()->ClearScriptSource(); }
-
   void ClearScriptText() { GetLoadedScript()->ClearScriptText(); }
 
   bool HasNoSRIOrSRIAndSerializedStencil() const {
@@ -577,6 +573,13 @@ class LoadedScriptDelegate {
     GetLoadedScript()->SetStencil(aStencil);
   }
   void ClearStencil() { GetLoadedScript()->ClearStencil(); }
+
+  void SetTookLongInPreviousRuns() {
+    GetLoadedScript()->SetTookLongInPreviousRuns();
+  }
+  bool TookLongInPreviousRuns() const {
+    return GetLoadedScript()->TookLongInPreviousRuns();
+  }
 };
 
 class ClassicScript final : public LoadedScript {

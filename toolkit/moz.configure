@@ -104,7 +104,7 @@ def check_moz_app_vendor(moz_app_vendor, build_project):
 # Set the MOZ_CONFIGURE_OPTIONS variable with all the options that
 # were passed somehow (environment, command line, mozconfig)
 @dependable
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 @imports(_from="mozbuild.util", _import="ensure_unicode")
 @imports(_from="mozbuild.util", _import="system_encoding")
 @imports("__sandbox__")
@@ -1054,7 +1054,7 @@ set_config("MOZ_PACKAGER_FORMAT", packager_format)
 @depends(target_is_android, "--enable-debug", milestone.is_nightly)
 def enable_minify_default(is_android, debug, is_nightly):
     if is_android and not debug and not is_nightly:
-        return ("properties", "js")
+        return ("properties",)
     return ("properties",)
 
 
@@ -1079,6 +1079,21 @@ def enable_minify(value):
 
 set_config("MOZ_PACKAGER_MINIFY", True, when=enable_minify.properties)
 set_config("MOZ_PACKAGER_MINIFY_JS", True, when=enable_minify.js)
+
+
+@depends(target_is_android, "--enable-debug", milestone.is_nightly)
+def enable_minify_pdfjs_default(is_android, debug, is_nightly):
+    return is_android and not debug and not is_nightly
+
+
+option(
+    name="--enable-minify-pdfjs",
+    help="Enable minification of PDF.js JavaScript files during packaging",
+    default=enable_minify_pdfjs_default,
+)
+
+
+set_config("MOZ_PACKAGER_MINIFY_PDFJS", True, when="--enable-minify-pdfjs")
 
 
 @depends(host, build_project)

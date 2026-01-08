@@ -29,6 +29,7 @@
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/nsCSPUtils.h"
 #include "mozilla/dom/txMozillaXSLTProcessor.h"
+#include "mozilla/intl/LocaleService.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 #include "nsContentCreatorFunctions.h"
@@ -641,17 +642,12 @@ nsresult nsXMLContentSink::CloseElement(nsIContent* aContent) {
 
     // Now tell the script that it's ready to go. This may execute the script
     // or return true, or neither if the script doesn't need executing.
-    bool block = sele->AttemptToExecute();
-    if (mParser) {
-      if (block) {
-        GetParser()->BlockParser();
-      }
+    bool block = sele->AttemptToExecute(GetParser());
 
-      // If the parser got blocked, make sure to return the appropriate rv.
-      // I'm not sure if this is actually needed or not.
-      if (!mParser->IsParserEnabled()) {
-        block = true;
-      }
+    // If the parser got blocked, make sure to return the appropriate rv.
+    // I'm not sure if this is actually needed or not.
+    if (mParser && !mParser->IsParserEnabled()) {
+      block = true;
     }
 
     return block ? NS_ERROR_HTMLPARSER_BLOCK : NS_OK;
@@ -1391,12 +1387,6 @@ nsXMLContentSink::ReportError(const char16_t* aErrorText,
   }
 
   // prepare to set <parsererror> as the document root
-  rv = HandleProcessingInstruction(
-      u"xml-stylesheet",
-      u"href=\"chrome://global/locale/intl.css\" type=\"text/css\"");
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  const char16_t* noAtts[] = {0, 0};
 
   constexpr auto errorNs =
       u"http://www.mozilla.org/newlayout/xml/parsererror.xml"_ns;
@@ -1405,7 +1395,12 @@ nsXMLContentSink::ReportError(const char16_t* aErrorText,
   parsererror.Append((char16_t)0xFFFF);
   parsererror.AppendLiteral("parsererror");
 
-  rv = HandleStartElement(parsererror.get(), noAtts, 0, (uint32_t)-1, 0);
+  const char16_t* dirAttr[] = {u"dir", u"ltr", 0, 0};
+  if (intl::LocaleService::GetInstance()->IsAppLocaleRTL() &&
+      !mDocument->ShouldResistFingerprinting(RFPTarget::JSLocale)) {
+    dirAttr[1] = u"rtl";
+  }
+  rv = HandleStartElement(parsererror.get(), dirAttr, 0, 2, 0);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = HandleCharacterData(aErrorText, NS_strlen(aErrorText), false);
@@ -1415,6 +1410,7 @@ nsXMLContentSink::ReportError(const char16_t* aErrorText,
   sourcetext.Append((char16_t)0xFFFF);
   sourcetext.AppendLiteral("sourcetext");
 
+  const char16_t* noAtts[] = {0, 0};
   rv = HandleStartElement(sourcetext.get(), noAtts, 0, (uint32_t)-1, 0);
   NS_ENSURE_SUCCESS(rv, rv);
 

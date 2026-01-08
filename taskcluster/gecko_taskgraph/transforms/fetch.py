@@ -11,8 +11,8 @@ import re
 
 import attr
 import taskgraph
-from mozbuild.shellutil import quote as shell_quote
 from mozpack import path as mozpath
+from mozshellutil import quote as shell_quote
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.schema import Schema, validate_schema
 from taskgraph.util.treeherder import join_symbol
@@ -210,6 +210,7 @@ def make_task(config, jobs):
             # download.
             Required("key-path"): str,
         },
+        Optional("headers"): [str],
         # The name to give to the generated artifact. Defaults to the file
         # portion of the URL. Using a different extension converts the
         # archive to the given type. Only conversion to .tar.zst is
@@ -272,6 +273,9 @@ def create_fetch_url_task(config, name, fetch):
                 "FETCH_GPG_KEY",
             ]
         )
+
+    for header in fetch.get("headers", []):
+        command.extend(["--header", header])
 
     command.extend(
         [

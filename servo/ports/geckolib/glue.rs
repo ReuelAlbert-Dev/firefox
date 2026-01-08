@@ -25,6 +25,7 @@ use std::fmt::Write;
 use std::iter;
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::LazyLock;
 use style::color::mix::ColorInterpolationMethod;
 use style::color::{AbsoluteColor, ColorComponents, ColorSpace};
 use style::computed_value_flags::ComputedValueFlags;
@@ -106,7 +107,7 @@ use style::invalidation::element::relative_selector::{
 };
 use style::invalidation::element::restyle_hints::RestyleHint;
 use style::invalidation::stylesheets::RuleChangeKind;
-use style::logical_geometry::{PhysicalAxis, PhysicalSide, WritingMode};
+use style::logical_geometry::{LogicalAxis, PhysicalAxis, PhysicalSide, WritingMode};
 use style::media_queries::MediaList;
 use style::parser::{Parse, ParserContext};
 use style::properties::declaration_block::PropertyTypedValue;
@@ -164,9 +165,7 @@ use style::values::computed::length_percentage::{
     AllowAnchorPosResolutionInCalcPercentage, Unpacked,
 };
 use style::values::computed::position::{AnchorFunction, PositionArea};
-use style::values::computed::{
-    self, ContentVisibility, Context, PositionAreaKeyword, ToComputedValue,
-};
+use style::values::computed::{self, ContentVisibility, Context, ToComputedValue};
 use style::values::distance::{ComputeSquaredDistance, SquaredDistance};
 use style::values::generics::color::ColorMixFlags;
 use style::values::generics::easing::BeforeFlag;
@@ -174,7 +173,7 @@ use style::values::generics::length::GenericAnchorSizeFunction;
 use style::values::resolved;
 use style::values::specified::align::AlignFlags;
 use style::values::specified::intersection_observer::IntersectionObserverMargin;
-use style::values::specified::position::DashedIdentAndOrTryTactic;
+use style::values::specified::position::PositionTryFallbacksItem;
 use style::values::specified::source_size_list::SourceSizeList;
 use style::values::specified::svg_path::PathCommand;
 use style::values::specified::{AbsoluteLength, NoCalcLength};
@@ -228,7 +227,7 @@ pub unsafe extern "C" fn Servo_Initialize(
     thread_state::initialize(thread_state::ThreadState::LAYOUT);
 
     debug_assert!(is_main_thread());
-    lazy_static::initialize(&STYLE_THREAD_POOL);
+    LazyLock::force(&STYLE_THREAD_POOL);
 
     // Perform some debug-only runtime assertions.
     origin_flags::assert_flags_match();
@@ -1820,36 +1819,6 @@ pub extern "C" fn Servo_AuthorStyles_IsDirty(styles: &AuthorStyles) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn Servo_AuthorStyles_Flush(
-    styles: &mut AuthorStyles,
-    document_set: &PerDocumentStyleData,
-) {
-    // Try to avoid the atomic borrow below if possible.
-    if !styles.stylesheets.dirty() {
-        return;
-    }
-
-    let global_style_data = &*GLOBAL_STYLE_DATA;
-    let guard = global_style_data.shared_lock.read();
-
-    let mut document_data = document_set.borrow_mut();
-
-    // TODO(emilio): This is going to need an element or something to do proper
-    // invalidation in Shadow roots.
-    styles.flush::<GeckoElement>(&mut document_data.stylist, &guard);
-}
-
-#[no_mangle]
-pub extern "C" fn Servo_StyleSet_RemoveUniqueEntriesFromAuthorStylesCache(
-    document_set: &PerDocumentStyleData,
-) {
-    let mut document_data = document_set.borrow_mut();
-    document_data
-        .stylist
-        .remove_unique_author_data_cache_entries();
-}
-
-#[no_mangle]
 pub unsafe extern "C" fn Servo_DeclarationBlock_SizeOfIncludingThis(
     malloc_size_of: GeckoMallocSizeOf,
     malloc_enclosing_size_of: GeckoMallocSizeOf,
@@ -2009,18 +1978,50 @@ pub unsafe extern "C" fn Servo_StyleSet_FlushStyleSheets(
     raw_data: &PerDocumentStyleData,
     doc_element: Option<&RawGeckoElement>,
     snapshots: *const ServoElementSnapshotTable,
+    non_document_styles: &mut nsTArray<&mut AuthorStyles>,
 ) {
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
     let mut data = raw_data.borrow_mut();
     let doc_element = doc_element.map(GeckoElement);
 
-    let have_invalidations = data.flush_stylesheets(&guard, doc_element, snapshots.as_ref());
+    let mut invalidations = data.flush_stylesheets(&guard);
+    if !non_document_styles.is_empty() {
+        for author_styles in non_document_styles {
+            let shadow_invalidations = author_styles.flush(&mut data.stylist, &guard);
+            // TODO(emilio): For now we drop the style invalidations on the floor, relying on
+            // explicit invalidation from C++.
+            // TODO(emilio): Consider doing scoped cascade data invalidation, specially once we
+            // have tree-scoped names.
+            invalidations
+                .cascade_data_difference
+                .merge_with(shadow_invalidations.cascade_data_difference);
+        }
+        data.stylist.remove_unique_author_data_cache_entries();
+    }
 
-    if have_invalidations && doc_element.is_some() {
-        // The invalidation machinery propagates the bits up, but we still need
-        // to tell the Gecko restyle root machinery about it.
-        bindings::Gecko_NoteDirtySubtreeForInvalidation(doc_element.unwrap().0);
+    // TODO(emilio): consider merging the existing stylesheet invalidation machinery into the
+    // `CascadeDataDifference`.
+    let Some(doc_element) = doc_element else {
+        return;
+    };
+    if invalidations.process_style(doc_element, snapshots.as_ref()) {
+        // The style invalidation machinery propagates the bits up, but we still need to tell the
+        // Gecko restyle root machinery about it.
+        bindings::Gecko_NoteDirtySubtreeForInvalidation(doc_element.0);
+    }
+    let changed_position_try_names = &invalidations
+        .cascade_data_difference
+        .changed_position_try_names;
+    if !changed_position_try_names.is_empty() {
+        style::invalidation::stylesheets::invalidate_position_try(
+            doc_element,
+            &changed_position_try_names,
+            &mut |e, _data| unsafe {
+                bindings::Gecko_InvalidatePositionTry(e.0);
+            },
+            &mut |_| {},
+        );
     }
 }
 
@@ -2052,6 +2053,12 @@ pub extern "C" fn Servo_StyleSet_SetAuthorStyleDisabled(
 pub extern "C" fn Servo_StyleSet_UsesFontMetrics(raw_data: &PerDocumentStyleData) -> bool {
     let doc_data = raw_data;
     doc_data.borrow().stylist.device().used_font_metrics()
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_StyleSet_UsesRootFontMetrics(raw_data: &PerDocumentStyleData) -> bool {
+    let doc_data = raw_data;
+    doc_data.borrow().stylist.device().used_root_font_metrics()
 }
 
 #[no_mangle]
@@ -4446,7 +4453,7 @@ pub unsafe extern "C" fn Servo_ComputedValues_GetForPositionTry(
     raw_data: &PerDocumentStyleData,
     style: &ComputedValues,
     element: &RawGeckoElement,
-    name_and_try_tactic: &DashedIdentAndOrTryTactic,
+    fallback_item: &PositionTryFallbacksItem,
 ) -> Strong<ComputedValues> {
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
@@ -4454,7 +4461,7 @@ pub unsafe extern "C" fn Servo_ComputedValues_GetForPositionTry(
     let element = GeckoElement(element);
     let data = raw_data.borrow();
     data.stylist
-        .resolve_position_try(style, &guards, element, name_and_try_tactic)
+        .resolve_position_try(style, &guards, element, fallback_item)
         .into()
 }
 
@@ -5876,6 +5883,23 @@ pub extern "C" fn Servo_DeclarationBlock_PropertyIsSet(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn Servo_DeclarationBlock_HasLonghandProperty(
+    declarations: &LockedDeclarationBlock,
+    property: &nsACString,
+) -> bool {
+    read_locked_arc(declarations, |decls: &PropertyDeclarationBlock| {
+        let prop_name = property.as_str_unchecked();
+        if let Ok(property_id) = PropertyId::parse_unchecked(prop_name, None) {
+            if let Err(longhand_or_custom) = property_id.as_shorthand() {
+                return decls.contains(longhand_or_custom);
+            }
+        }
+
+        false
+    })
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn Servo_DeclarationBlock_SetIdentStringValue(
     declarations: &LockedDeclarationBlock,
     property: NonCustomCSSPropertyId,
@@ -6940,7 +6964,7 @@ fn create_context_for_animation<'a>(
     container_size_query: ContainerSizeQuery<'a>,
 ) -> Context<'a> {
     Context::new_for_animation(
-        StyleBuilder::for_animation(
+        StyleBuilder::for_derived_style(
             per_doc_data.stylist.device(),
             Some(&per_doc_data.stylist),
             style,
@@ -7080,12 +7104,12 @@ pub extern "C" fn Servo_GetComputedKeyframeValues(
                 let guard = declarations.read_with(&guard);
                 for decl in guard.normal_declaration_iter() {
                     if let PropertyDeclaration::Custom(ref declaration) = *decl {
-                        builder.cascade(declaration, priority);
+                        builder.cascade(declaration, priority, &element);
                     }
                 }
             }
             iter.reset();
-            let _deferred = builder.build(DeferFontRelativeCustomPropertyResolution::No);
+            let _deferred = builder.build(DeferFontRelativeCustomPropertyResolution::No, &element);
             debug_assert!(
                 _deferred.is_none(),
                 "Custom property processing deferred despite specifying otherwise?"
@@ -7234,8 +7258,13 @@ pub extern "C" fn Servo_AnimationValue_Compute(
         .next()
     {
         Some((decl, imp)) if imp == Importance::Normal => {
-            let animation =
-                AnimationValue::from_declaration(decl, &mut context, style, default_values);
+            let animation = AnimationValue::from_declaration(
+                decl,
+                &mut context,
+                style,
+                default_values,
+                &element,
+            );
             animation.map_or(Strong::null(), |value| Arc::new(value).into())
         },
         _ => Strong::null(),
@@ -10772,8 +10801,8 @@ fn offset_params_from_base_params(
         mBaseParams: AnchorPosResolutionParams {
             mFrame: params.mFrame,
             mPosition: params.mPosition,
-            mPositionArea: params.mPositionArea,
             mCache: params.mCache,
+            mAutoResolutionOverrideParams: params.mAutoResolutionOverrideParams,
         },
     }
 }
@@ -10829,12 +10858,25 @@ pub extern "C" fn Servo_PhysicalizePositionArea(
     *area = area.to_physical(*cb_wm, *self_wm);
 }
 
+/// https://drafts.csswg.org/css-anchor-position-1/#position-area-alignment
 #[no_mangle]
 pub extern "C" fn Servo_ResolvePositionAreaSelfAlignment(
-    area: &PositionAreaKeyword,
+    area: &PositionArea,
+    axis: LogicalAxis,
+    cb_wm: &WritingMode,
+    self_wm: &WritingMode,
     out: &mut AlignFlags,
 ) {
-    let Some(align) = area.to_self_alignment() else {
+    // As well as converting `area` and `axis` to the same form for comparison
+    // this also makes sure `area`'s second keyword is explicit (not none).
+    let physical_area = area.to_physical(*cb_wm, *self_wm);
+    let physical_axis = axis.to_physical(*cb_wm);
+    let area_keyword = match physical_axis {
+        PhysicalAxis::Horizontal => physical_area.first,
+        PhysicalAxis::Vertical => physical_area.second,
+    };
+    // Note that area_keyword is a physical value (left/right/top/bottom).
+    let Some(align) = area_keyword.to_self_alignment(axis, cb_wm) else {
         debug_assert!(
             false,
             "ResolvePositionAreaSelfAlignment called on {:?}",

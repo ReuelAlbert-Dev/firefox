@@ -90,9 +90,11 @@ class alignas(16) Instance {
   // always in sync with the MemoryInstanceData for memory 0.
   uint8_t* memory0Base_;
 
-  // Bounds check limit in bytes (or zero if there is no memory) for memory 0
-  // This is 64-bits on 64-bit systems so as to allow for heap lengths up to and
-  // beyond 4GB, and 32-bits on 32-bit systems, where memories are limited to
+  // Bounds check limit in bytes for memory 0. If there is no memory 0, this
+  // value will be zero.
+  //
+  // This is 64 bits on 64-bit systems so as to allow for heap lengths up to and
+  // beyond 4GB, and 32 bits on 32-bit systems, where memories are limited to
   // 2GB.
   //
   // See "Linear memory addresses and bounds checking" in WasmMemory.cpp.
@@ -278,7 +280,8 @@ class alignas(16) Instance {
   uintptr_t traceFrame(JSTracer* trc, const wasm::WasmFrameIter& wfi,
                        uint8_t* nextPC,
                        uintptr_t highestByteVisitedInPrevFrame);
-  void updateFrameForMovingGC(const wasm::WasmFrameIter& wfi, uint8_t* nextPC);
+  void updateFrameForMovingGC(const wasm::WasmFrameIter& wfi, uint8_t* nextPC,
+                              Nursery& nursery);
 
   static constexpr size_t offsetOfMemory0Base() {
     return offsetof(Instance, memory0Base_);
@@ -615,8 +618,6 @@ class alignas(16) Instance {
   static int32_t arrayCopy(Instance* instance, void* dstArray,
                            uint32_t dstIndex, void* srcArray, uint32_t srcIndex,
                            uint32_t numElements, uint32_t elementSize);
-  static int32_t arrayFill(Instance* instance, void* array, uint32_t index,
-                           uint32_t numElements);
   static int32_t refTest(Instance* instance, void* refPtr,
                          const wasm::TypeDef* typeDef);
   static int32_t intrI8VecMul(Instance* instance, uint32_t dest, uint32_t src1,

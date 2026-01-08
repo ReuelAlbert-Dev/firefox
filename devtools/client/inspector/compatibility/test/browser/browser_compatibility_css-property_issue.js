@@ -13,7 +13,7 @@ const TEST_URI = `
   <style>
   body {
     color: blue;
-    scrollbar-color: gold;
+    text-box-edge: text;
     user-modify: read-only;
     background-repeat-x: repeat;
   }
@@ -29,15 +29,15 @@ const TEST_URI = `
 const TEST_DATA_SELECTED = [
   {
     type: COMPATIBILITY_ISSUE_TYPE.CSS_PROPERTY,
-    property: "scrollbar-color",
-    url: "https://developer.mozilla.org/docs/Web/CSS/scrollbar-color",
+    property: "text-box-edge",
+    url: "https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/text-box-edge",
     deprecated: false,
     experimental: false,
   },
   {
     type: COMPATIBILITY_ISSUE_TYPE.CSS_PROPERTY_ALIASES,
     property: "user-modify",
-    url: "https://developer.mozilla.org/docs/Web/CSS/user-modify",
+    url: "https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/user-modify",
     aliases: ["user-modify"],
     deprecated: true,
     experimental: false,
@@ -59,7 +59,7 @@ const TEST_DATA_ALL = [
   {
     type: COMPATIBILITY_ISSUE_TYPE.CSS_PROPERTY,
     property: "overflow-anchor",
-    url: "https://developer.mozilla.org/docs/Web/CSS/overflow-anchor",
+    url: "https://developer.mozilla.org/docs/Web/CSS/Reference/Properties/overflow-anchor",
     deprecated: false,
     experimental: false,
   },

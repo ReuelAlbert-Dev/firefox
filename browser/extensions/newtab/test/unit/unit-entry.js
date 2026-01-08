@@ -37,6 +37,20 @@ chai.use(chaiAssertions);
 
 const overrider = new GlobalOverrider();
 
+// Create HTMLDialogElement mock if it doesn't exist
+if (typeof window.HTMLDialogElement === "undefined") {
+  window.HTMLDialogElement = function () {};
+  window.HTMLDialogElement.prototype = Object.create(HTMLElement.prototype);
+}
+
+// Patch the showModal and close methods
+window.HTMLDialogElement.prototype.showModal = function () {
+  this.open = true;
+};
+window.HTMLDialogElement.prototype.close = function () {
+  this.open = false;
+};
+
 const RemoteSettings = name => ({
   get: () => {
     if (name === "attachment") {
@@ -250,6 +264,7 @@ const TEST_GLOBAL = {
       MODE_REJECT_OR_ACCEPT: 2,
       MODE_UNSET: 3,
     },
+    nsIProtocolProxyChannelFilter: {},
   },
   Cu: {
     importGlobalProperties() {},
@@ -707,6 +722,10 @@ const TEST_GLOBAL = {
     SERVER_URL: "bogus://foo",
   },
   NewTabContentPing,
+  ProxyService: {
+    registerChannelFilter() {},
+    unregisterChannelFilter() {},
+  },
 };
 overrider.set(TEST_GLOBAL);
 

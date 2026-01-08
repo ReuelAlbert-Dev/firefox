@@ -222,9 +222,11 @@ class Inspector extends EventEmitter {
     this.#fluentL10n = new FluentL10n();
     await this.#fluentL10n.init(["devtools/client/compatibility.ftl"]);
 
-    // Display the main inspector panel with: search input, markup view and breadcrumbs.
-    this.panelDoc.getElementById("inspector-main-content").style.visibility =
-      "visible";
+    // Add the class that will display the main inspector panel with: search input,
+    // markup view and breadcrumbs.
+    this.panelDoc
+      .getElementById("inspector-main-content")
+      .classList.add("initialized");
 
     // Setup the splitter before watching targets & resources.
     // The markup view will be initialized after we get the first root-node
@@ -254,7 +256,7 @@ class Inspector extends EventEmitter {
       onDestroyed: this.#onTargetDestroyed,
     });
 
-    const { TYPES } = this.toolbox.resourceCommand;
+    const { TYPES } = this.commands.resourceCommand;
     this.#watchedResources = [
       // To observe CSS change before opening changes view.
       TYPES.CSS_CHANGE,
@@ -272,7 +274,7 @@ class Inspector extends EventEmitter {
       this.#watchedResources.push(TYPES.ROOT_NODE);
     }
 
-    await this.toolbox.resourceCommand.watchResources(this.#watchedResources, {
+    await this.commands.resourceCommand.watchResources(this.#watchedResources, {
       onAvailable: this.onResourceAvailable,
     });
 
@@ -370,7 +372,7 @@ class Inspector extends EventEmitter {
 
       if (
         resource.resourceType ===
-          this.toolbox.resourceCommand.TYPES.ROOT_NODE &&
+          this.commands.resourceCommand.TYPES.ROOT_NODE &&
         // It might happen that the ROOT_NODE resource (which is a Front) is already
         // destroyed, and in such case we want to ignore it.
         !resource.isDestroyed() &&
@@ -383,14 +385,16 @@ class Inspector extends EventEmitter {
       // Only consider top level document, and ignore remote iframes top document
       if (
         resource.resourceType ===
-          this.toolbox.resourceCommand.TYPES.DOCUMENT_EVENT &&
+          this.commands.resourceCommand.TYPES.DOCUMENT_EVENT &&
         resource.name === "will-navigate" &&
         isTopLevelTarget
       ) {
         this.#onWillNavigate();
       }
 
-      if (resource.resourceType === this.toolbox.resourceCommand.TYPES.REFLOW) {
+      if (
+        resource.resourceType === this.commands.resourceCommand.TYPES.REFLOW
+      ) {
         this.emit("reflow");
         if (resource.targetFront === this.selection?.nodeFront?.targetFront) {
           // This event will be fired whenever a reflow is detected in the target front of the
@@ -1824,7 +1828,7 @@ class Inspector extends EventEmitter {
       onSelected: this.#onTargetSelected,
       onDestroyed: this.#onTargetDestroyed,
     });
-    const { resourceCommand } = this.toolbox;
+    const { resourceCommand } = this.commands;
     resourceCommand.unwatchResources(this.#watchedResources, {
       onAvailable: this.onResourceAvailable,
     });

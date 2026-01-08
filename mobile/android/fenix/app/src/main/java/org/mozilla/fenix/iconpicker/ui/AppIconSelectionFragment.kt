@@ -4,6 +4,7 @@
 
 package org.mozilla.fenix.iconpicker.ui
 
+import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.os.Build
 import android.os.Bundle
@@ -21,13 +22,16 @@ import org.mozilla.fenix.iconpicker.AppIconMiddleware
 import org.mozilla.fenix.iconpicker.AppIconRepository
 import org.mozilla.fenix.iconpicker.AppIconState
 import org.mozilla.fenix.iconpicker.AppIconStore
+import org.mozilla.fenix.iconpicker.AppIconTelemetryMiddleware
 import org.mozilla.fenix.iconpicker.AppIconUpdater
 import org.mozilla.fenix.iconpicker.DefaultAppIconRepository
 import org.mozilla.fenix.iconpicker.DefaultPackageManagerWrapper
+import org.mozilla.fenix.iconpicker.SearchWidgetsUpdater
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.utils.ShortcutManagerWrapperDefault
 import org.mozilla.fenix.utils.ShortcutsUpdaterDefault
 import org.mozilla.fenix.utils.changeAppLauncherIcon
+import org.mozilla.gecko.search.SearchWidgetProvider
 
 /**
  * Fragment that displays a list of alternative app icons.
@@ -57,7 +61,9 @@ class AppIconSelectionFragment : Fragment(), UserInteractionHandler {
                         middleware = listOf(
                             AppIconMiddleware(
                                 updateAppIcon = updateAppIcon(),
+                                updateSearchWidgets = updateSearchWidgets(),
                             ),
+                            AppIconTelemetryMiddleware(),
                         ),
                     )
                 },
@@ -77,6 +83,11 @@ class AppIconSelectionFragment : Fragment(), UserInteractionHandler {
                 crashReporter = components.analytics.crashReporter,
             )
         }
+    }
+
+    private fun updateSearchWidgets(): SearchWidgetsUpdater = SearchWidgetsUpdater {
+        val appWidgetManager = AppWidgetManager.getInstance(requireContext())
+        SearchWidgetProvider.updateAllWidgets(requireContext(), appWidgetManager)
     }
 
     private fun shouldWarnAboutShortcutRemoval(): Boolean {

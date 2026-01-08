@@ -35,7 +35,6 @@ const FEATURES = {
 
 const SIMPLE_COMMANDS = [
   "dumpTextRuns",
-  "dumpViews",
   "dumpCounterManager",
   "dumpRetainedDisplayList",
   "dumpStyleSheets",
@@ -425,9 +424,6 @@ function OnLDBLoad() {
         case "menu_dumpTextRuns":
           gDebugger.dumpTextRuns();
           break;
-        case "menu_dumpViews":
-          gDebugger.dumpViews();
-          break;
         case "menu_dumpCounterManager":
           gDebugger.dumpCounterManager();
           break;
@@ -607,7 +603,7 @@ function OnLDBUnload() {
 function toggle(menuitem) {
   // trim the initial "menu_"
   var feature = menuitem.id.substring(5);
-  gDebugger[feature] = menuitem.getAttribute("checked") == "true";
+  gDebugger[feature] = menuitem.hasAttribute("checked");
 }
 
 function openFile() {

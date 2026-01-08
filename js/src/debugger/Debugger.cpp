@@ -393,6 +393,11 @@ bool js::ParseEvalOptions(JSContext* cx, HandleValue value,
   }
   options.setHideFromDebugger(ToBoolean(v));
 
+  if (!JS_GetProperty(cx, opts, "bypassCSP", &v)) {
+    return false;
+  }
+  options.setBypassCSP(ToBoolean(v));
+
   if (options.kind() == EvalOptions::EnvKind::GlobalWithExtraOuterBindings) {
     if (!JS_GetProperty(cx, opts, "useInnerBindings", &v)) {
       return false;
@@ -452,8 +457,10 @@ Breakpoint::Breakpoint(Debugger* debugger, HandleObject wrappedDebugger,
 }
 
 void Breakpoint::trace(JSTracer* trc) {
-  MOZ_ASSERT(!IsDeadProxyObject(wrappedDebugger));
+  MOZ_ASSERT_IF(trc->kind() != JS::TracerKind::Moving,
+                !IsDeadProxyObject(wrappedDebugger));
   TraceEdge(trc, &wrappedDebugger, "breakpoint owner");
+
   TraceEdge(trc, &handler, "breakpoint handler");
 }
 
@@ -4004,7 +4011,7 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
 
     if (Debugger::GeneratorWeakMap::Ptr entry =
             dbg->generatorFrames.lookupUnbarriered(generator)) {
-      PreBarriered<DebuggerFrame*>& frameObj = entry->value();
+      const PreBarriered<DebuggerFrame*>& frameObj = entry->value();
       if (frameObj->hasAnyHooks()) {
         // See comment above.
         TraceCrossCompartmentEdge(tracer, generator, &frameObj,
@@ -7402,6 +7409,10 @@ extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
   debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_MEMORY_PROTO,
                               ObjectValue(*memoryProto));
   return true;
+}
+
+extern JS_PUBLIC_API const char* JS_GetLastOOMStackTrace(JSContext* cx) {
+  return cx->getOOMStackTrace();
 }
 
 JS_PUBLIC_API bool JS::dbg::IsDebugger(JSObject& obj) {

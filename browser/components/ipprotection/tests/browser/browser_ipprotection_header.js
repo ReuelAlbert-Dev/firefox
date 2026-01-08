@@ -7,9 +7,10 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
-  IPProtectionWidget: "resource:///modules/ipprotection/IPProtection.sys.mjs",
+  IPProtectionWidget:
+    "moz-src:///browser/components/ipprotection/IPProtection.sys.mjs",
   IPProtectionPanel:
-    "resource:///modules/ipprotection/IPProtectionPanel.sys.mjs",
+    "moz-src:///browser/components/ipprotection/IPProtectionPanel.sys.mjs",
 });
 
 /**
@@ -57,6 +58,7 @@ add_task(async function test_header_content() {
  * Tests that the help button functions as expected.
  */
 add_task(async function test_help_button() {
+  const openLinkStub = sinon.stub(window, "openWebLinkIn");
   let button = document.getElementById(lazy.IPProtectionWidget.WIDGET_ID);
   let panelView = PanelMultiView.getViewNode(
     document,
@@ -82,12 +84,13 @@ add_task(async function test_help_button() {
   Assert.ok(helpButton, "ipprotection-header help button should be present");
 
   let panelHiddenPromise = waitForPanelEvent(document, "popuphidden");
-
   helpButton.click();
 
   await panelHiddenPromise;
+  Assert.ok(openLinkStub.calledOnce, "help button should open a link");
   Assert.ok(
     !BrowserTestUtils.isVisible(helpButton),
     "ipprotection-header help button should have closed the panel"
   );
+  openLinkStub.restore();
 });

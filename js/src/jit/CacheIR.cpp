@@ -10420,6 +10420,13 @@ AttachDecision InlinableNativeIRGenerator::tryAttachObjectKeys() {
     return AttachDecision::NoAction;
   }
 
+  Shape* expectedObjKeysShape =
+      GlobalObject::getArrayShapeWithDefaultProto(cx_);
+  if (!expectedObjKeysShape) {
+    cx_->recoverFromOutOfMemory();
+    return AttachDecision::NoAction;
+  }
+
   // Generate cache IR code to attach a new inline cache which will delegate the
   // call to Object.keys to the native function.
   Int32OperandId argcId = initializeInputOperand();
@@ -10438,13 +10445,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachObjectKeys() {
 
   // Guard against proxies.
   writer.guardIsNotProxy(argObjId);
-
-  Shape* expectedObjKeysShape =
-      GlobalObject::getArrayShapeWithDefaultProto(cx_);
-  if (!expectedObjKeysShape) {
-    cx_->recoverFromOutOfMemory();
-    return AttachDecision::NoAction;
-  }
 
   // Compute the keys array.
   writer.objectKeysResult(argObjId, expectedObjKeysShape);
@@ -16867,6 +16867,10 @@ AttachDecision CloseIterIRGenerator::tryAttachNoReturnMethod() {
 }
 
 AttachDecision CloseIterIRGenerator::tryAttachScriptedReturn() {
+  if (kind_ == CompletionKind::Throw) {
+    return AttachDecision::NoAction;
+  }
+
   Maybe<PropertyInfo> prop;
   NativeObject* holder = nullptr;
 
@@ -16906,7 +16910,7 @@ AttachDecision CloseIterIRGenerator::tryAttachScriptedReturn() {
   ObjOperandId calleeId = writer.guardToObject(calleeValId);
   emitCalleeGuard(calleeId, callee);
 
-  writer.closeIterScriptedResult(objId, calleeId, kind_, callee->nargs());
+  writer.closeIterScriptedResult(objId, calleeId, callee->nargs());
 
   writer.returnFromIC();
   trackAttached("CloseIter.ScriptedReturn");

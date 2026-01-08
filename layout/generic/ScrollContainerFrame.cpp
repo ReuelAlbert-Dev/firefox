@@ -59,6 +59,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/HTMLMarqueeElement.h"
+#include "mozilla/dom/HTMLOptionElement.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/ScrollTimeline.h"
 #include "mozilla/gfx/gfxVars.h"
@@ -74,6 +75,7 @@
 #include "nsBidiUtils.h"
 #include "nsBlockFrame.h"
 #include "nsCOMPtr.h"
+#include "nsCSSRendering.h"
 #include "nsContainerFrame.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
@@ -90,6 +92,7 @@
 #include "nsIScrollbarMediator.h"
 #include "nsIXULRuntime.h"
 #include "nsLayoutUtils.h"
+#include "nsListControlFrame.h"
 #include "nsNameSpaceManager.h"
 #include "nsNodeInfoManager.h"
 #include "nsPresContext.h"
@@ -258,7 +261,6 @@ ScrollContainerFrame::ScrollContainerFrame(ComputedStyle* aStyle,
       mFrameIsUpdatingScrollbar(false),
       mDidHistoryRestore(false),
       mIsRoot(aIsRoot),
-      mSuppressScrollbarUpdate(false),
       mSkippedScrollbarLayout(false),
       mHadNonInitialReflow(false),
       mFirstReflow(true),
@@ -1516,20 +1518,16 @@ void ScrollContainerFrame::Reflow(nsPresContext* aPresContext,
       didOnlyVScrollbar != mOnlyNeedVScrollbarToScrollVVInsideLV ||
       !oldScrollPort.IsEqualEdges(newScrollPort) ||
       !oldScrolledAreaBounds.IsEqualEdges(newScrolledAreaBounds)) {
-    if (!mSuppressScrollbarUpdate) {
-      mSkippedScrollbarLayout = false;
-      ScrollContainerFrame::SetScrollbarVisibility(mHScrollbarBox,
-                                                   state.mShowHScrollbar);
-      ScrollContainerFrame::SetScrollbarVisibility(mVScrollbarBox,
-                                                   state.mShowVScrollbar);
-      // place and reflow scrollbars
-      const nsRect insideBorderArea(
-          nsPoint(state.mComputedBorder.left, state.mComputedBorder.top),
-          layoutSize);
-      LayoutScrollbars(state, insideBorderArea, oldScrollPort);
-    } else {
-      mSkippedScrollbarLayout = true;
-    }
+    mSkippedScrollbarLayout = false;
+    ScrollContainerFrame::SetScrollbarVisibility(mHScrollbarBox,
+                                                 state.mShowHScrollbar);
+    ScrollContainerFrame::SetScrollbarVisibility(mVScrollbarBox,
+                                                 state.mShowVScrollbar);
+    // place and reflow scrollbars
+    const nsRect insideBorderArea(
+        nsPoint(state.mComputedBorder.left, state.mComputedBorder.top),
+        layoutSize);
+    LayoutScrollbars(state, insideBorderArea, oldScrollPort);
   }
   if (mIsRoot) {
     if (RefPtr<MobileViewportManager> manager =
@@ -1877,12 +1875,12 @@ class ScrollContainerFrame::AsyncSmoothMSDScroll final
                        ScrollTriggeredByScript aTriggeredByScript)
       : mXAxisModel(aInitialPosition.x, aInitialDestination.x,
                     aInitialVelocity.width,
-                    StaticPrefs::layout_css_scroll_behavior_spring_constant(),
-                    StaticPrefs::layout_css_scroll_behavior_damping_ratio()),
+                    StaticPrefs::layout_css_scroll_snap_spring_constant(),
+                    StaticPrefs::layout_css_scroll_snap_damping_ratio()),
         mYAxisModel(aInitialPosition.y, aInitialDestination.y,
                     aInitialVelocity.height,
-                    StaticPrefs::layout_css_scroll_behavior_spring_constant(),
-                    StaticPrefs::layout_css_scroll_behavior_damping_ratio()),
+                    StaticPrefs::layout_css_scroll_snap_spring_constant(),
+                    StaticPrefs::layout_css_scroll_snap_damping_ratio()),
         mRange(aRange),
         mStartPosition(aInitialPosition),
         mLastRefreshTime(aStartTime),
@@ -3731,6 +3729,53 @@ void ScrollContainerFrame::MaybeCreateTopLayerAndWrapRootItems(
   }
 }
 
+class nsDisplayListFocus final : public nsPaintedDisplayItem {
+ public:
+  nsDisplayListFocus(nsDisplayListBuilder* aBuilder, nsListControlFrame* aFrame)
+      : nsPaintedDisplayItem(aBuilder, aFrame) {
+    MOZ_COUNT_CTOR(nsDisplayListFocus);
+  }
+
+  Maybe<nsCSSBorderRenderer> Renderer(DrawTarget* aDt) const {
+    auto* listFrame = static_cast<nsListControlFrame*>(Frame());
+    auto* option = listFrame->GetCurrentOption();
+    if (!option) {
+      return {};
+    }
+    nsIFrame* frame = option->GetPrimaryFrame();
+    if (!frame) {
+      return {};
+    }
+    nscolor color = LookAndFeel::Color(
+        option->Selected() ? LookAndFeel::ColorID::Selecteditemtext
+                           : LookAndFeel::ColorID::Selecteditem,
+        frame);
+    auto rect = frame->GetRectRelativeToSelf() + frame->GetOffsetTo(listFrame) +
+                ToReferenceFrame();
+    return Some(
+        nsCSSRendering::GetBorderRendererForFocus(listFrame, aDt, rect, color));
+  }
+
+  MOZ_COUNTED_DTOR_FINAL(nsDisplayListFocus)
+
+  void Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) override {
+    if (auto br = Renderer(aCtx->GetDrawTarget())) {
+      br->DrawBorders();
+    }
+  }
+  bool CreateWebRenderCommands(
+      wr::DisplayListBuilder& aBuilder, wr::IpcResourceUpdateQueue& aResources,
+      const StackingContextHelper& aSc,
+      layers::RenderRootStateManager* aManager,
+      nsDisplayListBuilder* aDisplayListBuilder) override {
+    if (auto br = Renderer(nullptr)) {
+      br->CreateWebRenderCommands(this, aBuilder, aResources, aSc);
+    }
+    return true;
+  }
+  NS_DISPLAY_DECL_NAME("ListFocus", TYPE_LIST_FOCUS)
+};
+
 void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                             const nsDisplayListSet& aLists) {
   SetAndNullOnExit<const nsIFrame> tmpBuilder(
@@ -4045,6 +4090,10 @@ void ScrollContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
       }
 
       BuildDisplayListForChild(aBuilder, mScrolledFrame, set);
+
+      if (nsListControlFrame* lc = do_QueryFrame(this); lc && lc->IsFocused()) {
+        set.Outlines()->AppendNewToTop<nsDisplayListFocus>(aBuilder, lc);
+      }
 
       if (dirtyRectHasBeenOverriden &&
           StaticPrefs::layout_display_list_show_rebuild_area()) {
@@ -6369,8 +6418,6 @@ void ScrollContainerFrame::LayoutScrollbarPartAtRect(
 void ScrollContainerFrame::LayoutScrollbars(ScrollReflowInput& aState,
                                             const nsRect& aInsideBorderArea,
                                             const nsRect& aOldScrollPort) {
-  NS_ASSERTION(!mSuppressScrollbarUpdate, "This should have been suppressed");
-
   const bool scrollbarOnLeft = !IsScrollbarOnRight();
   const bool overlayScrollbars = UsesOverlayScrollbars();
   const bool overlayScrollBarsOnRoot = overlayScrollbars && mIsRoot;
@@ -7758,7 +7805,9 @@ bool ScrollContainerFrame::CanApzScrollInTheseDirections(
 
 bool ScrollContainerFrame::SmoothScrollVisual(
     const nsPoint& aVisualViewportOffset,
-    FrameMetrics::ScrollOffsetUpdateType aUpdateType) {
+    FrameMetrics::ScrollOffsetUpdateType aUpdateType, ScrollMode aMode) {
+  MOZ_ASSERT(aMode == ScrollMode::Smooth || aMode == ScrollMode::SmoothMsd);
+
   bool canDoApzSmoothScroll =
       nsLayoutUtils::AsyncPanZoomEnabled(this) && WantAsyncScroll();
   if (!canDoApzSmoothScroll) {
@@ -7785,7 +7834,7 @@ bool ScrollContainerFrame::SmoothScrollVisual(
 
   UniquePtr<ScrollSnapTargetIds> snapTargetIds;
   // Perform the scroll.
-  ApzSmoothScrollTo(mDestination, ScrollMode::SmoothMsd,
+  ApzSmoothScrollTo(mDestination, aMode,
                     aUpdateType == FrameMetrics::eRestore
                         ? ScrollOrigin::Restore
                         : ScrollOrigin::Other,
@@ -7827,6 +7876,17 @@ bool ScrollContainerFrame::IsSmoothScroll(dom::ScrollBehavior aBehavior) const {
               StyleScrollBehavior::Smooth);
 }
 
+ScrollMode ScrollContainerFrame::ScrollModeForScrollBehavior(
+    dom::ScrollBehavior aBehavior) const {
+  if (!IsSmoothScroll(aBehavior)) {
+    return ScrollMode::Instant;
+  }
+
+  return StaticPrefs::layout_css_scroll_behavior_same_physics_as_user_input()
+             ? ScrollMode::Smooth
+             : ScrollMode::SmoothMsd;
+}
+
 nsTArray<ScrollPositionUpdate> ScrollContainerFrame::GetScrollUpdates() const {
   return mScrollUpdates.Clone();
 }
@@ -7838,22 +7898,10 @@ void ScrollContainerFrame::AppendScrollUpdate(
 }
 
 void ScrollContainerFrame::ScheduleScrollAnimations() {
-  nsIContent* content = GetContent();
-  MOZ_ASSERT(content && content->IsElement(),
-             "The ScrollContainerFrame should have the element.");
-
-  const Element* elementOrPseudo = content->AsElement();
-  PseudoStyleType pseudo = elementOrPseudo->GetPseudoElementType();
-  if (pseudo != PseudoStyleType::NotPseudo &&
-      !AnimationUtils::IsSupportedPseudoForAnimations(pseudo)) {
-    // This is not an animatable pseudo element, and so we don't generate
-    // scroll-timeline for it.
-    return;
-  }
-
-  const auto [element, request] =
-      AnimationUtils::GetElementPseudoPair(elementOrPseudo);
-  ProgressTimelineScheduler::ScheduleAnimations(element, request);
+  auto* rd = PresContext()->RefreshDriver();
+  MOZ_ASSERT(rd);
+  // This schedules UpdateAnimationsAndSendEvents in the HTML loop.
+  rd->EnsureAnimationUpdate();
 }
 
 nsSize ScrollContainerFrame::GetSizeForWindowInnerSize() const {

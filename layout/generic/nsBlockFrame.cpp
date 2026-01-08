@@ -1416,13 +1416,8 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
     int32_t mOffset = -1;
     nscoord mBlockCoord = 0;
 
-    bool operator==(const BalanceTarget& aOther) const {
-      return mContent == aOther.mContent && mOffset == aOther.mOffset &&
-             mBlockCoord == aOther.mBlockCoord;
-    }
-    bool operator!=(const BalanceTarget& aOther) const {
-      return !(*this == aOther);
-    }
+    bool operator==(const BalanceTarget& aOther) const = default;
+    bool operator!=(const BalanceTarget& aOther) const = default;
   };
 
   BalanceTarget balanceTarget;
@@ -1446,7 +1441,9 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   // will take effect for the current line list. Only to be used when there are
   // enough lines that the clamp will apply.
   auto getClampPosition = [&](uint32_t aClampCount) -> BalanceTarget {
-    MOZ_ASSERT(aClampCount < mLines.size());
+    if (NS_WARN_IF(aClampCount >= mLines.size())) {
+      return BalanceTarget{};
+    }
     auto iter = mLines.begin();
     for (uint32_t i = 0; i < aClampCount; i++) {
       ++iter;
@@ -2376,8 +2373,9 @@ void nsBlockFrame::ComputeOverflowAreas(OverflowAreas& aOverflowAreas,
   // XXX_perf: This can be done incrementally.  It is currently one of
   // the things that makes incremental reflow O(N^2).
   auto overflowClipAxes = ShouldApplyOverflowClipping(aDisplay);
-  auto overflowClipMargin = OverflowClipMargin(overflowClipAxes);
-  if (overflowClipAxes == kPhysicalAxesBoth && overflowClipMargin == nsSize()) {
+  auto overflowClipMargin =
+      OverflowClipMargin(overflowClipAxes, /* aAllowNegative = */ false);
+  if (overflowClipAxes == kPhysicalAxesBoth && overflowClipMargin.IsAllZero()) {
     return;
   }
 
@@ -2907,7 +2905,7 @@ void nsBlockFrame::ReparentFloats(nsIFrame* aFirstFrame,
   aOldParent->CollectFloats(aFirstFrame, list, aReparentSiblings);
   if (list.NotEmpty()) {
     for (nsIFrame* f : list) {
-      MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT),
+      MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW),
                  "CollectFloats should've removed that bit");
       ReparentFrame(f, aOldParent, this);
     }
@@ -2983,8 +2981,8 @@ bool nsBlockFrame::ReflowDirtyLines(BlockReflowState& aState) {
   bool needToRecoverState = false;
   // Float continuations were reflowed in ReflowPushedFloats
   bool reflowedFloat =
-      HasFloats() &&
-      GetFloats()->FirstChild()->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT);
+      HasFloats() && GetFloats()->FirstChild()->HasAnyStateBits(
+                         NS_FRAME_IS_PUSHED_OUT_OF_FLOW);
   bool lastLineMovedUp = false;
   // We save up information about BR-clearance here
   UsedClear inlineFloatClearType = aState.mTrailingClearFromPIF;
@@ -5310,7 +5308,7 @@ static bool CheckPlaceholderInLine(nsIFrame* aBlock, nsLineBox* aLine,
   }
   NS_ASSERTION(!aFloat->GetPrevContinuation(),
                "float in a line should never be a continuation");
-  NS_ASSERTION(!aFloat->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT),
+  NS_ASSERTION(!aFloat->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW),
                "float in a line should never be a pushed float");
   nsIFrame* ph = aFloat->FirstInFlow()->GetPlaceholderFrame();
   for (nsIFrame* f = ph; f; f = f->GetParent()) {
@@ -5706,7 +5704,7 @@ void nsBlockFrame::PushLines(BlockReflowState& aState,
     if (floats.NotEmpty()) {
 #ifdef DEBUG
       for (nsIFrame* f : floats) {
-        MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT),
+        MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW),
                    "CollectFloats should've removed that bit");
       }
 #endif
@@ -5835,7 +5833,7 @@ bool nsBlockFrame::DrainOverflowLines() {
         for (nsIFrame* f : oofs.mList) {
           nsIFrame* nif = f->GetNextInFlow();
           for (; nif && nif->GetParent() == this; nif = nif->GetNextInFlow()) {
-            MOZ_ASSERT(nif->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT));
+            MOZ_ASSERT(nif->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW));
             RemoveFloat(nif);
             pushedFloats.AppendFrame(nullptr, nif);
           }
@@ -5883,7 +5881,7 @@ bool nsBlockFrame::DrainSelfOverflowList() {
     if (oofs.mList.NotEmpty()) {
 #ifdef DEBUG
       for (nsIFrame* f : oofs.mList) {
-        MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT),
+        MOZ_ASSERT(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW),
                    "CollectFloats should've removed that bit");
       }
 #endif
@@ -5947,7 +5945,7 @@ void nsBlockFrame::DrainSelfPushedFloats() {
     // FIXME: This isn't quite right!  What if they're all pushed floats?
     nsIFrame* insertionPrevSibling = nullptr; /* beginning of list */
     for (nsIFrame* f = floats ? floats->FirstChild() : nullptr;
-         f && f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT);
+         f && f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW);
          f = f->GetNextSibling()) {
       insertionPrevSibling = f;
     }
@@ -7448,7 +7446,7 @@ void nsBlockFrame::ReflowPushedFloats(BlockReflowState& aState,
   nsFrameList* floats = GetFloats();
   nsIFrame* f = floats ? floats->FirstChild() : nullptr;
   nsIFrame* prev = nullptr;
-  while (f && f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT)) {
+  while (f && f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW)) {
     MOZ_ASSERT(prev == f->GetPrevSibling());
     // When we push a first-continuation float in a non-initial reflow,
     // it's possible that we end up with two continuations with the same
@@ -7607,14 +7605,14 @@ bool nsBlockFrame::HasPushedFloatsFromPrevContinuation() const {
   if (const nsFrameList* floats = GetFloats()) {
     // If we have pushed floats, then they should be at the beginning of our
     // float list.
-    if (floats->FirstChild()->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT)) {
+    if (floats->FirstChild()->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW)) {
       return true;
     }
 #ifdef DEBUG
     // Double-check the above assertion that pushed floats should be at the
     // beginning of our floats list.
     for (nsIFrame* f : *floats) {
-      NS_ASSERTION(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT),
+      NS_ASSERTION(!f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW),
                    "pushed floats must be at the beginning of the float list");
     }
 #endif
@@ -7763,9 +7761,9 @@ void nsBlockFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   if (GetPrevInFlow()) {
     DisplayOverflowContainers(aBuilder, aLists);
-    DisplayAbsoluteContinuations(aBuilder, aLists);
+    DisplayPushedAbsoluteFrames(aBuilder, aLists);
     for (nsIFrame* f : GetChildList(FrameChildListID::Float)) {
-      if (f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT)) {
+      if (f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW)) {
         BuildDisplayListForChild(aBuilder, f, aLists);
       }
     }
@@ -8312,9 +8310,9 @@ void nsBlockFrame::DoCollectFloats(nsIFrame* aFrame, nsFrameList& aList,
               : nullptr;
       while (outOfFlowFrame && outOfFlowFrame->GetParent() == this) {
         RemoveFloat(outOfFlowFrame);
-        // Remove the IS_PUSHED_FLOAT bit, in case |outOfFlowFrame| came from
-        // the PushedFloats list.
-        outOfFlowFrame->RemoveStateBits(NS_FRAME_IS_PUSHED_FLOAT);
+        // Remove the NS_FRAME_IS_PUSHED_OUT_OF_FLOW bit, in case
+        // |outOfFlowFrame| came from the PushedFloats list.
+        outOfFlowFrame->RemoveStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW);
         aList.AppendFrame(nullptr, outOfFlowFrame);
         outOfFlowFrame = outOfFlowFrame->GetNextInFlow();
         // FIXME: By not pulling floats whose parent is one of our
@@ -8358,7 +8356,7 @@ void nsBlockFrame::CheckFloats(BlockReflowState& aState) {
   bool hasHiddenFloats = false;
   uint32_t i = 0;
   for (nsIFrame* f : GetChildList(FrameChildListID::Float)) {
-    if (f->HasAnyStateBits(NS_FRAME_IS_PUSHED_FLOAT)) {
+    if (f->HasAnyStateBits(NS_FRAME_IS_PUSHED_OUT_OF_FLOW)) {
       continue;
     }
     // There are chances that the float children won't be added to lines,
