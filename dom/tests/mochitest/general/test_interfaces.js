@@ -220,6 +220,8 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "CDATASection", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "CSPViolationReportBody", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "CSS", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "CSSAnimation", insecureContext: true },
@@ -320,7 +322,6 @@ let interfaceNamesInGlobalScope = [
     name: "CloseWatcher",
     insecureContext: true,
     nightly: true,
-    android: false,
   },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "CommandEvent", insecureContext: true },
@@ -891,6 +892,8 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "InstallTrigger", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "IntegrityViolationReportBody", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "IntersectionObserver", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "IntersectionObserverEntry", insecureContext: true },
@@ -1254,6 +1257,10 @@ let interfaceNamesInGlobalScope = [
   { name: "ReadableStreamDefaultController", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "ReadableStreamDefaultReader", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "ReportBody", insecureContext: true },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "ReportingObserver", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   { name: "Request", insecureContext: true },
   // IMPORTANT: Do not change this list without review from a DOM peer!

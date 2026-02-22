@@ -875,8 +875,7 @@ class BuildReader:
 
     def summary(self):
         return ExecutionSummary(
-            "Finished reading {file_count:d} moz.build files in "
-            "{execution_time:.2f}s",
+            "Finished reading {file_count:d} moz.build files in {execution_time:.2f}s",
             file_count=self._file_count,
             execution_time=self._execution_time,
         )
@@ -1217,7 +1216,7 @@ class BuildReader:
             for v in ("input", "variables"):
                 if not getattr(gyp_dir, v):
                     raise SandboxValidationError(
-                        "Missing value for " 'GYP_DIRS["%s"].%s' % (target_dir, v),
+                        'Missing value for GYP_DIRS["%s"].%s' % (target_dir, v),
                         context,
                     )
 
@@ -1311,11 +1310,11 @@ class BuildReader:
         is relevant to that path. Let's say we have the following files on disk::
 
            moz.build
-           foo/moz.build
-           foo/baz/moz.build
-           foo/baz/file1
-           other/moz.build
-           other/file2
+           foo / moz.build
+           foo / baz / moz.build
+           foo / baz / file1
+           other / moz.build
+           other / file2
 
         If ``foo/baz/file1`` is passed in, the relevant moz.build files are
         ``moz.build``, ``foo/moz.build``, and ``foo/baz/moz.build``. For

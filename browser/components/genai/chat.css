@@ -45,12 +45,14 @@ browser {
     --caret-padding: var(--space-xsmall);
     --end-padding: 0px;
     --start-padding: calc(var(--caret-padding) + var(--background-image-width) + var(--space-xsmall));
+    --select-default-width: 300px;
     background-color: var(--button-background-color-ghost);
     background-position-x: var(--caret-anchor) var(--caret-padding);
     color: var(--button-text-color-ghost);
     flex: 1;
     height: var(--button-size-icon);
     margin-block: var(--space-xsmall);
+    max-width: var(--select-default-width);
 
     &:hover {
       background-color: var(--button-background-color-ghost-hover);
@@ -59,17 +61,6 @@ browser {
 
     &:dir(rtl) {
       --caret-anchor: right;
-    }
-  }
-
-  /* Hide some content, e.g., dropdown, when onboarding exists */
-  #multi-stage-message-root + & {
-    select {
-      background-image: none;
-    }
-
-    #header-more {
-      display: none;
     }
   }
 }
@@ -98,8 +89,8 @@ browser {
 
   .onboardingContainer {
     height: unset;
-    margin: var(--space-large);
-    margin-top: max(36px, 10vh - 31px);
+    margin: auto var(--space-large);
+    min-height: unset;
   }
 
   .screen {
@@ -232,6 +223,12 @@ browser {
     color: var(--text-color-deemphasized);
     font-size: 0.8em;
   }
+
+  + #header,
+  + #browser-container,
+  + #summarize-btn-container {
+    display: none;
+  }
 }
 
 #summarize-btn-container {
@@ -262,11 +259,6 @@ browser {
 
   /* stylelint-disable-next-line media-query-no-invalid */
   @media (not -moz-pref("browser.ml.chat.page")) or -moz-pref("browser.ml.chat.provider", "") {
-    display: none;
-  }
-
-  /* Hide footer when onboarding exists */
-  #multi-stage-message-root ~ & {
     display: none;
   }
 }

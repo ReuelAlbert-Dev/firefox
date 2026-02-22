@@ -381,15 +381,16 @@ void SVGDisplayContainerFrame::DidSetComputedStyle(ComputedStyle* aOldStyle) {
   }
   if (StyleDisplay()->CalcTransformPropertyDifference(
           *aOldStyle->StyleDisplay())) {
-    NotifySVGChanged(TRANSFORM_CHANGED);
+    NotifySVGChanged(ChangeFlag::TransformChanged);
   }
 }
 
-void SVGDisplayContainerFrame::NotifySVGChanged(uint32_t aFlags) {
-  MOZ_ASSERT(aFlags & (TRANSFORM_CHANGED | COORD_CONTEXT_CHANGED),
+void SVGDisplayContainerFrame::NotifySVGChanged(ChangeFlags aFlags) {
+  MOZ_ASSERT(aFlags.contains(ChangeFlag::TransformChanged) ||
+                 aFlags.contains(ChangeFlag::CoordContextChanged),
              "Invalidation logic may need adjusting");
 
-  if (aFlags & TRANSFORM_CHANGED) {
+  if (aFlags.contains(ChangeFlag::TransformChanged)) {
     // make sure our cached transform matrix gets (lazily) updated
     mCanvasTM = nullptr;
   }
@@ -430,8 +431,8 @@ gfxMatrix SVGDisplayContainerFrame::GetCanvasTM() {
     NS_ASSERTION(GetParent(), "null parent");
     auto* parent = static_cast<SVGContainerFrame*>(GetParent());
     auto* content = static_cast<SVGElement*>(GetContent());
-    mCanvasTM = MakeUnique<gfxMatrix>(content->ChildToUserSpaceTransform() *
-                                      parent->GetCanvasTM());
+    mCanvasTM = std::make_unique<gfxMatrix>(
+        content->ChildToUserSpaceTransform() * parent->GetCanvasTM());
   }
 
   return *mCanvasTM;

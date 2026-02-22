@@ -257,8 +257,6 @@ nsFormFillController::MarkAsAutoCompletableField(Element* aElement) {
   mAutoCompleteInputs.InsertOrUpdate(aElement, true);
   aElement->AddMutationObserverUnlessExists(this);
 
-  EnablePreview(aElement);
-
   if (nsFocusManager::GetFocusedElementStatic() == aElement) {
     if (!mControlledElement) {
       MaybeStartControllingInput(aElement);
@@ -968,7 +966,7 @@ nsresult nsFormFillController::KeyDown(Event* aEvent) {
 
   mPasswordPopupAutomaticallyOpened = false;
 
-  if (!IsFocusedInputControlled()) {
+  if (!mController || !mControlledElement || ReadOnly(mControlledElement)) {
     return NS_OK;
   }
 
@@ -985,6 +983,9 @@ nsresult nsFormFillController::KeyDown(Event* aEvent) {
     case KeyboardEvent_Binding::DOM_VK_RETURN: {
       nsCOMPtr<nsIAutoCompleteController> controller = mController;
       controller->HandleEnter(false, aEvent, &cancel);
+      if (nsFocusManager::GetFocusedElementStatic() != mControlledElement) {
+        StopControllingInput();
+      }
       break;
     }
     case KeyboardEvent_Binding::DOM_VK_DELETE:
@@ -1056,6 +1057,9 @@ nsresult nsFormFillController::KeyDown(Event* aEvent) {
     case KeyboardEvent_Binding::DOM_VK_ESCAPE: {
       nsCOMPtr<nsIAutoCompleteController> controller = mController;
       controller->HandleEscape(&cancel);
+      if (nsFocusManager::GetFocusedElementStatic() != mControlledElement) {
+        StopControllingInput();
+      }
       break;
     }
     case KeyboardEvent_Binding::DOM_VK_TAB: {
@@ -1265,7 +1269,7 @@ void nsFormFillController::GetValue(mozilla::dom::Element* aElement,
 
 Element* nsFormFillController::GetList(mozilla::dom::Element* aElement) {
   if (auto* input = HTMLInputElement::FromNodeOrNull(aElement)) {
-    return input->GetList();
+    return input->GetListInternal();
   }
   return nullptr;
 }
@@ -1336,13 +1340,4 @@ void nsFormFillController::SetUserInput(mozilla::dom::Element* aElement,
   } else if (auto* textarea = HTMLTextAreaElement::FromNodeOrNull(aElement)) {
     textarea->SetUserInput(aValue, aSubjectPrincipal);
   }
-}
-
-void nsFormFillController::EnablePreview(mozilla::dom::Element* aElement) {
-  if (auto* input = HTMLInputElement::FromNodeOrNull(aElement)) {
-    input->EnablePreview();
-  } else if (auto* textarea = HTMLTextAreaElement::FromNodeOrNull(aElement)) {
-    textarea->EnablePreview();
-  }
-  return;
 }

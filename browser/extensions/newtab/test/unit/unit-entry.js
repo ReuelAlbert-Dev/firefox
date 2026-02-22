@@ -37,20 +37,6 @@ chai.use(chaiAssertions);
 
 const overrider = new GlobalOverrider();
 
-// Create HTMLDialogElement mock if it doesn't exist
-if (typeof window.HTMLDialogElement === "undefined") {
-  window.HTMLDialogElement = function () {};
-  window.HTMLDialogElement.prototype = Object.create(HTMLElement.prototype);
-}
-
-// Patch the showModal and close methods
-window.HTMLDialogElement.prototype.showModal = function () {
-  this.open = true;
-};
-window.HTMLDialogElement.prototype.close = function () {
-  this.open = false;
-};
-
 const RemoteSettings = name => ({
   get: () => {
     if (name === "attachment") {
@@ -274,6 +260,15 @@ const TEST_GLOBAL = {
   console: {
     ...console,
     error() {},
+    createInstance() {
+      return {
+        log() {},
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      };
+    },
   },
   dump() {},
   EveryWindow: {
@@ -384,6 +379,22 @@ const TEST_GLOBAL = {
     home: "US",
     REGION_TOPIC: "browser-region-updated",
   },
+  SearchService: {
+    init() {
+      return Promise.resolve();
+    },
+    getVisibleEngines: () =>
+      Promise.resolve([{ identifier: "google" }, { identifier: "bing" }]),
+    defaultEngine: {
+      identifier: "google",
+      aliases: ["@google"],
+    },
+    defaultPrivateEngine: {
+      identifier: "bing",
+      aliases: ["@bing"],
+    },
+    getEngineByAlias: async () => null,
+  },
   Services: {
     dirsvc: {
       get: () => ({ parent: { parent: { path: "appPath" } } }),
@@ -441,6 +452,10 @@ const TEST_GLOBAL = {
         spec,
       }),
     },
+    /**
+     * @backward-compat { version 149 }
+     *   The search service was replaced by a singleton in 149.
+     */
     search: {
       init() {
         return Promise.resolve();
@@ -582,6 +597,9 @@ const TEST_GLOBAL = {
 
   getFxAccountsSingleton() {},
   AboutNewTab: {},
+  AboutHomeStartupCache: {
+    onPreloadedNewTabMessage() {},
+  },
   Glean: {
     activityStream: {
       eventClick: {

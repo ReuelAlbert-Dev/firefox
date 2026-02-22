@@ -87,7 +87,9 @@ struct ChannelMarker {
     using MS = MarkerSchema;
     MS schema(MS::Location::MarkerChart, MS::Location::MarkerTable);
     schema.SetTableLabel("{marker.data.url}");
-    schema.AddKeyFormat("url", MS::Format::Url, MS::PayloadFlags::Searchable);
+    schema.AddKeyFormat("url", MS::Format::Url);
+    // Bug 1618687 - Use channelId to segment "Waiting for Socket Thread".
+    schema.AddKeyFormat("channelId", MS::Format::Integer);
     schema.AddStaticLabelValue(
         "Description",
         "Timestamp capturing various phases of a network channel's lifespan.");
@@ -1718,8 +1720,7 @@ HttpChannelParent::SetClassifierMatchedInfo(const nsACString& aList,
                                             const nsACString& aProvider,
                                             const nsACString& aFullHash) {
   LOG(("HttpChannelParent::SetClassifierMatchedInfo [this=%p]\n", this));
-  if (!mIPCClosed) {
-    MOZ_ASSERT(mBgParent);
+  if (!mIPCClosed && mBgParent) {
     (void)mBgParent->OnSetClassifierMatchedInfo(aList, aProvider, aFullHash);
   }
   return NS_OK;
@@ -1730,8 +1731,7 @@ HttpChannelParent::SetClassifierMatchedTrackingInfo(
     const nsACString& aLists, const nsACString& aFullHashes) {
   LOG(("HttpChannelParent::SetClassifierMatchedTrackingInfo [this=%p]\n",
        this));
-  if (!mIPCClosed) {
-    MOZ_ASSERT(mBgParent);
+  if (!mIPCClosed && mBgParent) {
     (void)mBgParent->OnSetClassifierMatchedTrackingInfo(aLists, aFullHashes);
   }
   return NS_OK;
@@ -1744,8 +1744,7 @@ HttpChannelParent::NotifyClassificationFlags(uint32_t aClassificationFlags,
       ("HttpChannelParent::NotifyClassificationFlags "
        "classificationFlags=%" PRIu32 ", thirdparty=%d [this=%p]\n",
        aClassificationFlags, static_cast<int>(aIsThirdParty), this));
-  if (!mIPCClosed) {
-    MOZ_ASSERT(mBgParent);
+  if (!mIPCClosed && mBgParent) {
     (void)mBgParent->OnNotifyClassificationFlags(aClassificationFlags,
                                                  aIsThirdParty);
   }

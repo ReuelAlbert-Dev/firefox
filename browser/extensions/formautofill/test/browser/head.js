@@ -90,6 +90,8 @@ const FORMS_REPLACING_ALL_FIELDS_ON_INPUT =
   "https://example.org" +
   HTTP_TEST_PATH +
   "dynamic_form_replacing_all_fields.html";
+const FORMS_REPLACING_FORM_ON_INPUT =
+  "https://example.org" + HTTP_TEST_PATH + "dynamic_form_replace_form.html";
 const FORM_WITH_USER_INITIATED_FORM_CHANGE =
   "https://example.org" +
   HTTP_TEST_PATH +
@@ -195,6 +197,11 @@ const CROSS_ORIGIN_2_CC_EXP =
   CROSS_ORIGIN_2_URL + "../fixtures/autocomplete_cc_exp_embeded.html";
 const CROSS_ORIGIN_2_CC_TYPE =
   CROSS_ORIGIN_2_URL + "../fixtures/autocomplete_cc_type_embeded.html";
+
+const SAME_ORIGIN_NESTED_IFRAME =
+  TOP_LEVEL_URL + "../fixtures/nested_iframe.html";
+const CROSS_ORIGIN_NESTED_IFRAME =
+  CROSS_ORIGIN_URL + "../fixtures/nested_iframe.html";
 
 // Test profiles
 const TEST_ADDRESS_1 = {
@@ -859,6 +866,7 @@ async function clickDoorhangerButton(buttonType, index = 0) {
   let button;
   if (buttonType == MAIN_BUTTON || buttonType == SECONDARY_BUTTON) {
     button = getNotification()[buttonType];
+    button.click();
   } else if (buttonType == MENU_BUTTON) {
     // Click the dropmarker arrow and wait for the menu to show up.
     info("expecting notification menu button present");
@@ -877,9 +885,9 @@ async function clickDoorhangerButton(buttonType, index = 0) {
     await dropdownPromise;
 
     button = notification.querySelectorAll("menuitem")[index];
+    notification.menupopup.activateItem(button);
   }
 
-  button.click();
   info("expecting notification popup hidden");
   await popuphidden;
 }
@@ -900,6 +908,8 @@ async function clickAddressDoorhangerButton(buttonType, subType) {
     } else if (subType == ADDRESS_MENU_LEARN_MORE) {
       button = AutofillDoorhanger.learnMoreButton(notification);
     }
+    menupopup.activateItem(button);
+    return;
   } else {
     await clickDoorhangerButton(buttonType);
     return;
@@ -1209,7 +1219,8 @@ async function verifyPreviewResult(browser, section, expectedSection) {
   for (let i = 0; i < fieldDetails.length; i++) {
     const selector = getSelectorFromFieldDetail(fieldDetails[i]);
     const context = await findContext(browser, selector);
-    let expected = expectedFieldDetails[i].autofill ?? "";
+    let expected =
+      expectedFieldDetails[i].preview ?? expectedFieldDetails[i].autofill ?? "";
     if (fieldDetails[i].fieldName == "cc-number" && expected.length) {
       expected = "•".repeat(expected.length - 4) + expected.slice(-4);
     }
@@ -1489,6 +1500,9 @@ async function triggerCapture(browser, submitButtonSelector, fillSelectors) {
  * @param {object} patterns.captureExpectedRecord
  *        The expected saved record after capturing the form. Keyed by field name. This
  *        parameter is only used when `options.testCapture` is set.
+ * @param {boolean} patterns.useTestYear
+ *        Set to the current year to assign while running the test, useful for credit
+ *        card expiry tests with a manual set of year options in the dropdown.
  * @param {object} patterns.only
  *        This parameter is used solely for debugging purposes. When set to true,
  *        it restricts the execution to only the specified testcase.
@@ -1613,16 +1627,32 @@ async function add_heuristic_tests(
       const sleepAfterFocus = contexts.length > 1;
 
       for (const context of contexts) {
-        await SpecialPowers.spawn(context, [], async () => {
-          const elements = Array.from(
-            content.document.querySelectorAll("input, select")
-          );
-          // Focus on each field in the test document to trigger autofill field detection
-          // on all the fields.
-          elements.forEach(element => {
-            element.focus();
-          });
-        });
+        await SpecialPowers.spawn(
+          context,
+          [testPattern.useTestYear],
+          async year => {
+            let FormAutofillHeuristics;
+            if (year) {
+              FormAutofillHeuristics = ChromeUtils.importESModule(
+                "resource://gre/modules/shared/FormAutofillHeuristics.sys.mjs"
+              ).FormAutofillHeuristics;
+              FormAutofillHeuristics.useTestYear = year;
+            }
+
+            const elements = Array.from(
+              content.document.querySelectorAll("input, select")
+            );
+            // Focus on each field in the test document to trigger autofill field detection
+            // on all the fields.
+            elements.forEach(element => {
+              element.focus();
+            });
+
+            if (year) {
+              FormAutofillHeuristics.useTestYear = null;
+            }
+          }
+        );
 
         try {
           await BrowserTestUtils.synthesizeKey("VK_ESCAPE", {}, context);

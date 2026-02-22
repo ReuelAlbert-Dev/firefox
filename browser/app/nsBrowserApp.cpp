@@ -51,9 +51,9 @@
 
 #include "nsXPCOMPrivate.h"  // for MAXPATHLEN and XPCOM_DLL
 
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StartupTimeline.h"
-#include "BaseProfiler.h"
 
 #ifdef LIBFUZZER
 #  include "FuzzerDefs.h"
@@ -180,6 +180,7 @@ static bool IsFlag(const char* arg, const char* s) {
   return false;
 }
 
+#ifdef MOZ_BACKGROUNDTASKS
 /**
  * Return true if any arguments are flags with the given string.
  *
@@ -193,6 +194,7 @@ static bool HasFlag(int argc, char* argv[], const char* s) {
   }
   return false;
 }
+#endif
 
 constinit Bootstrap::UniquePtr gBootstrap;
 

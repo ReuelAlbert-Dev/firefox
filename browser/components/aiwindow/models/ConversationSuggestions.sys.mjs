@@ -9,13 +9,8 @@
 import {
   openAIEngine,
   renderPrompt,
+  MODEL_FEATURES,
 } from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
-
-import {
-  conversationStarterPrompt,
-  conversationFollowupPrompt,
-  conversationMemoriesPrompt,
-} from "moz-src:///browser/components/aiwindow/models/prompts/ConversationSuggestionsPrompts.sys.mjs";
 
 import { MESSAGE_ROLE } from "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs";
 
@@ -52,16 +47,17 @@ export function trimConversation(messages, maxMessages = 15) {
  * Helper to add memories to base prompt if applicable
  *
  * @param {string} base - base prompt
+ * @param {string} conversationMemoriesPrompt - the memories prompt template
  * @returns {Promise<string>} - prompt with memories added if applicable
  */
-export async function addMemoriesToPrompt(base) {
+export async function addMemoriesToPrompt(base, conversationMemoriesPrompt) {
   let memorySummaries =
     await MemoriesGetterForSuggestionPrompts.getMemorySummariesForPrompt(
       MAX_NUM_MEMORIES
     );
   if (memorySummaries.length) {
     const memoriesBlock = memorySummaries.map(s => `- ${s}`).join("\n");
-    const memoryPrompt = await renderPrompt(conversationMemoriesPrompt, {
+    const memoryPrompt = renderPrompt(conversationMemoriesPrompt, {
       memories: memoriesBlock,
     });
     return `${base}\n${memoryPrompt}`;
@@ -196,28 +192,50 @@ export async function generateConversationStartersSidebar(
       openedTabs = "No tabs available";
     }
 
+    // Build engine and load prompt
+    const engineInstance = await openAIEngine.build(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_SIDEBAR_STARTER
+    );
+
+    const conversationStarterPrompt = await engineInstance.loadPrompt(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_SIDEBAR_STARTER
+    );
+
+    const assistantLimitations = await engineInstance.loadPrompt(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_ASSISTANT_LIMITATIONS
+    );
+
     // Base template
-    const base = await renderPrompt(conversationStarterPrompt, {
+    const base = renderPrompt(conversationStarterPrompt, {
       current_tab: currentTab,
       open_tabs: openedTabs,
       n: String(n),
       date: today,
+      assistant_limitations: assistantLimitations,
     });
 
-    let filled = useMemories
-      ? await addMemoriesToPrompt(base, useMemories)
-      : base;
+    let filled = base;
+    if (useMemories) {
+      const conversationMemoriesPrompt = await engineInstance.loadPrompt(
+        MODEL_FEATURES.CONVERSATION_SUGGESTIONS_MEMORIES
+      );
+      filled = await addMemoriesToPrompt(base, conversationMemoriesPrompt);
+    }
 
-    const engineInstance = await openAIEngine.build("starter");
+    // Get config for inference parameters
+    const config = engineInstance.getConfig(engineInstance.feature);
+    const inferenceParams = config?.parameters || {};
 
     const result = await engineInstance.run({
-      messages: [
+      args: [
         {
           role: "system",
           content: "Return only the requested suggestions, one per line.",
         },
         { role: "user", content: filled },
       ],
+      fxAccountToken: await openAIEngine.getFxAccountToken(),
+      ...inferenceParams,
     });
 
     const prompts = cleanInferenceOutput(result);
@@ -254,18 +272,41 @@ export async function generateFollowupPrompts(
       currentTab && Object.keys(currentTab).length
         ? formatJson({ title: currentTab.title, url: currentTab.url })
         : "No tab";
-    const base = await renderPrompt(conversationFollowupPrompt, {
+
+    // Build engine and load prompt
+    const engineInstance = await openAIEngine.build(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_FOLLOWUP
+    );
+
+    const conversationFollowupPrompt = await engineInstance.loadPrompt(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_FOLLOWUP
+    );
+
+    const assistantLimitationsFollowup = await engineInstance.loadPrompt(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_ASSISTANT_LIMITATIONS
+    );
+
+    const base = renderPrompt(conversationFollowupPrompt, {
       current_tab: currentTabStr,
       conversation: formatJson(convo),
       n: String(n),
       date: today,
+      assistant_limitations: assistantLimitationsFollowup,
     });
 
-    let filled = useMemories
-      ? await addMemoriesToPrompt(base, useMemories)
-      : base;
+    let filled = base;
+    if (useMemories) {
+      const conversationMemoriesPrompt = await engineInstance.loadPrompt(
+        MODEL_FEATURES.CONVERSATION_SUGGESTIONS_MEMORIES
+      );
+      filled = await addMemoriesToPrompt(base, conversationMemoriesPrompt);
+    }
 
-    const engineInstance = await openAIEngine.build("followup");
+    // Get config for inference parameters
+    const config = engineInstance.getConfig(
+      MODEL_FEATURES.CONVERSATION_SUGGESTIONS_FOLLOWUP
+    );
+    const inferenceParams = config?.parameters || {};
 
     const result = await engineInstance.run({
       messages: [
@@ -275,6 +316,7 @@ export async function generateFollowupPrompts(
         },
         { role: "user", content: filled },
       ],
+      ...inferenceParams,
     });
 
     const prompts = cleanInferenceOutput(result);

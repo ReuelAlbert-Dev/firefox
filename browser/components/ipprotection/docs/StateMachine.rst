@@ -34,7 +34,7 @@ Events and integration points
 - ``IPProtectionService:StateChanged`` is dispatched on state changes with
   ``detail.state`` and ``detail.prevState``.
 - Helpers can call ``IPProtectionService.updateState()`` to recompute the state immediately; update any helper-owned data first because the call is synchronous.
-- Public actions: ``start(userAction)``, ``stop(userAction)``, and ``startLoginFlow(browser)``.
+- Public actions: ``start(userAction)``, ``stop(userAction)``.
 
 Proxy manager state machine
 ---------------------------
@@ -51,6 +51,7 @@ Proxy states
 - ``ACTIVATING``: ``start()`` is creating a channel filter, fetching a proxy pass, and selecting an endpoint.
 - ``ACTIVE``: Proxy connected. Usage and network observers are reporting metrics.
 - ``ERROR``: A recoverable error occurred while activating or rotating credentials. Errors are kept in a bounded history.
+- ``PAUSED``: Everything is working but the bandwidth limit has been reached so we can't connect to the VPN. The bandwidth will reset next month.
 
 Proxy transitions
 ~~~~~~~~~~~~~~~~~

@@ -50,7 +50,8 @@ const { ENABLED_AUTOFILL_ADDRESSES_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF } =
 
 const FORM_AUTOFILL_CONFIG = {
   payments: {
-    l10nId: "autofill-payment-methods-header",
+    l10nId: "payments-group",
+    headingLevel: 2,
     items: [
       {
         id: "saveAndFillPayments",
@@ -78,7 +79,8 @@ const FORM_AUTOFILL_CONFIG = {
     ],
   },
   addresses: {
-    l10nId: "autofill-addresses-header",
+    l10nId: "addresses-group",
+    headingLevel: 2,
     items: [
       {
         id: "saveAndFillAddresses",
@@ -170,10 +172,10 @@ export class FormAutofillPreferences {
       visible: () => lazy.OSKeyStore.canReauth(),
       get: () => FormAutofillUtils.getOSAuthEnabled(),
       async set(checked) {
-        await FormAutofillPreferences.prototype.trySetOSAuthEnabled(
-          win,
-          checked
-        );
+        await FormAutofillPreferences.trySetOSAuthEnabled(win, checked);
+
+        // Trigger change event to keep checkbox UI in sync with pref value
+        Services.obs.notifyObservers(null, "OSAuthEnabledChange");
       },
       setup: emitChange => {
         Services.obs.addObserver(emitChange, "OSAuthEnabledChange");
@@ -182,19 +184,9 @@ export class FormAutofillPreferences {
       },
     });
 
-    let paymentsGroup = document.querySelector(
-      "setting-group[groupid=payments]"
-    );
-    paymentsGroup.config = FORM_AUTOFILL_CONFIG.payments;
-    paymentsGroup.getSetting = win.Preferences.getSetting.bind(win.Preferences);
-
-    let addressesGroup = document.querySelector(
-      "setting-group[groupid=addresses]"
-    );
-    addressesGroup.config = FORM_AUTOFILL_CONFIG.addresses;
-    addressesGroup.getSetting = win.Preferences.getSetting.bind(
-      win.Preferences
-    );
+    win.SettingGroupManager.registerGroups(FORM_AUTOFILL_CONFIG);
+    win.initSettingGroup("payments");
+    win.initSettingGroup("addresses");
     Services.obs.notifyObservers(win, "formautofill-preferences-initialized");
   }
 
@@ -206,7 +198,16 @@ export class FormAutofillPreferences {
     await lazy.formAutofillStorage.initialize();
   }
 
-  async trySetOSAuthEnabled(win, checked) {
+  /**
+   * Helper that sets OS Auth from the about:preferences, if authorized.
+   *
+   * @param  {object} win
+   *          The browser window.
+   * @param  {boolean} checked
+   *          The new state to set OS auth for payments, which determines if its
+   *          enabled or not. If not authorized, set to the current checked state.
+   */
+  static async trySetOSAuthEnabled(win, checked) {
     let messageText = await lazy.l10n.formatValueSync(
       "autofill-creditcard-os-dialog-message"
     );
@@ -229,7 +230,6 @@ export class FormAutofillPreferences {
     });
 
     if (!isAuthorized) {
-      FormAutofillUtils.setOSAuthEnabled(!checked);
       return;
     }
 
@@ -262,8 +262,7 @@ export class FormAutofillPreferences {
             id: "payment-item",
             control: "moz-box-item",
             l10nId: "payment-moz-box-item",
-            iconSrc:
-              "chrome://formautofill/content/icon-credit-card-generic.svg",
+            iconSrc: "chrome://browser/skin/payment-methods-16.svg",
             l10nArgs: {
               cardNumber: record["cc-number"].replace(/^(\*+)(\d+)$/, "$1 $2"),
               expDate: record["cc-exp"].replace(/^(\d{4})-\d{2}$/, "XX/$1"),
@@ -273,6 +272,7 @@ export class FormAutofillPreferences {
                 control: "moz-button",
                 iconSrc: "chrome://global/skin/icons/delete.svg",
                 type: "icon",
+                l10nId: "payments-delete-payment-button-label",
                 controlAttrs: {
                   slot: "actions",
                   action: "remove",
@@ -283,6 +283,7 @@ export class FormAutofillPreferences {
                 control: "moz-button",
                 iconSrc: "chrome://global/skin/icons/edit.svg",
                 type: "icon",
+                l10nId: "payments-edit-payment-button-label",
                 controlAttrs: {
                   slot: "actions",
                   action: "edit",
@@ -345,6 +346,7 @@ export class FormAutofillPreferences {
           },
           options: [
             {
+              id: "delete-address-button",
               control: "moz-button",
               iconSrc: "chrome://global/skin/icons/delete.svg",
               type: "icon",
@@ -356,6 +358,7 @@ export class FormAutofillPreferences {
               },
             },
             {
+              id: "edit-address-button",
               control: "moz-button",
               iconSrc: "chrome://global/skin/icons/edit.svg",
               type: "icon",
@@ -569,5 +572,15 @@ export class FormAutofillPreferences {
       noValidate: true,
       l10nStrings: lazy.ManageAddresses.getAddressL10nStrings(),
     });
+  }
+
+  static openPaymentPreference() {
+    const win = Services.wm.getMostRecentBrowserWindow();
+    win.openPreferences("privacy-payment-methods-autofill");
+  }
+
+  static openAddressPreference() {
+    const win = Services.wm.getMostRecentBrowserWindow();
+    win.openPreferences("privacy-address-autofill");
   }
 }

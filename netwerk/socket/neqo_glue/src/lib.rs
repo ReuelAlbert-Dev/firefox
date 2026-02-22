@@ -28,8 +28,8 @@ use firefox_on_glean::{
 use libc::{c_int, AF_INET, AF_INET6};
 use libc::{c_uchar, size_t};
 use neqo_common::{
-    event::Provider as _, qdebug, qerror, qlog::Qlog, qwarn, Datagram, DatagramBatch, Decoder,
-    Encoder, Header, Role, Tos,
+    datagram, event::Provider as _, qdebug, qerror, qlog::Qlog, qwarn, Datagram, Decoder, Encoder,
+    Header, Role, Tos,
 };
 use neqo_crypto::{agent::CertificateCompressor, init, PRErrorCode};
 use neqo_http3::{
@@ -114,7 +114,7 @@ pub struct NeqoHttp3Conn {
     socket: Option<neqo_udp::Socket<BorrowedSocket>>,
     /// Buffered outbound datagram from previous send that failed with
     /// WouldBlock. To be sent once UDP socket has write-availability again.
-    buffered_outbound_datagram: Option<DatagramBatch>,
+    buffered_outbound_datagram: Option<datagram::Batch>,
 
     datagram_segment_size_sent: LocalMemoryDistribution<'static>,
     datagram_segment_size_received: LocalMemoryDistribution<'static>,
@@ -629,8 +629,8 @@ impl NeqoHttp3Conn {
             && static_prefs::pref!("network.http.http3.ecn_mark")
             && stats.frame_rx.handshake_done != 0
         {
-            let tx_ect0_sum: u64 = stats.ecn_tx.into_values().map(|v| v[Ecn::Ect0]).sum();
-            let tx_ce_sum: u64 = stats.ecn_tx.into_values().map(|v| v[Ecn::Ce]).sum();
+            let tx_ect0_sum: u64 = stats.ecn_tx_acked.into_values().map(|v| v[Ecn::Ect0]).sum();
+            let tx_ce_sum: u64 = stats.ecn_tx_acked.into_values().map(|v| v[Ecn::Ce]).sum();
             if tx_ect0_sum > 0 {
                 if let Ok(ratio) = i64::try_from((tx_ce_sum * PRECISION_FACTOR) / tx_ect0_sum) {
                     glean::http_3_ecn_ce_ect0_ratio_sent.accumulate_single_sample_signed(ratio);
@@ -2169,8 +2169,11 @@ pub extern "C" fn neqo_http3conn_authenticated(conn: &mut NeqoHttp3Conn, error: 
 pub extern "C" fn neqo_http3conn_set_resumption_token(
     conn: &mut NeqoHttp3Conn,
     token: &mut ThinVec<u8>,
-) {
-    _ = conn.conn.enable_resumption(Instant::now(), token);
+) -> nsresult {
+    match conn.conn.enable_resumption(Instant::now(), token) {
+        Ok(_) => NS_OK,
+        Err(_) => NS_ERROR_NET_HTTP3_PROTOCOL_ERROR,
+    }
 }
 
 #[no_mangle]

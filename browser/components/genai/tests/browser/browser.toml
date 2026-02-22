@@ -39,6 +39,11 @@ skip-if = [
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1992633
 ]
 
+["browser_chat_sidebar_permissions.js"]
+support-files = [
+  "file_chat-webrtc.html",
+]
+
 ["browser_chat_telemetry.js"]
 skip-if = [
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1992527
@@ -65,6 +70,8 @@ skip-if = [
   "os == 'mac' && os_version == '15.30' && arch == 'aarch64'", # Bug 1996489
 ]
 
+["browser_link_preview_aifeature_lifecycle.js"]
+
 ["browser_link_preview_nimbus.js"]
 
 ["browser_link_preview_optin.js"]
@@ -85,5 +92,3 @@ support-files = [
 ]
 
 ["browser_page_assist_sidebar.js"]
-
-["browser_smart_assist_sidebar.js"]

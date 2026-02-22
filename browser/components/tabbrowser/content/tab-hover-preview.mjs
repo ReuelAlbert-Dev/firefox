@@ -83,6 +83,16 @@ export default class TabHoverPanelSet {
     );
 
     this.#setExternalPopupListeners();
+    this.#win.gBrowser.tabContainer.addEventListener("dragstart", event => {
+      const target = event.target.closest?.("tab, .tab-group-label");
+      if (
+        target &&
+        (this.#win.gBrowser.isTab(target) ||
+          this.#win.gBrowser.isTabGroupLabel(target))
+      ) {
+        this.deactivate(null, { force: true });
+      }
+    });
   }
 
   /**
@@ -191,6 +201,7 @@ export default class TabHoverPanelSet {
     return (
       // All other popups are closed.
       !this.#openPopups.size &&
+      !this.#win.gBrowser.tabContainer.hasAttribute("movingtab") &&
       // TODO (bug 1899556): for now disable in background windows, as there are
       // issues with windows ordering on Linux (bug 1897475), plus intermittent
       // persistence of previews after session restore (bug 1888148).
@@ -292,6 +303,9 @@ class TabPanel extends HoverPanel {
     this.panelElement
       .querySelector(".tab-preview-add-note")
       .addEventListener("click", () => this.#openTabNotePanel());
+    this.panelElement
+      .querySelector(".tab-preview-note-expand")
+      .addEventListener("click", () => (this.#noteExpanded = true));
   }
 
   /**
@@ -332,6 +346,8 @@ class TabPanel extends HoverPanel {
     //
     // If the popup is closed this call will be ignored.
     this.#movePanel();
+
+    this.#noteExpanded = false;
 
     originalTab?.removeEventListener("TabAttrModified", this);
     this.#tab.addEventListener("TabAttrModified", this);
@@ -534,20 +550,41 @@ class TabPanel extends HoverPanel {
         "";
     }
 
-    const noteTextContainer = this.panelElement.querySelector(
-      ".tab-note-text-container"
+    const noteContainer = this.panelElement.querySelector(
+      ".tab-preview-note-container"
+    );
+    const noteTextContainer = noteContainer.querySelector(
+      ".tab-preview-note-text"
     );
     const addNoteButton = this.panelElement.querySelector(
       ".tab-preview-add-note"
     );
+
     if (this._prefUseTabNotes && lazy.TabNotes.isEligible(this.#tab)) {
       lazy.TabNotes.get(this.#tab).then(note => {
         noteTextContainer.textContent = note?.text || "";
+
         addNoteButton.toggleAttribute("hidden", !!note);
+        noteContainer.toggleAttribute("hidden", !note?.text);
+
+        // Allow CSS to see if the note is overflowing
+        this.#noteOverflow =
+          noteTextContainer.scrollHeight > noteTextContainer.clientHeight;
+
+        // Pass the width of the button to CSS so that
+        // they can be used to calculate the correct offset of the gradient mask
+        let button = this.panelElement.querySelector(
+          ".tab-preview-note-expand"
+        );
+        noteTextContainer.style.setProperty(
+          "--tab-note-expand-toggle-width",
+          `${button.offsetWidth}px`
+        );
       });
     } else {
       noteTextContainer.textContent = "";
       addNoteButton.setAttribute("hidden", "");
+      noteContainer.setAttribute("hidden", "");
     }
 
     let thumbnailContainer = this.panelElement.querySelector(
@@ -583,6 +620,25 @@ class TabPanel extends HoverPanel {
         this.popupOptions.y
       );
     }
+  }
+
+  /**
+   * @param {boolean} val
+   */
+  set #noteExpanded(val) {
+    this.panelElement.toggleAttribute("note-expanded", val);
+    if (val && this.#tab) {
+      this.#tab.dispatchEvent(
+        new CustomEvent("TabNote:Expand", { bubbles: true })
+      );
+    }
+  }
+
+  /**
+   * @param {boolean} val
+   */
+  set #noteOverflow(val) {
+    this.panelElement.toggleAttribute("note-overflow", val);
   }
 
   get popupOptions() {

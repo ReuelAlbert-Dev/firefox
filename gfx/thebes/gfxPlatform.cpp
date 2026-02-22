@@ -2303,6 +2303,7 @@ mozilla::LogModule* gfxPlatform::GetLog(eGfxLog aWhichLog) {
   static LazyLogModule sTextrunuiLog("textrunui");
   static LazyLogModule sCmapDataLog("cmapdata");
   static LazyLogModule sTextPerfLog("textperf");
+  static LazyLogModule sFontQueryLog("fontquery");
 
   switch (aWhichLog) {
     case eGfxLog_fontlist:
@@ -2317,6 +2318,8 @@ mozilla::LogModule* gfxPlatform::GetLog(eGfxLog aWhichLog) {
       return sCmapDataLog;
     case eGfxLog_textperf:
       return sTextPerfLog;
+    case eGfxLog_fontquery:
+      return sFontQueryLog;
   }
 
   MOZ_ASSERT_UNREACHABLE("Unexpected log type");
@@ -2875,13 +2878,16 @@ void gfxPlatform::InitWebRenderConfig() {
     }
   }
 
-#  ifdef XP_WIN
   if (StaticPrefs::
           gfx_webrender_layer_compositor_use_dcomp_texture_AtStartup() &&
       IsWin1122H2OrLater() && gfxVars::UseWebRenderDCompWin()) {
     gfxVars::SetWebRenderLayerCompositorDCompTexture(true);
   }
-#  endif
+
+  if (StaticPrefs::gfx_webrender_dcomp_texture_overlay_win_AtStartup() &&
+      IsWin1122H2OrLater() && gfxVars::UseWebRenderDCompWin()) {
+    gfxVars::SetUseWebRenderDCompositionTextureOverlayWin(true);
+  }
 #endif
 
   bool allowOverlayVpAutoHDR = false;
@@ -2903,6 +2909,10 @@ void gfxPlatform::InitWebRenderConfig() {
 
   if (allowOverlayVpAutoHDR) {
     gfxVars::SetWebRenderOverlayVpAutoHDR(true);
+  }
+
+  if (StaticPrefs::gfx_webrender_overlay_hdr_AtStartup()) {
+    gfxVars::SetWebRenderOverlayHDR(true);
   }
 
   bool allowOverlayVpSuperResolution = false;
@@ -3776,13 +3786,16 @@ void gfxPlatform::GetOverlayInfo(mozilla::widget::InfoObject& aObj) {
   };
 
   nsPrintfCString value(
-      "NV12=%s YUV2=%s BGRA8=%s RGB10A2=%s VpSR=%s VpAutoHDR=%s",
+      "NV12=%s YUV2=%s BGRA8=%s RGB10A2=%s RGBA16F=%s VpSR=%s VpAutoHDR=%s "
+      "HDR=%s",
       toString(mOverlayInfo.ref().mNv12Overlay),
       toString(mOverlayInfo.ref().mYuy2Overlay),
       toString(mOverlayInfo.ref().mBgra8Overlay),
       toString(mOverlayInfo.ref().mRgb10a2Overlay),
+      toString(mOverlayInfo.ref().mRgba16fOverlay),
       toStringBool(mOverlayInfo.ref().mSupportsVpSuperResolution),
-      toStringBool(mOverlayInfo.ref().mSupportsVpAutoHDR));
+      toStringBool(mOverlayInfo.ref().mSupportsVpAutoHDR),
+      toStringBool(mOverlayInfo.ref().mSupportsHDR));
 
   aObj.DefineProperty("OverlaySupport", NS_ConvertUTF8toUTF16(value));
 }

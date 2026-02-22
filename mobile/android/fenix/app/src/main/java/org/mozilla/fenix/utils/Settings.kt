@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Context.MODE_PRIVATE
 import android.content.SharedPreferences
 import android.content.pm.ShortcutManager
+import android.os.Environment
 import android.view.accessibility.AccessibilityManager
 import androidx.annotation.VisibleForTesting
 import androidx.annotation.VisibleForTesting.Companion.PRIVATE
@@ -46,6 +47,7 @@ import org.mozilla.fenix.autofill.address.RegionAddressFeatureGate
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
 import org.mozilla.fenix.components.settings.counterPreference
 import org.mozilla.fenix.components.settings.featureFlagBooleanPreference
+import org.mozilla.fenix.components.settings.lazyBooleanPreference
 import org.mozilla.fenix.components.settings.lazyFeatureFlagBooleanPreference
 import org.mozilla.fenix.components.toolbar.ToolbarPosition
 import org.mozilla.fenix.debugsettings.addresses.EmptyAddressesDebugRegionRepository
@@ -61,11 +63,10 @@ import org.mozilla.fenix.nimbus.CookieBannersSection
 import org.mozilla.fenix.nimbus.DefaultBrowserPrompt
 import org.mozilla.fenix.nimbus.FxNimbus
 import org.mozilla.fenix.nimbus.HomeScreenSection
+import org.mozilla.fenix.nimbus.OpeningScreenOption
 import org.mozilla.fenix.settings.PhoneFeature
 import org.mozilla.fenix.settings.ShortcutType
 import org.mozilla.fenix.settings.deletebrowsingdata.DeleteBrowsingDataOnQuitType
-import org.mozilla.fenix.settings.logins.SavedLoginsSortingStrategyMenu
-import org.mozilla.fenix.settings.logins.SortingStrategy
 import org.mozilla.fenix.settings.registerOnSharedPreferenceChangeListener
 import org.mozilla.fenix.settings.sitepermissions.AUTOPLAY_BLOCK_ALL
 import org.mozilla.fenix.settings.sitepermissions.AUTOPLAY_BLOCK_AUDIBLE
@@ -74,7 +75,6 @@ import org.mozilla.fenix.termsofuse.TOU_VERSION
 import org.mozilla.fenix.termsofuse.getApplicationInstalledTime
 import org.mozilla.fenix.wallpapers.Wallpaper
 import java.security.InvalidParameterException
-import java.util.UUID
 import java.util.concurrent.TimeUnit.MILLISECONDS
 
 private const val AUTOPLAY_USER_SETTING = "AUTOPLAY_USER_SETTING"
@@ -344,12 +344,19 @@ class Settings(
     }
 
     /**
-     * Indicates if the custom review prompt feature should be enabled. `True` if the feature is
-     * enabled, `false` otherwise.
+     * Indicates if review prompt feature should use the new trigger criteria.
      */
-    var customReviewPromptFeatureEnabled by booleanPreference(
+    var newReviewPromptTriggerCriteriaEnabled by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_custom_review_prompt_enabled),
         default = { FxNimbus.features.customReviewPrompt.value().enabled },
+    )
+
+    /**
+     * Indicates if the custom review prompt UI should be enabled.
+     */
+    var customReviewPromptUiEnabled by booleanPreference(
+        appContext.getPreferenceKey(R.string.pref_key_custom_review_prompt_ui_enabled),
+        default = { FxNimbus.features.customReviewPromptUi.value().enabled },
     )
 
     var lastCfrShownTimeInMillis by longPreference(
@@ -636,6 +643,14 @@ class Settings(
     )
 
     /**
+     * The ID of the content option for the Terms of Use prompt.
+     */
+    var termsOfUsePromptContentOptionId by stringPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_terms_prompt_content_option),
+        default = { FxNimbus.features.termsOfUsePrompt.value().contentOption.name },
+    )
+
+    /**
      * The maximum number of times the Terms of Use prompt should be displayed.
      *
      * Use a function to ensure the most up-to-date Nimbus value is retrieved.
@@ -698,6 +713,26 @@ class Settings(
     var hasUserDisabledExperimentation by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_user_disabled_experimentation),
         default = false,
+    )
+
+    /**
+     * Controls whether the user is opted into rollouts (remote improvements).
+     * Rollouts are completely decoupled from telemetry and experiments, so users
+     * can receive feature updates regardless of their telemetry or experiment settings.
+     */
+    var isRolloutsEnabled by lazyBooleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_rollouts),
+        defaultValue = { appContext.components.nimbus.sdk.rolloutParticipation },
+    )
+
+    /**
+     * Timestamp in milliseconds when the "Set as default browser" system prompt was requested.
+     * Used to calculate the response time and detect if the prompt was automatically suppressed
+     * by the system (e.g., when "Don't ask again" is active).
+     */
+    var setToDefaultPromptRequested by longPreference(
+        appContext.getPreferenceKey(R.string.pref_key_last_set_as_default_prompt_request_time),
+        default = 0L,
     )
 
     var isOverrideTPPopupsForPerformanceTest = false
@@ -827,13 +862,16 @@ class Settings(
         default = 0L,
     )
 
+    private val openingScreenDefault: OpeningScreenOption
+        get() = FxNimbus.features.homepageOpeningScreenDefault.value().defaultOption
+
     /**
      * Indicates if the user has selected the option to start on the home screen after
      * four hours of inactivity.
      */
     var openHomepageAfterFourHoursOfInactivity by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_start_on_home_after_four_hours),
-        default = true,
+        default = { openingScreenDefault == OpeningScreenOption.HOMEPAGE_FOUR_HOURS },
     )
 
     /**
@@ -841,7 +879,7 @@ class Settings(
      */
     var alwaysOpenTheHomepageWhenOpeningTheApp by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_start_on_home_always),
-        default = false,
+        default = { openingScreenDefault == OpeningScreenOption.HOMEPAGE },
     )
 
     /**
@@ -850,7 +888,7 @@ class Settings(
      */
     var alwaysOpenTheLastTabWhenOpeningTheApp by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_start_on_home_never),
-        default = false,
+        default = { openingScreenDefault == OpeningScreenOption.LAST_TAB },
     )
 
     /**
@@ -858,7 +896,7 @@ class Settings(
      */
     var isLnaBlockingEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_blocking_enabled),
-        default = { FxNimbus.features.lnaBlocking.value().blocking },
+        default = Config.channel.isNightlyOrDebug,
     )
 
     /**
@@ -866,7 +904,7 @@ class Settings(
      */
     var isLnaTrackerBlockingEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_tracker_blocking_enabled),
-        default = { FxNimbus.features.lnaBlocking.value().blockTrackers },
+        default = false,
     )
 
     /**
@@ -878,7 +916,7 @@ class Settings(
      */
     var isLnaFeatureEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_lna_feature_enabled),
-        default = { FxNimbus.features.lnaBlocking.value().enabled },
+        default = Config.channel.isNightlyOrDebug,
     )
 
     /**
@@ -1915,30 +1953,6 @@ class Settings(
         default = "",
     )
 
-    private var savedLoginsSortingStrategyString by stringPreference(
-        appContext.getPreferenceKey(R.string.pref_key_saved_logins_sorting_strategy),
-        default = SavedLoginsSortingStrategyMenu.Item.AlphabeticallySort.strategyString,
-    )
-
-    val savedLoginsMenuHighlightedItem: SavedLoginsSortingStrategyMenu.Item
-        get() = SavedLoginsSortingStrategyMenu.Item.fromString(savedLoginsSortingStrategyString)
-
-    var savedLoginsSortingStrategy: SortingStrategy
-        get() {
-            return when (savedLoginsMenuHighlightedItem) {
-                SavedLoginsSortingStrategyMenu.Item.AlphabeticallySort -> SortingStrategy.Alphabetically
-                SavedLoginsSortingStrategyMenu.Item.LastUsedSort -> SortingStrategy.LastUsed
-            }
-        }
-        set(value) {
-            savedLoginsSortingStrategyString = when (value) {
-                is SortingStrategy.Alphabetically ->
-                    SavedLoginsSortingStrategyMenu.Item.AlphabeticallySort.strategyString
-                is SortingStrategy.LastUsed ->
-                    SavedLoginsSortingStrategyMenu.Item.LastUsedSort.strategyString
-            }
-        }
-
     var isPullToRefreshEnabledInBrowser by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_website_pull_to_refresh),
         default = true,
@@ -1947,6 +1961,16 @@ class Settings(
     var isSettingsSearchEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_allow_settings_search),
         default = { FxNimbus.features.settingsSearch.value().enabled },
+    )
+
+    var isSearchOptimizationEnabled by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_search_optimization_feature),
+        default = { FxNimbus.features.searchOptimizationOption.value().enabled },
+    )
+
+    var shouldShowSearchOptimizationStockCard by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_search_optimization_stocks),
+        default = { FxNimbus.features.searchOptimizationOption.value().showStocksCard },
     )
 
     var isTabStripEnabled by booleanPreference(
@@ -2060,56 +2084,6 @@ class Settings(
     var shouldSyncAddressesAcrossDevices by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_addresses_sync_cards_across_devices),
         default = false,
-    )
-
-    /**
-     * Get the profile id to use in the sponsored stories communications with the Pocket endpoint.
-     */
-    val pocketSponsoredStoriesProfileId by stringPreference(
-        appContext.getPreferenceKey(R.string.pref_key_pocket_sponsored_stories_profile),
-        default = { UUID.randomUUID().toString() },
-        persistDefaultIfNotExists = true,
-    )
-
-    /**
-     * Whether or not the profile ID used in the sponsored stories communications with the Pocket
-     * endpoint has been migrated to the MARS endpoint.
-     */
-    var hasPocketSponsoredStoriesProfileMigrated by booleanPreference(
-        appContext.getPreferenceKey(R.string.pref_key_pocket_sponsored_stories_profile_migrated),
-        default = false,
-    )
-
-    /**
-     *  Whether or not to display the Pocket sponsored stories parameter secret settings.
-     */
-    var useCustomConfigurationForSponsoredStories by booleanPreference(
-        appContext.getPreferenceKey(R.string.pref_key_custom_sponsored_stories_parameters_enabled),
-        default = false,
-    )
-
-    /**
-     * Site parameter used to set the spoc content.
-     */
-    var pocketSponsoredStoriesSiteId by stringPreference(
-        appContext.getPreferenceKey(R.string.pref_key_custom_sponsored_stories_site_id),
-        default = "",
-    )
-
-    /**
-     * Country parameter used to set the spoc content.
-     */
-    var pocketSponsoredStoriesCountry by stringPreference(
-        appContext.getPreferenceKey(R.string.pref_key_custom_sponsored_stories_country),
-        default = "",
-    )
-
-    /**
-     * City parameter used to set the spoc content.
-     */
-    var pocketSponsoredStoriesCity by stringPreference(
-        appContext.getPreferenceKey(R.string.pref_key_custom_sponsored_stories_city),
-        default = "",
     )
 
     /**
@@ -2237,7 +2211,8 @@ class Settings(
      */
     var hasSeenBrowserToolbarCFR by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_toolbar_cfr),
-        default = isBenchmarkBuild,
+        default = Config.channel.isReleaseOrBeta || isBenchmarkBuild,
+        persistDefaultIfNotExists = true,
     )
 
     /**
@@ -2287,6 +2262,30 @@ class Settings(
         default = false,
     )
 
+    var firstWeekPostInstallLastThreeDaysActivitySent by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_first_week_post_install_last_three_days_activity_sent),
+        default = false,
+    )
+
+    var firstWeekPostInstallRecurrentActivitySent by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_first_week_post_install_recurrent_activity_sent),
+        default = false,
+    )
+
+    var firstWeekPostInstallEverydayActivityAndSetToDefaultSent by booleanPreference(
+        key = appContext.getPreferenceKey(
+            R.string.pref_key_first_week_post_install_everyday_activity_and_set_to_default_sent,
+        ),
+        default = false,
+    )
+
+    var firstWeekPostInstallIsBrowserSetToDefaultDuringFirstFourDays by booleanPreference(
+        key = appContext.getPreferenceKey(
+            R.string.pref_key_first_week_post_install_is_browser_set_to_default_during_first_four_days,
+        ),
+        default = false,
+    )
+
     var firstWeekDaysOfUseGrowthData by stringSetPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_growth_first_week_days_of_use),
         default = setOf(),
@@ -2315,14 +2314,6 @@ class Settings(
     var uriLoadGrowthLastSent by longPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_growth_uri_load_last_sent),
         default = 0,
-    )
-
-    /**
-     * Indicates if the menu redesign is enabled.
-     */
-    var enableMenuRedesign by booleanPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_enable_menu_redesign),
-        default = { FxNimbus.features.menuRedesign.value().enabled },
     )
 
     /**
@@ -2362,7 +2353,7 @@ class Settings(
      */
     var enableMozillaAdsClient by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_mozilla_ads_client),
-        default = FeatureFlags.MOZILLA_ADS_CLIENT_ENABLED,
+        default = { FxNimbus.features.mozillaAdsClient.value().enabled },
     )
 
     /**
@@ -2371,6 +2362,22 @@ class Settings(
     var enableFirefoxLabs by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_enable_firefox_labs),
         default = FeatureFlags.FIREFOX_LABS,
+    )
+
+    /**
+     * Indicates if Browser Mode Toggle is enabled.
+     */
+    var enableBrowserModeToggle by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_browser_mode_toggle),
+        default = { FxNimbus.features.browserModeToggle.value().enabled },
+    )
+
+    /**
+     * Indicates if Merino Client is enabled.
+     */
+    var enableMerinoClient by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_merino_client),
+        default = { FxNimbus.features.merinoClient.value().enabled },
     )
 
     /**
@@ -2482,11 +2489,30 @@ class Settings(
     )
 
     /**
-     * Indicates whether Relay enabled or not.
+     * Indicates whether Email Mask is enabled or not.
      */
-    var isRelayFeatureEnabled by booleanPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_enable_relay_email_masks),
-        default = { FxNimbus.features.relayEmailMasks.value().enabled },
+    var isEmailMaskFeatureEnabled by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_email_masks),
+        default = { FxNimbus.features.emailMasks.value().enabled },
+    )
+
+    /**
+     * Indicates whether we should suggest using Relay email masks.
+     *
+     * This is separate from [isEmailMaskFeatureEnabled] so turning suggestions off
+     * does not hide the feature from Settings. This is controlled by the user.
+     */
+    var isEmailMaskSuggestionEnabled by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_email_mask_suggestion),
+        default = true,
+    )
+
+    /**
+     * Indicates if the email mask CFR should be shown.
+     */
+    var shouldShowEmailMaskCfr by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_should_show_email_mask_cfr),
+        default = true,
     )
 
     /**
@@ -2522,6 +2548,14 @@ class Settings(
     var microsurveyFeatureEnabled by booleanPreference(
         key = appContext.getPreferenceKey(R.string.pref_key_microsurvey_feature_enabled),
         default = { FxNimbus.features.microsurveys.value().enabled },
+    )
+
+    /**
+     * Indicates if the Shake to Summarize feature is enabled.
+     */
+    var shakeToSummarizeFeatureEnabled by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_enable_shake_to_summarize),
+        default = Config.channel.isDebug,
     )
 
     /**
@@ -2622,11 +2656,11 @@ class Settings(
     )
 
     /**
-     * Indicates whether or not we should use the new crash reporter dialog.
+     * Indicates whether or not we should use the new crash reporter flow.
      */
-    var useNewCrashReporterDialog by booleanPreference(
+    var useNewCrashReporterFlow by booleanPreference(
         appContext.getPreferenceKey(R.string.pref_key_use_new_crash_reporter),
-        default = Config.channel.isNightlyOrDebug,
+        default = Config.channel.isNightlyOrDebug || Config.channel.isBeta,
     )
 
     /**
@@ -2646,14 +2680,6 @@ class Settings(
     var lastSavedInFolderGuid by stringPreference(
         key = appContext.getPreferenceKey(R.string.pref_last_folder_saved_in),
         default = "",
-    )
-
-    /**
-     * Indicates whether or not we should use the new compose logins UI
-     */
-    var enableComposeLogins by booleanPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_enable_compose_logins),
-        default = true,
     )
 
     var loginsListSortOrder by stringPreference(
@@ -2808,14 +2834,6 @@ class Settings(
     )
 
     /**
-     * Whether the Tab Manager enhancements are enabled.
-     */
-    var tabManagerEnhancementsEnabled by booleanPreference(
-        key = appContext.getPreferenceKey(R.string.pref_key_tab_manager_enhancements),
-        default = { DefaultTabManagementFeatureHelper.enhancementsEnabled },
-    )
-
-    /**
      * Whether the Tab Manager opening animation is enabled.
      */
     var tabManagerOpeningAnimationEnabled by booleanPreference(
@@ -2832,6 +2850,14 @@ class Settings(
     )
 
     /**
+     * Whether the Native Share Sheet feature is enabled.
+     */
+    var nativeShareSheetEnabled by booleanPreference(
+        key = appContext.getPreferenceKey(R.string.pref_key_native_share_sheet),
+        default = { FxNimbus.features.nativeShareSheet.value().enabled },
+    )
+
+    /**
      * Indicates whether the app should automatically clean up downloaded files.
      */
     fun shouldCleanUpDownloadsAutomatically(): Boolean {
@@ -2839,4 +2865,9 @@ class Settings(
         val cleanupPreferenceKey = appContext.getString(R.string.pref_key_downloads_clean_up_files_automatically)
         return sharedPreferences.getBoolean(cleanupPreferenceKey, false)
     }
+
+    var downloadsDefaultLocation by stringPreference(
+        appContext.getPreferenceKey(R.string.pref_key_downloads_default_location),
+        default = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).path,
+    )
 }

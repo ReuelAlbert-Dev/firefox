@@ -606,13 +606,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 XPCOMUtils.defineLazyPreferenceGetter(
   this,
-  "gTranslationsEnabled",
-  "browser.translations.enable",
-  false
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
   "gUseFeltPrivacyUI",
   "browser.privatebrowsing.felt-privacy-v1",
   false
@@ -1328,8 +1321,9 @@ function loadOneOrMoreURIs(aURIString, aTriggeringPrincipal, aPolicyContainer) {
 
 function openLocation(event) {
   if (window.location.href == AppConstants.BROWSER_CHROME_URL) {
-    gURLBar.select();
-    gURLBar.view.autoOpen({ event });
+    let focusTarget = UrlbarUtils.getURLBarForFocus(window);
+    focusTarget.select();
+    focusTarget.view.autoOpen({ event });
     return;
   }
 
@@ -2233,6 +2227,7 @@ var XULBrowserWindow = {
     // If we've actually changed document, update the toolbar visibility.
     if (!isSameDocument) {
       updateBookmarkToolbarVisibility();
+      AIWindow.updateImmersiveView(gBrowser.currentURI, window);
     }
 
     let closeOpenPanels = selector => {
@@ -2377,12 +2372,11 @@ var XULBrowserWindow = {
     } else {
       this._menuItemForTranslations.removeAttribute("disabled");
     }
-    if (gTranslationsEnabled) {
-      if (TranslationsParent.getIsTranslationsEngineSupported()) {
-        this._menuItemForTranslations.removeAttribute("hidden");
-      } else {
-        this._menuItemForTranslations.setAttribute("hidden", "true");
-      }
+    if (
+      TranslationsParent.AIFeature.isEnabled &&
+      TranslationsParent.getIsTranslationsEngineSupported()
+    ) {
+      this._menuItemForTranslations.removeAttribute("hidden");
     } else {
       this._menuItemForTranslations.setAttribute("hidden", "true");
     }
@@ -2976,8 +2970,7 @@ var TabsProgressListener = {
       PopupNotifications.locationChange(aBrowser);
     }
 
-    let tab = gBrowser.getTabForBrowser(aBrowser);
-    if (tab && tab._sharingState) {
+    if (aBrowser._sharingState) {
       gBrowser.resetBrowserSharing(aBrowser);
     }
 
@@ -3263,8 +3256,7 @@ var gUIDensity = {
       }
     }
 
-    gBrowser.tabContainer.uiDensityChanged();
-    gURLBar.uiDensityChanged();
+    window.dispatchEvent(new CustomEvent("uidensitychanged"));
   },
 };
 
@@ -4028,20 +4020,24 @@ const gRemoteControl = {
  * @param aUserContextId
  *        If not null, will switch to the first found tab having the provided
  *        userContextId.
+ * @param aSplitView
+ *        If not null, will move the tab to the active split view instead of switching to tab
  * @return True if an existing tab was found, false otherwise
  */
 function switchToTabHavingURI(
   aURI,
   aOpenNew,
   aOpenParams = {},
-  aUserContextId = null
+  aUserContextId = null,
+  aSplitView = null
 ) {
   return URILoadingHelper.switchToTabHavingURI(
     window,
     aURI,
     aOpenNew,
     aOpenParams,
-    aUserContextId
+    aUserContextId,
+    aSplitView
   );
 }
 
@@ -4619,8 +4615,10 @@ var gDialogBox = {
     window.focus();
 
     try {
-      // Prevent URL bar from showing on top of modal
-      gURLBar.incrementBreakoutBlockerCount();
+      // Prevent moz-urlbars from showing on top of modal
+      for (let mozUrlbar of document.querySelectorAll("moz-urlbar")) {
+        mozUrlbar.incrementBreakoutBlockerCount();
+      }
     } catch (ex) {
       console.error(ex);
     }
@@ -4648,8 +4646,10 @@ var gDialogBox = {
       this._updateMenuAndCommandState(true /* to enable */);
       this._dialog = null;
       UpdatePopupNotificationsVisibility();
-      // Restores URL bar breakout if needed
-      gURLBar.decrementBreakoutBlockerCount();
+      // Restore moz-urlbar breakout if needed
+      for (let mozUrlbar of document.querySelectorAll("moz-urlbar")) {
+        mozUrlbar.decrementBreakoutBlockerCount();
+      }
     }
     if (this._queued.length) {
       setTimeout(() => this._openNextDialog(), 0);
@@ -4813,6 +4813,15 @@ var ConfirmationHint = {
 
     MozXULElement.insertFTLIfNeeded("toolkit/branding/brandings.ftl");
     MozXULElement.insertFTLIfNeeded("browser/confirmationHints.ftl");
+
+    // IP Protection strings are still in preview (see Bug 2011776).
+    // Only insert the preview file if we're showing a hint for IP Protection.
+    if (
+      messageId === "confirmation-hint-ipprotection-navigated-to-excluded-site"
+    ) {
+      MozXULElement.insertFTLIfNeeded("browser/ipProtection.ftl");
+    }
+
     document.l10n.setAttributes(this._message, messageId, options.l10nArgs);
     if (options.descriptionId) {
       document.l10n.setAttributes(this._description, options.descriptionId);

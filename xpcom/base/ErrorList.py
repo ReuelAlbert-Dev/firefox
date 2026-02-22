@@ -1297,17 +1297,17 @@ def import_extra_errors(infile):
     Example json file (to add module):
     ```
     {
-      "MAILNEWS": {
-        "description": "Extra error codes for comm/mail",
-        "code": 16,
-        "members": {
-          "NS_MSG_ERROR_MBOX_MALFORMED": {
-            "severity": "FAILURE",
-            "code": 36,
-            "description": "Mbox message doesn't start with 'From ' separator line."
-          },
+        "MAILNEWS": {
+            "description": "Extra error codes for comm/mail",
+            "code": 16,
+            "members": {
+                "NS_MSG_ERROR_MBOX_MALFORMED": {
+                    "severity": "FAILURE",
+                    "code": 36,
+                    "description": "Mbox message doesn't start with 'From ' separator line.",
+                },
+            },
         }
-      }
     }
     ```
     """
@@ -1381,9 +1381,7 @@ enum class nsresult : uint32_t
 {}
 }};
 
-""".format(
-            ",\n".join(items)
-        )
+""".format(",\n".join(items))
     )
 
     items = []
@@ -1397,9 +1395,7 @@ const nsresult
 ;
 
 #endif // ErrorList_h__
-""".format(
-            ",\n".join(items)
-        )
+""".format(",\n".join(items))
     )
 
 

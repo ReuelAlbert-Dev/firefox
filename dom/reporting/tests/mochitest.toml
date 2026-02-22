@@ -6,10 +6,10 @@ prefs = [
 ]
 
 ["test_delivering.html"]
+scheme = "https"
 support-files = [
   "delivering.sjs",
   "iframe_delivering.html",
-  "worker_delivering.js",
 ]
 skip-if = [
   "http2",

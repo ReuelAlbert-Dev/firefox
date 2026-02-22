@@ -7,8 +7,8 @@
 import {
   openAIEngine,
   renderPrompt,
+  MODEL_FEATURES,
 } from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
-import { titleGenerationPrompt } from "moz-src:///browser/components/aiwindow/models/prompts/TitleGenerationPrompts.sys.mjs";
 
 /**
  * Generate a default title from the first four words of a message.
@@ -43,13 +43,17 @@ function generateDefaultTitle(message) {
  */
 export async function generateChatTitle(message, current_tab) {
   try {
-    // Build the OpenAI engines
-    const engine = await openAIEngine.build();
+    // Build the OpenAI engine
+    const engine = await openAIEngine.build(
+      MODEL_FEATURES.TITLE_GENERATION,
+      `${MODEL_FEATURES.TITLE_GENERATION}-engine`
+    );
 
     const tabInfo = current_tab || { url: "", title: "", description: "" };
 
-    // Render the prompt with actual values
-    const systemPrompt = await renderPrompt(titleGenerationPrompt, {
+    // Load and render the prompt with actual values
+    const rawPrompt = await engine.loadPrompt(MODEL_FEATURES.TITLE_GENERATION);
+    const systemPrompt = renderPrompt(rawPrompt, {
       current_tab: JSON.stringify(tabInfo),
     });
 
@@ -59,16 +63,19 @@ export async function generateChatTitle(message, current_tab) {
       { role: "user", content: message },
     ];
 
-    // Call the LLM
+    // Get config for inference parameters if exists
+    const config = engine.getConfig(engine.feature);
+    const inferenceParams = config?.parameters || {};
+
     const response = await engine.run({
-      messages,
+      args: messages,
       fxAccountToken: await openAIEngine.getFxAccountToken(),
+      ...inferenceParams,
     });
 
     // Extract the generated title from the response
     const title =
-      response?.choices?.[0]?.message?.content?.trim() ||
-      generateDefaultTitle(message);
+      response?.finalOutput?.trim() || generateDefaultTitle(message);
 
     return title;
   } catch (error) {

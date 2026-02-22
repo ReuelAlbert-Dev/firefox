@@ -80,9 +80,9 @@ class GeckoProfilerController:
 
         config_content = f"""env:
   MOZ_PROFILER_STARTUP: 1
-  MOZ_PROFILER_STARTUP_INTERVAL: {geckoprofiler_opts['interval']}
-  MOZ_PROFILER_STARTUP_FEATURES: {geckoprofiler_opts['features']}
-  MOZ_PROFILER_STARTUP_FILTERS: {geckoprofiler_opts['filters']}
+  MOZ_PROFILER_STARTUP_INTERVAL: {geckoprofiler_opts["interval"]}
+  MOZ_PROFILER_STARTUP_FEATURES: {geckoprofiler_opts["features"]}
+  MOZ_PROFILER_STARTUP_FILTERS: {geckoprofiler_opts["filters"]}
 """.encode()
 
         with tempfile.NamedTemporaryFile(delete=False) as config_file:
@@ -197,19 +197,21 @@ class GeckoProfiler(Layer):
         patterns = ["profile-*.json"]
         self.info(f"geckoview output_dir {self.output_dir} and test {self.test_name}")
 
-        profiles, work_dir = extract_tgz_and_find_files(
+        profiles, search_dir, work_dir = extract_tgz_and_find_files(
             self.output_dir, self.test_name, patterns
         )
+
+        search_dir = search_dir / self.test_name
 
         try:
             if profiles:
                 # Profiles are streamed directly from device and ready to use
-                profiles.sort()
                 archive_files(
                     profiles,
                     self.output_dir,
                     f"profile_{self.test_name}",
-                    prefix="gecko",
+                    sort_key=lambda p: (p.parent.name, int(p.stem.split("-")[-1])),
+                    base_dir=search_dir,
                 )
                 self.info("Archived gecko profiles")
         finally:

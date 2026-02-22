@@ -319,6 +319,9 @@ tab-context-move-split-view-to-group =
 
 ##
 
+tab-splitview-splitter =
+    .aria-label = Resize split view tabs
+
 tab-context-move-tab-to-group-saved-groups =
     .label = Closed Groups
 tab-group-editor-action-new-tab =
@@ -405,6 +408,8 @@ tab-note-editor-button-cancel =
 tab-note-editor-button-save =
     .label = Save
     .accesskey = S
+# Link to show the full tab note in case it was truncated.
+tab-note-preview-expand = Read more
 
 # Displayed within the tab note edit dialog box when the user has entered more
 # characters than are allowed.
@@ -419,8 +424,18 @@ tab-note-editor-character-limit =
 ## Split View
 
 # Split view tabs display their respective contents side by side
-# Displayed within the tooltip on tabs inside of a tab split view
-tabbrowser-tab-label-tab-split-view = Split view
+# Displayed within the tooltip on the left tab inside of a tab split view
+# "left" corresponds to the visual position. Translate literally; do not swap for RTL languages.
+# Variables:
+#   $label (String): the text label of the tab visible in the tab strip
+tabbrowser-tab-label-tab-split-view-left = { $label }, Split view left
+
+# Split view tabs display their respective contents side by side
+# Displayed within the tooltip on the right tab inside of a tab split view
+# "right" corresponds to the visual position. Translate literally; do not swap for RTL languages.
+# Variables:
+#   $label (String): the text label of the tab visible in the tab strip
+tabbrowser-tab-label-tab-split-view-right = { $label }, Split view right
 
 # Open a new tab next to the current tab and display their contents side by side
 tab-context-add-split-view =

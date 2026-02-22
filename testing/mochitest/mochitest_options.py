@@ -84,7 +84,7 @@ def strtobool(value: str):
     if value in false_vals:
         return 0
 
-    raise ValueError(f'Expected one of: {", ".join(true_vals + false_vals)}')
+    raise ValueError(f"Expected one of: {', '.join(true_vals + false_vals)}")
 
 
 def get_default_valgrind_suppression_files():
@@ -255,25 +255,6 @@ class MochitestArguments(ArgumentContainer):
                 "dest": "thisChunk",
                 "help": "If running tests by chunks, the chunk number to run.",
                 "default": None,
-            },
-        ],
-        [
-            ["--chunk-by-runtime"],
-            {
-                "action": "store_true",
-                "dest": "chunkByRuntime",
-                "help": "Group tests such that each chunk has roughly the same runtime.",
-                "default": False,
-            },
-        ],
-        [
-            ["--chunk-by-dir"],
-            {
-                "type": int,
-                "dest": "chunkByDir",
-                "help": "Group tests together in the same chunk that are in the same top "
-                "chunkByDir directories.",
-                "default": 0,
             },
         ],
         [
@@ -1057,9 +1038,6 @@ class MochitestArguments(ArgumentContainer):
             if not 1 <= options.thisChunk <= options.totalChunks:
                 parser.error("thisChunk must be between 1 and totalChunks")
 
-        if options.chunkByDir and options.chunkByRuntime:
-            parser.error("can only use one of --chunk-by-dir or --chunk-by-runtime")
-
         if options.xrePath is None:
             # default xrePath to the app path if not provided
             # but only if an app path was explicitly provided
@@ -1217,7 +1195,7 @@ class MochitestArguments(ArgumentContainer):
 
             if not pactl:
                 parser.error(
-                    "Missing binary pactl required for " "--use-test-media-devices"
+                    "Missing binary pactl required for --use-test-media-devices"
                 )
 
         # The a11y and chrome flavors can't run with e10s.

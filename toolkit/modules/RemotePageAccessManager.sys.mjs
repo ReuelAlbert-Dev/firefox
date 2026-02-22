@@ -49,6 +49,7 @@ export let RemotePageAccessManager = {
         "security.enterprise_roots.auto-enabled",
         "security.certerror.hideAddException",
         "security.certerrors.felt-privacy-v1",
+        "browser.ipProtection.userEnabled",
       ],
       RPMGetIntPref: [
         "security.dialog_enable_delay",
@@ -57,6 +58,7 @@ export let RemotePageAccessManager = {
       ],
       RPMGetAppBuildID: ["*"],
       RPMGetHostForDisplay: ["*"],
+      RPMGetInnermostAsciiHost: ["*"],
       RPMIsWindowPrivate: ["*"],
     },
     "about:home": {
@@ -100,7 +102,12 @@ export let RemotePageAccessManager = {
         "OpenTRRPreferences",
       ],
       RPMCheckAlternateHostAvailable: ["*"],
-      RPMRecordGleanEvent: ["securityDohNeterror", "securityUiTlserror"],
+      RPMRecordGleanEvent: [
+        "securityDohNeterror",
+        "securityUiTlserror",
+        "securityUiCerterror",
+        "securityUiNeterror",
+      ],
       RPMAddMessageListener: ["*"],
       RPMRemoveMessageListener: ["*"],
       RPMGetFormatURLPref: [
@@ -108,10 +115,15 @@ export let RemotePageAccessManager = {
         "network.trr_ui.skip_reason_learn_more_url",
       ],
       RPMGetBoolPref: [
+        "security.certerrors.mitm.priming.enabled",
+        "security.certerrors.permanentOverride",
+        "security.enterprise_roots.auto-enabled",
         "security.certerror.hideAddException",
         "security.certerrors.felt-privacy-v1",
+        "browser.ipProtection.userEnabled",
       ],
       RPMGetHostForDisplay: ["*"],
+      RPMGetInnermostAsciiHost: ["*"],
       RPMGetHttpResponseHeader: ["*"],
       RPMIsTRROnlyFailure: ["*"],
       RPMIsFirefox: ["*"],
@@ -122,7 +134,7 @@ export let RemotePageAccessManager = {
       RPMSetTRRDisabledLoadFlags: ["*"],
       RPMShowOSXLocalNetworkPermissionWarning: ["*"],
       RPMSendQuery: ["Browser:AddTRRExcludedDomain"],
-      RPMGetIntPref: ["network.trr.mode"],
+      RPMGetIntPref: ["network.trr.mode", "security.dialog_enable_delay"],
     },
     "about:newtab": {
       RPMSendAsyncMessage: ["ActivityStream:ContentToMain"],

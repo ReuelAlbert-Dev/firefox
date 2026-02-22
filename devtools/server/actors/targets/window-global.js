@@ -86,7 +86,7 @@ loader.lazyRequireGetter(
 loader.lazyRequireGetter(
   this,
   "StyleSheetsManager",
-  "resource://devtools/server/actors/utils/stylesheets-manager.js",
+  "resource://devtools/server/actors/stylesheets/stylesheets-manager.js",
   true
 );
 loader.lazyRequireGetter(
@@ -414,7 +414,7 @@ class WindowGlobalTargetActor extends BaseTargetActor {
       });
       Object.defineProperty(this, "window", {
         value: this.window,
-        configurable: false,
+        configurable: true,
         writable: false,
       });
       Object.defineProperty(this, "chromeEventHandler", {
@@ -805,6 +805,17 @@ class WindowGlobalTargetActor extends BaseTargetActor {
       return;
     }
     this.destroying = true;
+
+    // In case the window already navigated to another origin,
+    // which is possibly in another process, nullify window
+    // as most, if not all attributes would throw.
+    if (Cu.isRemoteProxy(this.window)) {
+      Object.defineProperty(this, "window", {
+        value: null,
+        configurable: true,
+        writable: false,
+      });
+    }
 
     // Force flushing pending resources if the actor isn't already destroyed.
     // This helps notify the client about pending resources on navigation.

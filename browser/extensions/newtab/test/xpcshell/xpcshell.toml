@@ -15,9 +15,13 @@ support-files = ["topstories.json"]
 
 ["test_AdsFeed.js"]
 
+["test_ExternalComponentsFeed.js"]
+
 ["test_HighlightsFeed.js"]
 
 ["test_InferredFeatureModel.js"]
+
+["test_InferredPersonalizationFeed.js"]
 
 ["test_ListsFeed.js"]
 

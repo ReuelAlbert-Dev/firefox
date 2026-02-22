@@ -310,7 +310,9 @@ var allowlist = [
 
   // Referenced programmatically
   { file: "chrome://browser/content/backup/BackupManifest.1.schema.json" },
+  { file: "chrome://browser/content/backup/BackupManifest.2.schema.json" },
   { file: "chrome://browser/content/backup/ArchiveJSONBlock.1.schema.json" },
+  { file: "chrome://browser/content/backup/ArchiveJSONBlock.2.schema.json" },
 
   // Bug 1733498 - Migrate necko errors l10n strings from .properties to Fluent
   {
@@ -328,27 +330,13 @@ var allowlist = [
   {
     file: "resource://app/modules/backup/CookiesBackupResource.sys.mjs",
   },
-  // Bug 2000945 - Move query intent detection to AI-window r?mardak (backed out due to unused file)
+
+  // Bug 1996315: QR code generation modules
   {
-    file: "moz-src:///browser/components/aiwindow/models/IntentClassifier.sys.mjs",
+    file: "moz-src:///browser/components/qrcode/QRCodeGenerator.sys.mjs",
   },
-  // Bug 2004888 - [FirstRun] Create Firstrun.html opening firstrun welcome screen
   {
-    file: "chrome://browser/content/aiwindow/firstrun.html",
-  },
-  // Bug 2005768 - Insights scheduler for generation from history
-  // Bug 2007939 - Rename "insights" to "memories"
-  {
-    file: "moz-src:///browser/components/aiwindow/models/memories/MemoriesHistoryScheduler.sys.mjs",
-  },
-  // Bug 2006090 - Insight updation - Day 0 and incremental updates from Chat history
-  // Bug 2007939 - Rename "insights" to "memories"
-  {
-    file: "moz-src:///browser/components/aiwindow/models/memories/MemoriesConversationScheduler.sys.mjs",
-  },
-  // Bug 2006433 - Implement conversation starter/followup inference
-  {
-    file: "moz-src:///browser/components/aiwindow/models/ConversationSuggestions.sys.mjs",
+    file: "moz-src:///browser/components/qrcode/QRCodeWorker.sys.mjs",
   },
 ];
 

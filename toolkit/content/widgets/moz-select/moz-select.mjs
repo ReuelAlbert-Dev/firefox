@@ -125,6 +125,10 @@ export default class MozSelect extends MozBaseInputElement {
           disabled: node.getAttribute("disabled") !== null,
           hidden: node.getAttribute("hidden") !== null,
         });
+      } else if (node.localName === "hr") {
+        options.push({
+          separator: true,
+        });
       }
     }
 
@@ -165,7 +169,36 @@ export default class MozSelect extends MozBaseInputElement {
   }
 
   /**
+   * Handles mousedown events to open the panel for mouse clicks.
+   * Note: panel-list's handleEvent() ignores the triggeringEvent by
+   * reference, preventing the panel from immediately closing.
+   *
+   * @param {MouseEvent} event - The mousedown event.
+   */
+  handlePanelMousedown(event) {
+    if (event.button !== 0) {
+      return;
+    }
+    this.panelList?.toggle(event);
+  }
+
+  /**
+   * Handles click events from keyboard activation (Space/Enter from button).
+   * Mouse clicks are handled by mousedown, so we filter those out here.
+   *
+   * @param {MouseEvent} event - The click event.
+   */
+  handlePanelClick(event) {
+    // Only handle keyboard-initiated clicks; mouse clicks are handled by mousedown
+    // event.detail is 0 for keyboard clicks, >0 for mouse clicks
+    if (event.detail === 0) {
+      this.panelList?.toggle(event);
+    }
+  }
+
+  /**
    * Toggles the panel-list open/closed state.
+   * Called by keyboard handlers and potentially other event handlers.
    *
    * @param {Event} event - The triggering event.
    */
@@ -176,7 +209,7 @@ export default class MozSelect extends MozBaseInputElement {
   /**
    * Handles keyboard events on the panel trigger button.
    * Arrow keys change selection (Windows/Linux) or open the panel (Mac).
-   * Space opens the panel. Enter is prevented to match native select behavior.
+   * Space and Enter open the panel.
    *
    * @param {KeyboardEvent} event - The keyboard event.
    */
@@ -190,17 +223,12 @@ export default class MozSelect extends MozBaseInputElement {
       case "ArrowUp":
         event.preventDefault();
         if (navigator.platform.includes("Mac")) {
-          // Mac - open the menu
           this.togglePanel(event);
         } else {
-          // Windows/Linux - select the next option
           this.selectNextOption(event.key === "ArrowDown" ? 1 : -1);
         }
         break;
       case "Enter":
-        event.preventDefault();
-        break;
-      case " ":
         event.preventDefault();
         this.togglePanel(event);
         break;
@@ -275,17 +303,19 @@ export default class MozSelect extends MozBaseInputElement {
         this.hasDescription ? undefined : this.ariaDescription
       )}
     >
-      ${this.options.map(
-        option => html`
-          <option
-            value=${option.value}
-            .selected=${option.value == this.value}
-            ?disabled=${option.disabled}
-            ?hidden=${option.hidden}
-          >
-            ${option.label}
-          </option>
-        `
+      ${this.options.map(option =>
+        option.separator
+          ? html`<hr />`
+          : html`
+              <option
+                value=${option.value}
+                .selected=${option.value == this.value}
+                ?disabled=${option.disabled}
+                ?hidden=${option.hidden}
+              >
+                ${option.label}
+              </option>
+            `
       )}
     </select>`;
   }
@@ -301,7 +331,8 @@ export default class MozSelect extends MozBaseInputElement {
       class="panel-trigger"
       aria-haspopup="menu"
       aria-expanded=${this.panelList?.open ? "true" : "false"}
-      @click=${this.togglePanel}
+      @mousedown=${this.handlePanelMousedown}
+      @click=${this.handlePanelClick}
       @keydown=${this.handlePanelKeydown}
       ?disabled=${this.disabled || this.parentDisabled}
     >
@@ -322,20 +353,21 @@ export default class MozSelect extends MozBaseInputElement {
       @click=${this.handlePanelChange}
       @hidden=${this.handlePanelHidden}
     >
-      ${this.options.map(
-        option =>
-          html`<panel-item
-            .value=${option.value}
-            ?selected=${option.value == this.value}
-            ?disabled=${option.disabled}
-            ?hidden=${option.hidden}
-            icon=${ifDefined(option.iconSrc)}
-            style=${option.iconSrc
-              ? `--select-item-icon-url: url(${option.iconSrc})`
-              : ""}
-          >
-            ${option.label}
-          </panel-item>`
+      ${this.options.map(option =>
+        option.separator
+          ? html`<hr />`
+          : html`<panel-item
+              .value=${option.value}
+              ?selected=${option.value == this.value}
+              ?disabled=${option.disabled}
+              ?hidden=${option.hidden}
+              icon=${ifDefined(option.iconSrc)}
+              style=${option.iconSrc
+                ? `--select-item-icon-url: url(${option.iconSrc})`
+                : ""}
+            >
+              ${option.label}
+            </panel-item>`
       )}
     </panel-list>`;
   }

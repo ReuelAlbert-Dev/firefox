@@ -449,9 +449,12 @@ class Class:
         self.name = self.fullname[self.fullname.rindex(".") + 1 :]
 
     def __hash__(self):
-        return hash(
-            (self.raw, tuple(self.ctors), tuple(self.fields), tuple(self.methods))
-        )
+        return hash((
+            self.raw,
+            tuple(self.ctors),
+            tuple(self.fields),
+            tuple(self.methods),
+        ))
 
     def __repr__(self):
         return self.raw
@@ -936,6 +939,7 @@ def verify_threading_annotations(clazz):
         "androidx.annotation.WorkerThread",
         "androidx.annotation.BinderThread",
         "androidx.annotation.AnyThread",
+        "org.mozilla.geckoview.HandlerThread",
     ]
 
     # If the annotation is on the class than it applies to every method
@@ -955,8 +959,8 @@ def verify_threading_annotations(clazz):
                 f,
                 "GV3",
                 "Method missing threading annotation. Needs "
-                "one of: @MainThread, @UiThread, @WorkerThread, @BinderThread, "
-                "@AnyThread.",
+                "one of: @MainThread, @UiThread, @WorkerThread, "
+                "@BinderThread, @AnyThread, @HandlerThread.",
             )
 
 

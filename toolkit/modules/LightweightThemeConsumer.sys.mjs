@@ -233,6 +233,18 @@ export function LightweightThemeConsumer(aDocument) {
     () => this._update(this._lastData)
   );
 
+  XPCOMUtils.defineLazyPreferenceGetter(
+    this,
+    "_toolbarTheme",
+    "browser.theme.toolbar-theme",
+    2,
+    () => {
+      if (this._isAIWindow) {
+        this._update(this._lastData);
+      }
+    }
+  );
+
   Services.obs.addObserver(this, "lightweight-theme-styling-update");
 
   this.darkThemeMediaQuery = this._win.matchMedia("(-moz-system-dark-theme)");
@@ -241,19 +253,14 @@ export function LightweightThemeConsumer(aDocument) {
   this.forcedColorsMediaQuery = this._win.matchMedia("(forced-colors)");
   this.forcedColorsMediaQuery.addListener(this);
 
-  const manager = lazy.LightweightThemeManager;
-  const theme =
-    this._isAIWindow && manager.aiThemeData
-      ? manager.aiThemeData
-      : manager.themeData;
+  this._aiWindowObserver = new this._win.MutationObserver(() => {
+    this.toggleAIWindowMode(this._win);
+  });
+  this._aiWindowObserver.observe(this._doc.documentElement, {
+    attributeFilter: ["ai-window"],
+  });
 
-  this._update(theme);
-
-  if (this._isAIWindow && !manager.aiThemeData) {
-    manager.promiseAIThemeData().then(() => {
-      this._update(manager.aiThemeData);
-    });
-  }
+  this._update(lazy.LightweightThemeManager.themeData);
 
   this._win.addEventListener("unload", this, { once: true });
 }
@@ -271,9 +278,7 @@ LightweightThemeConsumer.prototype = {
       return;
     }
 
-    if (!this._isAIWindow) {
-      this._update(data);
-    }
+    this._update(data);
   },
 
   handleEvent(aEvent) {
@@ -289,6 +294,8 @@ LightweightThemeConsumer.prototype = {
       case "unload":
         Services.obs.removeObserver(this, "lightweight-theme-styling-update");
         Services.ppmm.sharedData.delete(`theme/${this._winId}`);
+        this._aiWindowObserver?.disconnect();
+        this._aiWindowObserver = null;
         this._win = this._doc = null;
         this.darkThemeMediaQuery?.removeListener(this);
         this.darkThemeMediaQuery = null;
@@ -299,16 +306,48 @@ LightweightThemeConsumer.prototype = {
   },
 
   _update(themeData) {
+    const manager = lazy.LightweightThemeManager;
+
+    // Store user's theme before replacing with aiThemeData.
     this._lastData = themeData;
 
-    let supportsDarkTheme =
-      !!themeData.darkTheme ||
-      !themeData.theme ||
-      themeData.theme.id == DEFAULT_THEME_ID;
+    // Capture original theme's color scheme before replacing with aiThemeData.
+    let originalThemeColorScheme = themeData?.theme?.color_scheme;
+
+    if (this._isAIWindow) {
+      if (manager.aiThemeData) {
+        themeData = manager.aiThemeData;
+      } else {
+        manager.promiseAIThemeData().then(() => {
+          if (this._isAIWindow && this._win && !this._win.closed) {
+            this._update(this._lastData);
+          }
+        });
+        return;
+      }
+    }
+
     let updateGlobalThemeData = true;
     const useDarkTheme = (() => {
+      let supportsDarkTheme =
+        !!themeData.darkTheme ||
+        !themeData.theme ||
+        themeData.theme.id == DEFAULT_THEME_ID;
+
       if (!supportsDarkTheme) {
         return false;
+      }
+
+      // AI windows: use color scheme from original user's theme
+      if (this._isAIWindow && originalThemeColorScheme) {
+        switch (originalThemeColorScheme) {
+          case "light":
+            return false;
+          case "dark":
+            return true;
+          default:
+            break;
+        }
       }
 
       if (this.darkThemeMediaQuery?.matches) {
@@ -329,6 +368,10 @@ LightweightThemeConsumer.prototype = {
       updateGlobalThemeData = false;
       return true;
     })();
+
+    if (this._isAIWindow) {
+      updateGlobalThemeData = false;
+    }
 
     let theme = useDarkTheme ? themeData.darkTheme : themeData.theme;
     let forcedColorsThemeOverride =
@@ -493,6 +536,11 @@ LightweightThemeConsumer.prototype = {
       this._doc.head.appendChild(stylesheet);
       this._lastExperimentData.stylesheet = stylesheet;
     }
+  },
+
+  toggleAIWindowMode(win) {
+    this._isAIWindow = win.document.documentElement.hasAttribute("ai-window");
+    this._update(lazy.LightweightThemeManager.themeData);
   },
 };
 

@@ -2031,7 +2031,7 @@ impl TextureDescriptor<'_> {
 
     pub fn is_cube_compatible(&self) -> bool {
         self.dimension == wgt::TextureDimension::D2
-            && self.size.depth_or_array_layers % 6 == 0
+            && self.size.depth_or_array_layers.is_multiple_of(6)
             && self.sample_count == 1
             && self.size.width == self.size.height
     }
@@ -2336,7 +2336,6 @@ impl fmt::Debug for NagaShader {
 }
 
 /// Shader input.
-#[allow(clippy::large_enum_variant)]
 pub enum ShaderInput<'a> {
     Naga(NagaShader),
     Msl {
@@ -2814,6 +2813,7 @@ pub struct TlasInstance {
 #[cfg(dx12)]
 pub enum D3D12ExposeAdapterResult {
     CreateDeviceError(dx12::CreateDeviceError),
+    UnknownFeatureLevel(i32),
     ResourceBindingTier2Requirement,
     ShaderModel6Requirement,
     Success(dx12::FeatureLevel, dx12::ShaderModel),
@@ -2825,7 +2825,7 @@ pub struct Telemetry {
     #[cfg(dx12)]
     pub d3d12_expose_adapter: fn(
         desc: &windows::Win32::Graphics::Dxgi::DXGI_ADAPTER_DESC2,
-        driver_version: [u16; 4],
+        driver_version: Result<[u16; 4], windows_core::HRESULT>,
         result: D3D12ExposeAdapterResult,
     ),
 }

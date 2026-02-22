@@ -323,13 +323,11 @@ def show_taskgraph(options):
     for param in parameters[:]:
         if isinstance(param, str) and os.path.isdir(param):
             parameters.remove(param)
-            parameters.extend(
-                [
-                    p.as_posix()
-                    for p in Path(param).iterdir()
-                    if p.suffix in (".yml", ".json")
-                ]
-            )
+            parameters.extend([
+                p.as_posix()
+                for p in Path(param).iterdir()
+                if p.suffix in (".yml", ".json")
+            ])
 
     logdir = None
     if len(parameters) > 1:
@@ -358,7 +356,7 @@ def show_taskgraph(options):
             ].endswith(("taskgraph", "mozbuild")):
                 del sys.modules[mod]
 
-        # Ensure gecko_taskgraph is ahead of taskcluster_taskgraph in sys.path.
+        # Ensure gecko_taskgraph is ahead of upstream Taskgraph in sys.path.
         # Without this, we may end up validating some things against the wrong
         # schema.
         import gecko_taskgraph  # noqa

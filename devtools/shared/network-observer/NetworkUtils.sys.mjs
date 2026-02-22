@@ -86,6 +86,14 @@ const LOAD_CAUSE_STRINGS = {
   [Ci.nsIContentPolicy.TYPE_WEB_IDENTITY]: "webidentity",
 };
 
+const REDIRECT_CODES = [
+  301, // HTTP Moved Permanently
+  302, // HTTP Found
+  303, // HTTP See Other
+  307, // HTTP Temporary Redirect
+  308, // HTTP Moved Permanently
+];
+
 function causeTypeToString(causeType, loadFlags, internalContentPolicyType) {
   let prefix = "";
   if (
@@ -107,8 +115,8 @@ function stringToCauseType(value) {
 
 function isChannelFromSystemPrincipal(channel) {
   let principal;
-
-  if (channel.isDocument) {
+  const channelURI = channel.originalURI || channel.URI;
+  if (channelURI?.spec.startsWith("view-source:") || channel.isDocument) {
     // The loadingPrincipal is the principal where the request will be used.
     principal = channel.loadInfo.loadingPrincipal;
   } else {
@@ -867,7 +875,15 @@ async function decodeCompressedStream(stream, length, encodings) {
         _length,
         data
       ) {
-        resolve(String.fromCharCode.apply(this, data));
+        // `data`` might be a very large array, chunk calls to fromCharCode to
+        // avoid "RangeError: too many arguments provided for a function call".
+        const CHUNK_SIZE = 65536;
+        let result = "";
+        for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+          const chunk = data.slice(i, i + CHUNK_SIZE);
+          result += String.fromCharCode.apply(null, chunk);
+        }
+        resolve(result);
       },
     });
   });
@@ -894,6 +910,10 @@ async function decodeCompressedStream(stream, length, encodings) {
   converter.onStopRequest(null, null, null);
 
   return onDecodingComplete;
+}
+
+function isRedirect(responseStatus) {
+  return REDIRECT_CODES.includes(responseStatus);
 }
 
 /**
@@ -938,6 +958,7 @@ export const NetworkUtils = {
   isFromCache,
   isNavigationRequest,
   isPreloadRequest,
+  isRedirect,
   isThirdPartyTrackingResource,
   matchRequest,
   NETWORK_EVENT_TYPES,

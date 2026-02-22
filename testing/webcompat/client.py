@@ -528,7 +528,7 @@ class Client:
             wait="interactive",
         )
         await self.session.bidi_session.script.evaluate(
-            expression=f"window.browser.extension.getBackgroundPage().{waitFor}.ready()",
+            expression=f"window.browser.extension.getBackgroundPage().{waitFor}.allSettled()",
             target=ContextTarget(context["context"]),
             await_promise=True,
         )
@@ -1523,9 +1523,9 @@ class Client:
             )
             time.sleep(0.5)
             without_scrollbar = trending_list.screenshot()
-            assert (
-                with_scrollbar == without_scrollbar
-            ), "scrollbar does not cover any text"
+            assert with_scrollbar == without_scrollbar, (
+                "scrollbar does not cover any text"
+            )
 
     def test_for_fastclick(self, element):
         # FastClick cancels touchend, breaking default actions on Fenix.

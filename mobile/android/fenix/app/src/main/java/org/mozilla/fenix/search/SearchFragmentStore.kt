@@ -13,6 +13,7 @@ import mozilla.components.browser.state.selector.findTab
 import mozilla.components.browser.state.state.SearchState
 import mozilla.components.browser.state.state.searchEngines
 import mozilla.components.browser.state.state.selectedOrDefaultSearchEngine
+import mozilla.components.concept.awesomebar.AwesomeBar.GroupedSuggestion
 import mozilla.components.concept.awesomebar.AwesomeBar.Suggestion
 import mozilla.components.concept.awesomebar.AwesomeBar.SuggestionProvider
 import mozilla.components.lib.state.Action
@@ -21,7 +22,6 @@ import mozilla.components.lib.state.State
 import mozilla.components.lib.state.Store
 import org.mozilla.fenix.automotive.isAndroidAutomotiveAvailable
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
-import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.metrics.MetricsUtils
 import org.mozilla.fenix.search.SearchFragmentAction.Init
@@ -53,13 +53,11 @@ class SearchFragmentStore(
      *
      * @property context [Context] used for various system interactions.
      * @property viewLifecycleOwner [LifecycleOwner] depending on which lifecycle related operations will be scheduled.
-     * @property browsingModeManager [BrowsingModeManager] for querying the current browsing mode.
      * @property navController [NavController] used to navigate to other destinations.
      */
     data class Environment(
         val context: Context,
         val viewLifecycleOwner: LifecycleOwner,
-        val browsingModeManager: BrowsingModeManager,
         val navController: NavController,
     )
 }
@@ -114,6 +112,7 @@ sealed class SearchEngineSource {
  * @property searchEngineSource The current selected search engine with the context of how it was selected.
  * @property defaultEngine The current default search engine (or null if none is available yet).
  * @property searchSuggestionsProviders The list of search suggestions providers that the user can choose from.
+ * @property hiddenSuggestions The list of suggestions that should not be shown anymore to users.
  * @property searchSuggestionsOrientedAtBottom Whether or not the search suggestions should be oriented at the
  * bottom of the screen.
  * @property searchStartedForCurrentUrl Whether or not the search started with editing the current URL.
@@ -160,6 +159,7 @@ data class SearchFragmentState(
     val searchEngineSource: SearchEngineSource,
     val defaultEngine: SearchEngine?,
     val searchSuggestionsProviders: List<SuggestionProvider>,
+    val hiddenSuggestions: Set<GroupedSuggestion>,
     val searchSuggestionsOrientedAtBottom: Boolean,
     val searchStartedForCurrentUrl: Boolean,
     val shouldShowSearchSuggestions: Boolean,
@@ -202,6 +202,7 @@ data class SearchFragmentState(
             searchEngineSource = SearchEngineSource.None,
             defaultEngine = null,
             searchSuggestionsProviders = emptyList(),
+            hiddenSuggestions = emptySet(),
             searchSuggestionsOrientedAtBottom = false,
             searchStartedForCurrentUrl = false,
             shouldShowSearchSuggestions = false,
@@ -262,6 +263,7 @@ fun createInitialSearchFragmentState(
         searchTerms = tab?.content?.searchTerms.orEmpty(),
         searchEngineSource = searchEngineSource,
         searchSuggestionsProviders = emptyList(),
+        hiddenSuggestions = emptySet(),
         searchSuggestionsOrientedAtBottom = settings.shouldUseBottomToolbar,
         searchStartedForCurrentUrl = false,
         shouldShowSearchSuggestions = false,
@@ -421,6 +423,20 @@ sealed class SearchFragmentAction : Action {
      */
     data class SuggestionSelected(
         val suggestion: Suggestion,
+    ) : SearchFragmentAction()
+
+    /**
+     * Action indicating a suggestion that should not be shown anymore to users.
+     */
+    data class SuggestionHidden(
+        val suggestion: GroupedSuggestion,
+    ) : SearchFragmentAction()
+
+    /**
+     * Action indicating a suggestion that can be shown again to users.
+     */
+    data class SuggestionRestored(
+        val suggestion: GroupedSuggestion,
     ) : SearchFragmentAction()
 
     /**
@@ -617,6 +633,14 @@ private fun searchStateReducer(state: SearchFragmentState, action: SearchFragmen
 
         is SearchFragmentAction.SearchStarted -> {
             state.copy(searchStartedForCurrentUrl = action.searchStartedForCurrentUrl)
+        }
+
+        is SearchFragmentAction.SuggestionHidden -> {
+            state.copy(hiddenSuggestions = state.hiddenSuggestions + action.suggestion)
+        }
+
+        is SearchFragmentAction.SuggestionRestored -> {
+            state.copy(hiddenSuggestions = state.hiddenSuggestions - action.suggestion)
         }
 
         is SearchFragmentAction.SuggestionClicked,

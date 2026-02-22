@@ -54,13 +54,21 @@ skip-if = [
 
 ["test_moz_input_elems_in_form.html"]
 
+["test_moz_input_email.html"]
+
 ["test_moz_input_folder.html"]
+
+["test_moz_input_number.html"]
 
 ["test_moz_input_password.html"]
 
 ["test_moz_input_search.html"]
 
+["test_moz_input_tel.html"]
+
 ["test_moz_input_text.html"]
+
+["test_moz_input_url.html"]
 
 ["test_moz_label.html"]
 
@@ -88,6 +96,8 @@ skip-if = [
   "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && debug", # Bug 1997197
 ]
 
+["test_moz_select_panel.html"]
+
 ["test_moz_support_link.html"]
 
 ["test_moz_toggle.html"]
@@ -107,6 +117,8 @@ skip-if = [
 ["test_panel_list_in_xul_panel.html"]
 
 ["test_panel_list_min_width_from_anchor.html"]
+
+["test_panel_list_popover.html"]
 
 ["test_popupanchor.xhtml"]
 

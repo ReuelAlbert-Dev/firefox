@@ -19,7 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.tooling.preview.PreviewLightDark
+import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
 import mozilla.components.compose.browser.toolbar.ActionContainer
 import mozilla.components.compose.browser.toolbar.concept.Action
@@ -37,6 +37,7 @@ import mozilla.components.compose.browser.toolbar.store.DisplayState
 import mozilla.components.lib.state.ext.observeAsComposableState
 import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.theme.FirefoxTheme
+import org.mozilla.fenix.theme.PreviewThemeProvider
 import org.mozilla.fenix.theme.Theme
 import mozilla.components.ui.icons.R as iconsR
 
@@ -149,7 +150,7 @@ private fun initialActions(): List<Action> {
 }
 
 @Composable
-private fun SimpleBrowserToolbarPreview(actions: List<Action>, theme: Theme = Theme.getTheme()) {
+private fun SimpleBrowserToolbarPreview(actions: List<Action>, theme: Theme) {
     val store = BrowserToolbarStore(
         initialState = BrowserToolbarState(
             displayState = DisplayState(browserActionsEnd = actions),
@@ -162,38 +163,26 @@ private fun SimpleBrowserToolbarPreview(actions: List<Action>, theme: Theme = Th
     }
 }
 
-@Composable
-@PreviewLightDark
-private fun BrowserSimpleToolbarPreview_Edit() {
-    SimpleBrowserToolbarPreview(editEndActions())
-}
-
-@Composable
 @Preview
-private fun BrowserSimpleToolbarPrivatePreview_Edit() {
-    SimpleBrowserToolbarPreview(editEndActions(), theme = Theme.Private)
+@Composable
+private fun BrowserSimpleToolbarPreview_Edit(
+    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
+) {
+    SimpleBrowserToolbarPreview(editEndActions(), theme = theme)
 }
 
-@Composable
-@PreviewLightDark
-private fun BrowserSimpleToolbarPreview_Initial() {
-    SimpleBrowserToolbarPreview(initialActions())
-}
-
-@Composable
 @Preview
-private fun BrowserSimpleToolbarPrivatePreview_Initial() {
-    SimpleBrowserToolbarPreview(initialActions(), theme = Theme.Private)
+@Composable
+private fun BrowserSimpleToolbarPreview_Initial(
+    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
+) {
+    SimpleBrowserToolbarPreview(initialActions(), theme = theme)
 }
 
-@Composable
-@PreviewLightDark
-private fun BrowserSimpleToolbarPreview_Search() {
-    SimpleBrowserToolbarPreview(searchEndActions())
-}
-
-@Composable
 @Preview
-private fun BrowserSimpleToolbarPrivatePreview_Search() {
-    SimpleBrowserToolbarPreview(searchEndActions(), theme = Theme.Private)
+@Composable
+private fun BrowserSimpleToolbarPreview_Search(
+    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
+) {
+    SimpleBrowserToolbarPreview(searchEndActions(), theme = theme)
 }

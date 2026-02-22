@@ -75,7 +75,7 @@ task-defaults:
         mozconfig-variant:
             by-release-type:
                 beta: beta
-                release.*: release
+                release: release
                 esr.*: release
                 default: nightly
         tooltool-downloads: internal
@@ -94,7 +94,7 @@ task-defaults:
                     by-shipping-product:
                         devedition: aurora
                         default: beta
-                release.*: release
+                release: release
                 esr.*: esr
                 default: null
     fetches:

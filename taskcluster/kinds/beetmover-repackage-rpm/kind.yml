@@ -32,7 +32,7 @@ tasks:
         attributes:
             artifact_map:
                 by-release-type:
-                    beta|release.*|esr.*: taskcluster/gecko_taskgraph/manifests/firefox_candidates.yml
+                    beta|release|esr.*: taskcluster/gecko_taskgraph/manifests/firefox_candidates.yml
                     default: taskcluster/gecko_taskgraph/manifests/firefox_nightly.yml
         run-on-releases:
             - nightly

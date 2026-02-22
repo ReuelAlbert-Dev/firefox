@@ -33,6 +33,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Encoding.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
@@ -92,7 +93,7 @@ namespace dom {
     JS::Handle<JSObject*> GetConstructorObjectHandle(JSContext*); \
   }
 #define HTML_OTHER(_tag)
-#include "nsHTMLTagList.h"
+#include "nsHTMLTagList.inc"
 #undef HTML_TAG
 #undef HTML_OTHER
 
@@ -106,7 +107,7 @@ using constructorGetterCallback = JS::Handle<JSObject*> (*)(JSContext*);
 // to index into this array.
 static const constructorGetterCallback sConstructorGetterCallback[] = {
     HTMLUnknownElement_Binding::GetConstructorObjectHandle,
-#include "nsHTMLTagList.h"
+#include "nsHTMLTagList.inc"
 #undef HTML_TAG
 #undef HTML_OTHER
 };
@@ -2825,8 +2826,7 @@ bool IsGlobalInExposureSet(JSContext* aCx, JSObject* aGlobal,
                 GlobalNames::ServiceWorkerGlobalScope |
                 GlobalNames::WorkerDebuggerGlobalScope |
                 GlobalNames::AudioWorkletGlobalScope |
-                GlobalNames::PaintWorkletGlobalScope |
-                GlobalNames::ShadowRealmGlobalScope)) == 0,
+                GlobalNames::PaintWorkletGlobalScope)) == 0,
              "Unknown global type");
 
   const char* name = JS::GetClass(aGlobal)->name;
@@ -2863,11 +2863,6 @@ bool IsGlobalInExposureSet(JSContext* aCx, JSObject* aGlobal,
 
   if ((aGlobalSet & GlobalNames::PaintWorkletGlobalScope) &&
       !strcmp(name, "PaintWorkletGlobalScope")) {
-    return true;
-  }
-
-  if ((aGlobalSet & GlobalNames::ShadowRealmGlobalScope) &&
-      !strcmp(name, "ShadowRealmGlobalScope")) {
     return true;
   }
 
@@ -3285,12 +3280,15 @@ bool GenericMethod(JSContext* cx, unsigned argc, JS::Value* vp) {
     bool ok = ThisPolicy::HandleInvalidThis(cx, args, false, protoID);
     return ExceptionPolicy::HandleException(cx, args, info, ok);
   }
-  JS::Rooted<JSObject*> obj(cx, ThisPolicy::ExtractThisObject(args));
+
+  JS::RootedTuple<JSObject*, JSObject*> roots(cx);
+  JS::RootedField<JSObject*, 0> obj(roots, ThisPolicy::ExtractThisObject(args));
 
   // NOTE: we want to leave obj in its initial compartment, so don't want to
   // pass it to UnwrapObjectInternal.  Also, the thing we pass to
   // UnwrapObjectInternal may be affected by our ThisPolicy.
-  JS::Rooted<JSObject*> rootSelf(cx, ThisPolicy::MaybeUnwrapThisObject(obj));
+  JS::RootedField<JSObject*, 1> rootSelf(
+      roots, ThisPolicy::MaybeUnwrapThisObject(obj));
   void* self;
   {
     nsresult rv =
@@ -3514,7 +3512,8 @@ static bool GetBackingObject(JSContext* aCx, JS::Handle<JSObject*> aObj,
                              size_t aSlotIndex,
                              JS::MutableHandle<JSObject*> aBackingObj,
                              bool* aBackingObjCreated, Args... aArgs) {
-  JS::Rooted<JSObject*> reflector(aCx);
+  JS::RootedTuple<JSObject*, JS::Value, JSObject*> roots(aCx);
+  JS::RootedField<JSObject*, 0> reflector(roots);
   reflector = IsDOMObject(aObj)
                   ? aObj
                   : js::UncheckedUnwrap(aObj,
@@ -3522,14 +3521,14 @@ static bool GetBackingObject(JSContext* aCx, JS::Handle<JSObject*> aObj,
 
   // Retrieve the backing object from the reserved slot on the maplike/setlike
   // object. If it doesn't exist yet, create it.
-  JS::Rooted<JS::Value> slotValue(aCx);
+  JS::RootedField<JS::Value, 1> slotValue(roots);
   slotValue = JS::GetReservedSlot(reflector, aSlotIndex);
   if (slotValue.isUndefined()) {
     // Since backing object access can happen in non-originating realms,
     // make sure to create the backing object in reflector realm.
     {
       JSAutoRealm ar(aCx, reflector);
-      JS::Rooted<JSObject*> newBackingObj(aCx);
+      JS::RootedField<JSObject*, 2> newBackingObj(roots);
       newBackingObj.set(Method(aCx, aArgs...));
       if (NS_WARN_IF(!newBackingObj)) {
         return false;
@@ -3804,7 +3803,7 @@ bool HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
   // Technically, per spec, a window always has a document.  In Gecko, a
   // sufficiently torn-down window might not, so check for that case.  We're
   // going to need a document to create an element.
-  Document* doc = window->GetExtantDoc();
+  RefPtr<Document> doc = window->GetExtantDoc();
   if (!doc) {
     rv.Throw(NS_ERROR_UNEXPECTED);
     return false;
@@ -3847,7 +3846,7 @@ bool HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
   }
 
   // Step 3.
-  CustomElementDefinition* definition =
+  RefPtr<CustomElementDefinition> definition =
       registry->LookupCustomElementDefinition(aCx, newTarget);
   if (!definition) {
     rv.ThrowTypeError<MSG_ILLEGAL_CONSTRUCTOR>();
@@ -3947,6 +3946,21 @@ bool HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
 
   // Steps 7 and 8.
   JS::Rooted<JSObject*> desiredProto(aCx);
+
+  // Check which construction path we're taking before running any JS.
+  // This determines whether we need AutoConstructionDepth protection.
+  nsTArray<RefPtr<Element>>& constructionStack = definition->mConstructionStack;
+  const bool isDirectConstruction = constructionStack.IsEmpty();
+
+  // For direct construction (not upgrade), create AutoConstructionDepth before
+  // GetDesiredProto. This ensures mConstructionDepth is incremented before any
+  // re-entrant JS can run via Proxy traps, preventing desynchronization with
+  // mPrefixStack which may be pushed by nsContentUtils::NewXULOrHTMLElement.
+  mozilla::Maybe<AutoConstructionDepth> autoDepth;
+  if (isDirectConstruction) {
+    autoDepth.emplace(definition);
+  }
+
   if (!GetDesiredProto(aCx, args, aProtoId, aCreator, &desiredProto)) {
     return false;
   }
@@ -3957,14 +3971,12 @@ bool HTMLConstructor(JSContext* aCx, unsigned aArgc, JS::Value* aVp,
   // one branch and steps 9-12 on another branch, then common up the "return
   // element" work.
   RefPtr<Element> element;
-  nsTArray<RefPtr<Element>>& constructionStack = definition->mConstructionStack;
-  if (constructionStack.IsEmpty()) {
+  if (isDirectConstruction) {
     // Step 8.
     // Now we go to construct an element.  We want to do this in global's
     // realm, not caller realm (the normal constructor behavior),
     // just in case those elements create JS things.
     JSAutoRealm ar(aCx, global.Get());
-    AutoConstructionDepth acd(definition);
 
     RefPtr<NodeInfo> nodeInfo = doc->NodeInfoManager()->GetNodeInfo(
         definition->mLocalName, definition->mPrefixStack.LastElement(), ns,
@@ -4080,7 +4092,7 @@ namespace {
 
 #define DEPRECATED_OPERATION(_op) #_op,
 static const char* kDeprecatedOperations[] = {
-#include "nsDeprecatedOperationList.h"
+#include "nsDeprecatedOperationList.inc"
     nullptr};
 #undef DEPRECATED_OPERATION
 

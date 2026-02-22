@@ -569,11 +569,6 @@ class Configuration(DescriptorProvider):
                 def getter(x):
                     return x.interface.isExposedInWindow()
 
-            elif key == "isExposedInShadowRealms":
-
-                def getter(x):
-                    return x.interface.isExposedInShadowRealms()
-
             elif key == "isSerializable":
 
                 def getter(x):
@@ -837,8 +832,7 @@ class Descriptor(DescriptorProvider):
                         )
                     if len(m.signatures()) != 1:
                         raise TypeError(
-                            "We don't support overloaded "
-                            "legacycaller.\n%s" % m.location
+                            "We don't support overloaded legacycaller.\n%s" % m.location
                         )
                     addOperation("LegacyCaller", m)
 

@@ -999,7 +999,7 @@ class ScrollContainerFrame : public nsContainerFrame,
   void MarkNotRecentlyScrolled();
   nsExpirationState* GetExpirationState() { return &mActivityExpirationState; }
 
-  bool UsesOverlayScrollbars() const;
+  bool UseOverlayScrollbars() const;
   bool IsLastSnappedTarget(const nsIFrame* aFrame) const;
 
   // If aBuilder is non-null, returns the value cached on aBuilder. Pass null
@@ -1148,6 +1148,10 @@ class ScrollContainerFrame : public nsContainerFrame,
     }
     mScrollPort = aNewScrollPort;
   }
+
+  // Gets the node that is a suitable scroll event target for our events.
+  enum class RootTargetsDocument : bool { No, Yes };
+  RefPtr<nsINode> ScrollEventTargetNode(RootTargetsDocument) const;
 
   /**
    * Return the 'optimal viewing region' as a rect suitable for use by

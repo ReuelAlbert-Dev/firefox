@@ -277,6 +277,9 @@ JS_PUBLIC_API JSObject* JS::CompileJsonModule(
 
 JS_PUBLIC_API JSObject* JS::CreateDefaultExportSyntheticModule(
     JSContext* cx, const Value& defaultExport) {
+  CHECK_THREAD(cx);
+  cx->check(defaultExport);
+
   Rooted<ExportNameVector> exportNames(cx);
   if (!exportNames.append(cx->names().default_)) {
     ReportOutOfMemory(cx);
@@ -305,7 +308,7 @@ JS_PUBLIC_API JSObject* JS::CreateDefaultExportSyntheticModule(
 
 JS_PUBLIC_API JSObject* JS::CompileWasmModule(
     JSContext* cx, const ReadOnlyCompileOptions& options,
-    SourceText<mozilla::Utf8Unit>& srcBuf) {
+    js::Vector<uint8_t, 0, js::MallocAllocPolicy>& srcBuf) {
   // TODO: Compilation of wasm modules will be added in
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1997621.
   // For now, we fail unconditionally.
@@ -313,18 +316,6 @@ JS_PUBLIC_API JSObject* JS::CompileWasmModule(
                            JSMSG_WASM_COMPILE_ERROR,
                            "Compilation of wasm modules not implemented.");
 
-  return nullptr;
-}
-
-JS_PUBLIC_API JSObject* JS::CompileWasmModule(
-    JSContext* cx, const ReadOnlyCompileOptions& options,
-    SourceText<char16_t>& srcBuf) {
-  // TODO: Compilation of wasm modules will be added in
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1997621.
-  // For now, we fail unconditionally.
-  JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                           JSMSG_WASM_COMPILE_ERROR,
-                           "Compilation of wasm modules not implemented.");
   return nullptr;
 }
 
@@ -361,7 +352,7 @@ JS_PUBLIC_API bool JS::LoadRequestedModules(
     JS::LoadModuleRejectedCallback rejected) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  cx->releaseCheck(moduleArg);
+  cx->releaseCheck(moduleArg, hostDefined);
 
   return js::LoadRequestedModules(cx, moduleArg.as<ModuleObject>(), hostDefined,
                                   resolved, rejected);
@@ -372,7 +363,7 @@ JS_PUBLIC_API bool JS::LoadRequestedModules(
     MutableHandle<JSObject*> promiseOut) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
-  cx->releaseCheck(moduleArg);
+  cx->releaseCheck(moduleArg, hostDefined);
 
   return js::LoadRequestedModules(cx, moduleArg.as<ModuleObject>(), hostDefined,
                                   promiseOut);
@@ -756,7 +747,14 @@ bool js::HostLoadImportedModule(JSContext* cx, Handle<JSScript*> referrer,
                                 Handle<Value> payload, uint32_t lineNumber,
                                 JS::ColumnNumberOneOrigin columnNumber) {
   MOZ_ASSERT(moduleRequest);
-  MOZ_ASSERT(!payload.isUndefined());
+  MOZ_ASSERT(payload.isObject());
+  cx->releaseCheck(referrer, moduleRequest, hostDefined, payload);
+
+  // TODO: The modules system doesn't support passing a wrapped promise from
+  // another compartment, which can happen when this is called from
+  // ShadowRealmImportValue.
+  MOZ_RELEASE_ASSERT(payload.toObject().is<GraphLoadingStateRecordObject>() ||
+                     payload.toObject().is<PromiseObject>());
 
   JS::ModuleLoadHook moduleLoadHook = cx->runtime()->moduleLoadHook;
   if (!moduleLoadHook) {
@@ -1453,6 +1451,11 @@ static bool InnerModuleLoading(JSContext* cx,
   MOZ_ASSERT(state);
   MOZ_ASSERT(module);
 
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
+    return false;
+  }
+
   // Step 1. Assert: state.[[IsLoading]] is true.
   MOZ_ASSERT(state->isLoading());
 
@@ -1712,8 +1715,9 @@ static bool InnerModuleLinking(JSContext* cx, Handle<ModuleObject*> module,
                                size_t* indexOut) {
   // Step 1. If module is not a Cyclic Module Record, then
   if (!module->hasCyclicModuleFields()) {
-    // Step 1.a. Perform ? module.Link(). (Skipped)
-    // Step 2.b. Return index.
+    // Step 1.a. Perform ? module.Link().
+    // (Skipped as we have already created the environment for these modules).
+    // Step 1.b. Return index.
     *indexOut = index;
     return true;
   }
@@ -2091,8 +2095,11 @@ static bool InnerModuleEvaluation(JSContext* cx, Handle<ModuleObject*> module,
 
       // Step 11.c.ii. Assert: requiredModule.[[Status]] is evaluating if and
       //               only if requiredModule is in stack.
-      MOZ_ASSERT((requiredModule->status() == ModuleStatus::Evaluating) ==
-                 ContainsElement(stack, requiredModule));
+      if ((requiredModule->status() == ModuleStatus::Evaluating) !=
+          ContainsElement(stack, requiredModule)) {
+        ThrowUnexpectedModuleStatus(cx, requiredModule->status());
+        return false;
+      }
 
       // Step 11.c.iii. If requiredModule.[[Status]] is evaluating, then:
       if (requiredModule->status() == ModuleStatus::Evaluating) {
@@ -2633,9 +2640,6 @@ static bool EvaluateDynamicImportOptions(
 }
 
 // https://tc39.es/ecma262/#sec-evaluate-import-call
-//
-// ShadowRealmImportValue duplicates some of this, so be sure to keep these in
-// sync.
 JSObject* js::StartDynamicModuleImport(JSContext* cx, HandleScript script,
                                        HandleValue specifierArg,
                                        HandleValue optionsArg) {
@@ -2654,6 +2658,25 @@ JSObject* js::StartDynamicModuleImport(JSContext* cx, HandleScript script,
 
   return promise;
 }
+
+#ifdef ENABLE_SOURCE_PHASE_IMPORTS
+JSObject* js::StartDynamicModuleImportSource(JSContext* cx, HandleScript script,
+                                             HandleValue specifierArg) {
+  JS::Rooted<PromiseObject*> promise(cx,
+                                     PromiseObject::createSkippingExecutor(cx));
+  if (!promise) {
+    return nullptr;
+  }
+
+  // TODO: This will be implemented in Bug 2011284.
+  JS_ReportErrorASCII(cx, "source phase imports are not yet implemented");
+  if (!RejectPromiseWithPendingError(cx, promise)) {
+    return nullptr;
+  }
+
+  return promise;
+}
+#endif
 
 // https://tc39.es/ecma262/#sec-evaluate-import-call continued.
 static bool TryStartDynamicModuleImport(JSContext* cx, HandleScript script,
@@ -2855,6 +2878,7 @@ bool ContinueDynamicImport(JSContext* cx, Handle<JSScript*> referrer,
   // only need to do _linkAndEvaluate_ part defined in the spec. Create a
   // promise that we'll resolve immediately.
   JS::Rooted<PromiseObject*> loadPromise(cx, CreatePromiseObjectForAsync(cx));
+
   if (!loadPromise) {
     return RejectPromiseWithPendingError(cx, promiseCapability);
   }

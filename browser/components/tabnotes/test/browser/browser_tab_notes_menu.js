@@ -4,6 +4,10 @@
 
 "use strict";
 
+const { Sqlite } = ChromeUtils.importESModule(
+  "resource://gre/modules/Sqlite.sys.mjs"
+);
+
 registerCleanupFunction(async () => {
   await TabNotes.reset();
 });
@@ -119,7 +123,10 @@ add_task(async function test_tabContextMenu_prefDisabled() {
 add_task(async function test_openTabNotePanelFromContextMenu() {
   // open context menu with tab notes enabled
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.tabs.notes.enabled", true]],
+    set: [
+      ["browser.tabs.notes.enabled", true],
+      ["browser.tabs.notes.newBadge.enabled", true],
+    ],
   });
   let tab = BrowserTestUtils.addTab(gBrowser, "https://www.example.com");
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
@@ -128,6 +135,11 @@ add_task(async function test_openTabNotePanelFromContextMenu() {
   Assert.ok(
     !addNoteElement.hidden,
     "'Add Note' is visible in context menu when pref enabled"
+  );
+  Assert.equal(
+    addNoteElement.getAttribute("badge"),
+    "New",
+    "'New' badge appears when user first interacts with context menu item"
   );
   let tabNotePanel = document.getElementById("tabNotePanel");
 
@@ -142,6 +154,14 @@ add_task(async function test_openTabNotePanelFromContextMenu() {
     "Tab note panel appears after clicking context menu item"
   );
   await closeTabNoteMenu();
+
+  tabContextMenu = await getContextMenu(tab, "tabContextMenu");
+  Assert.ok(
+    !addNoteElement.getAttribute("badge"),
+    "'New' badge disappears after user interaction"
+  );
+
+  await closeContextMenu(tabContextMenu);
   BrowserTestUtils.removeTab(tab);
   await SpecialPowers.popPrefEnv();
 });
@@ -249,11 +269,23 @@ add_task(async function test_editTabNote() {
   tabNoteMenu.querySelector("#tab-note-editor-button-save").click();
   await Promise.all([menuHidden, tabNoteEdited]);
 
+  await BrowserTestUtils.waitForCondition(
+    () => Glean.tabNotes.edited.testGetValue()?.length,
+    "wait for event to be recorded"
+  );
+
   const tabNote = await TabNotes.get(tab);
   Assert.equal(
     tabNote.text,
     initialNoteValue + updatedNoteValue,
     "The updated text entered into the textarea was saved as a note"
+  );
+
+  const [editedMetric] = Glean.tabNotes.edited.testGetValue();
+  Assert.deepEqual(
+    editedMetric.extra,
+    { source: "context_menu" },
+    "edited event extra data should show that the tab note was edited from the context menu"
   );
 
   await TabNotes.delete(tab);
@@ -274,15 +306,49 @@ add_task(async function test_deleteTabNote() {
   await TabNotes.set(tab, initialNoteValue);
   await tabNoteCreated;
 
+  // Modify the created time of the note so we can test the max age recorded by
+  // Glean
+  const dbConn = await Sqlite.openConnection({
+    path: TabNotes.dbPath,
+  });
+  dbConn.executeCached(
+    'UPDATE tabnotes SET created = unixepoch("now", "-12 hours") WHERE canonical_url = :url',
+    {
+      url: tab.canonicalUrl,
+    }
+  );
+
   let tabNoteRemoved = BrowserTestUtils.waitForEvent(tab, "TabNote:Removed");
   activateTabContextMenuItem(tab, "#context_deleteNote", "#context_updateNote");
   await tabNoteRemoved;
+
+  await BrowserTestUtils.waitForCondition(
+    () => Glean.tabNotes.deleted.testGetValue()?.length,
+    "wait for event to be recorded"
+  );
 
   let result = await TabNotes.has(tab);
 
   Assert.ok(!result, "Tab note was deleted");
 
+  const [deletedMetric] = Glean.tabNotes.deleted.testGetValue();
+  Assert.equal(
+    deletedMetric.extra.source,
+    "context_menu",
+    "deleted event extra data should say the tab note was deleted from the context menu"
+  );
+  Assert.equal(
+    deletedMetric.extra.note_age_hours,
+    12,
+    "note_age_hours should show that note was created 12 hours ago"
+  );
+
   BrowserTestUtils.removeTab(tab);
+  await dbConn.close();
+
+  // Reset Glean metrics
+  await Services.fog.testFlushAllChildren();
+  Services.fog.testResetFOG();
 });
 
 add_task(async function test_tabNoteOverflow() {

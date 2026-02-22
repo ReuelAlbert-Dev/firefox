@@ -40,7 +40,8 @@ XULButtonElement::XULButtonElement(
     : nsXULElement(std::move(aNodeInfo)),
       mIsAlwaysMenu(IsAnyOfXULElements(nsGkAtoms::menu, nsGkAtoms::menulist,
                                        nsGkAtoms::menuitem)),
-      mCheckable(IsAnyOfXULElements(nsGkAtoms::menuitem, nsGkAtoms::radio,
+      mCheckable(IsAnyOfXULElements(nsGkAtoms::menuitem,
+                                    nsGkAtoms::richlistitem, nsGkAtoms::radio,
                                     nsGkAtoms::checkbox)) {}
 
 XULButtonElement::~XULButtonElement() {
@@ -245,8 +246,7 @@ void XULButtonElement::ExecuteMenu(Modifiers aModifiers, int16_t aButton,
   // Flip "checked" state if we're a checkbox menu, or an un-checked radio menu.
   bool needToFlipChecked = false;
   if (*menuType == MenuType::Checkbox ||
-      (*menuType == MenuType::Radio &&
-       !State().HasState(ElementState::CHECKED))) {
+      (*menuType == MenuType::Radio && !GetBoolAttr(nsGkAtoms::checked))) {
     needToFlipChecked = !AttrValueIs(kNameSpaceID_None, nsGkAtoms::autocheck,
                                      nsGkAtoms::_false, eCaseMatters);
   }
@@ -643,6 +643,11 @@ bool XULButtonElement::OnPointerClicked(WidgetGUIEvent& aEvent) {
     return false;
   }
 
+  if (NodeInfo()->Equals(nsGkAtoms::checkbox)) {
+    // Toggle `checked` now so that command handling sees the right state.
+    SetBoolAttr(nsGkAtoms::checked, !GetBoolAttr(nsGkAtoms::checked));
+  }
+
   // Have the content handle the event, propagating it according to normal DOM
   // rules.
   RefPtr<mozilla::PresShell> presShell = OwnerDoc()->GetPresShell();
@@ -712,6 +717,24 @@ void XULButtonElement::UncheckRadioSiblings() {
   }
 }
 
+nsAtom* XULButtonElement::GetCheckedStateAttribute() const {
+  // <menuitem> uses checked for type=radio / type=checkbox, and selected for
+  // <menulist>.
+  //
+  // <richlistitem> uses checked, and <radio> uses selected. Note that
+  // <richlistitem> uses selected with a different meaning as well (for the
+  // currently selected / focused item), so this code needs to deal with that.
+  MOZ_ASSERT(mCheckable);
+  if (auto menuType = GetMenuType()) {
+    return *menuType == MenuType::Normal ? nsGkAtoms::selected
+                                         : nsGkAtoms::checked;
+  }
+  if (NodeInfo()->Equals(nsGkAtoms::radio)) {
+    return nsGkAtoms::selected;
+  }
+  return nsGkAtoms::checked;
+}
+
 void XULButtonElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
                                     const nsAttrValue* aValue,
                                     const nsAttrValue* aOldValue,
@@ -722,8 +745,14 @@ void XULButtonElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
   if (aNamespaceID != kNameSpaceID_None) {
     return;
   }
-  if (aName == nsGkAtoms::checked && mCheckable) {
-    SetStates(ElementState::CHECKED, !!aValue, aNotify);
+  if (mCheckable) {
+    if (aName == GetCheckedStateAttribute()) {
+      SetStates(ElementState::CHECKED, !!aValue, aNotify);
+    }
+    if (IsAlwaysMenu() && aName == nsGkAtoms::type) {
+      SetStates(ElementState::CHECKED, GetBoolAttr(GetCheckedStateAttribute()),
+                aNotify);
+    }
   }
   if (aName == nsGkAtoms::disabled) {
     SetStates(ElementState::DISABLED, !!aValue, aNotify);
@@ -734,7 +763,7 @@ void XULButtonElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
     const bool shouldUncheckSiblings = [&] {
       if (aName == nsGkAtoms::type || aName == nsGkAtoms::name) {
         return *GetMenuType() == MenuType::Radio &&
-               State().HasState(ElementState::CHECKED);
+               GetBoolAttr(nsGkAtoms::checked);
       }
       if (aName == nsGkAtoms::checked && aValue) {
         return *GetMenuType() == MenuType::Radio;

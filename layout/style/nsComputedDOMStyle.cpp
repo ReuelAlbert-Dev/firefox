@@ -12,6 +12,7 @@
 
 #include "AnchorPositioningUtils.h"
 #include "NonCustomCSSPropertyId.h"
+#include "PseudoStyleType.h"
 #include "mozilla/AppUnits.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/ComputedStyleInlines.h"
@@ -33,7 +34,6 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "nsCSSProps.h"
-#include "nsCSSPseudoElements.h"
 #include "nsContentUtils.h"
 #include "nsDOMCSSDeclaration.h"
 #include "nsDOMCSSValueList.h"
@@ -68,8 +68,7 @@ using namespace mozilla::dom;
 already_AddRefed<nsComputedDOMStyle> NS_NewComputedDOMStyle(
     dom::Element* aElement, const nsAString& aPseudoElt, Document* aDocument,
     nsComputedDOMStyle::StyleType aStyleType, mozilla::ErrorResult&) {
-  auto request = nsCSSPseudoElements::ParsePseudoElement(
-      aPseudoElt, CSSEnabledState::ForAllContent);
+  auto request = PseudoStyleRequest::Parse(aPseudoElt);
   auto returnEmpty = nsComputedDOMStyle::AlwaysReturnEmptyStyle::No;
   if (!request) {
     if (!aPseudoElt.IsEmpty() && aPseudoElt.First() == u':') {
@@ -598,7 +597,7 @@ nsMargin nsComputedDOMStyle::GetAdjustedValuesForBoxSizing() {
   const nsStylePosition* stylePos = StylePosition();
 
   nsMargin adjustment;
-  if (stylePos->mBoxSizing == StyleBoxSizing::Border) {
+  if (stylePos->mBoxSizing == StyleBoxSizing::BorderBox) {
     adjustment = mInnerFrame->GetUsedBorderAndPadding();
   }
 
@@ -798,6 +797,7 @@ static bool MayNeedToFlushLayout(NonCustomCSSPropertyId aPropId) {
     case eCSSProperty_perspective_origin:
     case eCSSProperty_transform_origin:
     case eCSSProperty_transform:
+    case eCSSProperty__webkit_transform:
     case eCSSProperty_top:
     case eCSSProperty_right:
     case eCSSProperty_bottom:
@@ -939,6 +939,7 @@ bool nsComputedDOMStyle::NeedsToFlushLayout(
     case eCSSProperty_transform_origin:
       return style->StyleDisplay()->mTransformOrigin.HasPercent();
     case eCSSProperty_transform:
+    case eCSSProperty__webkit_transform:
       return style->StyleDisplay()->mTransform.HasPercent();
     case eCSSProperty_top:
     case eCSSProperty_right:
@@ -1261,6 +1262,10 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetPerspectiveOrigin() {
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetTransform() {
   const nsStyleDisplay* display = StyleDisplay();
   return GetTransformValue(display->mTransform);
+}
+
+already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetWebkitTransform() {
+  return DoGetTransform();
 }
 
 /* static */

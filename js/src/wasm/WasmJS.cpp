@@ -24,7 +24,6 @@
 #include <cstdint>
 
 #include "jsapi.h"
-#include "jsexn.h"
 
 #include "ds/IdValuePair.h"            // js::IdValuePair
 #include "frontend/FrontendContext.h"  // AutoReportFrontendContext
@@ -266,7 +265,7 @@ bool js::wasm::GetImports(JSContext* cx, const Module& module,
 
         Rooted<WasmTableObject*> obj(
             cx, &importFieldValue.toObject().as<WasmTableObject>());
-        if (obj->table().elemType() != tables[index].elemType) {
+        if (obj->table().elemType() != tables[index].elemType()) {
           JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                    JSMSG_WASM_BAD_TBL_TYPE_LINK);
           return false;
@@ -1146,32 +1145,6 @@ void WasmModuleObject::finalize(JS::GCContext* gcx, JSObject* obj) {
                MemoryUse::WasmModule);
 }
 
-static bool IsModuleObject(JSObject* obj, const Module** module) {
-  WasmModuleObject* mobj = obj->maybeUnwrapIf<WasmModuleObject>();
-  if (!mobj) {
-    return false;
-  }
-
-  *module = &mobj->module();
-  return true;
-}
-
-static bool GetModuleArg(JSContext* cx, const CallArgs& args,
-                         uint32_t numRequired, const char* name,
-                         const Module** module) {
-  if (!args.requireAtLeast(cx, name, numRequired)) {
-    return false;
-  }
-
-  if (!args[0].isObject() || !IsModuleObject(&args[0].toObject(), module)) {
-    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
-                             JSMSG_WASM_BAD_MOD_ARG);
-    return false;
-  }
-
-  return true;
-}
-
 struct KindNames {
   Rooted<PropertyName*> kind;
   Rooted<PropertyName*> table;
@@ -1239,8 +1212,21 @@ static JSString* KindToString(JSContext* cx, const KindNames& names,
 bool WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  const Module* module;
-  if (!GetModuleArg(cx, args, 1, "WebAssembly.Module.imports", &module)) {
+  if (!args.requireAtLeast(cx, "WebAssembly.Module.imports", 1)) {
+    return false;
+  }
+
+  if (!args[0].isObject()) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
+    return false;
+  }
+
+  Rooted<WasmModuleObject*> moduleObj(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!moduleObj) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
     return false;
   }
 
@@ -1249,14 +1235,14 @@ bool WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  const ModuleMetadata& moduleMeta = module->moduleMeta();
+  const ModuleMetadata& moduleMeta = moduleObj->module().moduleMeta();
 
   RootedValueVector elems(cx);
   if (!elems.reserve(moduleMeta.imports.length())) {
     return false;
   }
 
-  const CodeMetadata& codeMeta = module->codeMeta();
+  const CodeMetadata& codeMeta = moduleObj->module().codeMeta();
 #if defined(ENABLE_WASM_TYPE_REFLECTIONS)
   size_t numFuncImport = 0;
   size_t numMemoryImport = 0;
@@ -1311,7 +1297,7 @@ bool WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp) {
         size_t tableIndex = numTableImport++;
         const TableDesc& table = codeMeta.tables[tableIndex];
         typeObj =
-            TableTypeToObject(cx, table.addressType(), table.elemType,
+            TableTypeToObject(cx, table.addressType(), table.elemType(),
                               table.initialLength(), table.maximumLength());
         break;
       }
@@ -1365,8 +1351,21 @@ bool WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp) {
 bool WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  const Module* module;
-  if (!GetModuleArg(cx, args, 1, "WebAssembly.Module.exports", &module)) {
+  if (!args.requireAtLeast(cx, "WebAssembly.Module.exports", 1)) {
+    return false;
+  }
+
+  if (!args[0].isObject()) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
+    return false;
+  }
+
+  Rooted<WasmModuleObject*> moduleObj(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!moduleObj) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
     return false;
   }
 
@@ -1375,7 +1374,7 @@ bool WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  const ModuleMetadata& moduleMeta = module->moduleMeta();
+  const ModuleMetadata& moduleMeta = moduleObj->module().moduleMeta();
 
   RootedValueVector elems(cx);
   if (!elems.reserve(moduleMeta.exports.length())) {
@@ -1383,7 +1382,7 @@ bool WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp) {
   }
 
 #ifdef ENABLE_WASM_TYPE_REFLECTIONS
-  const CodeMetadata& codeMeta = module->codeMeta();
+  const CodeMetadata& codeMeta = moduleObj->module().codeMeta();
 #endif  // ENABLE_WASM_TYPE_REFLECTIONS
 
   for (const Export& exp : moduleMeta.exports) {
@@ -1417,7 +1416,7 @@ bool WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp) {
       case DefinitionKind::Table: {
         const TableDesc& table = codeMeta.tables[exp.tableIndex()];
         typeObj =
-            TableTypeToObject(cx, table.addressType(), table.elemType,
+            TableTypeToObject(cx, table.addressType(), table.elemType(),
                               table.initialLength(), table.maximumLength());
         break;
       }
@@ -1468,9 +1467,21 @@ bool WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp) {
 bool WasmModuleObject::customSections(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  const Module* module;
-  if (!GetModuleArg(cx, args, 2, "WebAssembly.Module.customSections",
-                    &module)) {
+  if (!args.requireAtLeast(cx, "WebAssembly.Module.customSections", 2)) {
+    return false;
+  }
+
+  if (!args[0].isObject()) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
+    return false;
+  }
+
+  Rooted<WasmModuleObject*> moduleObj(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!moduleObj) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
     return false;
   }
 
@@ -1497,7 +1508,8 @@ bool WasmModuleObject::customSections(JSContext* cx, unsigned argc, Value* vp) {
 
   RootedValueVector elems(cx);
   Rooted<ArrayBufferObject*> buf(cx);
-  for (const CustomSection& cs : module->moduleMeta().customSections) {
+  for (const CustomSection& cs :
+       moduleObj->module().moduleMeta().customSections) {
     if (name.length() != cs.name.length()) {
       continue;
     }
@@ -1965,8 +1977,15 @@ bool WasmInstanceObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  const Module* module;
-  if (!args[0].isObject() || !IsModuleObject(&args[0].toObject(), &module)) {
+  if (!args[0].isObject()) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_MOD_ARG);
+    return false;
+  }
+
+  Rooted<WasmModuleObject*> moduleObj(
+      cx, args[0].toObject().maybeUnwrapIf<WasmModuleObject>());
+  if (!moduleObj) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_MOD_ARG);
     return false;
@@ -1985,12 +2004,13 @@ bool WasmInstanceObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   Rooted<ImportValues> imports(cx);
-  if (!GetImports(cx, *module, importObj, imports.address())) {
+  if (!GetImports(cx, moduleObj->module(), importObj, imports.address())) {
     return false;
   }
 
   Rooted<WasmInstanceObject*> instanceObj(cx);
-  if (!module->instantiate(cx, imports.get(), proto, &instanceObj)) {
+  if (!moduleObj->module().instantiate(cx, imports.get(), proto,
+                                       &instanceObj)) {
     return false;
   }
 
@@ -2816,8 +2836,7 @@ static Value RefTypeDefaultValue(wasm::RefType tableType) {
 }
 
 /* static */
-WasmTableObject* WasmTableObject::create(JSContext* cx, Limits limits,
-                                         wasm::RefType tableType,
+WasmTableObject* WasmTableObject::create(JSContext* cx, const TableType& type,
                                          HandleObject proto) {
   AutoSetNewObjectMetadata metadata(cx);
   Rooted<WasmTableObject*> obj(
@@ -2828,7 +2847,7 @@ WasmTableObject* WasmTableObject::create(JSContext* cx, Limits limits,
 
   MOZ_ASSERT(obj->isNewborn());
 
-  TableDesc td(limits, tableType, Nothing(),
+  TableDesc td(type, Nothing(),
                /*isAsmJS*/ false,
                /*isImported=*/true, /*isExported=*/true);
 
@@ -2876,8 +2895,8 @@ bool WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  RefType tableType;
-  if (!ToRefType(cx, elementVal, &tableType)) {
+  RefType elemType;
+  if (!ToRefType(cx, elementVal, &elemType)) {
     return false;
   }
 
@@ -2902,15 +2921,15 @@ bool WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   Rooted<WasmTableObject*> table(
-      cx, WasmTableObject::create(cx, limits, tableType, proto));
+      cx, WasmTableObject::create(cx, TableType(limits, elemType), proto));
   if (!table) {
     return false;
   }
 
   // Initialize the table to a default value
   RootedValue initValue(
-      cx, args.length() < 2 ? RefTypeDefaultValue(tableType) : args[1]);
-  if (!CheckRefType(cx, tableType, initValue)) {
+      cx, args.length() < 2 ? RefTypeDefaultValue(elemType) : args[1]);
+  if (!CheckRefType(cx, elemType, initValue)) {
     return false;
   }
 
@@ -2925,7 +2944,7 @@ bool WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp) {
   if (initValue.isNull()) {
     table->table().assertRangeNull(0, limits.initial);
   }
-  if (!tableType.isNullable()) {
+  if (!elemType.isNullable()) {
     table->table().assertRangeNotNull(0, limits.initial);
   }
 #endif
@@ -4038,6 +4057,10 @@ bool WasmExceptionObject::loadArg(JSContext* cx, size_t offset,
 
 bool WasmExceptionObject::initArg(JSContext* cx, size_t offset,
                                   wasm::ValType type, HandleValue value) {
+  // We use writeToTenuredHeapLocation below as WasmExceptionObject is always
+  // tenured.
+  MOZ_ASSERT(isTenured());
+
   if (!type.isExposable()) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_VAL_TYPE);
@@ -4047,22 +4070,23 @@ bool WasmExceptionObject::initArg(JSContext* cx, size_t offset,
   // Avoid rooting hazard of `this` being live across `fromJSValue`
   // which may GC.
   uint8_t* dest = typedMem() + offset;
+
   RootedVal val(cx);
   if (!Val::fromJSValue(cx, type, value, &val)) {
     return false;
   }
-  val.get().writeToHeapLocation(dest);
+  val.get().writeToTenuredHeapLocation(dest);
   return true;
 }
 
 void WasmExceptionObject::initRefArg(size_t offset, wasm::AnyRef ref) {
   uint8_t* dest = typedMem() + offset;
-  *((GCPtr<AnyRef>*)dest) = ref;
+  BarrieredInit(this, dest, ref);
 }
 
 wasm::AnyRef WasmExceptionObject::loadRefArg(size_t offset) const {
   uint8_t* src = typedMem() + offset;
-  return *((GCPtr<AnyRef>*)src);
+  return *(AnyRef*)src;
 }
 
 const JSFunctionSpec WasmExceptionObject::methods[] = {
@@ -4691,9 +4715,11 @@ static bool WebAssembly_instantiate(JSContext* cx, unsigned argc, Value* vp) {
     return RejectWithPendingException(cx, promise, callArgs);
   }
 
-  const Module* module;
-  if (IsModuleObject(firstArg, &module)) {
-    if (!AsyncInstantiate(cx, *module, importObj, Ret::Instance, promise)) {
+  Rooted<WasmModuleObject*> moduleObj(
+      cx, firstArg->maybeUnwrapIf<WasmModuleObject>());
+  if (moduleObj) {
+    if (!AsyncInstantiate(cx, moduleObj->module(), importObj, Ret::Instance,
+                          promise)) {
       return false;
     }
   } else {
@@ -5469,9 +5495,7 @@ static bool WebAssembly_promising(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   RootedObject func(cx, &args[0].toObject());
-  RootedFunction promise(
-      cx, WasmPromisingFunctionCreate(cx, func, wasm::ValTypeVector(),
-                                      wasm::ValTypeVector()));
+  RootedFunction promise(cx, WasmPromisingFunctionCreate(cx, func));
   if (!promise) {
     return false;
   }

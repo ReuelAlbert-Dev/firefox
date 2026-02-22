@@ -363,9 +363,6 @@ def check(
         )
         return 0
 
-    # Escape the files from source
-    source = [re.escape(f) for f in source]
-
     cwd = command_context.topobjdir
 
     monitor = StaticAnalysisMonitor(
@@ -575,15 +572,14 @@ def _get_clang_tidy_command(
         + common_args
         # run-clang-tidy expects regexps, not paths, so we need to escape
         # backslashes.
-        + [os.path.normpath(s).replace("\\", "\\\\") for s in sources]
+        + [re.escape(os.path.normpath(s)) for s in sources]
     )
 
 
 @StaticAnalysisSubCommand(
     "static-analysis",
     "autotest",
-    "Run the auto-test suite in order to determine that"
-    " the analysis did not regress.",
+    "Run the auto-test suite in order to determine that the analysis did not regress.",
 )
 @CommandArgument(
     "--dump-results",

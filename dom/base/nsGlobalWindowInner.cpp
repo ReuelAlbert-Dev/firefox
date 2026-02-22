@@ -1275,6 +1275,7 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   mConsole = nullptr;
   mCookieStore = nullptr;
   mDocumentPiP = nullptr;
+  mCloseWatcherManager = nullptr;
 
   mPaintWorklet = nullptr;
 
@@ -1577,6 +1578,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
       !tmp->mWindowGlobalChild || tmp->mWindowGlobalChild->IsClosed(),
       "How are we unlinking a window before its actor has been destroyed?");
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindowGlobalChild)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCloseWatcherManager)
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mMenubar)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mToolbar)
@@ -2109,7 +2111,7 @@ void nsGlobalWindowInner::UpdateParentTarget() {
     eventTarget = mChromeEventHandler;
   }
 
-  mParentTarget = eventTarget;
+  mParentTarget = std::move(eventTarget);
 }
 
 EventTarget* nsGlobalWindowInner::GetTargetForDOMEvent() {
@@ -2681,6 +2683,42 @@ bool nsGlobalWindowInner::SynthesizeMouseEvent(
       CSSPoint(aOffsetX, aOffsetY), offset, presShell->GetPresContext());
   auto result = nsContentUtils::SynthesizeMouseEvent(
       presShell, widget, aType, refPoint, aMouseEventData, aOptions, aCallback);
+  if (result.isErr()) {
+    aError.Throw(result.unwrapErr());
+    return false;
+  }
+
+  return result.unwrap();
+}
+
+bool nsGlobalWindowInner::SynthesizeTouchEvent(
+    const nsAString& aType, const nsTArray<SynthesizeTouchEventData>& aTouches,
+    const int32_t aModifiers, const SynthesizeTouchEventOptions& aOptions,
+    const Optional<OwningNonNull<VoidFunction>>& aCallback,
+    mozilla::ErrorResult& aError) {
+  nsIDocShell* docShell = GetDocShell();
+  RefPtr<PresShell> presShell = docShell ? docShell->GetPresShell() : nullptr;
+  if (!presShell) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return false;
+  }
+
+  nsPoint offset;
+  nsCOMPtr<nsIWidget> widget = nsContentUtils::GetWidget(presShell, &offset);
+  if (!widget) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return false;
+  }
+
+  RefPtr<nsPresContext> presContext = mDoc->GetPresContext();
+  if (!presContext) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return false;
+  }
+
+  auto result = nsContentUtils::SynthesizeTouchEvent(
+      presContext, widget, offset, aType, aTouches, aModifiers, aOptions,
+      aCallback);
   if (result.isErr()) {
     aError.Throw(result.unwrapErr());
     return false;
@@ -3884,6 +3922,13 @@ void nsGlobalWindowInner::ResizeBy(int32_t aWidthDif, int32_t aHeightDif,
                                    ErrorResult& aError) {
   FORWARD_TO_OUTER_OR_THROW(
       ResizeByOuter, (aWidthDif, aHeightDif, aCallerType, aError), aError, );
+}
+
+void nsGlobalWindowInner::MoveResize(int32_t aX, int32_t aY, int32_t aWidth,
+                                     int32_t aHeight, ErrorResult& aError) {
+  const auto callerType = CallerType::System;  // We're ChromeOnly
+  FORWARD_TO_OUTER_OR_THROW(
+      MoveResizeOuter, (aX, aY, aWidth, aHeight, callerType, aError), aError, );
 }
 
 void nsGlobalWindowInner::SizeToContent(

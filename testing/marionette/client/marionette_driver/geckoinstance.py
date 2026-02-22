@@ -148,6 +148,9 @@ class GeckoInstance:
         # Disable the GFX sanity window
         "media.sanity-test.disabled": True,
         "media.volume_scale": "0.01",
+        # Allow scroll amount larger than one page on a single mouse wheel
+        # event.
+        "mousewheel.allow_scrolling_more_than_one_page": True,
         # Disable connectivity service pings
         "network.connectivity-service.enabled": False,
         # Do not prompt for temporary redirects
@@ -343,15 +346,13 @@ class GeckoInstance:
             args["preferences"]["remote.log.level"] = level
 
         if "-jsdebugger" in self.app_args:
-            args["preferences"].update(
-                {
-                    "devtools.browsertoolbox.panel": "jsdebugger",
-                    "devtools.chrome.enabled": True,
-                    "devtools.debugger.prompt-connection": False,
-                    "devtools.debugger.remote-enabled": True,
-                    "devtools.testing": True,
-                }
-            )
+            args["preferences"].update({
+                "devtools.browsertoolbox.panel": "jsdebugger",
+                "devtools.chrome.enabled": True,
+                "devtools.debugger.prompt-connection": False,
+                "devtools.debugger.remote-enabled": True,
+                "devtools.testing": True,
+            })
 
         if self.addons:
             args["addons"] = self.addons
@@ -420,13 +421,11 @@ class GeckoInstance:
 
         # environment variables needed for crashreporting
         # https://developer.mozilla.org/docs/Environment_variables_affecting_crash_reporting
-        env.update(
-            {
-                "MOZ_CRASHREPORTER": "1",
-                "MOZ_CRASHREPORTER_NO_REPORT": "1",
-                "MOZ_CRASHREPORTER_SHUTDOWN": "1",
-            }
-        )
+        env.update({
+            "MOZ_CRASHREPORTER": "1",
+            "MOZ_CRASHREPORTER_NO_REPORT": "1",
+            "MOZ_CRASHREPORTER_SHUTDOWN": "1",
+        })
 
         extra_args = ["-marionette", "-remote-allow-system-access"]
         args = {
@@ -677,6 +676,8 @@ class DesktopInstance(GeckoInstance):
         # Turn off Merino suggestions in the location bar so as not to trigger network
         # connections.
         "browser.urlbar.merino.endpointURL": "",
+        "browser.urlbar.merino.ohttpConfigURL": "",
+        "browser.urlbar.merino.ohttpRelayURL": "",
         # Turn off search suggestions in the location bar so as not to trigger network
         # connections.
         "browser.urlbar.suggest.searches": False,

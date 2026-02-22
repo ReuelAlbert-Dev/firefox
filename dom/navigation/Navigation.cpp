@@ -159,6 +159,11 @@ void NavigationAPIMethodTracker::CreateResult(JSContext* aCx,
   InitNavigationResult(aResult, mCommittedPromise, mFinishedPromise);
 }
 
+bool NavigationAPIMethodTracker::IsHandled() const {
+  return this != mNavigationObject->mOngoingAPIMethodTracker && mKey &&
+         !mNavigationObject->mUpcomingTraverseAPIMethodTrackers.Contains(*mKey);
+}
+
 NS_IMPL_CYCLE_COLLECTION_WITH_JS_MEMBERS(NavigationAPIMethodTracker,
                                          (mNavigationObject, mSerializedState,
                                           mCommittedToEntry, mCommittedPromise,
@@ -442,7 +447,9 @@ void Navigation::SetEarlyErrorResult(JSContext* aCx, NavigationResult& aResult,
   // «[ "committed" → a promise rejected with e,
   //    "finished" → a promise rejected with e ]».
 
-  RefPtr global = GetOwnerGlobal();
+  // Get the global of the current realm to create the DOMException.
+  // See https://webidl.spec.whatwg.org/#js-creating-throwing-exceptions
+  nsIGlobalObject* global = GetCurrentGlobal();
   if (!global) {
     // Creating a promise should only fail if there is no global.
     // In this case, the only solution is to ignore the error.
@@ -690,6 +697,11 @@ void Navigation::PerformNavigationTraversal(JSContext* aCx, const nsID& aKey,
     // 12.3 If targetSHE is navigable's active session history entry,
     //      then abort these steps.
     if (NS_SUCCEEDED(aResult)) {
+      return;
+    }
+
+    // See https://github.com/whatwg/html/issues/12176
+    if (apiMethodTracker->IsHandled()) {
       return;
     }
 
@@ -1127,8 +1139,7 @@ static void LogEvent(Event* aEvent, NavigateEvent* aOngoingEvent,
   }
 
   if (aOngoingEvent) {
-    log.AppendElement(
-        fmt::format(FMT_STRING("{}"), aOngoingEvent->NavigationType()));
+    log.AppendElement(fmt::format("{}", aOngoingEvent->NavigationType()));
 
     if (RefPtr<NavigationDestination> destination =
             aOngoingEvent->Destination()) {
@@ -1157,7 +1168,7 @@ nsresult Navigation::FireEvent(const nsAString& aName) {
 static void ExtractErrorInformation(JSContext* aCx,
                                     JS::Handle<JS::Value> aError,
                                     ErrorEventInit& aErrorEventInitDict,
-                                    NavigateEvent* aEvent) {
+                                    const NavigateEvent* aEvent) {
   nsContentUtils::ExtractErrorValues(
       aCx, aError, aErrorEventInitDict.mFilename, &aErrorEventInitDict.mLineno,
       &aErrorEventInitDict.mColno, aErrorEventInitDict.mMessage);
@@ -1262,7 +1273,7 @@ struct NavigationWaitForAllScope final : public nsISupports,
     }
   }
   // https://html.spec.whatwg.org/#commit-a-navigate-event
-  MOZ_CAN_RUN_SCRIPT void CommitNavigateEvent(NavigationType aNavigationType) {
+  MOZ_CAN_RUN_SCRIPT void CommitNavigateEvent() {
     // 1. Let navigation be event's target.
     // Omitted since Navigation is part of this's state.
 
@@ -1310,7 +1321,7 @@ struct NavigationWaitForAllScope final : public nsISupports,
       // See https://github.com/whatwg/html/issues/11830 for this change.
       mEvent->SetInterceptionState(NavigateEvent::InterceptionState::Committed);
       // 9.1 Switch on event's navigationType:
-      switch (aNavigationType) {
+      switch (mEvent->NavigationType()) {
         case NavigationType::Push:
         case NavigationType::Replace:
           // Run the URL and history update steps given event's relevant
@@ -1321,7 +1332,8 @@ struct NavigationWaitForAllScope final : public nsISupports,
             docShell->UpdateURLAndHistory(
                 document, mDestination->GetURL(),
                 mEvent->ClassicHistoryAPIState(),
-                *NavigationUtils::NavigationHistoryBehavior(aNavigationType),
+                *NavigationUtils::NavigationHistoryBehavior(
+                    mEvent->NavigationType()),
                 document->GetDocumentURI(),
                 Equals(mDestination->GetURL(), document->GetDocumentURI()));
           }
@@ -1332,7 +1344,8 @@ struct NavigationWaitForAllScope final : public nsISupports,
           // "reload".
           if (docShell) {
             mNavigation->UpdateEntriesForSameDocumentNavigation(
-                docShell->GetActiveSessionHistoryInfo(), aNavigationType);
+                docShell->GetActiveSessionHistoryInfo(),
+                mEvent->NavigationType());
           }
           break;
         case NavigationType::Traverse:
@@ -1738,7 +1751,7 @@ bool Navigation::InnerFireNavigateEvent(
   // Step 30
   if (event->NavigationPrecommitHandlerList().IsEmpty()) {
     LOG_FMTD("No precommit handlers, committing directly");
-    scope->CommitNavigateEvent(aNavigationType);
+    scope->CommitNavigateEvent();
   } else {
     LOG_FMTD("Running {} precommit handlers",
              event->NavigationPrecommitHandlerList().Length());
@@ -1758,15 +1771,14 @@ bool Navigation::InnerFireNavigateEvent(
     // Step 31.4
     Promise::WaitForAll(
         globalObject, precommitPromiseList,
-        [weakScope = WeakPtr(scope),
-         aNavigationType](const Span<JS::Heap<JS::Value>>&)
+        [weakScope = WeakPtr(scope)](const Span<JS::Heap<JS::Value>>&)
             MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
               // If weakScope is null we've been cycle collected
               if (!weakScope) {
                 return;
               }
               RefPtr scope = weakScope.get();
-              scope->CommitNavigateEvent(aNavigationType);
+              scope->CommitNavigateEvent();
             },
         [weakScope = WeakPtr(scope)](JS::Handle<JS::Value> aRejectionReason)
             MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA {
@@ -1876,9 +1888,9 @@ void Navigation::AbortOngoingNavigation(JSContext* aCx,
 
   // Step 6
   if (event->IsBeingDispatched()) {
-    // Here NonSystem is needed since it needs to be the same as what we
-    // dispatch with.
-    event->PreventDefault(aCx, CallerType::NonSystem);
+    // This is a bit unusual, but we actually need to cancel even uncancelable
+    // events here. This means that we can't just call preventDefault.
+    event->Cancel();
   }
 
   // Step 7
@@ -1886,10 +1898,13 @@ void Navigation::AbortOngoingNavigation(JSContext* aCx,
 }
 
 // https://html.spec.whatwg.org/#abort-a-navigateevent
-void Navigation::AbortNavigateEvent(JSContext* aCx, NavigateEvent* aEvent,
+void Navigation::AbortNavigateEvent(JSContext* aCx, const NavigateEvent* aEvent,
                                     JS::Handle<JS::Value> aReason) {
   // 1. Let navigation be event's relevant global object's navigation API.
   // Omitted since this is called from a Navigation object.
+
+  // 4. Set navigation's ongoing navigate event to null.
+  mOngoingNavigateEvent = nullptr;
 
   // 2. Signal abort on event's abort controller given reason.
   aEvent->AbortController()->Abort(aCx, aReason);
@@ -1897,9 +1912,6 @@ void Navigation::AbortNavigateEvent(JSContext* aCx, NavigateEvent* aEvent,
   // 3. Let errorInfo be the result of extracting error information from reason.
   RootedDictionary<ErrorEventInit> init(aCx);
   ExtractErrorInformation(aCx, aReason, init, aEvent);
-
-  // 4. Set navigation's ongoing navigate event to null.
-  mOngoingNavigateEvent = nullptr;
 
   // 5. If navigation's ongoing API method tracker is non-null, then reject the
   //    finished promise for apiMethodTracker with error.

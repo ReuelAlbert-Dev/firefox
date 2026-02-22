@@ -514,6 +514,8 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
         StaticPrefs::media_block_autoplay_until_in_foreground();
   }
 
+  fields.Get<IDX_AnimationsPlayBackRateMultiplier>() = 1.0;
+
   RefPtr<BrowsingContext> context;
   if (XRE_IsParentProcess()) {
     context = new CanonicalBrowsingContext(parentWC, group, id,
@@ -1033,7 +1035,6 @@ void BrowsingContext::Detach(bool aFromIPC) {
 
   if (XRE_IsParentProcess()) {
     Canonical()->AddPendingDiscard();
-    Canonical()->mActiveEntryList = nullptr;
   }
   auto callListeners =
       MakeScopeExit([&, listeners = std::move(mDiscardListeners), id = Id()] {
@@ -1430,6 +1431,7 @@ BrowsingContext* BrowsingContext::FindWithNameInSubtree(
   return nullptr;
 }
 
+// https://html.spec.whatwg.org/#allowed-to-navigate
 bool BrowsingContext::IsSandboxedFrom(BrowsingContext* aTarget) {
   // If no target then not sandboxed.
   if (!aTarget) {
@@ -1632,6 +1634,10 @@ JSObject* BrowsingContext::ReadStructuredClone(JSContext* aCx,
   // destroyed before we try to return a raw JSObject*, so create it in its own
   // scope.
   if (RefPtr<BrowsingContext> context = Get(id)) {
+    if (!context->Group()->IsKnownForChildID(aHolder->GetOriginChildID())) {
+      return nullptr;
+    }
+
     if (!GetOrCreateDOMReflector(aCx, context, &val) || !val.isObject()) {
       return nullptr;
     }
@@ -2467,14 +2473,24 @@ void BrowsingContext::Navigate(
     loadState->SetLoadType(LOAD_STOP_CONTENT);
   }
 
-  // Get the incumbent script's browsing context to set as source.
-  nsCOMPtr<nsPIDOMWindowInner> sourceWindow =
-      nsContentUtils::IncumbentInnerWindow();
-  if (sourceWindow) {
-    WindowContext* context = sourceWindow->GetWindowContext();
-    loadState->SetSourceBrowsingContext(sourceWindow->GetBrowsingContext());
+  const auto snapShot = [&](auto& source) {
+    loadState->SetSourceBrowsingContext(source->GetBrowsingContext());
+    WindowContext* context = source->GetWindowContext();
     loadState->SetHasValidUserGestureActivation(
         context && context->HasValidTransientUserGestureActivation());
+  };
+
+  // aSourceDocument is used for snapshot params and "allowed by sandboxing to
+  // navigate" in https://html.spec.whatwg.org/#navigate first step 2 then 6.2.
+  // When snap shotting we read the UA value
+  // https://html.spec.whatwg.org/#snapshotting-source-snapshot-params
+  if (aSourceDocument && aSourceDocument->GetBrowsingContext()) {
+    snapShot(aSourceDocument);
+  } else if (nsCOMPtr<nsPIDOMWindowInner> incumbentWindow =
+                 nsContentUtils::IncumbentInnerWindow()) {
+    // When BrowsingContext::Navigate can get called with browser UI involvement
+    // snapshot with default params. See Bug 2010041
+    snapShot(incumbentWindow);
   }
 
   loadState->SetLoadFlags(nsIWebNavigation::LOAD_FLAGS_NONE);
@@ -2884,67 +2900,36 @@ void BrowsingContext::PostMessageMoz(JSContext* aCx,
 
   // We will see if the message is required to be in the same process or it can
   // be in the different process after Write().
-  ipc::StructuredCloneData message = ipc::StructuredCloneData(
+  auto message = MakeRefPtr<ipc::StructuredCloneData>(
       StructuredCloneHolder::StructuredCloneScope::UnknownDestination,
       StructuredCloneHolder::TransferringSupported);
-  message.Write(aCx, aMessage, transferArray, clonePolicy, aError);
+  message->Write(aCx, aMessage, transferArray, clonePolicy, aError);
   if (NS_WARN_IF(aError.Failed())) {
     return;
   }
 
-  ClonedOrErrorMessageData messageData;
+  // The clone scope gets set when we write the message data based on the
+  // requirements of that data that we're writing.
+  // If the message data contains a shared memory object, then CloneScope
+  // would return SameProcess. Otherwise, it returns DifferentProcess.
+  if (message->CloneScope() !=
+      StructuredCloneHolder::StructuredCloneScope::DifferentProcess) {
+    MOZ_ASSERT(message->CloneScope() ==
+               StructuredCloneHolder::StructuredCloneScope::SameProcess);
+
+    message = nullptr;
+
+    nsContentUtils::ReportToConsole(
+        nsIScriptError::warningFlag, "DOM Window"_ns,
+        callerInnerWindow ? callerInnerWindow->GetDocument() : nullptr,
+        nsContentUtils::eDOM_PROPERTIES,
+        "PostMessageSharedMemoryObjectToCrossOriginWarning");
+  }
+
   if (ContentChild* cc = ContentChild::GetSingleton()) {
-    // The clone scope gets set when we write the message data based on the
-    // requirements of that data that we're writing.
-    // If the message data contains a shared memory object, then CloneScope
-    // would return SameProcess. Otherwise, it returns DifferentProcess.
-    if (message.CloneScope() ==
-        StructuredCloneHolder::StructuredCloneScope::DifferentProcess) {
-      ClonedMessageData clonedMessageData;
-      if (!message.BuildClonedMessageData(clonedMessageData)) {
-        aError.Throw(NS_ERROR_FAILURE);
-        return;
-      }
-
-      messageData = std::move(clonedMessageData);
-    } else {
-      MOZ_ASSERT(message.CloneScope() ==
-                 StructuredCloneHolder::StructuredCloneScope::SameProcess);
-
-      messageData = ErrorMessageData();
-
-      nsContentUtils::ReportToConsole(
-          nsIScriptError::warningFlag, "DOM Window"_ns,
-          callerInnerWindow ? callerInnerWindow->GetDocument() : nullptr,
-          nsContentUtils::eDOM_PROPERTIES,
-          "PostMessageSharedMemoryObjectToCrossOriginWarning");
-    }
-
-    cc->SendWindowPostMessage(this, messageData, data);
+    cc->SendWindowPostMessage(this, message, data);
   } else if (ContentParent* cp = Canonical()->GetContentParent()) {
-    if (message.CloneScope() ==
-        StructuredCloneHolder::StructuredCloneScope::DifferentProcess) {
-      ClonedMessageData clonedMessageData;
-      if (!message.BuildClonedMessageData(clonedMessageData)) {
-        aError.Throw(NS_ERROR_FAILURE);
-        return;
-      }
-
-      messageData = std::move(clonedMessageData);
-    } else {
-      MOZ_ASSERT(message.CloneScope() ==
-                 StructuredCloneHolder::StructuredCloneScope::SameProcess);
-
-      messageData = ErrorMessageData();
-
-      nsContentUtils::ReportToConsole(
-          nsIScriptError::warningFlag, "DOM Window"_ns,
-          callerInnerWindow ? callerInnerWindow->GetDocument() : nullptr,
-          nsContentUtils::eDOM_PROPERTIES,
-          "PostMessageSharedMemoryObjectToCrossOriginWarning");
-    }
-
-    (void)cp->SendWindowPostMessage(this, messageData, data);
+    (void)cp->SendWindowPostMessage(this, message, data);
   }
 }
 
@@ -3312,6 +3297,15 @@ void BrowsingContext::DidSet(FieldIndex<IDX_ForcedColorsOverride>,
                              dom::ForcedColorsOverride aOldValue) {
   MOZ_ASSERT(IsTop());
   if (ForcedColorsOverride() == aOldValue) {
+    return;
+  }
+  PresContextAffectingFieldChanged();
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_AnimationsPlayBackRateMultiplier>,
+                             double aOldValue) {
+  MOZ_ASSERT(IsTop());
+  if (AnimationsPlayBackRateMultiplier() == aOldValue) {
     return;
   }
   PresContextAffectingFieldChanged();
@@ -4540,13 +4534,9 @@ void BrowsingContext::SynchronizeNavigationAPIState(
   }
 
   if (XRE_IsContentProcess()) {
-    ClonedMessageData data;
-    DebugOnly<bool> result = static_cast<nsStructuredCloneContainer*>(aState)
-                                 ->BuildClonedMessageData(data);
-    MOZ_ASSERT(result);
-
     MOZ_ASSERT(ContentChild::GetSingleton());
-    ContentChild::GetSingleton()->SendSynchronizeNavigationAPIState(this, data);
+    ContentChild::GetSingleton()->SendSynchronizeNavigationAPIState(
+        this, WrapNotNull(static_cast<nsStructuredCloneContainer*>(aState)));
   } else {
     Canonical()->SynchronizeNavigationAPIState(aState);
   }
@@ -4579,6 +4569,10 @@ bool ParamTraits<MaybeDiscarded<BrowsingContext>>::Read(
   if (id == 0) {
     *aResult = nullptr;
   } else if (RefPtr<BrowsingContext> bc = BrowsingContext::Get(id)) {
+    if (!bc->Group()->IsKnownForMessageReader(aReader)) {
+      return false;
+    }
+
     *aResult = std::move(bc);
   } else {
     aResult->SetDiscarded(id);

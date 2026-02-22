@@ -1104,7 +1104,7 @@ class Marionette:
         """
         if not self.instance:
             raise errors.MarionetteException(
-                "quit() can only be called " "on Gecko instances launched by Marionette"
+                "quit() can only be called on Gecko instances launched by Marionette"
             )
 
         quit_details = {"cause": "shutdown", "forced": False}
@@ -1164,8 +1164,9 @@ class Marionette:
 
         if quit_details.get("cause") not in (None, "shutdown"):
             raise errors.MarionetteException(
-                "Unexpected shutdown reason '{}' for "
-                "quitting the process.".format(quit_details["cause"])
+                "Unexpected shutdown reason '{}' for quitting the process.".format(
+                    quit_details["cause"]
+                )
             )
 
         return quit_details
@@ -1204,8 +1205,7 @@ class Marionette:
         """
         if not self.instance:
             raise errors.MarionetteException(
-                "restart() can only be called "
-                "on Gecko instances launched by Marionette"
+                "restart() can only be called on Gecko instances launched by Marionette"
             )
 
         context = self._send_message("Marionette:GetContext", key="value")
@@ -1299,8 +1299,9 @@ class Marionette:
 
         if restart_details.get("cause") not in (None, "restart"):
             raise errors.MarionetteException(
-                "Unexpected shutdown reason '{}' for "
-                "restarting the process".format(restart_details["cause"])
+                "Unexpected shutdown reason '{}' for restarting the process".format(
+                    restart_details["cause"]
+                )
             )
 
         return restart_details
@@ -1325,7 +1326,7 @@ class Marionette:
             or requriedCapabilities), and only recognises extension
             capabilities that are specific to Marionette.
         :param process_forked: If True, the existing process forked itself due
-        to an internal restart.
+            to an internal restart.
         :param timeout: Optional timeout in seconds for the server to be ready.
 
         :returns: A dictionary of the capabilities offered.
@@ -1821,11 +1822,18 @@ class Marionette:
 
         ::
 
-            result = marionette.execute_script("return arguments[0] + arguments[1];",
-                                               script_args=(2, 3,))
+            result = marionette.execute_script(
+                "return arguments[0] + arguments[1];",
+                script_args=(
+                    2,
+                    3,
+                ),
+            )
             assert result == 5
             some_element = marionette.find_element(By.ID, "someElement")
-            sid = marionette.execute_script("return arguments[0].id;", script_args=(some_element,))
+            sid = marionette.execute_script(
+                "return arguments[0].id;", script_args=(some_element,)
+            )
             assert some_element.get_attribute("id") == sid
 
         Scripts wishing to access non-standard properties of the window
@@ -1848,7 +1856,9 @@ class Marionette:
         ::
 
             marionette.execute_script("global.test1 = 'foo';")
-            result = self.marionette.execute_script("return global.test1;", new_sandbox=False)
+            result = self.marionette.execute_script(
+                "return global.test1;", new_sandbox=False
+            )
             assert result == "foo"
 
         """
@@ -2039,8 +2049,12 @@ class Marionette:
 
             driver.add_cookie({"name": "foo", "value": "bar"})
             driver.add_cookie({"name": "foo", "value": "bar", "path": "/"})
-            driver.add_cookie({"name": "foo", "value": "bar", "path": "/",
-                               "secure": True})
+            driver.add_cookie({
+                "name": "foo",
+                "value": "bar",
+                "path": "/",
+                "secure": True,
+            })
         """
         self._send_message("WebDriver:AddCookie", {"cookie": cookie})
 

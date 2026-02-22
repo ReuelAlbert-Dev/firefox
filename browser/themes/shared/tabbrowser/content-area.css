@@ -54,15 +54,11 @@
   min-height: 0;
 }
 
-#browser:not(.browser-toolbox-background) {
-  background-color: var(--toolbar-bgcolor);
-  color: var(--toolbar-color);
-
-  :root[lwtheme] & {
-    /* Ensure toolbar color displays on top of the frame/toolbox color to
-    * guarantee full opacity */
-    background-color: var(--lwt-accent-color);
-    background-image: linear-gradient(var(--toolbar-bgcolor), var(--toolbar-bgcolor));
+/* stylelint-disable-next-line media-query-no-invalid */
+@media not -moz-pref("sidebar.verticalTabs") {
+  #browser {
+    background-color: var(--toolbar-bgcolor);
+    color: var(--toolbar-color);
   }
 }
 
@@ -117,6 +113,7 @@
 .browserSidebarContainer {
   position: absolute;
   inset: 0;
+  anchor-scope: --browser-with-dialog;
 }
 
 .sidebar-browser-stack {
@@ -147,12 +144,17 @@
     opacity: 0;
   }
 
-  browser[type="content"] {
+  /* Exclude browsers with smartwindow-content attribute which inherit
+     color-scheme from chrome to follow the browser theme */
+  browser[type="content"]:not([smartwindow-content]) {
     color-scheme: env(-moz-content-preferred-color-scheme);
   }
 
   browser[tabDialogShowing] {
     -moz-user-focus: none !important;
+    /* Used to position .dialogStack on top of this <browser> element so it doesn't overlap
+       the DevTools toolbox */
+    anchor-name: --browser-with-dialog;
   }
 
   .split-view-panel {
@@ -188,6 +190,7 @@
       margin: 0;
       position: absolute;
       max-width: none;
+      width: 100% !important;
 
       & > .browserContainer {
         border-radius: 0;
@@ -214,6 +217,11 @@
     .split-view-splitter {
       order: 1;
       flex: none;
+      -moz-user-focus: normal;
+
+      &:focus-visible {
+        outline: auto;
+      }
     }
 
     .split-view-panel[column="1"] {
@@ -421,6 +429,12 @@ split-view-footer {
   z-index: var(--browser-stack-z-index-dialog-stack);
   position: absolute;
   inset: 0;
+  /* --browser-with-dialog set on browser[tabDialogShowing], we want to position the overlay
+     only on the top of the <browser> element so it doesn't overlap the DevTools toolbox */
+  position-anchor: --browser-with-dialog;
+  position-area: center;
+  width: 100%;
+  height: 100%;
 
   /* Hide tab-modal dialogs when a window-modal one is up. */
   :root[window-modal-open] .browserStack > &,

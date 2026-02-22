@@ -58,7 +58,7 @@ def check(params, file_patterns):
         revision = params.get("comm_head_rev")
         if not revision:
             logger.warning(
-                "Missing `comm_head_rev` parameters; " "assuming all files have changed"
+                "Missing `comm_head_rev` parameters; assuming all files have changed"
             )
             return True
 
@@ -93,7 +93,7 @@ class PreloadedGetLocallyChangedFiles:
     - it's already done through an external command
 
     So we do that in a background thread as soon as possible, so that at the
-    point when we need the result, it's already `prefetched'.
+    point when we need the result, it's already "prefetched".
     """
 
     def __init__(self):

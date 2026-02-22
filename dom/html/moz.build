@@ -195,6 +195,7 @@ UNIFIED_SOURCES += [
     "nsHTMLDocument.cpp",
     "nsIConstraintValidation.cpp",
     "RadioNodeList.cpp",
+    "TextControlElement.cpp",
     "TextControlState.cpp",
     "ValidityState.cpp",
     "VideoDocument.cpp",

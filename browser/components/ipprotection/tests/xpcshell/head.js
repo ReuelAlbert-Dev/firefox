@@ -13,7 +13,7 @@ const { IPPProxyManager, IPPProxyStates } = ChromeUtils.importESModule(
 const { IPPSignInWatcher } = ChromeUtils.importESModule(
   "moz-src:///browser/components/ipprotection/IPPSignInWatcher.sys.mjs"
 );
-const { ProxyPass } = ChromeUtils.importESModule(
+const { ProxyPass, ProxyUsage, Entitlement } = ChromeUtils.importESModule(
   "moz-src:///browser/components/ipprotection/GuardianClient.sys.mjs"
 );
 const { RemoteSettings } = ChromeUtils.importESModule(
@@ -61,19 +61,28 @@ async function putServerInRemoteSettings(
 }
 /* exported putServerInRemoteSettings */
 
+/* exported setupStubs */
+
+const defaultStubOptions = {
+  signedIn: true,
+  isLinkedToGuardian: true,
+  validProxyPass: true,
+  entitlement: createTestEntitlement(),
+  proxyUsage: new ProxyUsage(
+    "5368709120",
+    "4294967296",
+    "3026-02-01T00:00:00.000Z"
+  ),
+};
+Object.freeze(defaultStubOptions);
+
 function setupStubs(
   sandbox,
-  options = {
-    signedIn: true,
-    isLinkedToGuardian: true,
-    validProxyPass: true,
-    entitlement: {
-      subscribed: false,
-      uid: 42,
-      created_at: "2023-01-01T12:00:00.000Z",
-    },
+  aOptions = {
+    ...defaultStubOptions,
   }
 ) {
+  const options = { ...defaultStubOptions, ...aOptions };
   sandbox.stub(IPPSignInWatcher, "isSignedIn").get(() => options.signedIn);
   sandbox
     .stub(IPProtectionService.guardian, "isLinkedToGuardian")
@@ -86,6 +95,7 @@ function setupStubs(
   sandbox.stub(IPProtectionService.guardian, "enroll").resolves({
     status: 200,
     error: null,
+    ok: true,
   });
   sandbox.stub(IPProtectionService.guardian, "fetchProxyPass").resolves({
     status: 200,
@@ -95,7 +105,11 @@ function setupStubs(
         ? createProxyPassToken()
         : createExpiredProxyPassToken()
     ),
+    usage: options.proxyUsage,
   });
+  sandbox
+    .stub(IPProtectionService.guardian, "fetchProxyUsage")
+    .resolves(options.proxyUsage);
 }
 
 /**
@@ -133,3 +147,24 @@ function createExpiredProxyPassToken() {
   );
 }
 /* exported createExpiredProxyPassToken */
+
+/**
+ * Creates a test Entitlement with default values.
+ *
+ * @param {object} overrides - Optional fields to override
+ * @returns {Entitlement}
+ */
+function createTestEntitlement(overrides = {}) {
+  return new Entitlement({
+    autostart: false,
+    created_at: "2023-01-01T12:00:00.000Z",
+    limited_bandwidth: false,
+    location_controls: false,
+    subscribed: false,
+    uid: 42,
+    website_inclusion: false,
+    maxBytes: "0",
+    ...overrides,
+  });
+}
+/* exported createTestEntitlement */

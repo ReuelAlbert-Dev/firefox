@@ -29,6 +29,7 @@
 #include "NodeUbiReporting.h"
 #include "NonCustomCSSPropertyId.h"
 #include "PLDHashTable.h"
+#include "PseudoStyleType.h"
 #include "StorageAccessPermissionRequest.h"
 #include "ThirdPartyUtil.h"
 #include "domstubs.h"
@@ -207,6 +208,7 @@
 #include "mozilla/dom/PContentChild.h"
 #include "mozilla/dom/PWindowGlobalChild.h"
 #include "mozilla/dom/PageLoadEventUtils.h"
+#include "mozilla/dom/PageRevealEvent.h"
 #include "mozilla/dom/PageTransitionEvent.h"
 #include "mozilla/dom/PageTransitionEventBinding.h"
 #include "mozilla/dom/Performance.h"
@@ -218,6 +220,7 @@
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseNativeHandler.h"
 #include "mozilla/dom/RemoteBrowser.h"
+#include "mozilla/dom/ReportDeliver.h"
 #include "mozilla/dom/ResizeObserver.h"
 #include "mozilla/dom/RustTypes.h"
 #include "mozilla/dom/SVGDocument.h"
@@ -295,7 +298,6 @@
 #include "nsBidiUtils.h"
 #include "nsCRT.h"
 #include "nsCSSProps.h"
-#include "nsCSSPseudoElements.h"
 #include "nsCSSRendering.h"
 #include "nsCanvasFrame.h"
 #include "nsCaseTreatment.h"
@@ -692,7 +694,10 @@ class SimpleHTMLCollection final : public nsSimpleContentList,
   }
   virtual uint32_t Length() override { return nsSimpleContentList::Length(); }
   virtual Element* GetElementAt(uint32_t aIndex) override {
-    return mElements.SafeElementAt(aIndex)->AsElement();
+    if (nsIContent* content = mElements.SafeElementAt(aIndex)) {
+      return content->AsElement();
+    }
+    return nullptr;
   }
 
   virtual Element* GetFirstNamedElement(const nsAString& aName,
@@ -806,15 +811,6 @@ size_t IdentifierMapEntry::SizeOfExcludingThis(
     MallocSizeOf aMallocSizeOf) const {
   return mKey.mString.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
 }
-
-// Helper structs for the content->subdoc map
-
-class SubDocMapEntry : public PLDHashEntryHdr {
- public:
-  // Both of these are strong references
-  dom::Element* mKey;  // must be first, to look like PLDHashEntryStub
-  dom::Document* mSubDocument;
-};
 
 class OnloadBlocker final : public nsIRequest {
  public:
@@ -1476,6 +1472,7 @@ Document::Document(const char* aContentType,
       mSuppressNotifyingDevToolsOfNodeRemovals(false),
       mHasPolicyWithRequireTrustedTypesForDirective(false),
       mClipboardCopyTriggered(false),
+      mHasBeenRevealed(false),
       mXMLDeclarationBits(0),
       mOnloadBlockCount(0),
       mWriteLevel(0),
@@ -1888,29 +1885,25 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
   }
 
   rv = cert->GetValidity(getter_AddRefs(validity));
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return;
-  }
-  if (NS_WARN_IF(!validity)) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-    return;
-  }
+  if (NS_WARN_IF(NS_FAILED(rv)) || NS_WARN_IF(!validity)) {
+    aInfo.mValidNotBefore = 0;
+    aInfo.mValidNotAfter = 0;
+  } else {
+    PRTime validityResult;
+    rv = validity->GetNotBefore(&validityResult);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aInfo.mValidNotBefore = 0;
+    } else {
+      aInfo.mValidNotBefore = DOMTimeStamp(validityResult / PR_USEC_PER_MSEC);
+    }
 
-  PRTime validityResult;
-  rv = validity->GetNotBefore(&validityResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return;
+    rv = validity->GetNotAfter(&validityResult);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aInfo.mValidNotAfter = 0;
+    } else {
+      aInfo.mValidNotAfter = DOMTimeStamp(validityResult / PR_USEC_PER_MSEC);
+    }
   }
-  aInfo.mValidNotBefore = DOMTimeStamp(validityResult / PR_USEC_PER_MSEC);
-
-  rv = validity->GetNotAfter(&validityResult);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return;
-  }
-  aInfo.mValidNotAfter = DOMTimeStamp(validityResult / PR_USEC_PER_MSEC);
 
   nsAutoString issuerCommonName;
   nsAutoString certChainPEMString;
@@ -1938,25 +1931,18 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
     }
 
     rv = certificate->GetValidity(getter_AddRefs(validity));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      aRv.Throw(rv);
-      return;
-    }
-    if (NS_WARN_IF(!validity)) {
-      aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
-      return;
-    }
-
-    rv = validity->GetNotBefore(&notBefore);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      aRv.Throw(rv);
-      return;
-    }
-
-    rv = validity->GetNotAfter(&notAfter);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      aRv.Throw(rv);
-      return;
+    if (NS_WARN_IF(NS_FAILED(rv)) || NS_WARN_IF(!validity)) {
+      notBefore = 0;
+      notAfter = 0;
+    } else {
+      rv = validity->GetNotBefore(&notBefore);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        notBefore = 0;
+      }
+      rv = validity->GetNotAfter(&notAfter);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        notAfter = 0;
+      }
     }
 
     notBefore = std::max(minValidity, notBefore);
@@ -2100,19 +2086,6 @@ void Document::RecordPageLoadEventTelemetry() {
   }
 #endif
 
-  if (GetChannel()) {
-    nsCOMPtr<nsICacheInfoChannel> cacheInfoChannel =
-        do_QueryInterface(GetChannel());
-    if (cacheInfoChannel) {
-      nsICacheInfoChannel::CacheDisposition disposition =
-          nsICacheInfoChannel::kCacheUnknown;
-      nsresult rv = cacheInfoChannel->GetCacheDisposition(&disposition);
-      if (NS_SUCCEEDED(rv)) {
-        mPageloadEventData.set_cacheDisposition(disposition);
-      }
-    }
-  }
-
   nsAutoCString loadTypeStr;
   switch (docshell->GetLoadType()) {
     case LOAD_NORMAL:
@@ -2252,6 +2225,17 @@ void Document::AccumulatePageLoadTelemetry() {
     return;
   }
 
+  bool isCacheHit = false;
+  if (nsCOMPtr<nsICacheInfoChannel> cacheInfoChannel =
+          do_QueryInterface(GetChannel())) {
+    nsICacheInfoChannel::CacheDisposition disposition =
+        nsICacheInfoChannel::kCacheUnknown;
+    if (NS_SUCCEEDED(cacheInfoChannel->GetCacheDisposition(&disposition))) {
+      mPageloadEventData.set_cacheDisposition(disposition);
+      isCacheHit = disposition == nsICacheInfoChannel::kCacheHit;
+    }
+  }
+
   // Default duration is 0, use this to check for bogus negative values.
   const TimeDuration zeroDuration;
 
@@ -2345,7 +2329,11 @@ void Document::AccumulatePageLoadTelemetry() {
         }
       }
 
-      mPageloadEventData.set_httpVer(major);
+      // Don't record http version for cache hits since the version stored in
+      // the cache entry reflects the original request, not this navigation.
+      if (!isCacheHit) {
+        mPageloadEventData.set_httpVer(major);
+      }
     }
 
     uint32_t earlyHintType = 0;
@@ -2486,9 +2474,9 @@ Document::~Document() {
 
   mParentDocument = nullptr;
 
-  // Kill the subdocument map, doing this will release its strong
+  // Clear the subdocument map, doing this will release its strong
   // references, if any.
-  mSubDocuments = nullptr;
+  mSubDocuments.Clear();
 
   nsAutoScriptBlocker scriptBlocker;
 
@@ -2704,16 +2692,11 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     tmp->mAnimationController->Traverse(&cb);
   }
 
-  if (tmp->mSubDocuments) {
-    for (auto iter = tmp->mSubDocuments->Iter(); !iter.Done(); iter.Next()) {
-      auto entry = static_cast<SubDocMapEntry*>(iter.Get());
-
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mSubDocuments entry->mKey");
-      cb.NoteXPCOMChild(entry->mKey);
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb,
-                                         "mSubDocuments entry->mSubDocument");
-      cb.NoteXPCOMChild(ToSupports(entry->mSubDocument));
-    }
+  for (auto& entry : tmp->mSubDocuments) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mSubDocuments key");
+    cb.NoteXPCOMChild(entry.GetKey());
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mSubDocuments value");
+    cb.NoteXPCOMChild(ToSupports(entry.GetData().get()));
   }
 
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCSSLoader)
@@ -2859,7 +2842,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
     tmp->mStyleSheetSetList = nullptr;
   }
 
-  tmp->mSubDocuments = nullptr;
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSubDocuments)
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFrameRequestManager)
 
@@ -3027,10 +3010,9 @@ void Document::Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) {
 }
 
 void Document::DisconnectNodeTree() {
-  // Delete references to sub-documents and kill the subdocument map,
-  // if any. This is not strictly needed, but makes the node tree
-  // teardown a bit faster.
-  mSubDocuments = nullptr;
+  // Delete references to sub-documents, if any. This is not strictly needed,
+  // but makes the node tree teardown a bit faster.
+  mSubDocuments.Clear();
 
   bool oldVal = mInUnlinkOrDeletion;
   mInUnlinkOrDeletion = true;
@@ -3644,8 +3626,8 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
 
   mChannel = aChannel;
   RecomputeResistFingerprinting();
-  nsCOMPtr<nsIInputStreamChannel> inStrmChan = do_QueryInterface(mChannel);
-  if (inStrmChan) {
+  if (nsCOMPtr<nsIInputStreamChannel> inStrmChan =
+          do_QueryInterface(mChannel)) {
     bool isSrcdocChannel;
     inStrmChan->GetIsSrcdocChannel(&isSrcdocChannel);
     if (isSrcdocChannel) {
@@ -3714,11 +3696,9 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
   // sub-resources and sub-documents.
   mHttpsOnlyStatus = loadInfo->GetHttpsOnlyStatus();
 
-  nsresult rv = InitReferrerInfo(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitReferrerInfo(aChannel));
 
-  rv = InitCOEP(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitCOEP(aChannel));
 
   // HACK: Calling EnsureIPCPoliciesRead() here will parse the CSP using the
   // context's current mSelfURI (which is still the previous mSelfURI),
@@ -3734,27 +3714,20 @@ nsresult Document::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
     cspToInherit->EnsureIPCPoliciesRead();
   }
 
-  rv = InitPolicyContainer(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitPolicyContainer(aChannel));
 
-  rv = InitCSP(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitCSP(aChannel));
 
-  rv = InitIntegrityPolicy(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitIntegrityPolicy(aChannel));
 
-  rv = InitDocPolicy(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitDocPolicy(aChannel));
 
   // Initialize FeaturePolicy
-  rv = InitFeaturePolicy(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitFeaturePolicy(aChannel));
 
-  rv = InitTLSCertificateBinding(aChannel);
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(InitTLSCertificateBinding(aChannel));
 
-  rv = loadInfo->GetCookieJarSettings(getter_AddRefs(mCookieJarSettings));
-  NS_ENSURE_SUCCESS(rv, rv);
+  MOZ_TRY(loadInfo->GetCookieJarSettings(getter_AddRefs(mCookieJarSettings)));
 
   MaybeRecomputePartitionKey();
 
@@ -7736,65 +7709,23 @@ bool Document::RemoveFromBFCacheSync() {
   return removed;
 }
 
-static void SubDocClearEntry(PLDHashTable* table, PLDHashEntryHdr* entry) {
-  SubDocMapEntry* e = static_cast<SubDocMapEntry*>(entry);
-
-  NS_RELEASE(e->mKey);
-  if (e->mSubDocument) {
-    e->mSubDocument->SetParentDocument(nullptr);
-    NS_RELEASE(e->mSubDocument);
-  }
-}
-
-static void SubDocInitEntry(PLDHashEntryHdr* entry, const void* key) {
-  SubDocMapEntry* e =
-      const_cast<SubDocMapEntry*>(static_cast<const SubDocMapEntry*>(entry));
-
-  e->mKey = const_cast<Element*>(static_cast<const Element*>(key));
-  NS_ADDREF(e->mKey);
-
-  e->mSubDocument = nullptr;
-}
-
 nsresult Document::SetSubDocumentFor(Element* aElement, Document* aSubDoc) {
   NS_ENSURE_TRUE(aElement, NS_ERROR_UNEXPECTED);
 
   if (!aSubDoc) {
     // aSubDoc is nullptr, remove the mapping
 
-    if (mSubDocuments) {
-      mSubDocuments->Remove(aElement);
-    }
+    mSubDocuments.Remove(aElement);
   } else {
-    if (!mSubDocuments) {
-      // Create a new hashtable
+    // Ensure there's a mapping for aElement in mSubDocuments.
+    auto& slot = mSubDocuments.LookupOrInsert(aElement);
 
-      static const PLDHashTableOps hash_table_ops = {
-          PLDHashTable::HashVoidPtrKeyStub, PLDHashTable::MatchEntryStub,
-          PLDHashTable::MoveEntryStub, SubDocClearEntry, SubDocInitEntry};
-
-      mSubDocuments =
-          MakeUnique<PLDHashTable>(&hash_table_ops, sizeof(SubDocMapEntry));
-    }
-
-    // Add a mapping to the hash table
-    auto entry =
-        static_cast<SubDocMapEntry*>(mSubDocuments->Add(aElement, fallible));
-
-    if (!entry) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    if (entry->mSubDocument) {
-      entry->mSubDocument->SetParentDocument(nullptr);
-
-      // Release the old sub document
-      NS_RELEASE(entry->mSubDocument);
-    }
-
-    entry->mSubDocument = aSubDoc;
-    NS_ADDREF(entry->mSubDocument);
-
+    // Replace the entry in the table with aSubDoc, and set the parent document.
+    // NOTE: The extra reference we take here, and `SetParentDocument` call we
+    // make will be reverted by `ClearParentDocumentDeleter` when the entry is
+    // removed.
+    NS_ADDREF(aSubDoc);
+    slot.reset(aSubDoc);
     aSubDoc->SetParentDocument(this);
   }
 
@@ -7802,12 +7733,9 @@ nsresult Document::SetSubDocumentFor(Element* aElement, Document* aSubDoc) {
 }
 
 Document* Document::GetSubDocumentFor(nsIContent* aContent) const {
-  if (mSubDocuments && aContent->IsElement()) {
-    auto entry = static_cast<SubDocMapEntry*>(
-        mSubDocuments->Search(aContent->AsElement()));
-
-    if (entry) {
-      return entry->mSubDocument;
+  if (aContent->IsElement()) {
+    if (auto entry = mSubDocuments.Lookup(aContent->AsElement())) {
+      return entry.Data().get();
     }
   }
 
@@ -8295,11 +8223,12 @@ nsISupports* Document::GetContainer() const {
 
 void Document::SetScriptGlobalObject(
     nsIScriptGlobalObject* aScriptGlobalObject) {
-  MOZ_ASSERT(aScriptGlobalObject || !mAnimationController ||
-                 mAnimationController->IsPausedByType(
-                     SMILTimeContainer::PAUSE_PAGEHIDE |
-                     SMILTimeContainer::PAUSE_BEGIN),
-             "Clearing window pointer while animations are unpaused");
+  MOZ_ASSERT(
+      aScriptGlobalObject || !mAnimationController ||
+          mAnimationController->IsPausedByType(SMILTimeContainer::PauseTypes(
+              SMILTimeContainer::PauseType::PageHide,
+              SMILTimeContainer::PauseType::Begin)),
+      "Clearing window pointer while animations are unpaused");
 
   if (mScriptGlobalObject && !aScriptGlobalObject) {
     // We're detaching from the window.  We need to grab a pointer to
@@ -8344,6 +8273,15 @@ void Document::SetScriptGlobalObject(
   bool needOnloadBlocker = !mScriptGlobalObject && aScriptGlobalObject;
 
   mScriptGlobalObject = aScriptGlobalObject;
+  // Only initialize the global's endpoints if its that time we're actually
+  // initializing the global
+  nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(mChannel);
+  if (httpChannel && mScriptGlobalObject) {
+    ReportDeliver::WindowInitializeReportingEndpoints(
+        mScriptGlobalObject,
+        mozilla::dom::ReportingHeader::
+            ProcessReportingEndpointsListFromResponse(httpChannel));
+  }
 
   if (needOnloadBlocker) {
     EnsureOnloadBlocker();
@@ -9059,8 +8997,9 @@ bool IsLowercaseASCII(const nsAString& aValue) {
 already_AddRefed<Element> Document::CreateElement(
     const nsAString& aTagName, const ElementCreationOptionsOrString& aOptions,
     ErrorResult& rv) {
-  rv = nsContentUtils::CheckQName(aTagName, false);
-  if (rv.Failed()) {
+  // https://dom.spec.whatwg.org/#dom-document-createelement
+  if (!nsContentUtils::IsValidElementLocalName(aTagName)) {
+    rv.ThrowInvalidCharacterError("Invalid element name");
     return nullptr;
   }
 
@@ -9084,9 +9023,9 @@ already_AddRefed<Element> Document::CreateElement(
     // with CSS_PSEUDO_ELEMENT_IS_JS_CREATED_NAC.
     if (options.mPseudo.WasPassed()) {
       Maybe<PseudoStyleRequest> request =
-          nsCSSPseudoElements::ParsePseudoElement(options.mPseudo.Value());
+          PseudoStyleRequest::Parse(options.mPseudo.Value());
       if (!request || request->IsNotPseudo() ||
-          !nsCSSPseudoElements::PseudoElementIsJSCreatedNAC(request->mType)) {
+          !PseudoStyle::IsJSCreatedNAC(request->mType)) {
         rv.ThrowNotSupportedError("Invalid pseudo-element");
         return nullptr;
       }
@@ -9137,8 +9076,9 @@ already_AddRefed<Element> Document::CreateElementNS(
 already_AddRefed<Element> Document::CreateXULElement(
     const nsAString& aTagName, const ElementCreationOptionsOrString& aOptions,
     ErrorResult& aRv) {
-  aRv = nsContentUtils::CheckQName(aTagName, false);
-  if (aRv.Failed()) {
+  // https://dom.spec.whatwg.org/#dom-document-createelement
+  if (!nsContentUtils::IsValidElementLocalName(aTagName)) {
+    aRv.ThrowInvalidCharacterError("Invalid element name");
     return nullptr;
   }
 
@@ -9236,9 +9176,9 @@ already_AddRefed<Attr> Document::CreateAttribute(const nsAString& aName,
     return nullptr;
   }
 
-  nsresult res = nsContentUtils::CheckQName(aName, false);
-  if (NS_FAILED(res)) {
-    rv.Throw(res);
+  // https://dom.spec.whatwg.org/#dom-document-createattribute
+  if (!nsContentUtils::IsValidAttributeLocalName(aName)) {
+    rv.ThrowInvalidCharacterError("Invalid attribute name");
     return nullptr;
   }
 
@@ -9250,8 +9190,9 @@ already_AddRefed<Attr> Document::CreateAttribute(const nsAString& aName,
   }
 
   RefPtr<mozilla::dom::NodeInfo> nodeInfo;
-  res = mNodeInfoManager->GetNodeInfo(name, nullptr, kNameSpaceID_None,
-                                      ATTRIBUTE_NODE, getter_AddRefs(nodeInfo));
+  nsresult res =
+      mNodeInfoManager->GetNodeInfo(name, nullptr, kNameSpaceID_None,
+                                    ATTRIBUTE_NODE, getter_AddRefs(nodeInfo));
   if (NS_FAILED(res)) {
     rv.Throw(res);
     return nullptr;
@@ -9982,6 +9923,7 @@ nsresult Document::InitializeFrameLoader(nsFrameLoader* aLoader) {
     return NS_ERROR_FAILURE;
   }
 
+  MOZ_RELEASE_ASSERT(aLoader, "Loader to initialize must not be null");
   mInitializableFrameLoaders.AppendElement(aLoader);
   if (!mFrameLoaderRunner) {
     mFrameLoaderRunner =
@@ -10040,7 +9982,7 @@ void Document::MaybeInitializeFinalizeFrameLoaders() {
   while (mInitializableFrameLoaders.Length()) {
     RefPtr<nsFrameLoader> loader = mInitializableFrameLoaders[0];
     mInitializableFrameLoaders.RemoveElementAt(0);
-    NS_ASSERTION(loader, "null frameloader in the array?");
+    MOZ_RELEASE_ASSERT(loader, "null frameloader in the array?");
     loader->ReallyStartLoading();
   }
 
@@ -10109,7 +10051,7 @@ SMILAnimationController* Document::GetAnimationController() {
   nsPresContext* context = GetPresContext();
   if (mAnimationController && context &&
       context->ImageAnimationMode() == imgIContainer::kDontAnimMode) {
-    mAnimationController->Pause(SMILTimeContainer::PAUSE_USERPREF);
+    mAnimationController->Pause(SMILTimeContainer::PauseType::UserPref);
   }
 
   // If we're hidden (or being hidden), notify the newly-created animation
@@ -11888,20 +11830,21 @@ already_AddRefed<Element> Document::CreateElem(const nsAString& aName,
                                                int32_t aNamespaceID,
                                                const nsAString* aIs) {
 #ifdef DEBUG
-  nsAutoString qName;
-  if (aPrefix) {
+  if (!aPrefix) {
+    NS_ASSERTION(nsContentUtils::IsValidElementLocalName(aName),
+                 "Don't pass invalid names to Document::CreateElem");
+  } else {
+    nsAutoString qName;
     aPrefix->ToString(qName);
     qName.Append(':');
-  }
-  qName.Append(aName);
+    qName.Append(aName);
 
-  // Note: "a:b:c" is a valid name in non-namespaces XML, and
-  // Document::CreateElement can call us with such a name and no prefix,
-  // which would cause an error if we just used true here.
-  bool nsAware = aPrefix != nullptr || aNamespaceID != GetDefaultNamespaceID();
-  NS_ASSERTION(NS_SUCCEEDED(nsContentUtils::CheckQName(qName, nsAware)),
-               "Don't pass invalid prefixes to Document::CreateElem, "
-               "check caller.");
+    const char16_t* localNameEnd;
+    const char16_t* colon;
+    NS_ASSERTION(NS_SUCCEEDED(nsContentUtils::ParseQualifiedNameRelaxed(
+                     qName, ELEMENT_NODE, &colon, &localNameEnd)),
+                 "Don't pass invalid prefixes to Document::CreateElem.");
+  }
 #endif
 
   RefPtr<mozilla::dom::NodeInfo> nodeInfo;
@@ -11967,18 +11910,11 @@ void Document::Sanitize() {
 }
 
 void Document::EnumerateSubDocuments(SubDocEnumFunc aCallback) {
-  if (!mSubDocuments) {
-    return;
-  }
-
-  // PLDHashTable::Iterator can't handle modifications while iterating so we
+  // nsTHashtable::Iterator can't handle modifications while iterating so we
   // copy all entries to an array first before calling any callbacks.
   AutoTArray<RefPtr<Document>, 8> subdocs;
-  for (auto iter = mSubDocuments->Iter(); !iter.Done(); iter.Next()) {
-    const auto* entry = static_cast<SubDocMapEntry*>(iter.Get());
-    if (Document* subdoc = entry->mSubDocument) {
-      subdocs.AppendElement(subdoc);
-    }
+  for (const auto& entry : mSubDocuments.Values()) {
+    subdocs.AppendElement(entry.get());
   }
   for (auto& subdoc : subdocs) {
     if (aCallback(*subdoc) == CallState::Stop) {
@@ -11990,17 +11926,12 @@ void Document::EnumerateSubDocuments(SubDocEnumFunc aCallback) {
 void Document::CollectDescendantDocuments(
     nsTArray<RefPtr<Document>>& aDescendants,
     IncludeSubResources aIncludeSubresources, SubDocTestFunc aCallback) const {
-  if (mSubDocuments) {
-    for (auto iter = mSubDocuments->Iter(); !iter.Done(); iter.Next()) {
-      const auto* entry = static_cast<SubDocMapEntry*>(iter.Get());
-      if (Document* subdoc = entry->mSubDocument) {
-        if (aCallback(subdoc)) {
-          aDescendants.AppendElement(subdoc);
-        }
-        subdoc->CollectDescendantDocuments(aDescendants, aIncludeSubresources,
-                                           aCallback);
-      }
+  for (const auto& entry : mSubDocuments.Values()) {
+    if (aCallback(entry.get())) {
+      aDescendants.AppendElement(entry.get());
     }
+    entry->CollectDescendantDocuments(aDescendants, aIncludeSubresources,
+                                      aCallback);
   }
 
   if (aIncludeSubresources == IncludeSubResources::Yes) {
@@ -12164,11 +12095,8 @@ bool Document::CanSavePresentation(nsIRequest* aNewRequest,
     ret = false;
   }
 
-  if (aIncludeSubdocuments && mSubDocuments) {
-    for (auto iter = mSubDocuments->Iter(); !iter.Done(); iter.Next()) {
-      auto entry = static_cast<SubDocMapEntry*>(iter.Get());
-      Document* subdoc = entry->mSubDocument;
-
+  if (aIncludeSubdocuments) {
+    for (const auto& subdoc : mSubDocuments.Values()) {
       uint32_t subDocBFCacheCombo = 0;
       // The aIgnoreRequest we were passed is only for us, so don't pass it on.
       bool canCache =
@@ -12301,7 +12229,7 @@ void Document::Destroy() {
     MOZ_ASSERT(child->GetParentNode() == this);
   }
   MOZ_ASSERT(oldChildCount == GetChildCount());
-  MOZ_ASSERT(!mSubDocuments || mSubDocuments->EntryCount() == 0);
+  MOZ_ASSERT(mSubDocuments.IsEmpty());
 
   mInUnlinkOrDeletion = oldVal;
 
@@ -12610,6 +12538,13 @@ void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
                           nullptr);
     }
 
+    if (aPersisted) {
+      // We're coming out of bfcache, clear the revealed flag per
+      // https://html.spec.whatwg.org/#reactivate-a-document 4.2.
+      mHasBeenRevealed = false;
+      MaybeScheduleRenderingPhases({RenderingPhase::Reveal});
+    }
+
     nsCOMPtr<EventTarget> target = aDispatchStartTarget;
     if (!target) {
       target = do_QueryInterface(GetWindow());
@@ -12668,7 +12603,10 @@ void Document::OnPageHide(bool aPersisted, EventTarget* aDispatchStartTarget,
   }
 
   // https://wicg.github.io/document-picture-in-picture/#close-on-destroy
-  CloseAnyAssociatedDocumentPiPWindows();
+  // If chrome window is destroyed, content will take care of PiP windows.
+  if (GetBrowsingContext() && GetBrowsingContext()->IsContent()) {
+    CloseAnyAssociatedDocumentPiPWindows();
+  }
 
   PointerLockManager::Unlock("Document::OnPageHide", this);
 
@@ -14379,13 +14317,13 @@ nsContentList* Document::ImageMapList() {
 
 #define DEPRECATED_OPERATION(_op) #_op "Warning",
 static const char* kDeprecationWarnings[] = {
-#include "nsDeprecatedOperationList.h"
+#include "nsDeprecatedOperationList.inc"
     nullptr};
 #undef DEPRECATED_OPERATION
 
 #define DOCUMENT_WARNING(_op) #_op "Warning",
 static const char* kDocumentWarnings[] = {
-#include "nsDocumentWarningList.h"
+#include "nsDocumentWarningList.inc"
     nullptr};
 #undef DOCUMENT_WARNING
 
@@ -14394,7 +14332,7 @@ static UseCounter OperationToUseCounter(DeprecatedOperations aOperation) {
 #define DEPRECATED_OPERATION(_op)    \
   case DeprecatedOperations::e##_op: \
     return eUseCounter_##_op;
-#include "nsDeprecatedOperationList.h"
+#include "nsDeprecatedOperationList.inc"
 #undef DEPRECATED_OPERATION
     default:
       MOZ_CRASH();
@@ -14713,34 +14651,24 @@ already_AddRefed<nsDOMCaretPosition> Document::CaretPositionFromPoint(
   nsCOMPtr<nsINode> node = offsets.content;
   uint32_t offset = offsets.offset;
   nsCOMPtr<nsINode> anonNode = node;
-  bool nodeIsAnonymous = node && node->IsInNativeAnonymousSubtree();
+  const bool nodeIsAnonymous = node && node->IsInNativeAnonymousSubtree();
+  bool offsetAndNodeNeedsAdjustment = false;
   if (nodeIsAnonymous) {
     node = ptFrame->GetContent();
     nsINode* nonChrome =
         node->AsContent()->FindFirstNonChromeOnlyAccessContent();
-    HTMLTextAreaElement* textArea = HTMLTextAreaElement::FromNode(nonChrome);
-    nsTextControlFrame* textFrame =
-        do_QueryFrame(nonChrome->AsContent()->GetPrimaryFrame());
-    if (!textFrame) {
+    auto* textControl = TextControlElement::FromNode(nonChrome);
+    if (!textControl) {
       return nullptr;
     }
-
     // If the anonymous content node has a child, then we need to make sure
     // that we get the appropriate child, as otherwise the offset may not be
     // correct when we construct a range for it.
-    nsCOMPtr<nsINode> firstChild = anonNode->GetFirstChild();
-    if (firstChild) {
+    if (nsINode* firstChild = anonNode->GetFirstChild()) {
       anonNode = firstChild;
     }
-
-    if (textArea) {
-      offset = nsContentUtils::GetAdjustedOffsetInTextControl(ptFrame, offset);
-    }
-
     node = nonChrome;
   }
-
-  bool offsetAndNodeNeedsAdjustment = false;
 
   if (StaticPrefs::
           dom_shadowdom_new_caretPositionFromPoint_behavior_enabled()) {
@@ -15342,6 +15270,10 @@ void Document::HandleEscKey() {
   for (const nsWeakPtr& weakPtr : Reversed(mTopLayer)) {
     nsCOMPtr<Element> element(do_QueryReferent(weakPtr));
     if (RefPtr popoverHTMLEl = nsGenericHTMLElement::FromNodeOrNull(element)) {
+      if (element->IsPopoverOpenedInMode(PopoverAttributeState::Hint)) {
+        popoverHTMLEl->HidePopover(IgnoreErrors());
+        return;
+      }
       if (element->IsPopoverOpenedInMode(PopoverAttributeState::Auto)) {
         popoverHTMLEl->HidePopover(IgnoreErrors());
         return;
@@ -16075,16 +16007,27 @@ void Document::HideAllPopoversUntil(nsINode& aEndpoint,
 
   // 2. Let document be endpoint's node document.
   MOZ_ASSERT(aEndpoint.OwnerDoc() == this);
+
   // 3. Assert: endpoint is a Document or endpoint's popover visibility state is
   // showing.
+  MOZ_ASSERT(aEndpoint.IsDocument() ||
+             (endpointHTMLEl && endpointHTMLEl->PopoverOpen()));
+
   // 4. Assert: endpoint is a Document or endpoint's popover attribute is in the
   // Auto state or endpoint's popover attribute is in the Hint state.
-  // todo(keithamus): Implement this
+  // Note: We check the opened mode rather than attribute state, as the
+  // attribute can be changed via JavaScript during re-entrancy.
+  MOZ_ASSERT(
+      aEndpoint.IsDocument() ||
+      endpointHTMLEl->IsPopoverOpenedInMode(PopoverAttributeState::Auto) ||
+      endpointHTMLEl->IsPopoverOpenedInMode(PopoverAttributeState::Hint));
 
   // 5. If endpoint is a Document:
   if (&aEndpoint == this) {
     // 5.1. Run close entire popover list given document's showing hint popover
     // list, focusPreviousElement, and fireEvents.
+    CloseEntirePopoverList(PopoverAttributeState::Hint, aFocusPreviousElement,
+                           aFireEvents);
     // 5.2. Run close entire popover list given document's showing auto popover
     // list, focusPreviousElement, and fireEvents.
     CloseEntirePopoverList(PopoverAttributeState::Auto, aFocusPreviousElement,
@@ -16094,16 +16037,28 @@ void Document::HideAllPopoversUntil(nsINode& aEndpoint,
   }
 
   // 6. If document's showing hint popover list contains endpoint:
-  // 6.1. Assert: endpoint's popover attribute is in the Hint state.
-  // 6.2. Run hide popover stack until given endpoint, document's showing hint
-  // popover list, focusPreviousElement, and fireEvents.
-  // 6.3. Return.
-  // todo(keithamus): Implement this
+  if (PopoverListOf(PopoverAttributeState::Hint).Contains(&aEndpoint)) {
+    // 6.1. Assert: endpoint's popover attribute is in the Hint state.
+    MOZ_ASSERT(endpointHTMLEl && endpointHTMLEl->IsPopoverOpenedInMode(
+                                     PopoverAttributeState::Hint));
+    // 6.2. Run hide popover stack until given endpoint, document's showing hint
+    // popover list, focusPreviousElement, and fireEvents.
+    HidePopoverStackUntil(PopoverAttributeState::Hint, aEndpoint,
+                          aFocusPreviousElement, aFireEvents);
+    // 6.3. Return.
+    return;
+  }
 
   // 7. Run close entire popover list given document's showing hint popover
   // list, focusPreviousElement, and fireEvents.
+  CloseEntirePopoverList(PopoverAttributeState::Hint, aFocusPreviousElement,
+                         aFireEvents);
+
   // 8. If document's showing auto popover list does not contain endpoint, then
   // return.
+  if (!PopoverListOf(PopoverAttributeState::Auto).Contains(&aEndpoint)) {
+    return;
+  }
 
   // 9. Run hide popover stack until given endpoint, document's showing auto
   // popover list, focusPreviousElement, and fireEvents.
@@ -16154,22 +16109,20 @@ void Document::HidePopoverStackUntil(PopoverAttributeState aMode,
     // 2.4. While lastToHide's popover visibility state is showing:
     while (lastToHide && lastToHide->IsPopoverOpen()) {
       // 2.4.1. Assert: popoverList is not empty.
-      // todo(keithamus): Assert
+      MOZ_ASSERT(!PopoverListOf(aMode).IsEmpty());
+
+      RefPtr topmost = GetTopmostPopoverOf(aMode);
 
       // 2.4.2. Run the hide popover algorithm given the last item in
       // popoverList, focusPreviousElement, fireEvents, false, and null.
-      RefPtr<Element> topmost =
-          GetTopmostPopoverOf(PopoverAttributeState::Auto);
-      if (!topmost) {
-        break;
-      }
       HidePopover(*topmost, aFocusPreviousElement, fireEvents,
                   /* aSource */ nullptr, IgnoreErrors());
     }
 
     // 2.5. Assert: repeatingHide is false or popoverList's last item is
     // endpoint.
-    // todo(keithamus): Assert
+    MOZ_ASSERT(!repeatingHide ||
+               PopoverListOf(aMode).LastElement() == &aEndpoint);
 
     // 2.6. Set repeatingHide to true if popoverList contains endpoint and
     // popoverList's last item is not endpoint, otherwise false.
@@ -16222,42 +16175,28 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
     }
   });
 
-  PopoverData* popoverData = popoverHTMLEl->GetPopoverData();
-
   // 7. If element's opened in popover mode is "auto" or "hint", then:
-  if (popoverData &&
-      popoverData->GetOpenedInMode() == PopoverAttributeState::Auto) {
-    // 7.1. Run hide all popovers until given element, focusPreviousElement, and
-    // fireEvents.
+  if (PopoverData* popoverData = popoverHTMLEl->GetPopoverData();
+      popoverData &&
+      (popoverData->GetOpenedInMode() == PopoverAttributeState::Auto ||
+       popoverData->GetOpenedInMode() == PopoverAttributeState::Hint)) {
+    // 7.1. Run hide all popovers until given element, focusPreviousElement,
+    // and fireEvents.
     HideAllPopoversUntil(*popoverHTMLEl, aFocusPreviousElement, fireEvents);
 
-    // 7.2. If the result of running check popover validity given element, true,
-    // and throwExceptions is false, then run cleanupSteps and return.
+    // 7.2. If the result of running check popover validity given element,
+    // true, and throwExceptions is false, then run cleanupSteps and return.
     if (!popoverHTMLEl->CheckPopoverValidity(PopoverVisibilityState::Showing,
                                              nullptr, aRv)) {
       return;
     }
-
-    // TODO: we can't always guarantee:
-    // The last item in document's auto popover list is popoverHTMLEl.
-    // See, https://github.com/whatwg/html/issues/9197
-    // If popoverHTMLEl is not on top, hide popovers again without firing
-    // events.
-    if (NS_WARN_IF(GetTopmostPopoverOf(PopoverAttributeState::Auto) !=
-                   popoverHTMLEl)) {
-      HideAllPopoversUntil(*popoverHTMLEl, aFocusPreviousElement, false);
-      if (!popoverHTMLEl->CheckPopoverValidity(PopoverVisibilityState::Showing,
-                                               nullptr, aRv)) {
-        return;
-      }
-      MOZ_ASSERT(
-          GetTopmostPopoverOf(PopoverAttributeState::Auto) == popoverHTMLEl,
-          "popoverHTMLEl should be on top of auto popover list");
-    }
   }
 
-  auto* data = popoverHTMLEl->GetPopoverData();
-  MOZ_ASSERT(data, "Should have popover data");
+  // 8. Let autoPopoverListContainsElement be true if document's showing auto
+  // popover list's last item is element, otherwise false.
+  auto autoList = PopoverListOf(PopoverAttributeState::Auto);
+  bool autoPopoverListContainsElement =
+      !autoList.IsEmpty() && autoList.LastElement() == popoverHTMLEl;
 
   // 9. If fireEvents is true:
   // Fire beforetoggle event and re-check popover validity.
@@ -16274,9 +16213,11 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
     // auto popover list's last item is not element, then run hide all popovers
     // until given element, focusPreviousElement, and false. Hide all popovers
     // when beforetoggle shows a popover.
-    if (popoverHTMLEl->IsPopoverOpenedInMode(PopoverAttributeState::Auto) &&
-        GetTopmostPopoverOf(PopoverAttributeState::Auto) != popoverHTMLEl) {
-      HideAllPopoversUntil(*popoverHTMLEl, aFocusPreviousElement, false);
+    if (autoPopoverListContainsElement) {
+      auto* topmostAuto = GetTopmostPopoverOf(PopoverAttributeState::Auto);
+      if (!topmostAuto || topmostAuto != popoverHTMLEl) {
+        HideAllPopoversUntil(*popoverHTMLEl, aFocusPreviousElement, false);
+      }
     }
 
     // 9.3. If the result of running check popover validity given element, true,
@@ -16286,27 +16227,28 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
       return;
     }
 
-    // 9.4. XXX: See below
-
+    // 9.4. Request an element to be removed from the top layer given element.
     // 9.5. Set element's implicit anchor element to null.
-    data->SetInvoker(nullptr);
+    // XXX: Dropped below if, as both of these steps happen unconditionally.
+    //      (See  step 10, 11 below). The implicit anchor for a popover is its
+    //      invoker, so removing the invoker is the same step.
   }
 
-  // 9.4. Request an element to be removed from the top layer given element.
   // 10. Otherwise, remove an element from the top layer immediately given
   // element.
   RemovePopoverFromTopLayer(aPopover);
 
-  // 11. Set element's popover invoker to null.
-  data->SetInvoker(nullptr);
+  if (PopoverData* popoverData = popoverHTMLEl->GetPopoverData()) {
+    // 11. Set element's popover invoker to null.
+    popoverData->SetInvoker(nullptr);
 
-  // 12. Set element's opened in popover mode to null.
-  popoverHTMLEl->GetPopoverData()->SetOpenedInMode(PopoverAttributeState::None);
+    // 12. Set element's opened in popover mode to null.
+    popoverData->SetOpenedInMode(PopoverAttributeState::None);
 
-  // 13. Set element's popover visibility state to hidden.
-  popoverHTMLEl->PopoverPseudoStateUpdate(false, true);
-  popoverHTMLEl->GetPopoverData()->SetPopoverVisibilityState(
-      PopoverVisibilityState::Hidden);
+    // 13. Set element's popover visibility state to hidden.
+    popoverHTMLEl->PopoverPseudoStateUpdate(false, true);
+    popoverData->SetPopoverVisibilityState(PopoverVisibilityState::Hidden);
+  }
 
   // 14. If fireEvents is true, then queue a popover toggle event task given
   // element, "open", and "closed". Queue popover toggle event task.
@@ -16745,8 +16687,14 @@ bool Document::ApplyFullscreen(UniquePtr<FullscreenRequest> aRequest) {
 
   Element* elem = aRequest->Element();
 
+  // Hide auto popovers until the topmost auto ancestor (or document if none).
   RefPtr<nsINode> hideUntil = elem->GetTopmostPopoverAncestor(
-      PopoverAttributeState::Auto, nullptr, false);
+      PopoverAttributeState::Hint, nullptr, false);
+  if (!hideUntil) {
+    hideUntil = elem->GetTopmostPopoverAncestor(PopoverAttributeState::Auto,
+                                                nullptr, false);
+  }
+
   if (!hideUntil) {
     hideUntil = OwnerDoc();
   }
@@ -17006,6 +16954,42 @@ void Document::PostVisibilityUpdateEvent() {
       "Document::UpdateVisibilityState", this, &Document::UpdateVisibilityState,
       DispatchVisibilityChange::Yes);
   Dispatch(event.forget());
+}
+
+// https://html.spec.whatwg.org/#reveal
+void Document::Reveal() {
+  // Step 1
+  if (mHasBeenRevealed) {
+    return;
+  }
+
+  // Step 2
+  mHasBeenRevealed = true;
+
+  if (!StaticPrefs::dom_viewTransitions_cross_document_enabled()) {
+    return;
+  }
+
+  RefPtr<nsGlobalWindowInner> win = nsGlobalWindowInner::Cast(GetInnerWindow());
+  if (!win) {
+    return;
+  }
+
+  // Step 3, Let transition be the result of resolving inbound cross-document
+  // view-transition for document.
+  // TODO
+
+  // Step 4
+  PageRevealEventInit init;
+  // init.mViewTransition = TODO
+
+  RefPtr<PageRevealEvent> event =
+      PageRevealEvent::Constructor(win, u"pagereveal"_ns, init);
+  event->SetTrusted(true);
+  win->DispatchEvent(*event);
+
+  // Step 5, If transition is not null, then:
+  // TODO
 }
 
 void Document::MaybeActiveMediaComponents() {
@@ -18937,10 +18921,9 @@ void Document::DetermineProximityToViewportAndNotifyResizeObservers() {
     // https://github.com/whatwg/html/issues/11210 for the timing of this.
     UpdateLastRememberedSizes();
 
-    const bool evaluateAllFallbacksIfNeeded = !initialAnchorOverflowDone;
+    const bool firstTime = !initialAnchorOverflowDone;
     initialAnchorOverflowDone = true;
-    if (AnchorPositioningUtils::TriggerLayoutOnOverflow(
-            ps, evaluateAllFallbacksIfNeeded)) {
+    if (AnchorPositioningUtils::TriggerLayoutOnOverflow(ps, firstTime)) {
       // If any of the anchor positioned items overflow its cb, then we trigger
       // a layout for them. If we triggered for any item, we have to restart the
       // loop to flush all layouts.
@@ -19328,10 +19311,11 @@ Document::GetContentBlockingEvents() {
 }
 
 StorageAccessAPIHelper::PerformPermissionGrant
-Document::CreatePermissionGrantPromise(
-    nsPIDOMWindowInner* aInnerWindow, nsIPrincipal* aPrincipal,
-    bool aHasUserInteraction, bool aRequireUserInteraction,
-    const Maybe<nsCString>& aTopLevelBaseDomain, bool aFrameOnly) {
+Document::CreatePermissionGrantPromise(nsPIDOMWindowInner* aInnerWindow,
+                                       nsIPrincipal* aPrincipal,
+                                       bool aHasUserInteraction,
+                                       bool aRequireUserInteraction,
+                                       bool aFrameOnly) {
   MOZ_ASSERT(aInnerWindow);
   MOZ_ASSERT(aPrincipal);
   RefPtr<Document> self(this);
@@ -19339,7 +19323,7 @@ Document::CreatePermissionGrantPromise(
   RefPtr<nsIPrincipal> principal(aPrincipal);
 
   return [inner, self, principal, aHasUserInteraction, aRequireUserInteraction,
-          aTopLevelBaseDomain, aFrameOnly]() {
+          aFrameOnly]() {
     RefPtr<StorageAccessAPIHelper::StorageAccessPermissionGrantPromise::Private>
         p = new StorageAccessAPIHelper::StorageAccessPermissionGrantPromise::
             Private(__func__);
@@ -19368,8 +19352,7 @@ Document::CreatePermissionGrantPromise(
     promise->Then(
         GetCurrentSerialEventTarget(), __func__,
         [self, p, inner, principal, aHasUserInteraction,
-         aRequireUserInteraction, aTopLevelBaseDomain,
-         aFrameOnly](uint32_t aAction) {
+         aRequireUserInteraction, aFrameOnly](uint32_t aAction) {
           if (aAction == nsIPermissionManager::ALLOW_ACTION) {
             p->Resolve(StorageAccessAPIHelper::eAllow, __func__);
             return;
@@ -19399,7 +19382,7 @@ Document::CreatePermissionGrantPromise(
           // Create the user prompt
           RefPtr<StorageAccessPermissionRequest> sapr =
               StorageAccessPermissionRequest::Create(
-                  inner, principal, aTopLevelBaseDomain, aFrameOnly,
+                  inner, principal, aFrameOnly,
                   // Allow
                   [p] {
                     glean::dom::storage_access_api_ui
@@ -19834,331 +19817,6 @@ already_AddRefed<mozilla::dom::Promise> Document::RequestStorageAccessForOrigin(
 
   // Step 5: While the async stuff is happening, we should return the promise so
   // our caller can continue executing.
-  return promise.forget();
-}
-
-already_AddRefed<Promise> Document::RequestStorageAccessUnderSite(
-    const nsAString& aSerializedSite, ErrorResult& aRv) {
-  nsIGlobalObject* global = GetScopeObject();
-  if (!global) {
-    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return nullptr;
-  }
-  RefPtr<Promise> promise = Promise::Create(global, aRv);
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  // Check that we have user activation before proceeding to prevent
-  // rapid calls to the API to leak information.
-  if (!ConsumeTransientUserGestureActivation()) {
-    // Report an error to the console for this case
-    nsContentUtils::ReportToConsole(
-        nsIScriptError::errorFlag, "requestStorageAccess"_ns, this,
-        nsContentUtils::eDOM_PROPERTIES, "RequestStorageAccessUserGesture");
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check if the provided URI is different-site to this Document
-  nsCOMPtr<nsIURI> siteURI;
-  nsresult rv = NS_NewURI(getter_AddRefs(siteURI), aSerializedSite);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-  bool isCrossSiteArgument;
-  rv = NodePrincipal()->IsThirdPartyURI(siteURI, &isCrossSiteArgument);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return nullptr;
-  }
-  if (!isCrossSiteArgument) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check if this party has broad cookie permissions.
-  Maybe<bool> resultBecauseCookiesApproved =
-      StorageAccessAPIHelper::CheckCookiesPermittedDecidesStorageAccessAPI(
-          CookieJarSettings(), NodePrincipal());
-  if (resultBecauseCookiesApproved.isSome()) {
-    if (resultBecauseCookiesApproved.value()) {
-      promise->MaybeResolveWithUndefined();
-      return promise.forget();
-    }
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check if browser settings preclude this document getting storage
-  // access under the provided site
-  Maybe<bool> resultBecauseBrowserSettings =
-      StorageAccessAPIHelper::CheckBrowserSettingsDecidesStorageAccessAPI(
-          CookieJarSettings(), true, false, true);
-  if (resultBecauseBrowserSettings.isSome()) {
-    if (resultBecauseBrowserSettings.value()) {
-      promise->MaybeResolveWithUndefined();
-      return promise.forget();
-    }
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check that this Document is same-site to the top
-  Maybe<bool> resultBecauseCallContext = StorageAccessAPIHelper::
-      CheckSameSiteCallingContextDecidesStorageAccessAPI(this, false);
-  if (resultBecauseCallContext.isSome()) {
-    if (resultBecauseCallContext.value()) {
-      promise->MaybeResolveWithUndefined();
-      return promise.forget();
-    }
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  nsCOMPtr<nsIPrincipal> principal(NodePrincipal());
-
-  // Test if the permission this is requesting is already set
-  nsCOMPtr<nsIPrincipal> argumentPrincipal =
-      BasePrincipal::CreateContentPrincipal(
-          siteURI, NodePrincipal()->OriginAttributesRef());
-  if (!argumentPrincipal) {
-    ConsumeTransientUserGestureActivation();
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-  nsCString originNoSuffix;
-  rv = NodePrincipal()->GetOriginNoSuffix(originNoSuffix);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  ContentChild* cc = ContentChild::GetSingleton();
-  MOZ_ASSERT(cc);
-  RefPtr<Document> self(this);
-  cc->SendTestStorageAccessPermission(argumentPrincipal, originNoSuffix)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [promise, siteURI,
-           self](const ContentChild::TestStorageAccessPermissionPromise::
-                     ResolveValueType& aResult) {
-            if (aResult) {
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndResolve(
-                      StorageAccessAPIHelper::eAllow, __func__);
-            }
-            // Get a grant for the storage access permission that will be set
-            // when this is completed in the embedding context
-            nsCString serializedSite;
-            nsCOMPtr<nsIEffectiveTLDService> etld =
-                mozilla::components::EffectiveTLD::Service();
-            if (!etld) {
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndReject(
-                      false, __func__);
-            }
-            nsresult rv = etld->GetSite(siteURI, serializedSite);
-            if (NS_FAILED(rv)) {
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndReject(
-                      false, __func__);
-            }
-            return self->CreatePermissionGrantPromise(
-                self->GetInnerWindow(), self->NodePrincipal(), true, true,
-                Some(serializedSite), false)();
-          },
-          [](const ContentChild::TestStorageAccessPermissionPromise::
-                 RejectValueType& aResult) {
-            return StorageAccessAPIHelper::StorageAccessPermissionGrantPromise::
-                CreateAndReject(false, __func__);
-          })
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [promise, principal, siteURI](int result) {
-            ContentChild* cc = ContentChild::GetSingleton();
-            if (!cc) {
-              // TODO(bug 1778561): Make this work in non-content processes.
-              promise->MaybeRejectWithUndefined();
-              return;
-            }
-            // Set a permission in the parent process that this document wants
-            // storage access under the argument's site, resolving our returned
-            // promise on success
-            cc->SendSetAllowStorageAccessRequestFlag(principal, siteURI)
-                ->Then(
-                    GetCurrentSerialEventTarget(), __func__,
-                    [promise](bool success) {
-                      if (success) {
-                        promise->MaybeResolveWithUndefined();
-                      } else {
-                        promise->MaybeRejectWithUndefined();
-                      }
-                    },
-                    [promise](mozilla::ipc::ResponseRejectReason reason) {
-                      promise->MaybeRejectWithUndefined();
-                    });
-          },
-          [promise](bool result) { promise->MaybeRejectWithUndefined(); });
-
-  // Return the promise that is resolved in the async handler above
-  return promise.forget();
-}
-
-already_AddRefed<Promise> Document::CompleteStorageAccessRequestFromSite(
-    const nsAString& aSerializedOrigin, ErrorResult& aRv) {
-  nsIGlobalObject* global = GetScopeObject();
-  if (!global) {
-    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return nullptr;
-  }
-  RefPtr<Promise> promise = Promise::Create(global, aRv);
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  // Check that the provided URI is different-site to this Document
-  nsCOMPtr<nsIURI> argumentURI;
-  nsresult rv = NS_NewURI(getter_AddRefs(argumentURI), aSerializedOrigin);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-  bool isCrossSiteArgument;
-  rv = NodePrincipal()->IsThirdPartyURI(argumentURI, &isCrossSiteArgument);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    aRv.Throw(rv);
-    return nullptr;
-  }
-  if (!isCrossSiteArgument) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check if browser settings preclude this document getting storage
-  // access under the provided site
-  Maybe<bool> resultBecauseBrowserSettings =
-      StorageAccessAPIHelper::CheckBrowserSettingsDecidesStorageAccessAPI(
-          CookieJarSettings(), true, false, true);
-  if (resultBecauseBrowserSettings.isSome()) {
-    if (resultBecauseBrowserSettings.value()) {
-      promise->MaybeResolveWithUndefined();
-      return promise.forget();
-    }
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Check that this Document is same-site to the top
-  Maybe<bool> resultBecauseCallContext = StorageAccessAPIHelper::
-      CheckSameSiteCallingContextDecidesStorageAccessAPI(this, false);
-  if (resultBecauseCallContext.isSome()) {
-    if (resultBecauseCallContext.value()) {
-      promise->MaybeResolveWithUndefined();
-      return promise.forget();
-    }
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Create principal of the embedded site requesting storage access
-  nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
-      argumentURI, NodePrincipal()->OriginAttributesRef());
-  if (!principal) {
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-
-  // Get versions of these objects that we can use in lambdas for callbacks
-  RefPtr<Document> self(this);
-  RefPtr<BrowsingContext> bc = GetBrowsingContext();
-  nsCOMPtr<nsPIDOMWindowInner> inner = GetInnerWindow();
-
-  // Test that the permission was set by a call to RequestStorageAccessUnderSite
-  // from a top level document that is same-site with the argument
-  ContentChild* cc = ContentChild::GetSingleton();
-  if (!cc) {
-    // TODO(bug 1778561): Make this work in non-content processes.
-    promise->MaybeRejectWithUndefined();
-    return promise.forget();
-  }
-  cc->SendTestAllowStorageAccessRequestFlag(NodePrincipal(), argumentURI)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [inner, bc, self, principal](bool success) {
-            if (success) {
-              // If that resolved with true, check that we don't already have a
-              // permission that gives cookie access.
-              return StorageAccessAPIHelper::
-                  AsyncCheckCookiesPermittedDecidesStorageAccessAPIOnChildProcess(
-                      bc, principal);
-            }
-            return MozPromise<Maybe<bool>, nsresult, true>::CreateAndReject(
-                NS_ERROR_FAILURE, __func__);
-          },
-          [](mozilla::ipc::ResponseRejectReason reason) {
-            return MozPromise<Maybe<bool>, nsresult, true>::CreateAndReject(
-                NS_ERROR_FAILURE, __func__);
-          })
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [inner, bc, principal, self, promise](Maybe<bool> cookieResult) {
-            // Handle the result of the cookie permission check that took place
-            // in the ContentParent.
-            if (cookieResult.isSome()) {
-              if (cookieResult.value()) {
-                return StorageAccessAPIHelper::
-                    StorageAccessPermissionGrantPromise::CreateAndResolve(
-                        StorageAccessAPIHelper::eAllowAutoGrant, __func__);
-              }
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndReject(
-                      false, __func__);
-            }
-
-            // Check for the existing storage access permission
-            nsAutoCString type;
-            bool ok =
-                AntiTrackingUtils::CreateStoragePermissionKey(principal, type);
-            if (!ok) {
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndReject(
-                      false, __func__);
-            }
-            if (AntiTrackingUtils::CheckStoragePermission(
-                    self->NodePrincipal(), type, self->IsInPrivateBrowsing())) {
-              return StorageAccessAPIHelper::
-                  StorageAccessPermissionGrantPromise::CreateAndResolve(
-                      StorageAccessAPIHelper::eAllowAutoGrant, __func__);
-            }
-
-            // Try to request storage access, ignoring the final checks.
-            // We ignore the final checks because this is where the "grant"
-            // either by prompt doorhanger or autogrant takes place. We already
-            // gathered an equivalent grant in requestStorageAccessUnderSite.
-            return StorageAccessAPIHelper::RequestStorageAccessAsyncHelper(
-                self, inner, bc, principal, true, true, false,
-                ContentBlockingNotifier::eStorageAccessAPI, false);
-          },
-          // If the IPC rejects, we should reject our promise here which will
-          // cause a rejection of the promise we already returned
-          [promise]() {
-            return MozPromise<int, bool, true>::CreateAndReject(false,
-                                                                __func__);
-          })
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          // If the previous handlers resolved, we should reinstate user
-          // activation and resolve the promise we returned in Step 5.
-          [self, inner, promise] {
-            inner->SaveStorageAccessPermissionGranted();
-            promise->MaybeResolveWithUndefined();
-          },
-          // If the previous handler rejected, we should reject the promise
-          // returned by this function.
-          [promise] { promise->MaybeRejectWithUndefined(); });
-
   return promise.forget();
 }
 

@@ -17,6 +17,10 @@ const { IPPProxyManager, IPPProxyStates } = ChromeUtils.importESModule(
   "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs"
 );
 
+const { IPProtectionAlertManager } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/ipprotection/IPProtectionAlertManager.sys.mjs"
+);
+
 const { IPPSignInWatcher } = ChromeUtils.importESModule(
   "moz-src:///browser/components/ipprotection/IPPSignInWatcher.sys.mjs"
 );
@@ -44,7 +48,7 @@ ChromeUtils.defineESModuleGetters(this, {
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
 });
 
-const { ProxyPass } = ChromeUtils.importESModule(
+const { ProxyPass, ProxyUsage, Entitlement } = ChromeUtils.importESModule(
   "moz-src:///browser/components/ipprotection/GuardianClient.sys.mjs"
 );
 const { RemoteSettings } = ChromeUtils.importESModule(
@@ -149,6 +153,7 @@ async function setPanelState(state = defaultState, win = window) {
 async function closePanel(win = window) {
   // Reset the state
   let panel = IPProtection.getPanel(win);
+
   panel.setState(defaultState);
   // Close the panel
   let panelHiddenPromise = waitForPanelEvent(win.document, "popuphidden");
@@ -242,21 +247,18 @@ let DEFAULT_EXPERIMENT = {
 
 let DEFAULT_SERVICE_STATUS = {
   isSignedIn: false,
-  isEnrolledAndEntitled: false,
+  isEnrolledAndEntitled: undefined,
   canEnroll: true,
   entitlement: {
     status: 200,
     error: undefined,
-    entitlement: {
-      subscribed: false,
-      uid: 42,
-      created_at: "2023-01-01T12:00:00.000Z",
-    },
+    entitlement: createTestEntitlement(),
   },
   proxyPass: {
     status: 200,
     error: undefined,
     pass: makePass(),
+    usage: makeUsage(),
   },
 };
 /* exported DEFAULT_SERVICE_STATUS */
@@ -276,24 +278,27 @@ add_setup(async function setupVPN() {
   setupService();
 
   await putServerInRemoteSettings(DEFAULT_SERVICE_STATUS.serverList);
-  await IPProtectionService.init();
 
-  if (DEFAULT_EXPERIMENT) {
-    await setupExperiment();
-  }
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.ipProtection.enabled", true]],
+  });
 
   registerCleanupFunction(async () => {
     cleanupService();
-    IPProtectionService.uninit();
+    Services.prefs.clearUserPref("browser.ipProtection.enabled");
     setupSandbox.restore();
-    cleanupExperiment();
     CustomizableUI.reset();
     Services.prefs.clearUserPref(IPProtectionWidget.ADDED_PREF);
-    Services.prefs.clearUserPref("browser.ipProtection.panelOpenCount");
+    Services.prefs.clearUserPref("browser.ipProtection.everOpenedPanel");
+    Services.prefs.clearUserPref("browser.ipProtection.userEnableCount");
     Services.prefs.clearUserPref("browser.ipProtection.stateCache");
     Services.prefs.clearUserPref("browser.ipProtection.entitlementCache");
     Services.prefs.clearUserPref("browser.ipProtection.locationListCache");
+    Services.prefs.clearUserPref("browser.ipProtection.usageCache");
     Services.prefs.clearUserPref("browser.ipProtection.onboardingMessageMask");
+    Services.prefs.clearUserPref("browser.ipProtection.egressLocationEnabled");
+    Services.prefs.clearUserPref("browser.ipProtection.bandwidthThreshold");
+    Services.prefs.clearUserPref("browser.ipProtection.userEnabled");
   });
 });
 
@@ -341,6 +346,8 @@ function setupService(
 
   if (typeof entitlement != "undefined") {
     stubs.fetchUserInfo.resolves(entitlement);
+  } else {
+    stubs.fetchUserInfo.resolves(DEFAULT_SERVICE_STATUS.entitlement);
   }
 
   if (typeof proxyPass != "undefined") {
@@ -387,6 +394,27 @@ async function cleanupExperiment() {
 }
 /* exported cleanupExperiment */
 
+/**
+ * Creates a test Entitlement with default values.
+ *
+ * @param {object} overrides - Optional fields to override
+ * @returns {Entitlement}
+ */
+function createTestEntitlement(overrides = {}) {
+  return new Entitlement({
+    autostart: false,
+    created_at: "2023-01-01T12:00:00.000Z",
+    limited_bandwidth: false,
+    location_controls: false,
+    subscribed: false,
+    uid: 42,
+    website_inclusion: false,
+    maxBytes: "0",
+    ...overrides,
+  });
+}
+/* exported createTestEntitlement */
+
 function makePass(
   from = Temporal.Now.instant(),
   until = from.add({ hours: 24 })
@@ -408,6 +436,15 @@ function makePass(
   return new ProxyPass(token);
 }
 /* exported makePass */
+
+function makeUsage(
+  max = "5368709120",
+  remaining = "4294967296",
+  reset = "2026-01-01T00:00:00.000Z"
+) {
+  return new ProxyUsage(max, remaining, reset);
+}
+/* exported makeUsage */
 
 async function putServerInRemoteSettings(
   server = {
@@ -434,3 +471,70 @@ async function putServerInRemoteSettings(
   }
 }
 /* exported putServerInRemoteSettings */
+
+function checkBandwidth(bandwidthEl, bandwidthUsage) {
+  Assert.ok(
+    BrowserTestUtils.isVisible(bandwidthEl),
+    "bandwidth-usage should be present and visible"
+  );
+
+  Assert.equal(
+    bandwidthEl.bandwidthPercent,
+    bandwidthUsage.percent,
+    `Bandwidth should have ${bandwidthUsage.percent} % used`
+  );
+
+  Assert.equal(
+    bandwidthEl.remainingMB,
+    bandwidthUsage.remainingMB,
+    `Bandwidth should have ${bandwidthUsage.remainingMB} MB remaining`
+  );
+
+  Assert.equal(
+    bandwidthEl.remainingGB,
+    bandwidthUsage.remainingGB,
+    `Bandwidth should have ${bandwidthUsage.remainingGB} GB remaining`
+  );
+
+  Assert.equal(
+    bandwidthEl.max,
+    bandwidthUsage.max,
+    `Bandwidth should have max of ${bandwidthUsage.max} bytes`
+  );
+
+  Assert.equal(
+    bandwidthEl.maxGB,
+    bandwidthUsage.maxGB,
+    `Bandwidth should have ${bandwidthUsage.maxGB} GB remaining`
+  );
+
+  Assert.equal(
+    bandwidthEl.bandwidthUsed,
+    bandwidthUsage.used,
+    `Bandwidth should have ${bandwidthUsage.used} bytes used`
+  );
+
+  Assert.equal(
+    bandwidthEl.bandwidthUsedGB,
+    bandwidthUsage.usedGB,
+    `Bandwidth should have ${bandwidthUsage.usedGB} GB used`
+  );
+
+  Assert.equal(
+    bandwidthEl.remainingRounded,
+    bandwidthUsage.remainingRounded,
+    `Bandwidth should have ${bandwidthUsage.remainingRounded} remaining`
+  );
+
+  let descriptionTextArray = bandwidthEl.description.textContent.split(" ");
+  Assert.equal(
+    descriptionTextArray.filter(word => word === "GB").length,
+    bandwidthUsage.gbCount,
+    `GB used ${bandwidthUsage.gbCount} times`
+  );
+  Assert.equal(
+    descriptionTextArray.filter(word => word === "MB").length,
+    bandwidthUsage.mbCount,
+    `MB used ${bandwidthUsage.mbCount} times`
+  );
+}

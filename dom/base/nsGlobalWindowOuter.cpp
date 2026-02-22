@@ -2115,7 +2115,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   js::AutoCheckRecursionLimit recursion(cx);
   if (!recursion.checkConservativeDontReport(cx)) {
     NS_WARNING("Overrecursion in SetNewDocument");
-    return NS_ERROR_FAILURE;
+    return NS_ERROR_RECURSIVE_DOCUMENT_LOAD;
   }
 
   if (!mDoc) {
@@ -2287,7 +2287,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     if (!GetWrapperPreserveColor()) {
       JS::Rooted<JSObject*> outer(
           cx, NewOuterWindowProxy(cx, newInnerGlobal, thisChrome));
-      NS_ENSURE_TRUE(outer, NS_ERROR_FAILURE);
+      NS_ENSURE_TRUE(outer, NS_ERROR_OUT_OF_MEMORY);
 
       mBrowsingContext->CleanUpDanglingRemoteOuterWindowProxies(cx, &outer);
       MOZ_ASSERT(js::IsWindowProxy(outer));
@@ -2302,10 +2302,7 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     } else {
       JS::Rooted<JSObject*> outerObject(
           cx, NewOuterWindowProxy(cx, newInnerGlobal, thisChrome));
-      if (!outerObject) {
-        NS_ERROR("out of memory");
-        return NS_ERROR_FAILURE;
-      }
+      NS_ENSURE_TRUE(outerObject, NS_ERROR_OUT_OF_MEMORY);
 
       JS::Rooted<JSObject*> obj(cx, GetWrapper());
 
@@ -3563,16 +3560,8 @@ CSSIntPoint nsGlobalWindowOuter::GetScreenXY(CallerType aCallerType,
   LayoutDeviceIntPoint windowPos;
   aError = treeOwnerAsWin->GetPosition(&windowPos.x.value, &windowPos.y.value);
 
-  RefPtr<nsPresContext> presContext = mDocShell->GetPresContext();
-  if (!presContext) {
-    // XXX Fishy LayoutDevice to CSS conversion?
-    return CSSIntPoint(windowPos.x, windowPos.y);
-  }
-
-  nsDeviceContext* context = presContext->DeviceContext();
-  auto windowPosAppUnits = LayoutDeviceIntPoint::ToAppUnits(
-      windowPos, context->AppUnitsPerDevPixel());
-  return CSSIntPoint::FromAppUnitsRounded(windowPosAppUnits);
+  CSSToLayoutDeviceScale scale = CSSToDevScaleForBaseWindow(treeOwnerAsWin);
+  return RoundedToInt(windowPos / scale);
 }
 
 int32_t nsGlobalWindowOuter::GetScreenXOuter(CallerType aCallerType,
@@ -4611,29 +4600,32 @@ bool nsGlobalWindowOuter::CanMoveResizeWindows(CallerType aCallerType,
     if (mBrowsingContext->Top()->HasSiblings()) {
       return false;
     }
+
+    if (mBrowsingContext->GetIsDocumentPiP()) {
+      // https://wicg.github.io/document-picture-in-picture/#positioning
+      if (aIsMove) {
+        nsLiteralString errorMsg(
+            u"Picture-in-Picture windows cannot be moved by script.");
+        nsContentUtils::ReportToConsoleNonLocalized(
+            errorMsg, nsIScriptError::warningFlag, "Window"_ns, GetDocument());
+        return false;
+      }
+
+      // https://wicg.github.io/document-picture-in-picture/#resizing-the-pip-window
+      WindowContext* wc = mInnerWindow->GetWindowContext();
+      if (!wc || !wc->ConsumeTransientUserGestureActivation()) {
+        aError.ThrowNotAllowedError(
+            "Resizing a Picture-in-Picture window requires transient "
+            "activation");
+        return false;
+      }
+    }
   }
 
   if (mDocShell) {
     bool allow;
     nsresult rv = mDocShell->GetAllowWindowControl(&allow);
-    if (NS_SUCCEEDED(rv) && !allow) return false;
-  }
-
-  if (mBrowsingContext->GetIsDocumentPiP()) {
-    // https://wicg.github.io/document-picture-in-picture/#positioning
-    if (aIsMove) {
-      nsLiteralString errorMsg(
-          u"Picture-in-Picture windows cannot be moved by script.");
-      nsContentUtils::ReportToConsoleNonLocalized(
-          errorMsg, nsIScriptError::warningFlag, "Window"_ns, GetDocument());
-      return false;
-    }
-
-    // https://wicg.github.io/document-picture-in-picture/#resizing-the-pip-window
-    WindowContext* wc = mInnerWindow->GetWindowContext();
-    if (!wc || !wc->ConsumeTransientUserGestureActivation()) {
-      aError.ThrowNotAllowedError(
-          "Resizing a Picture-in-Picture window requires transient activation");
+    if (NS_SUCCEEDED(rv) && !allow) {
       return false;
     }
   }
@@ -5024,6 +5016,14 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
   }
 
   RefPtr<Document> docToPrint = mDoc;
+  if (docToPrint) {
+    // This is needed so that lazily created shadow trees like <input>'s get
+    // cloned into the static document if needed.
+    // FIXME(emilio): Might want to differentiate between JS and non-JS widgets
+    // instead.
+    docToPrint->FlushPendingNotifications(FlushType::Layout);
+    docToPrint = mDoc;
+  }
   if (NS_WARN_IF(!docToPrint)) {
     aError.ThrowNotSupportedError("Document is gone");
     return nullptr;
@@ -5179,10 +5179,11 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     // which case this is the second print with this static document clone that
     // we created the first time through, and we are responsible for cleaning it
     // up. There's also an exception if we're directly using the system print
-    // dialog rather than our preview panel, because in this case the preview
-    // will not take care of cleaning up the cloned doc.
-    closeWindowAfterPrint =
-        usingCachedBrowsingContext || StaticPrefs::print_prefer_system_dialog();
+    // dialog or silent printing, rather than our preview panel, because in this
+    // case the preview will not take care of cleaning up the cloned doc.
+    closeWindowAfterPrint = usingCachedBrowsingContext ||
+                            StaticPrefs::print_prefer_system_dialog() ||
+                            StaticPrefs::print_always_print_silent();
   } else {
     // In this case the document was not a static clone, so we made a static
     // clone for printing purposes and must clean it up after the print is done.
@@ -5250,11 +5251,6 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
 void nsGlobalWindowOuter::MoveToOuter(int32_t aXPos, int32_t aYPos,
                                       CallerType aCallerType,
                                       ErrorResult& aError) {
-  /*
-   * If caller is not chrome and the user has not explicitly exempted the site,
-   * prevent window.moveTo() by exiting early
-   */
-
   if (!CanMoveResizeWindows(aCallerType, true, aError)) {
     return;
   }
@@ -5265,20 +5261,11 @@ void nsGlobalWindowOuter::MoveToOuter(int32_t aXPos, int32_t aYPos,
     return;
   }
 
-  // We need to do the same transformation GetScreenXY does.
-  RefPtr<nsPresContext> presContext = mDocShell->GetPresContext();
-  if (!presContext) {
-    return;
-  }
-
   CSSIntPoint cssPos(aXPos, aYPos);
   CheckSecurityLeftAndTop(&cssPos.x.value, &cssPos.y.value, aCallerType);
 
-  nsDeviceContext* context = presContext->DeviceContext();
-
-  auto devPos = LayoutDeviceIntPoint::FromAppUnitsRounded(
-      CSSIntPoint::ToAppUnits(cssPos), context->AppUnitsPerDevPixel());
-
+  auto devPos =
+      RoundedToInt(cssPos * CSSToDevScaleForBaseWindow(treeOwnerAsWin));
   aError = treeOwnerAsWin->SetPosition(devPos.x, devPos.y);
   CheckForDPIChange();
 }
@@ -5286,11 +5273,6 @@ void nsGlobalWindowOuter::MoveToOuter(int32_t aXPos, int32_t aYPos,
 void nsGlobalWindowOuter::MoveByOuter(int32_t aXDif, int32_t aYDif,
                                       CallerType aCallerType,
                                       ErrorResult& aError) {
-  /*
-   * If caller is not chrome and the user has not explicitly exempted the site,
-   * prevent window.moveBy() by exiting early
-   */
-
   if (!CanMoveResizeWindows(aCallerType, true, aError)) {
     return;
   }
@@ -5423,6 +5405,29 @@ void nsGlobalWindowOuter::ResizeByOuter(int32_t aWidthDif, int32_t aHeightDif,
 
   aError = treeOwnerAsWin->SetSize(newDevSize.width, newDevSize.height, true);
 
+  CheckForDPIChange();
+}
+
+void nsGlobalWindowOuter::MoveResizeOuter(int32_t aX, int32_t aY,
+                                          int32_t aWidth, int32_t aHeight,
+                                          CallerType aCallerType,
+                                          ErrorResult& aError) {
+  if (!CanMoveResizeWindows(aCallerType, /* aIsMove = */ true, aError)) {
+    return;
+  }
+  nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = GetTreeOwnerWindow();
+  if (!treeOwnerAsWin) {
+    aError.Throw(NS_ERROR_FAILURE);
+    return;
+  }
+  CSSIntRect rect(aX, aY, aWidth, aHeight);
+  CheckSecurityWidthAndHeight(&rect.width, &rect.height, aCallerType);
+  CheckSecurityLeftAndTop(&rect.x, &rect.y, aCallerType);
+
+  auto scale = CSSToDevScaleForBaseWindow(treeOwnerAsWin);
+  LayoutDeviceIntRect newDevRect = RoundedToInt(rect * scale);
+  aError = treeOwnerAsWin->SetPositionAndSize(
+      newDevRect.x, newDevRect.y, newDevRect.width, newDevRect.height, true);
   CheckForDPIChange();
 }
 

@@ -22,7 +22,7 @@ transforms:
 task-defaults:
     run-on-repo-type: [hg]
     shipping-product: firefox
-    run-on-releases: [release, release-rc, beta, esr140]
+    run-on-releases: [release, beta, esr140]
     treeherder:
         kind: other
         tier: 2

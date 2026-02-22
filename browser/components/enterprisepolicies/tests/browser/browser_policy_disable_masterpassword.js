@@ -14,7 +14,7 @@ async function checkDeviceManager({ buttonIsDisabled }) {
     "",
     ""
   );
-  await BrowserTestUtils.waitForEvent(deviceManagerWindow, "load");
+  await TestUtils.topicObserved("device-manager-loaded");
 
   let tree = deviceManagerWindow.document.getElementById("device_tree");
   ok(tree, "The device tree exists");

@@ -206,6 +206,8 @@ void WaylandSurface::RequestFrameCallbackLocked(
 
   // Frame callback will be added by Map.
   if (!mIsMapped) {
+    LOGVERBOSE(
+        "WaylandSurface::RequestFrameCallbackLocked(): is not mapped, quit.");
     return;
   }
 
@@ -228,10 +230,15 @@ void WaylandSurface::RequestFrameCallbackLocked(
   }
 
   if (!mFrameCallbackEnabled || !mFrameCallbackHandler.IsSet()) {
+    LOGVERBOSE(
+        "WaylandSurface::RequestFrameCallbackLocked(): quit, frame callback is "
+        "not set/enabled.");
     return;
   }
 
   if (!mFrameCallback) {
+    LOGVERBOSE(
+        "WaylandSurface::RequestFrameCallbackLocked(): adding frame callback");
     static const struct wl_callback_listener listener{
         [](void* aData, struct wl_callback* callback, uint32_t time) {
           RefPtr waylandSurface = static_cast<WaylandSurface*>(aData);
@@ -287,12 +294,14 @@ void WaylandSurface::RequestFrameCallbackLocked(
 
 void WaylandSurface::ClearFrameCallbackLocked(
     const WaylandSurfaceLock& aProofOfLock) {
+  LOGVERBOSE("WaylandSurface::ClearFrameCallbackLocked()");
   MOZ_DIAGNOSTIC_ASSERT(&aProofOfLock == mSurfaceLock);
   MozClearPointer(mFrameCallback, wl_callback_destroy);
 }
 
 void WaylandSurface::ClearFrameCallbackHandlerLocked(
     const WaylandSurfaceLock& aProofOfLock) {
+  LOGVERBOSE("WaylandSurface::ClearFrameCallbackHandlerLocked()");
   MOZ_DIAGNOSTIC_ASSERT(&aProofOfLock == mSurfaceLock);
   mFrameCallbackHandler = FrameCallback{};
 }
@@ -332,6 +341,7 @@ void WaylandSurface::SetFrameCallbackStateLocked(
 void WaylandSurface::SetFrameCallbackStateHandlerLocked(
     const WaylandSurfaceLock& aProofOfLock,
     const std::function<void(bool)>& aFrameCallbackStateHandler) {
+  LOGVERBOSE("WaylandSurface::SetFrameCallbackStateHandlerLocked()");
   MOZ_DIAGNOSTIC_ASSERT(&aProofOfLock == mSurfaceLock);
   mFrameCallbackStateHandler = aFrameCallbackStateHandler;
 }
@@ -447,9 +457,6 @@ bool WaylandSurface::MapLocked(const WaylandSurfaceLock& aProofOfLock,
   LOGWAYLAND(" subsurface position [%d,%d]", (int)mSubsurfacePosition.x,
              (int)mSubsurfacePosition.y);
 
-  LOGWAYLAND("  register frame callback");
-  RequestFrameCallbackLocked(aProofOfLock);
-
   MOZ_DIAGNOSTIC_ASSERT(!mVisibleFrameCallback);
   static const struct wl_callback_listener listener{
       [](void* aData, struct wl_callback* callback, uint32_t time) {
@@ -459,10 +466,13 @@ bool WaylandSurface::MapLocked(const WaylandSurfaceLock& aProofOfLock,
   mVisibleFrameCallback = wl_surface_frame(mSurface);
   wl_callback_add_listener(mVisibleFrameCallback, &listener, this);
 
+  mIsMapped = true;
+
+  LOGWAYLAND("  register frame callback");
+  RequestFrameCallbackLocked(aProofOfLock);
+
   CommitLocked(aProofOfLock, /* aForceCommit */ true,
                /* aForceDisplayFlush */ true);
-
-  mIsMapped = true;
 
   if (mUseDMABufFormats) {
     EnableDMABufFormatsLocked(aProofOfLock, mDMABufFormatRefreshCallback);
@@ -571,7 +581,7 @@ void WaylandSurface::UnmapLocked(WaylandSurfaceLock& aSurfaceLock) {
       [](void* aData, struct wl_callback* callback, uint32_t time) {
         RefPtr surface = dont_AddRef(static_cast<WaylandSurface*>(aData));
         LOGS_VERBOSE("WaylandSurface::UnmapLocked() finished callback [%p] ",
-                     aData);
+                     surface->mLoggingWidget);
       }};
   wl_callback_add_listener(wl_display_sync(WaylandDisplayGetWLDisplay()),
                            &listener, this);
@@ -1060,8 +1070,8 @@ void WaylandSurface::RemoveTransactionLocked(
   if (mBufferTransactions.IsEmpty()) {
     return;
   }
-  LOGVERBOSE("WaylandSurface::RemoveTransactionLocked() [%p]",
-             (void*)aTransaction);
+  LOGVERBOSE("WaylandSurface::RemoveTransactionLocked() [%p] num %d",
+             (void*)aTransaction, (int)mBufferTransactions.Length());
   MOZ_DIAGNOSTIC_ASSERT(aTransaction->IsDeleted());
   [[maybe_unused]] bool removed =
       mBufferTransactions.RemoveElement(aTransaction);
@@ -1124,9 +1134,9 @@ bool WaylandSurface::AttachLocked(const WaylandSurfaceLock& aSurfaceLock,
       "WaylandSurface::AttachLocked() transactions [%d] WaylandBuffer [%p] "
       "attached [%d] buffer size [%d x %d] surface (scaled) size [%d x %d] "
       "fractional scale %f matches %d",
-      (int)mBufferTransactions.Length(), aBuffer.get(), aBuffer->IsAttached(),
-      bufferSize.width, bufferSize.height, surfaceSize.width,
-      surfaceSize.height, scale, sizeMatches);
+      (int)mBufferTransactions.Length(), aBuffer.get(),
+      aBuffer->IsAttached(aSurfaceLock), bufferSize.width, bufferSize.height,
+      surfaceSize.width, surfaceSize.height, scale, sizeMatches);
 
   if (mViewportFollowsSizeChanges) {
     DesktopIntSize viewportSize;

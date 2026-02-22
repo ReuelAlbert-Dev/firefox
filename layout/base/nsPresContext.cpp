@@ -54,6 +54,7 @@
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
+#include "mozilla/dom/DocumentTimeline.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/FontFaceSet.h"
 #include "mozilla/dom/HTMLBodyElement.h"
@@ -643,9 +644,9 @@ bool nsPresContext::NormalizeRubyMetrics() {
   return mRubyPositioningFactor > 0.0f;
 }
 
-nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
-  NS_ASSERTION(!mInitialized, "attempt to reinit pres context");
-  NS_ENSURE_ARG(aDeviceContext);
+void nsPresContext::Init(nsDeviceContext* aDeviceContext) {
+  MOZ_ASSERT(!mInitialized, "attempt to reinit pres context");
+  MOZ_ASSERT(aDeviceContext);
 
   mDeviceContext = aDeviceContext;
 
@@ -716,8 +717,7 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
   Preferences::RegisterCallbacks(nsPresContext::PreferenceChanged,
                                  gExactCallbackPrefs, this);
 
-  nsresult rv = mEventManager->Init();
-  NS_ENSURE_SUCCESS(rv, rv);
+  mEventManager->Init();
 
   mEventManager->SetPresContext(this);
 
@@ -736,8 +736,6 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
 #ifdef DEBUG
   mInitialized = true;
 #endif
-
-  return NS_OK;
 }
 
 void nsPresContext::UpdateForcedColors(bool aNotify) {
@@ -893,6 +891,14 @@ void nsPresContext::SetColorSchemeOverride(
   }
 }
 
+void nsPresContext::UpdateAnimationsPlayBackRateMultiplier(double aMultiplier) {
+  if (mAnimationsPlayBackRateMultiplier == aMultiplier) {
+    return;
+  }
+  mAnimationsPlayBackRateMultiplier = aMultiplier;
+  mDocument->Timeline()->PostUpdateForAllAnimations();
+}
+
 void nsPresContext::RecomputeBrowsingContextDependentData() {
   MOZ_ASSERT(mDocument);
   dom::Document* doc = mDocument;
@@ -938,6 +944,9 @@ void nsPresContext::RecomputeBrowsingContextDependentData() {
     }
     EmulateMedium(mediumToEmulate);
   }
+
+  UpdateAnimationsPlayBackRateMultiplier(
+      top->AnimationsPlayBackRateMultiplier());
 
   mDocument->EnumerateExternalResources([](dom::Document& aSubResource) {
     if (nsPresContext* subResourcePc = aSubResource.GetPresContext()) {
@@ -1291,13 +1300,13 @@ void nsPresContext::SetSMILAnimations(dom::Document* aDoc, uint16_t aNewMode,
       case imgIContainer::kNormalAnimMode:
       case imgIContainer::kLoopOnceAnimMode:
         if (aOldMode == imgIContainer::kDontAnimMode) {
-          controller->Resume(SMILTimeContainer::PAUSE_USERPREF);
+          controller->Resume(SMILTimeContainer::PauseType::UserPref);
         }
         break;
 
       case imgIContainer::kDontAnimMode:
         if (aOldMode != imgIContainer::kDontAnimMode) {
-          controller->Pause(SMILTimeContainer::PAUSE_USERPREF);
+          controller->Pause(SMILTimeContainer::PauseType::UserPref);
         }
         break;
     }
@@ -3030,6 +3039,22 @@ nscoord nsPresContext::GetBimodalDynamicToolbarHeightInAppUnits() const {
              ? CSSPixel::ToAppUnits(ScreenCoord(GetDynamicToolbarMaxHeight()) /
                                     GetMVMScale(mPresShell))
              : 0;
+}
+
+nscoord nsPresContext::GetBimodalDynamicToolbarHeightForFixedPosInAppUnits()
+    const {
+  if (GetDynamicToolbarState() != DynamicToolbarState::Collapsed) {
+    return 0;
+  }
+  if (mDynamicToolbarMaxHeight == 0) {
+    return 0;
+  }
+  RefPtr<MobileViewportManager> mvm = mPresShell->GetMobileViewportManager();
+  if (!mvm) {
+    return 0;
+  }
+  return CSSPixel::ToAppUnits(ScreenCoord(GetDynamicToolbarMaxHeight()) /
+                              mvm->GetIntrinsicScaleForFixedViewport());
 }
 
 void nsPresContext::SetSafeAreaInsets(

@@ -16,14 +16,13 @@
 #include <string.h>
 
 #include "jsapi.h"
-#include "jsdate.h"
-#include "jsexn.h"
 #include "jsfriendapi.h"
-#include "jsnum.h"
 #include "jstypes.h"
 
 #include "builtin/BigInt.h"
+#include "builtin/Date.h"
 #include "builtin/MapObject.h"
+#include "builtin/Number.h"
 #include "builtin/Object.h"
 #include "builtin/String.h"
 #include "builtin/Symbol.h"
@@ -53,6 +52,7 @@
 #include "vm/BytecodeUtil.h"
 #include "vm/Compartment.h"
 #include "vm/DateObject.h"
+#include "vm/ErrorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtomUtils.h"  // Atomize
@@ -2173,31 +2173,6 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
   // to realize is that this is a -constructor function-, not a function
   // on the prototype; and the proto of the constructor is JSProto_Function.
   if (key == JSProto_Function) {
-    if (!JS::Prefs::experimental_uint8array_base64() &&
-        (id == NameToId(cx->names().fromBase64) ||
-         id == NameToId(cx->names().fromHex))) {
-      return true;
-    }
-  }
-
-  if (key == JSProto_Uint8Array &&
-      !JS::Prefs::experimental_uint8array_base64() &&
-      (id == NameToId(cx->names().setFromBase64) ||
-       id == NameToId(cx->names().setFromHex) ||
-       id == NameToId(cx->names().toBase64) ||
-       id == NameToId(cx->names().toHex))) {
-    return true;
-  }
-
-  // It's gently surprising that this is JSProto_Function, but the trick
-  // to realize is that this is a -constructor function-, not a function
-  // on the prototype; and the proto of the constructor is JSProto_Function.
-  if (key == JSProto_Function) {
-    if (!JS::Prefs::experimental_uint8array_base64() &&
-        (id == NameToId(cx->names().fromBase64) ||
-         id == NameToId(cx->names().fromHex))) {
-      return true;
-    }
     if (!JS::Prefs::experimental_error_iserror() &&
         id == NameToId(cx->names().isError)) {
       return true;
@@ -2235,13 +2210,6 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
       return true;
     }
   }
-  if (key == JSProto_Map || key == JSProto_WeakMap) {
-    if (!JS::Prefs::experimental_upsert() &&
-        (id == NameToId(cx->names().getOrInsert) ||
-         id == NameToId(cx->names().getOrInsertComputed))) {
-      return true;
-    }
-  }
   if (key == JSProto_ArrayBuffer &&
       !JS::Prefs::experimental_arraybuffer_immutable()) {
     if (id == NameToId(cx->names().immutable) ||
@@ -2268,12 +2236,6 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
       id == NameToId(cx->names().captureStackTrace)) {
     return true;
   }
-
-  if (key == JSProto_Math && !JS::Prefs::experimental_math_sumprecise() &&
-      id == NameToId(cx->names().sumPrecise)) {
-    return true;
-  }
-
   if (key == JSProto_Atomics && !JS::Prefs::experimental_atomics_pause() &&
       id == NameToId(cx->names().pause)) {
     return true;
@@ -3370,6 +3332,20 @@ void JSObject::traceChildren(JSTracer* trc) {
       GetObjectSlotNameFunctor func(nobj, SlotsKind::Dynamic);
       JS::AutoTracingDetails ctx(trc, func);
       TraceRange(trc, nslots - nfixed, nobj->slots_, "objectDynamicSlots");
+
+#if defined(JS_GC_CONCURRENT_MARKING) && defined(DEBUG)
+      // Any unused dynamic slots that should be undefined.
+      if (nobj->hasDynamicSlots()) {
+        uint32_t nfixed = nobj->numFixedSlots();
+        uint32_t start = nslots;
+        uint32_t end = nfixed + nobj->numDynamicSlots();
+        MOZ_ASSERT(start >= nobj->numFixedSlots());
+        HeapSlot* dynamicSlots = nobj->getSlotAddressUnchecked(start);
+        for (uint32_t i = 0; i < end - start; i++) {
+          MOZ_ASSERT(dynamicSlots[i].isUndefined());
+        }
+      }
+#endif
     }
 
     TraceRange(trc, nobj->getDenseInitializedLength(),

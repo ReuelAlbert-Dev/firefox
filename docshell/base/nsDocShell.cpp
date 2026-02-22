@@ -259,7 +259,7 @@
 #  include "mozIPlacesPendingOperation.h"
 #endif
 
-#if NS_PRINT_PREVIEW
+#ifdef NS_PRINTING
 #  include "nsIDocumentViewerPrint.h"
 #  include "nsIWebBrowserPrint.h"
 #endif
@@ -443,23 +443,17 @@ nsresult nsDocShell::InitWindow(nsIWidget* aParentWidget, int32_t aX,
                                 mozilla::dom::WindowGlobalChild* aWindowActor) {
   SetParentWidget(aParentWidget);
   SetPositionAndSize(aX, aY, aWidth, aHeight, 0);
-  if (!Initialize(aOpenWindowInfo, aWindowActor)) {
-    // Since bug 543435, Initialize can fail and propagating this would
-    // cause callers to crash when they didn't previously (bug 2003244).
-    NS_WARNING("Failed to initialize docshell");
-  }
-
-  return NS_OK;
+  return Initialize(aOpenWindowInfo, aWindowActor);
 }
 
-bool nsDocShell::Initialize(nsIOpenWindowInfo* aOpenWindowInfo,
-                            mozilla::dom::WindowGlobalChild* aWindowActor) {
+nsresult nsDocShell::Initialize(nsIOpenWindowInfo* aOpenWindowInfo,
+                                mozilla::dom::WindowGlobalChild* aWindowActor) {
   if (mInitialized) {
     // We've already been initialized.
     MOZ_ASSERT(!aOpenWindowInfo,
                "Tried to reinitialize with override principal");
     MOZ_ASSERT(!aWindowActor, "Tried to reinitialize with a window actor");
-    return true;
+    return NS_OK;
   }
 
   MOZ_ASSERT(aOpenWindowInfo,
@@ -468,15 +462,14 @@ bool nsDocShell::Initialize(nsIOpenWindowInfo* aOpenWindowInfo,
   NS_ASSERTION(mItemType == typeContent || mItemType == typeChrome,
                "Unexpected item type in docshell");
 
-  NS_ENSURE_TRUE(Preferences::GetRootBranch(), false);
+  NS_ENSURE_TRUE(Preferences::GetRootBranch(), NS_ERROR_NOT_INITIALIZED);
   mInitialized = true;
 
   mDisableMetaRefreshWhenInactive =
       Preferences::GetBool("browser.meta_refresh_when_inactive.disabled",
                            mDisableMetaRefreshWhenInactive);
 
-  bool succeeded =
-      NS_SUCCEEDED(CreateInitialDocumentViewer(aOpenWindowInfo, aWindowActor));
+  nsresult rv = CreateInitialDocumentViewer(aOpenWindowInfo, aWindowActor);
 
   if (nsCOMPtr<nsIObserverService> serv = services::GetObserverService()) {
     const char* msg = mItemType == typeContent ? NS_WEBNAVIGATION_CREATE
@@ -484,7 +477,7 @@ bool nsDocShell::Initialize(nsIOpenWindowInfo* aOpenWindowInfo,
     serv->NotifyWhenScriptSafe(GetAsSupports(this), msg, nullptr);
   }
 
-  return succeeded;
+  return rv;
 }
 
 /* static */
@@ -2521,11 +2514,6 @@ void VerifyCientPrincipalInfosMatch(const mozilla::ipc::PrincipalInfo& aLeft,
 void nsDocShell::MaybeInheritController(
     mozilla::dom::ClientSource* aClientSource, nsIPrincipal* aPrincipal) {
   nsCOMPtr<nsIDocShell> parent = GetInProcessParentDocshell();
-  if (!parent) {
-    if (RefPtr<BrowsingContext> opener = mBrowsingContext->GetOpener()) {
-      parent = opener->GetDocShell();
-    }
-  }
   nsPIDOMWindowOuter* parentOuter = parent ? parent->GetWindow() : nullptr;
   nsPIDOMWindowInner* parentInner =
       parentOuter ? parentOuter->GetCurrentInnerWindow() : nullptr;
@@ -3677,8 +3665,8 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
         error = "redirectLoop";
         break;
       case NS_ERROR_UNKNOWN_SOCKET_TYPE:
-        // Doc failed to load because PSM is not installed
-        error = "unknownSocketType";
+        // Doc failed to load because the client is misconfigured
+        error = "clientSocketMisconfiguration";
         break;
       case NS_ERROR_NET_RESET:
         // Doc failed to load because the server kept reseting the connection
@@ -4787,6 +4775,11 @@ nsDocShell::SetPositionAndSize(int32_t aX, int32_t aY, int32_t aWidth,
     // XXX Border figured in here or is that handled elsewhere?
     nsresult rv = viewer->SetBoundsWithFlags(mBounds, cvflags);
     NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
+  }
+
+  if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
+    obs->NotifyObservers(GetAsSupports(this), "docshell-position-size-changed",
+                         nullptr);
   }
 
   return NS_OK;
@@ -6661,7 +6654,7 @@ nsresult nsDocShell::CreateInitialDocumentViewer(
   if (mIsBeingDestroyed) {
     return NS_ERROR_FAILURE;
   }
-  MOZ_ASSERT(!mDocumentViewer);
+  MOZ_DIAGNOSTIC_ASSERT(!mDocumentViewer);
   MOZ_ASSERT(aOpenWindowInfo, "Why don't we have openwindowinfo?");
 
   // Previously, CreateDocumentViewerForActor would've used the actor's
@@ -6674,7 +6667,7 @@ nsresult nsDocShell::CreateInitialDocumentViewer(
       aWindowActor->DocumentPrincipal() ==
           aOpenWindowInfo->PartitionedPrincipalToInheritForAboutBlank());
 
-  nsresult rv = CreateAboutBlankDocumentViewer(
+  MOZ_TRY(CreateAboutBlankDocumentViewer(
       aOpenWindowInfo->PrincipalToInheritForAboutBlank(),
       aOpenWindowInfo->PartitionedPrincipalToInheritForAboutBlank(),
       aOpenWindowInfo->PolicyContainerToInheritForAboutBlank(),
@@ -6682,28 +6675,25 @@ nsresult nsDocShell::CreateInitialDocumentViewer(
       /* aIsInitialDocument */ true,
       aOpenWindowInfo->CoepToInheritForAboutBlank(),
       /* aTryToSaveOldPresentation */ true,
-      /* aCheckPermitUnload */ true, aWindowActor);
+      /* aCheckPermitUnload */ false, aWindowActor));
 
   NS_ENSURE_STATE(mDocumentViewer);
 
-  if (NS_SUCCEEDED(rv)) {
-    RefPtr<Document> doc(GetDocument());
-    MOZ_ASSERT(doc,
-               "Should have doc if CreateAboutBlankDocumentViewer "
-               "succeeded!");
-    MOZ_ASSERT(doc->IsInitialDocument(), "Document should be initial document");
+  RefPtr<Document> doc(GetDocument());
+  MOZ_ASSERT(doc,
+             "Should have doc if CreateAboutBlankDocumentViewer succeeded!");
+  MOZ_ASSERT(doc->IsInitialDocument(), "Document should be initial document");
 
-    // Documents created using CreateInitialDocumentViewer may be transient
-    // placeholders created by framescripts before content has a
-    // chance to load. In some cases, window.open(..., "noopener")
-    // will create such a document and then synchronously tear it
-    // down, firing a "pagehide" event. Doing so violates our
-    // assertions about DocGroups. It's easier to silence the
-    // assertion here than to avoid creating the extra document.
-    doc->IgnoreDocGroupMismatches();
-  }
+  // Documents created using CreateInitialDocumentViewer may be transient
+  // placeholders created by framescripts before content has a
+  // chance to load. In some cases, window.open(..., "noopener")
+  // will create such a document and then synchronously tear it
+  // down, firing a "pagehide" event. Doing so violates our
+  // assertions about DocGroups. It's easier to silence the
+  // assertion here than to avoid creating the extra document.
+  doc->IgnoreDocGroupMismatches();
 
-  return rv;
+  return NS_OK;
 }
 
 // Location.ancestorOrigins for about:blank, need special case handling.
@@ -6795,6 +6785,8 @@ nsresult nsDocShell::CreateAboutBlankDocumentViewer(
                           MarkerStack::Capture());
 
   MOZ_ASSERT_IF(aActor, aActor->DocumentPrincipal() == aPrincipal);
+
+  MOZ_DIAGNOSTIC_ASSERT(mInitialized, "Must initialize before viewer creation");
 
   /* mCreatingDocument should never be true at this point. However, it's
      a theoretical possibility. We want to know about it and make it stop,
@@ -8020,8 +8012,8 @@ nsresult nsDocShell::CreateDocumentViewer(const nsACString& aContentType,
   //         historyEntry's navigation API key to entryToReplace's
   //         navigation API key.
   bool isReplace =
-      mActiveEntry && mLoadingEntry && IsValidLoadType(mLoadType) &&
-      NavigationUtils::NavigationTypeFromLoadType(mLoadType)
+      mActiveEntry && mLoadingEntry &&
+      mLoadingEntry->mTriggeringNavigationType
           .map([](auto type) { return type == NavigationType::Replace; })
           .valueOr(false);
   if (isReplace) {
@@ -9840,7 +9832,7 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
             mBrowsingContext->GetEmbedderElement())) {
       // Per spec, reload doesn't cancel lazy loading iframes.
       if (!(aLoadState->LoadType() & LOAD_RELOAD_NORMAL)) {
-        iframe->CancelLazyLoading(true /* aClearLazyLoadState */);
+        iframe->StopLazyLoading(HTMLIFrameElement::TriggerLoad::No);
       }
     }
   }
@@ -10702,7 +10694,8 @@ bool nsDocShell::ShouldDoInitialAboutBlankSyncLoad(
     return false;
   }
 
-  if (mHasStartedLoadingOtherThanInitialBlankURI ||
+  if (mHasStartedLoadingOtherThanInitialBlankURI || !mDocumentViewer ||
+      !mDocumentViewer->GetDocument() ||
       !mDocumentViewer->GetDocument()->IsUncommittedInitialDocument()) {
     return false;
   }
@@ -10852,6 +10845,8 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
     // tears us down.
     return NS_OK;
   }
+
+  MOZ_DIAGNOSTIC_ASSERT(mInitialized, "Need to initialize before load");
 
   nsCOMPtr<nsIURILoader> uriLoader = components::URILoader::Service();
   if (NS_WARN_IF(!uriLoader)) {
@@ -11021,15 +11016,18 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   const bool doInitialSyncLoad = ShouldDoInitialAboutBlankSyncLoad(
       uri, aLoadState, aLoadState->PrincipalToInherit());
 
-  if (!doInitialSyncLoad) {
+  if (!doInitialSyncLoad && mBrowsingContext->IsContent()) {
     // https://wicg.github.io/document-picture-in-picture/#close-on-navigate
+    // Two exceptions.
+    // - The initial navigation is not per-spec and must complete.
+    // - We also set IsDocumentPiP on chrome but the spec doesn't apply to it.
     if (Document* doc = GetExtantDocument()) {
       NS_DispatchToMainThread(NS_NewRunnableFunction(
           "Close PIP window on navigate", [doc = RefPtr(doc)]() {
             doc->CloseAnyAssociatedDocumentPiPWindows();
           }));
     }
-    if (GetBrowsingContext()->GetIsDocumentPiP()) {
+    if (mBrowsingContext->GetIsDocumentPiP()) {
       return NS_OK;
     }
   }
@@ -11049,7 +11047,9 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
         aLoadState->PolicyContainer(), mContentTypeHint);
     entry->SetTransient();
     mozilla::dom::LoadingSessionHistoryInfo info(*entry);
-    info.mContiguousEntries.AppendElement(*entry);
+    if (Navigation::IsAPIEnabled()) {
+      info.mContiguousEntries.AppendElement(*entry);
+    }
     SetLoadingSessionHistoryInfo(info, true);
   }
 
@@ -11337,11 +11337,33 @@ nsresult nsDocShell::CompleteInitialAboutBlankLoad(
     return NS_ERROR_FAILURE;
   }
 
-  const bool principalMissmatch =
-      aLoadState->PrincipalToInherit() &&
-      !aLoadState->PrincipalToInherit()->Equals(doc->GetPrincipal());
-  MOZ_ASSERT_IF(!aLoadState->PrincipalToInherit(),
-                doc->GetPrincipal()->GetIsNullPrincipal());
+  // Get the load event fired for the initial about:blank without starting
+  // a real load from a channel. We still need a channel object even though
+  // we don't care about reading from the channel.
+  nsCOMPtr<nsIChannel> aboutBlankChannel;
+  rv = NS_NewChannelInternal(getter_AddRefs(aboutBlankChannel),
+                             aLoadState->URI(), aLoadInfo, nullptr, mLoadGroup,
+                             nullptr, nsIChannel::LOAD_DOCUMENT_URI);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  if (!aboutBlankChannel) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIPrincipal> expectedPrincipal = aLoadState->PrincipalToInherit();
+  nsCOMPtr<nsIPrincipal> expectedPartitionedPrincipal = expectedPrincipal;
+  // If we don't have a content principal, also use it as partitioned principal
+  if (expectedPrincipal && expectedPrincipal->GetIsContentPrincipal()) {
+    // The partitioned content principal is always isolated.
+    StoragePrincipalHelper::Create(
+        aboutBlankChannel, expectedPrincipal, /* aForceIsolation */ true,
+        getter_AddRefs(expectedPartitionedPrincipal));
+  }
+
+  const bool principalMismatch =
+      expectedPrincipal && !expectedPrincipal->Equals(doc->GetPrincipal());
+  MOZ_ASSERT_IF(!expectedPrincipal, doc->GetPrincipal()->GetIsNullPrincipal());
 
   // The channel would sandbox aLoadState->PrincipalToInherit(). Even if
   // the document already has a null principal, we don't know if it's the right
@@ -11351,22 +11373,16 @@ nsresult nsDocShell::CompleteInitialAboutBlankLoad(
           ? mBrowsingContext->GetSandboxFlags()
           : mBrowsingContext->GetInitialSandboxFlags();
   const bool shouldBeSandboxed = sandboxFlags & SANDBOXED_ORIGIN;
-  MOZ_ASSERT_IF(shouldBeSandboxed, aLoadState->PrincipalToInherit());
+  MOZ_ASSERT_IF(shouldBeSandboxed, expectedPrincipal);
 
   // Clobber document before completing the synchronous load if it doesn't have
   // the right principal (bug 1979032)
-  if (principalMissmatch || shouldBeSandboxed) {
-    nsIPrincipal* principal = aLoadState->PrincipalToInherit();
-    nsIPrincipal* partitionedPrincipal =
-        aLoadState->PartitionedPrincipalToInherit();
-    if (!partitionedPrincipal) {
-      partitionedPrincipal = principal;
-    }
-
+  if (principalMismatch || shouldBeSandboxed) {
     // This will sandbox the principals as needed
     rv = CreateAboutBlankDocumentViewer(
-        principal, partitionedPrincipal, aLoadState->PolicyContainer(),
-        doc->GetDocBaseURI(), /* aIsInitialDocument */ true);
+        expectedPrincipal, expectedPartitionedPrincipal,
+        aLoadState->PolicyContainer(), doc->GetDocBaseURI(),
+        /* aIsInitialDocument */ true);
     NS_ENSURE_SUCCESS(rv, rv);
 
     doc = mDocumentViewer->GetDocument();
@@ -11405,20 +11421,6 @@ nsresult nsDocShell::CompleteInitialAboutBlankLoad(
               ? doc->PartitionedPrincipal()
               : doc->GetPrincipal());
     }
-  }
-
-  // Get the load event fired for the initial about:blank without starting
-  // a real load from a channel. We still need a channel object even though
-  // we don't care about reading from the channel.
-  nsCOMPtr<nsIChannel> aboutBlankChannel;
-  rv = NS_NewChannelInternal(getter_AddRefs(aboutBlankChannel),
-                             aLoadState->URI(), aLoadInfo, nullptr, mLoadGroup,
-                             nullptr, nsIChannel::LOAD_DOCUMENT_URI);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  if (!aboutBlankChannel) {
-    return NS_ERROR_FAILURE;
   }
 
   MOZ_ASSERT(!mIsLoadingDocument);
@@ -14212,7 +14214,7 @@ nsresult nsDocShell::OnOverLink(nsIContent* aContent, nsIURI* aURI,
       nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
           aURI, aContent->NodePrincipal()->OriginAttributesRef());
 
-      specService->SpeculativeConnect(aURI, principal, nullptr, false);
+      specService->SpeculativeConnect(aURI, principal, this, false);
     }
   }
 
@@ -14285,12 +14287,11 @@ nsresult nsDocShell::CharsetChangeStopDocumentLoad() {
 }
 
 NS_IMETHODIMP nsDocShell::ExitPrintPreview() {
-#if NS_PRINT_PREVIEW
+#ifdef NS_PRINTING
   nsCOMPtr<nsIWebBrowserPrint> viewer = do_QueryInterface(mDocumentViewer);
-  return viewer->ExitPrintPreview();
-#else
-  return NS_OK;
+  MOZ_TRY(viewer->ExitPrintPreview());
 #endif
+  return NS_OK;
 }
 
 /* [infallible] */
@@ -14790,7 +14791,7 @@ void nsDocShell::MoveLoadingToActiveEntry(bool aExpired, uint32_t aCacheKey,
                                  .valueOr(nullptr)),
                     loadingEntry->mTriggeringNavigationType
                         .map([](NavigationType type) {
-                          return fmt::format(FMT_STRING("{}"), type);
+                          return fmt::format("{}", type);
                         })
                         .valueOr("none"));
         if (loadingEntry->mTriggeringEntry &&

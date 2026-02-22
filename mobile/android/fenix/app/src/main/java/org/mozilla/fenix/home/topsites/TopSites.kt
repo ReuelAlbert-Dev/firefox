@@ -48,10 +48,10 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import mozilla.components.compose.base.annotation.FlexibleWindowLightDarkPreview
+import mozilla.components.compose.base.annotation.FlexibleWindowPreview
 import mozilla.components.compose.base.modifier.rightClickable
 import mozilla.components.feature.top.sites.TopSite
 import mozilla.components.ui.colors.PhotonColors
@@ -63,6 +63,7 @@ import org.mozilla.fenix.home.fake.FakeHomepagePreview
 import org.mozilla.fenix.home.topsites.TopSitesTestTag.TOP_SITE_CARD_FAVICON
 import org.mozilla.fenix.home.topsites.interactor.TopSiteInteractor
 import org.mozilla.fenix.theme.FirefoxTheme
+import org.mozilla.fenix.theme.PreviewThemeProvider
 import org.mozilla.fenix.theme.Theme
 import org.mozilla.fenix.wallpapers.WallpaperState
 import mozilla.components.ui.icons.R as iconsR
@@ -484,11 +485,6 @@ internal fun getMenuItems(
         result.addAll(
             listOf(
                 MenuItem(
-                    title = stringResource(id = R.string.delete_from_history),
-                    testTag = TopSitesTestTag.REMOVE,
-                    onClick = { onRemoveTopSiteClicked(topSite) },
-                ),
-                MenuItem(
                     title = stringResource(id = R.string.top_sites_menu_settings),
                     onClick = onSettingsClicked,
                 ),
@@ -503,35 +499,12 @@ internal fun getMenuItems(
     return result
 }
 
+@FlexibleWindowPreview
 @Composable
-@FlexibleWindowLightDarkPreview
-private fun TopSitesPreview() {
-    FirefoxTheme {
-        Surface {
-            Box(
-                modifier = Modifier.padding(all = FirefoxTheme.layout.space.static200),
-            ) {
-                TopSites(
-                    topSites = FakeHomepagePreview.topSites(),
-                    onTopSiteClick = {},
-                    onTopSiteLongClick = {},
-                    onTopSiteImpression = { _, _ -> },
-                    onOpenInPrivateTabClicked = {},
-                    onEditTopSiteClicked = {},
-                    onRemoveTopSiteClicked = {},
-                    onSettingsClicked = {},
-                    onSponsorPrivacyClicked = {},
-                    onTopSitesItemBound = {},
-                )
-            }
-        }
-    }
-}
-
-@Composable
-@Preview
-private fun TopSitesPrivatePreview() {
-    FirefoxTheme(theme = Theme.Private) {
+private fun TopSitesPreview(
+    @PreviewParameter(PreviewThemeProvider::class) theme: Theme,
+) {
+    FirefoxTheme(theme) {
         Surface {
             Box(
                 modifier = Modifier.padding(all = FirefoxTheme.layout.space.static200),

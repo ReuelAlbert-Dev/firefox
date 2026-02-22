@@ -7,7 +7,7 @@ Transform the beetmover-repackage-rpm task into an actual task description.
 
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.dependencies import get_primary_dependency
-from taskgraph.util.schema import Schema
+from taskgraph.util.schema import LegacySchema
 from taskgraph.util.treeherder import inherit_treeherder_from_dep, replace_group
 from voluptuous import Required
 
@@ -22,16 +22,14 @@ from gecko_taskgraph.util.scriptworker import (
 
 transforms = TransformSequence()
 
-beetmover_description_schema = Schema(
-    {
-        Required("attributes"): task_description_schema["attributes"],
-        Required("dependencies"): task_description_schema["dependencies"],
-        Required("label"): str,
-        Required("name"): str,
-        Required("shipping-phase"): task_description_schema["shipping-phase"],
-        Required("task-from"): task_description_schema["task-from"],
-    }
-)
+beetmover_description_schema = LegacySchema({
+    Required("attributes"): task_description_schema["attributes"],
+    Required("dependencies"): task_description_schema["dependencies"],
+    Required("label"): str,
+    Required("name"): str,
+    Required("shipping-phase"): task_description_schema["shipping-phase"],
+    Required("task-from"): task_description_schema["task-from"],
+})
 
 transforms.add_validate(beetmover_description_schema)
 

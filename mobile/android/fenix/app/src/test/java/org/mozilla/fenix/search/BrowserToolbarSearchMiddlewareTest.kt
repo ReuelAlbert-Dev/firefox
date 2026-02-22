@@ -22,9 +22,11 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import mozilla.components.browser.domains.autocomplete.BaseDomainAutocompleteProvider
 import mozilla.components.browser.state.action.AwesomeBarAction.EngagementFinished
+import mozilla.components.browser.state.action.BrowserAction
 import mozilla.components.browser.state.action.SearchAction.ApplicationSearchEnginesLoaded
 import mozilla.components.browser.state.search.RegionState
 import mozilla.components.browser.state.search.SearchEngine
+import mozilla.components.browser.state.state.BrowserState
 import mozilla.components.browser.state.state.SearchState
 import mozilla.components.browser.state.state.selectedOrDefaultSearchEngine
 import mozilla.components.browser.state.store.BrowserStore
@@ -65,7 +67,6 @@ import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.BrowserFragmentDirections
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode.Normal
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode.Private
-import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.appstate.AppAction
@@ -110,18 +111,19 @@ class BrowserToolbarSearchMiddlewareTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private val testScope = CoroutineScope(testDispatcher)
+    private val captureBrowserActionsMiddleware = CaptureActionsMiddleware<BrowserState, BrowserAction>()
 
     val appStore = AppStore()
-    val browserStore: BrowserStore = mockk(relaxed = true) {
-        every { state.search } returns fakeSearchState()
-    }
+    val browserStore = BrowserStore(
+        BrowserState(search = fakeSearchState()),
+        middleware = listOf(captureBrowserActionsMiddleware),
+    )
     val components: Components = mockk()
     val settings: Settings = mockk(relaxed = true)
     val navController: NavController = mockk {
         every { navigate(any<NavDirections>()) } just Runs
         every { navigate(any<Int>()) } just Runs
     }
-    val browsingModeManager: BrowsingModeManager = mockk()
 
     @Test
     fun `WHEN the toolbar enters in edit mode THEN a new search selector button is added`() {
@@ -257,7 +259,10 @@ class BrowserToolbarSearchMiddlewareTest {
         assertFalse(appStore.state.searchState.isSearchActive)
         assertEquals("", store.state.editState.query.current)
         captorMiddleware.assertLastAction(SearchEnded::class) {}
-        verify { browserStore.dispatch(EngagementFinished(abandoned = true)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertTrue(action.abandoned)
+        }
+
         verify {
             navController.navigate(
                 BrowserFragmentDirections.actionGlobalSearchEngineFragment(),
@@ -712,11 +717,14 @@ class BrowserToolbarSearchMiddlewareTest {
     fun `WHEN the search engine is added by the application THEN do not load URL`() {
         val captorMiddleware = CaptureActionsMiddleware<AppState, AppAction>()
         val appStore = AppStore(middlewares = listOf(captorMiddleware))
-        val browserStore: BrowserStore = mockk(relaxed = true) {
-            every { state.search } returns fakeSearchState().copy(
-                userSelectedSearchEngineId = TABS_SEARCH_ENGINE_ID,
-            )
-        }
+        val browserStore = BrowserStore(
+            BrowserState(
+                search = fakeSearchState().copy(
+                    userSelectedSearchEngineId = TABS_SEARCH_ENGINE_ID,
+                ),
+            ),
+        )
+
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         val components: Components = mockk(relaxed = true) {
             every { useCases.fenixBrowserUseCases } returns browserUseCases
@@ -762,7 +770,9 @@ class BrowserToolbarSearchMiddlewareTest {
         store.dispatch(CommitUrl("about:addons"))
 
         verify { navController.navigate(NavGraphDirections.actionGlobalAddonsManagementFragment()) }
-        verify { browserStore.dispatch(EngagementFinished(abandoned = false)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertFalse(action.abandoned)
+        }
         captorMiddleware.assertLastAction(SearchEnded::class) {}
     }
 
@@ -782,18 +792,17 @@ class BrowserToolbarSearchMiddlewareTest {
     fun `WHEN mozilla manifesto URL is searched THEN navigate to mozilla manifesto page`() {
         val manifestoUrl = SupportUtils.getMozillaPageUrl(SupportUtils.MozillaPage.MANIFESTO)
         val captorMiddleware = CaptureActionsMiddleware<AppState, AppAction>()
-        val appStore = AppStore(middlewares = listOf(captorMiddleware))
+        val appStore = AppStore(
+            initialState = AppState(mode = Normal),
+            middlewares = listOf(captorMiddleware),
+        )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         val components: Components = mockk(relaxed = true) {
             every { useCases.fenixBrowserUseCases } returns browserUseCases
         }
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Normal
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
-            browsingModeManager = browsingModeManager,
         )
 
         assertNull(Events.enteredUrl.testGetValue())
@@ -816,7 +825,9 @@ class BrowserToolbarSearchMiddlewareTest {
             "false",
             Events.enteredUrl.testGetValue()!!.single().extra?.getValue("autocomplete"),
         )
-        verify { browserStore.dispatch(EngagementFinished(abandoned = false)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertFalse(action.abandoned)
+        }
         captorMiddleware.assertLastAction(SearchEnded::class) {}
     }
 
@@ -828,7 +839,9 @@ class BrowserToolbarSearchMiddlewareTest {
 
         store.dispatch(CommitUrl(""))
 
-        verify { browserStore.dispatch(EngagementFinished(abandoned = true)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertTrue(action.abandoned)
+        }
         captorMiddleware.assertLastAction(SearchEnded::class) {}
     }
 
@@ -836,7 +849,10 @@ class BrowserToolbarSearchMiddlewareTest {
     fun `GIVEN homepage as a new tab is enabled WHEN url is committed THEN perform search in the existing tab`() {
         val url = "https://www.mozilla.org"
         val captorMiddleware = CaptureActionsMiddleware<AppState, AppAction>()
-        val appStore = AppStore(middlewares = listOf(captorMiddleware))
+        val appStore = AppStore(
+            initialState = AppState(mode = Normal),
+            middlewares = listOf(captorMiddleware),
+        )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         val components: Components = mockk(relaxed = true) {
             every { useCases.fenixBrowserUseCases } returns browserUseCases
@@ -844,14 +860,10 @@ class BrowserToolbarSearchMiddlewareTest {
         val settings: Settings = mockk(relaxed = true) {
             every { enableHomepageAsNewTab } returns true
         }
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Normal
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
             settings = settings,
-            browsingModeManager = browsingModeManager,
         )
 
         assertNull(Events.enteredUrl.testGetValue())
@@ -874,7 +886,9 @@ class BrowserToolbarSearchMiddlewareTest {
             "false",
             Events.enteredUrl.testGetValue()!!.single().extra?.getValue("autocomplete"),
         )
-        verify { browserStore.dispatch(EngagementFinished(abandoned = false)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertFalse(action.abandoned)
+        }
         captorMiddleware.assertLastAction(SearchEnded::class) {}
     }
 
@@ -882,7 +896,10 @@ class BrowserToolbarSearchMiddlewareTest {
     fun `GIVEN homepage as a new tab is enabled WHEN search term is committed THEN perform search in the existing tab`() {
         val searchTerm = "Firefox"
         val captorMiddleware = CaptureActionsMiddleware<AppState, AppAction>()
-        val appStore = AppStore(middlewares = listOf(captorMiddleware))
+        val appStore = AppStore(
+            initialState = AppState(mode = Normal),
+            middlewares = listOf(captorMiddleware),
+        )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         val components: Components = mockk(relaxed = true) {
             every { useCases.fenixBrowserUseCases } returns browserUseCases
@@ -890,14 +907,10 @@ class BrowserToolbarSearchMiddlewareTest {
         val settings: Settings = mockk(relaxed = true) {
             every { enableHomepageAsNewTab } returns true
         }
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Normal
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
             settings = settings,
-            browsingModeManager = browsingModeManager,
         )
 
         store.dispatch(CommitUrl(searchTerm))
@@ -912,7 +925,9 @@ class BrowserToolbarSearchMiddlewareTest {
                 searchEngine = any(),
             )
         }
-        verify { browserStore.dispatch(EngagementFinished(abandoned = false)) }
+        captureBrowserActionsMiddleware.assertFirstAction(EngagementFinished::class) { action ->
+            assertFalse(action.abandoned)
+        }
         captorMiddleware.assertLastAction(SearchEnded::class) {}
     }
 
@@ -946,16 +961,15 @@ class BrowserToolbarSearchMiddlewareTest {
     @Test
     fun `GIVEN QR scan while in normal browsing mode WHEN receiving a result THEN open it as a new normal tab`() {
         val appStoreActionsCaptor = CaptureActionsMiddleware<AppState, AppAction>()
-        val appStore = AppStore(middlewares = listOf(appStoreActionsCaptor))
+        val appStore = AppStore(
+            initialState = AppState(mode = Normal),
+            middlewares = listOf(appStoreActionsCaptor),
+        )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         every { components.useCases.fenixBrowserUseCases } returns browserUseCases
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Normal
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
-            browsingModeManager = browsingModeManager,
         )
         store.dispatch(EnterEditMode(false))
         val qrScannerButton = store.state.editState.editActionsEnd.last() as ActionButtonRes
@@ -980,16 +994,15 @@ class BrowserToolbarSearchMiddlewareTest {
     @Test
     fun `GIVEN QR scan while in private browsing mode WHEN receiving a result THEN open it as a new private tab`() {
         val appStoreActionsCaptor = CaptureActionsMiddleware<AppState, AppAction>()
-        val appStore = AppStore(middlewares = listOf(appStoreActionsCaptor))
+        val appStore = AppStore(
+            initialState = AppState(mode = Private),
+            middlewares = listOf(appStoreActionsCaptor),
+        )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         every { components.useCases.fenixBrowserUseCases } returns browserUseCases
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Private
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
-            browsingModeManager = browsingModeManager,
         )
         store.dispatch(EnterEditMode(true))
         val qrScannerButton = store.state.editState.editActionsEnd.last() as ActionButtonRes
@@ -1016,19 +1029,16 @@ class BrowserToolbarSearchMiddlewareTest {
         val appStoreActionsCaptor = CaptureActionsMiddleware<AppState, AppAction>()
         val appStore = AppStore(
             initialState = AppState(
+                mode = Normal,
                 searchState = AppSearchState.EMPTY.copy(sourceTabId = "test"),
             ),
             middlewares = listOf(appStoreActionsCaptor),
         )
         val browserUseCases: FenixBrowserUseCases = mockk(relaxed = true)
         every { components.useCases.fenixBrowserUseCases } returns browserUseCases
-        val browsingModeManager: BrowsingModeManager = mockk(relaxed = true) {
-            every { mode } returns Normal
-        }
         val (_, store) = buildMiddlewareAndAddToStore(
             appStore = appStore,
             components = components,
-            browsingModeManager = browsingModeManager,
         )
         store.dispatch(EnterEditMode(false))
         val qrScannerButton = store.state.editState.editActionsEnd.last() as ActionButtonRes
@@ -1102,7 +1112,6 @@ class BrowserToolbarSearchMiddlewareTest {
         browserStore: BrowserStore = this.browserStore,
         components: Components = this.components,
         navController: NavController = this.navController,
-        browsingModeManager: BrowsingModeManager = this.browsingModeManager,
         settings: Settings = this.settings,
         scope: CoroutineScope = testScope,
     ): Pair<BrowserToolbarSearchMiddleware, BrowserToolbarStore> {
@@ -1112,7 +1121,6 @@ class BrowserToolbarSearchMiddlewareTest {
             browserStore = browserStore,
             components = components,
             navController = navController,
-            browsingModeManager = browsingModeManager,
             settings = settings,
             scope = scope,
         )
@@ -1133,7 +1141,6 @@ class BrowserToolbarSearchMiddlewareTest {
         browserStore: BrowserStore = this.browserStore,
         components: Components = this.components,
         navController: NavController = this.navController,
-        browsingModeManager: BrowsingModeManager = this.browsingModeManager,
         settings: Settings = this.settings,
         scope: CoroutineScope = testScope,
     ) = BrowserToolbarSearchMiddleware(
@@ -1142,7 +1149,6 @@ class BrowserToolbarSearchMiddlewareTest {
         browserStore = browserStore,
         components = components,
         navController = navController,
-        browsingModeManager = browsingModeManager,
         settings = settings,
         scope = scope,
         autocompleteDispatcher = testDispatcher,

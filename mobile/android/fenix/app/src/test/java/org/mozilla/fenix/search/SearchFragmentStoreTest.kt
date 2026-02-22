@@ -4,7 +4,6 @@
 
 package org.mozilla.fenix.search
 
-import android.content.Intent
 import io.mockk.MockKAnnotations
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
@@ -18,7 +17,6 @@ import mozilla.components.browser.state.state.ContentState
 import mozilla.components.browser.state.state.SearchState
 import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.concept.awesomebar.AwesomeBar.SuggestionProvider
-import mozilla.components.support.test.rule.MainCoroutineRule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -26,12 +24,10 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
-import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.appstate.AppState
@@ -45,9 +41,6 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SearchFragmentStoreTest {
-    @get:Rule
-    val mainCoroutineRule = MainCoroutineRule()
-
     @MockK private lateinit var searchEngine: SearchEngine
 
     @MockK private lateinit var activity: HomeActivity
@@ -64,10 +57,6 @@ class SearchFragmentStoreTest {
     @Before
     fun setup() {
         MockKAnnotations.init(this)
-        every { activity.browsingModeManager } returns object : BrowsingModeManager {
-            override var mode: BrowsingMode = BrowsingMode.Normal
-            override fun updateMode(intent: Intent?) = Unit
-        }
         every { components.settings } returns settings
         every { searchEngine.trendingUrl } returns null
 
@@ -1326,7 +1315,14 @@ class SearchFragmentStoreTest {
         val initialState = emptyDefaultState()
         val store = SearchFragmentStore(initialState)
 
-        store.dispatch(SearchStarted(selectedSearchEngine, false, true, false))
+        store.dispatch(
+            SearchStarted(
+                selectedSearchEngine,
+                isUserSelected = false,
+                inPrivateMode = true,
+                searchStartedForCurrentUrl = false,
+            ),
+        )
 
         assertEquals(initialState, store.state)
     }

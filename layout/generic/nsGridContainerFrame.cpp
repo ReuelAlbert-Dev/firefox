@@ -201,7 +201,7 @@ struct BoxSizingAdjustment {
       return mValue.ref();
     }
 
-    if (mStyle.StylePosition()->mBoxSizing != StyleBoxSizing::Border) {
+    if (mStyle.StylePosition()->mBoxSizing != StyleBoxSizing::BorderBox) {
       // Use default, (0, 0).
       mValue.emplace(mWM);
       return mValue.ref();
@@ -1920,12 +1920,14 @@ class MOZ_STACK_CLASS nsGridContainerFrame::LineNameMap {
    * @param aRange the subgrid's range in the parent grid, or null
    * @param aIsSameDirection true if our axis progresses in the same direction
    *                              in the subgrid and parent
+   * @param aIsOrthogonal true if the subgrid and parent have orthongonal
+   *                           writing modes
    */
   LineNameMap(const nsStylePosition* aStylePosition,
               const ImplicitNamedAreas* aImplicitNamedAreas,
               const TrackSizingFunctions& aTracks,
               const LineNameMap* aParentLineNameMap, const LineRange* aRange,
-              bool aIsSameDirection)
+              bool aIsSameDirection = true, bool aIsOrthogonal = false)
       : mStylePosition(aStylePosition),
         mAreas(aImplicitNamedAreas),
         mRepeatAutoStart(aTracks.mRepeatAutoStart),
@@ -1934,6 +1936,7 @@ class MOZ_STACK_CLASS nsGridContainerFrame::LineNameMap {
         mParentLineNameMap(aParentLineNameMap),
         mRange(aRange),
         mIsSameDirection(aIsSameDirection),
+        mIsOrthogonal(aIsOrthogonal),
         mHasRepeatAuto(aTracks.mHasRepeatAuto) {
     if (MOZ_UNLIKELY(aRange)) {  // subgrid case
       mClampMinLine = 1;
@@ -2190,6 +2193,10 @@ class MOZ_STACK_CLASS nsGridContainerFrame::LineNameMap {
       if (MOZ_UNLIKELY(!map->mIsSameDirection)) {
         aSide = GetOppositeSide(aSide);
         sameDirectionAsThis = !sameDirectionAsThis;
+      }
+      if (MOZ_UNLIKELY(map->mIsOrthogonal)) {
+        aSide =
+            MakeLogicalSide(GetOrthogonalAxis(GetAxis(aSide)), GetEdge(aSide));
       }
       min = map->TranslateToParentMap(min);
       max = map->TranslateToParentMap(max);
@@ -2516,6 +2523,8 @@ class MOZ_STACK_CLASS nsGridContainerFrame::LineNameMap {
   const LineRange* mRange;
   // True if the subgrid/parent axes progresses in the same direction.
   const bool mIsSameDirection;
+  // True if the subgrid and parent have orthogonal writing modes.
+  const bool mIsOrthogonal;
 
   // True if there is a specified repeat(auto-fill/fit) track.
   bool mHasRepeatAuto;
@@ -3102,23 +3111,23 @@ void nsGridContainerFrame::Tracks::Dump() const {
                                           : std::to_string(aCoord);
   };
 
-  fmt::print(FMT_STRING("{} {} {}{}, track union bits: "), numTracks,
+  fmt::print("{} {} {}{}, track union bits: ", numTracks,
              mIsMasonry ? "masonry" : "grid", trackName,
              numTracks > 1 ? "s" : "");
   TrackSize::DumpStateBits(mStateUnion);
   printf("\n");
 
   for (uint32_t i = 0; i < numTracks; ++i) {
-    fmt::print(FMT_STRING("  {} {}: "), trackName, i);
+    fmt::print("  {} {}: ", trackName, i);
     mSizes[i].Dump();
     printf("\n");
   }
 
-  fmt::println(FMT_STRING("  first baseline: {}, last baseline: {}"),
+  fmt::println("  first baseline: {}, last baseline: {}",
                BaselineToStr(GetBaseline(0, BaselineSharingGroup::First)),
                BaselineToStr(GetBaseline(mBaselines.Length() - 1,
                                          BaselineSharingGroup::Last)));
-  fmt::println(FMT_STRING("  {} gap: {}, content-box {}-size: {}"), trackName,
+  fmt::println("  {} gap: {}, content-box {}-size: {}", trackName,
                CoordToStr(mGridGap),
                mAxis == LogicalAxis::Inline ? "inline" : "block",
                CoordToStr(mContentBoxSize));
@@ -3277,8 +3286,8 @@ struct MOZ_STACK_CLASS nsGridContainerFrame::GridReflowInput {
       absCB->PrepareAbsoluteFrames(aGridContainerFrame);
     }
     // XXX NOTE: This is O(n^2) in the number of abs.pos. items. (bug 1252186)
-    const nsFrameList& absPosChildren = aGridContainerFrame->GetChildList(
-        aGridContainerFrame->GetAbsoluteListID());
+    const nsFrameList& absPosChildren =
+        aGridContainerFrame->GetChildList(FrameChildListID::Absolute);
     for (auto f : absPosChildren) {
       nsIFrame* childFirstInFlow = f->FirstInFlow();
       DebugOnly<size_t> len = mAbsPosItems.Length();
@@ -5209,6 +5218,7 @@ void nsGridContainerFrame::Grid::PlaceGridItems(
   const LineNameMap* parentLineNameMap = nullptr;
   const LineRange* subgridRange = nullptr;
   bool subgridAxisIsSameDirection = true;
+  bool subgridIsOrthogonal = false;
   if (!aGridRI.mFrame->IsColSubgrid()) {
     aGridRI.mColFunctions.InitRepeatTracks(
         gridStyle->mColumnGap, aSizes.mMin.ISize(aGridRI.mWM),
@@ -5227,11 +5237,12 @@ void nsGridContainerFrame::Grid::PlaceGridItems(
         aGridRI.mFrame->ParentGridContainerForSubgrid()->GetWritingMode();
     subgridAxisIsSameDirection =
         aGridRI.mWM.ParallelAxisStartsOnSameSide(LogicalAxis::Inline, parentWM);
+    subgridIsOrthogonal = subgrid->mIsOrthogonal;
   }
   mGridColEnd = mExplicitGridColEnd;
   LineNameMap colLineNameMap(gridStyle, mAreas, aGridRI.mColFunctions,
                              parentLineNameMap, subgridRange,
-                             subgridAxisIsSameDirection);
+                             subgridAxisIsSameDirection, subgridIsOrthogonal);
 
   if (!aGridRI.mFrame->IsRowSubgrid()) {
     const Maybe<nscoord> containBSize = aGridRI.mFrame->ContainIntrinsicBSize();
@@ -5263,11 +5274,12 @@ void nsGridContainerFrame::Grid::PlaceGridItems(
         aGridRI.mFrame->ParentGridContainerForSubgrid()->GetWritingMode();
     subgridAxisIsSameDirection =
         aGridRI.mWM.ParallelAxisStartsOnSameSide(LogicalAxis::Block, parentWM);
+    subgridIsOrthogonal = subgrid->mIsOrthogonal;
   }
   mGridRowEnd = mExplicitGridRowEnd;
   LineNameMap rowLineNameMap(gridStyle, mAreas, aGridRI.mRowFunctions,
                              parentLineNameMap, subgridRange,
-                             subgridAxisIsSameDirection);
+                             subgridAxisIsSameDirection, subgridIsOrthogonal);
 
   const bool isSubgridOrItemInSubgrid =
       aGridRI.mFrame->IsSubgrid() || !!mParentGrid;
@@ -9610,7 +9622,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
 
   contentBSize =
       ReflowChildren(gridRI, contentArea, containerSize, aDesiredSize, aStatus);
-  if (Style()->GetPseudoType() == PseudoStyleType::scrolledContent) {
+  if (Style()->GetPseudoType() == PseudoStyleType::MozScrolledContent) {
     // Per spec, the grid area is included in a grid container's scrollable
     // overflow region [1], as well as the padding on the end-edge sides that
     // would satisfy the requirements of 'place-content: end' alignment [2].
@@ -9780,8 +9792,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
         subgrid && IsColSubgrid() ? &subgrid->SubgridCols() : nullptr;
 
     LineNameMap colLineNameMap(gridRI.mGridStyle, GetImplicitNamedAreas(),
-                               gridRI.mColFunctions, nullptr, subgridColRange,
-                               true);
+                               gridRI.mColFunctions, nullptr, subgridColRange);
     uint32_t colTrackCount = gridRI.mCols.mSizes.Length();
     nsTArray<nscoord> colTrackPositions(colTrackCount);
     nsTArray<nscoord> colTrackSizes(colTrackCount);
@@ -9819,8 +9830,7 @@ void nsGridContainerFrame::Reflow(nsPresContext* aPresContext,
     const auto* subgridRowRange =
         subgrid && IsRowSubgrid() ? &subgrid->SubgridRows() : nullptr;
     LineNameMap rowLineNameMap(gridRI.mGridStyle, GetImplicitNamedAreas(),
-                               gridRI.mRowFunctions, nullptr, subgridRowRange,
-                               true);
+                               gridRI.mRowFunctions, nullptr, subgridRowRange);
     uint32_t rowTrackCount = gridRI.mRows.mSizes.Length();
     nsTArray<nscoord> rowTrackPositions(rowTrackCount);
     nsTArray<nscoord> rowTrackSizes(rowTrackCount);
@@ -10273,7 +10283,6 @@ void nsGridContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   if (GetPrevInFlow()) {
     DisplayOverflowContainers(aBuilder, aLists);
-    DisplayPushedAbsoluteFrames(aBuilder, aLists);
   }
 
   // Our children are all grid-level boxes, which behave the same as
@@ -10291,6 +10300,10 @@ void nsGridContainerFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   for (; !iter.AtEnd(); iter.Next()) {
     nsIFrame* child = *iter;
     BuildDisplayListForChild(aBuilder, child, aLists, flags);
+  }
+
+  if (GetPrevInFlow()) {
+    DisplayPushedAbsoluteFrames(aBuilder, aLists);
   }
 }
 

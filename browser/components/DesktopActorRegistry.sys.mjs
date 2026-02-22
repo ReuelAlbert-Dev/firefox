@@ -135,6 +135,9 @@ let JSWINDOWACTORS = {
       },
     },
     matches: ["about:messagepreview", "about:messagepreview?*"],
+    remoteTypes: ["privilegedabout"],
+    enablePreference:
+      "browser.newtabpage.activity-stream.asrouter.devtoolsEnabled",
   },
 
   AboutPrivateBrowsing: {
@@ -150,6 +153,7 @@ let JSWINDOWACTORS = {
     },
 
     matches: ["about:privatebrowsing*"],
+    remoteTypes: ["privilegedabout"],
   },
 
   AboutProtections: {
@@ -165,6 +169,7 @@ let JSWINDOWACTORS = {
     },
 
     matches: ["about:protections", "about:protections?*"],
+    remoteTypes: ["privilegedabout"],
   },
 
   AboutReader: {
@@ -226,10 +231,32 @@ let JSWINDOWACTORS = {
     child: {
       esModuleURI:
         "moz-src:///browser/components/aiwindow/ui/actors/AIChatContentChild.sys.mjs",
+      events: {
+        "AIChatContent:DispatchSearch": { wantUntrusted: true },
+        "AIChatContent:DispatchFollowUp": { wantUntrusted: true },
+        "AIChatContent:Ready": { wantUntrusted: true },
+        "AIChatContent:DispatchAction": { wantUntrusted: true },
+        "AIChatContent:OpenLink": { wantUntrusted: true },
+      },
     },
     allFrames: true,
     matches: ["about:aichatcontent"],
-    enablePreference: "browser.aiwindow.enabled",
+    enablePreference: "browser.smartwindow.enabled",
+  },
+
+  AISmartBar: {
+    parent: {
+      esModuleURI:
+        "moz-src:///browser/components/aiwindow/ui/actors/AISmartBarParent.sys.mjs",
+    },
+    child: {
+      esModuleURI:
+        "moz-src:///browser/components/aiwindow/ui/actors/AISmartBarChild.sys.mjs",
+    },
+    matches: ["chrome://browser/content/aiwindow/aiWindow.html"],
+    includeChrome: true,
+    allFrames: true,
+    enablePreference: "browser.smartwindow.enabled",
   },
 
   BackupUI: {
@@ -300,11 +327,23 @@ let JSWINDOWACTORS = {
       events: {
         DOMContentLoaded: {},
         pageshow: {},
+        // `popstate` does not bubble, so it needs to be captured.
+        popstate: { capture: true },
       },
     },
-    enablePreference: "browser.tabs.notes.enabled",
     matches: ["http://*/*", "https://*/*"],
     messageManagerGroups: ["browsers"],
+    enablePreference: "browser.tabs.notes.enabled",
+    onPreferenceChanged: isEnabled => {
+      if (isEnabled) {
+        Services.obs.notifyObservers(undefined, "CanonicalURL:ActorRegistered");
+      } else {
+        Services.obs.notifyObservers(
+          undefined,
+          "CanonicalURL:ActorUnregistered"
+        );
+      }
+    },
   },
 
   ClickHandler: {

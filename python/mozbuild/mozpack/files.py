@@ -926,7 +926,8 @@ class BaseFinder:
         """
         Iterates over all files under the base directory (excluding files
         starting with a '.' and files at any level under a directory starting
-        with a '.').
+        with a '.')::
+
             for path, file in finder:
                 ...
         """
@@ -958,7 +959,7 @@ class BaseFinder:
         if path.endswith((".ftl", ".properties")):
             return MinifiedCommentStripped(file)
 
-        if path.endswith((".js", ".jsm", ".mjs")):
+        if path.endswith((".js", ".mjs")):
             file_path = mozpath.normsep(path)
             filename = mozpath.basename(file_path)
             # Don't minify prefs files because they use a custom parser that's stricter than JS
@@ -1091,10 +1092,12 @@ class FileFinder(BaseFinder):
         """
         Actual implementation of FileFinder.find() when the given pattern
         contains globbing patterns ('*' or '**'). This is meant to be an
-        equivalent of:
+        equivalent of::
+
             for p, f in self:
                 if mozpath.match(p, pattern):
                     yield p, f
+
         but avoids scanning the entire tree.
         """
         if not pattern:
@@ -1253,13 +1256,11 @@ class MercurialRevisionFinder(BaseFinder):
 
         # Immediately populate the list of files in the repo since nearly every
         # operation requires this list.
-        out = self._client.rawcommand(
-            [
-                b"files",
-                b"--rev",
-                self._rev.encode(),
-            ]
-        )
+        out = self._client.rawcommand([
+            b"files",
+            b"--rev",
+            self._rev.encode(),
+        ])
         for relpath in out.splitlines():
             # Mercurial may use \ as path separator on Windows. So use
             # normpath().

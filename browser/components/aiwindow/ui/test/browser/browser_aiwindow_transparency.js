@@ -3,6 +3,8 @@
 
 "use strict";
 
+const FIRSTRUN_URL = "chrome://browser/content/aiwindow/firstrun.html";
+
 /**
  * Checks if browser has transparent attribute
  *
@@ -31,7 +33,15 @@ function getTransparentPageURL() {
 let gAIWindow;
 let gReusableTab;
 
-add_setup(async function () {
+add_setup(async function setup() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.search.suggest.enabled", false],
+      ["browser.urlbar.suggest.searches", false],
+      ["browser.smartwindow.endpoint", "http://localhost:0/v1"],
+    ],
+  });
+
   gAIWindow = await openAIWindow();
   registerCleanupFunction(async () => {
     await BrowserTestUtils.closeWindow(gAIWindow);
@@ -63,6 +73,27 @@ add_task(async function test_transparency_on_new_tab() {
     newBrowser.currentURI.spec,
     AIWINDOW_URL,
     "New tab should be on AI window URL"
+  );
+
+  gAIWindow.gBrowser.removeTab(newTab);
+});
+
+add_task(async function test_transparency_on_firstrun_page() {
+  const newTab = await BrowserTestUtils.openNewForegroundTab(
+    gAIWindow.gBrowser,
+    FIRSTRUN_URL
+  );
+  const newBrowser = gAIWindow.gBrowser.getBrowserForTab(newTab);
+
+  Assert.ok(
+    isBrowserTransparent(newBrowser),
+    "Browser should be transparent on new firstrun page"
+  );
+
+  Assert.equal(
+    newBrowser.currentURI.spec,
+    FIRSTRUN_URL,
+    "New tab should be on firstrun URL"
   );
 
   gAIWindow.gBrowser.removeTab(newTab);

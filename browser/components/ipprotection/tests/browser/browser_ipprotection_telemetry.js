@@ -62,8 +62,8 @@ add_task(async function user_toggle_on_and_off() {
 
   let statusCard = content.shadowRoot.querySelector("ipprotection-status-card");
 
-  let toggle = statusCard.connectionToggleEl;
-  Assert.ok(toggle, "Status card connection toggle should be present");
+  let turnOnButton = statusCard.actionButtonEl;
+  Assert.ok(turnOnButton, "Status card turn on button should be present");
 
   Services.fog.testResetFOG();
   await Services.fog.testFlushAllChildren();
@@ -73,8 +73,8 @@ add_task(async function user_toggle_on_and_off() {
     false,
     () => !!IPPProxyManager.activatedAt
   );
-  // Toggle the VPN on
-  toggle.click();
+  // Turn the VPN on
+  turnOnButton.click();
   await vpnOnPromise;
   let toggledEvents = Glean.ipprotection.toggled.testGetValue();
   Assert.equal(toggledEvents.length, 1, "should have recorded a toggle");
@@ -89,8 +89,9 @@ add_task(async function user_toggle_on_and_off() {
     false,
     () => !IPPProxyManager.activatedAt
   );
-  // Toggle the VPN off
-  toggle.click();
+  // Turn the VPN off
+  let turnOffButton = statusCard.actionButtonEl;
+  turnOffButton.click();
   await vpnOffPromise;
   toggledEvents = Glean.ipprotection.toggled.testGetValue();
   Assert.equal(toggledEvents.length, 2, "should have recorded a second toggle");
@@ -111,91 +112,6 @@ add_task(async function user_toggle_on_and_off() {
   let panelHiddenPromise = waitForPanelEvent(document, "popuphidden");
   EventUtils.synthesizeKey("KEY_Escape");
   await panelHiddenPromise;
-});
-
-/**
- * Tests that the toggled event is recorded when the VPN
- * turns off at browser shutdown
- */
-add_task(async function toggle_off_on_shutdown() {
-  let button = document.getElementById(IPProtectionWidget.WIDGET_ID);
-  Assert.ok(
-    BrowserTestUtils.isVisible(button),
-    "IP Protection widget should be added to the navbar"
-  );
-
-  let panelShownPromise = waitForPanelEvent(document, "popupshown");
-  let panelInitPromise = BrowserTestUtils.waitForEvent(
-    document,
-    "IPProtection:Init"
-  );
-  button.click();
-  await Promise.all([panelShownPromise, panelInitPromise]);
-
-  let panelView = PanelMultiView.getViewNode(
-    document,
-    IPProtectionWidget.PANEL_ID
-  );
-
-  let content = panelView.querySelector(IPProtectionPanel.CONTENT_TAGNAME);
-  Assert.ok(content, "Panel content should be present");
-
-  setupService({
-    isSignedIn: true,
-    isEnrolledAndEntitled: true,
-  });
-  IPProtectionService.updateState();
-  await content.updateComplete;
-  await putServerInRemoteSettings();
-
-  let statusCard = content.statusCardEl;
-  let toggle = statusCard.connectionToggleEl;
-  Assert.ok(toggle, "Status card connection toggle should be present");
-
-  Services.fog.testResetFOG();
-
-  let vpnOnPromise = BrowserTestUtils.waitForEvent(
-    lazy.IPPProxyManager,
-    "IPPProxyManager:StateChanged",
-    false,
-    () => !!IPPProxyManager.activatedAt
-  );
-  // Toggle the VPN on
-  toggle.click();
-  await vpnOnPromise;
-  let toggledEvents = Glean.ipprotection.toggled.testGetValue();
-  Assert.equal(toggledEvents.length, 1, "should have recorded a toggle");
-  Assert.equal(toggledEvents[0].category, "ipprotection");
-  Assert.equal(toggledEvents[0].name, "toggled");
-  Assert.equal(toggledEvents[0].extra.enabled, "true");
-  Assert.equal(toggledEvents[0].extra.userAction, "true");
-
-  // Simulate closing the window
-  lazy.IPProtectionService.uninit();
-  toggledEvents = Glean.ipprotection.toggled.testGetValue();
-  Assert.equal(toggledEvents.length, 2, "should have recorded a second toggle");
-  Assert.equal(toggledEvents[1].category, "ipprotection");
-  Assert.equal(toggledEvents[1].name, "toggled");
-  Assert.equal(toggledEvents[1].extra.enabled, "false");
-  Assert.equal(toggledEvents[1].extra.userAction, "false");
-  Assert.greater(
-    Math.ceil(toggledEvents[1].extra.duration),
-    0,
-    "Should have positive duration"
-  );
-
-  // Clear userEnabled pref to avoid breaking tests
-  Services.prefs.clearUserPref("browser.ipProtection.userEnabled");
-
-  Services.fog.testResetFOG();
-  // Re-initialize to avoid breaking tests that follow
-  cleanupService();
-  await lazy.IPProtectionService.init();
-  let widget = document.getElementById(IPProtectionWidget.WIDGET_ID);
-  Assert.ok(
-    BrowserTestUtils.isVisible(widget),
-    "IP Protection widget should be added back to the navbar"
-  );
 });
 
 /**
@@ -225,7 +141,11 @@ add_task(async function click_upgrade_button() {
   );
 
   let content = panelView.querySelector(IPProtectionPanel.CONTENT_TAGNAME);
-  let originalState = structuredClone(content.state);
+  let originalState = JSON.parse(
+    JSON.stringify(content.state, (key, value) =>
+      typeof value === "bigint" ? JSON.rawJSON(value.toString()) : value
+    )
+  );
 
   Assert.ok(content, "Panel content should be present");
 
@@ -275,4 +195,122 @@ add_task(async function test_error_state() {
   Assert.equal(errorEvent.length, 1, "should have recorded an error");
   Services.fog.testResetFOG();
   await closePanel();
+});
+
+/**
+ * Tests that the toggled event is recorded when the VPN
+ * turns off at browser shutdown
+ */
+add_task(async function toggle_off_on_shutdown() {
+  let button = document.getElementById(IPProtectionWidget.WIDGET_ID);
+  Assert.ok(
+    BrowserTestUtils.isVisible(button),
+    "IP Protection widget should be added to the navbar"
+  );
+
+  let panelShownPromise = waitForPanelEvent(document, "popupshown");
+  let panelInitPromise = BrowserTestUtils.waitForEvent(
+    document,
+    "IPProtection:Init"
+  );
+  button.click();
+  await Promise.all([panelShownPromise, panelInitPromise]);
+
+  let panelView = PanelMultiView.getViewNode(
+    document,
+    IPProtectionWidget.PANEL_ID
+  );
+
+  let content = panelView.querySelector(IPProtectionPanel.CONTENT_TAGNAME);
+  Assert.ok(content, "Panel content should be present");
+
+  setupService({
+    isSignedIn: true,
+    isEnrolledAndEntitled: true,
+  });
+  IPProtectionService.updateState();
+  await content.updateComplete;
+  await putServerInRemoteSettings();
+
+  let statusCard = content.statusCardEl;
+  let turnOnButton = statusCard.actionButtonEl;
+  Assert.ok(turnOnButton, "Status card turn on button should be present");
+
+  Services.fog.testResetFOG();
+
+  let vpnOnPromise = BrowserTestUtils.waitForEvent(
+    lazy.IPPProxyManager,
+    "IPPProxyManager:StateChanged",
+    false,
+    () => !!IPPProxyManager.activatedAt
+  );
+  // Turn the VPN on
+  turnOnButton.click();
+  await vpnOnPromise;
+  let toggledEvents = Glean.ipprotection.toggled.testGetValue();
+  Assert.equal(toggledEvents.length, 1, "should have recorded a toggle");
+  Assert.equal(toggledEvents[0].category, "ipprotection");
+  Assert.equal(toggledEvents[0].name, "toggled");
+  Assert.equal(toggledEvents[0].extra.enabled, "true");
+  Assert.equal(toggledEvents[0].extra.userAction, "true");
+
+  // Simulate closing the window
+  lazy.IPProtectionService.uninit();
+  toggledEvents = Glean.ipprotection.toggled.testGetValue();
+  Assert.equal(toggledEvents.length, 2, "should have recorded a second toggle");
+  Assert.equal(toggledEvents[1].category, "ipprotection");
+  Assert.equal(toggledEvents[1].name, "toggled");
+  Assert.equal(toggledEvents[1].extra.enabled, "false");
+  Assert.equal(toggledEvents[1].extra.userAction, "false");
+  Assert.greater(
+    Math.ceil(toggledEvents[1].extra.duration),
+    0,
+    "Should have positive duration"
+  );
+
+  // Clear userEnabled pref to avoid breaking tests
+  Services.prefs.clearUserPref("browser.ipProtection.userEnabled");
+
+  Services.fog.testResetFOG();
+  // Re-initialize to avoid breaking tests that follow
+  cleanupService();
+  await lazy.IPProtectionService.init();
+  let widget = document.getElementById(IPProtectionWidget.WIDGET_ID);
+  Assert.ok(
+    BrowserTestUtils.isVisible(widget),
+    "IP Protection widget should be added back to the navbar"
+  );
+});
+
+/**
+ * Tests that the removed_from_toolbar event is recorded when the widget
+ * is removed from the toolbar.
+ */
+add_task(async function removed_from_toolbar() {
+  Services.fog.testResetFOG();
+
+  let start = CustomizableUI.getPlacementOfWidget(IPProtectionWidget.WIDGET_ID);
+  Assert.ok(start, "IP Protection widget should be in the toolbar");
+
+  CustomizableUI.removeWidgetFromArea(IPProtectionWidget.WIDGET_ID);
+
+  // Wait for the async onWidgetRemoved handler to complete
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  let events = Glean.ipprotection.removedFromToolbar.testGetValue();
+  Assert.equal(
+    events.length,
+    1,
+    "should have recorded a removed_from_toolbar event"
+  );
+  Assert.equal(events[0].category, "ipprotection");
+  Assert.equal(events[0].name, "removed_from_toolbar");
+
+  Services.fog.testResetFOG();
+
+  CustomizableUI.addWidgetToArea(
+    IPProtectionWidget.WIDGET_ID,
+    start.area,
+    start.position
+  );
 });

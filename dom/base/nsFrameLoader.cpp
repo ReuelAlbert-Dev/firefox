@@ -779,6 +779,8 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
 
 nsresult nsFrameLoader::CheckURILoad(nsIURI* aURI,
                                      nsIPrincipal* aTriggeringPrincipal) {
+  NS_ENSURE_STATE(mOwnerContent && mOwnerContent->IsInComposedDoc());
+
   // Check for security.  The fun part is trying to figure out what principals
   // to use.  The way I figure it, if we're doing a LoadFrame() accidentally
   // (eg someone created a frame/iframe node, we're being parsed, XUL iframes
@@ -2299,7 +2301,7 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
       doc->GetPolicyContainer();
   openWindowInfo->mCoepToInheritForAboutBlank = doc->GetEmbedderPolicy();
   openWindowInfo->mBaseUriToInheritForAboutBlank = mOwnerContent->GetBaseURI();
-  if (!docShell->Initialize(openWindowInfo, nullptr)) {
+  if (NS_FAILED(docShell->Initialize(openWindowInfo, nullptr))) {
     // Do not call Destroy() here. See bug 472312.
     NS_WARNING("Something wrong when creating the docshell for a frameloader!");
     return NS_ERROR_FAILURE;
@@ -2317,6 +2319,12 @@ nsresult nsFrameLoader::MaybeCreateDocShell() {
     if (nsPIDOMWindowOuter* window = doc->GetWindow()) {
       window->UpdateParentTarget();
     }
+  }
+
+  if (mDestroyCalled) {
+    // Docshell creation can run script,see bug 2007774.
+    // Callers might expect there to be a document etc. if we return OK.
+    return nsresult::NS_ERROR_DOCSHELL_DYING;
   }
 
   return NS_OK;
@@ -2886,7 +2894,8 @@ nsresult nsFrameLoader::FinishStaticClone(
   nsCOMPtr<Document> doc = origDocShell->GetDocument();
   NS_ENSURE_STATE(doc);
 
-  MaybeCreateDocShell();
+  nsresult rv = MaybeCreateDocShell();
+  NS_ENSURE_SUCCESS(rv, rv);
   RefPtr<nsDocShell> docShell = GetDocShell();
   NS_ENSURE_STATE(docShell);
 
@@ -2940,16 +2949,11 @@ class nsAsyncMessageToChild : public nsSameProcessAsyncMessageBase,
   RefPtr<nsFrameLoader> mFrameLoader;
 };
 
-nsresult nsFrameLoader::DoSendAsyncMessage(const nsAString& aMessage,
-                                           StructuredCloneData& aData) {
+nsresult nsFrameLoader::DoSendAsyncMessage(
+    const nsAString& aMessage, NotNull<StructuredCloneData*> aData) {
   auto* browserParent = GetBrowserParent();
   if (browserParent) {
-    ClonedMessageData data;
-    if (!BuildClonedMessageData(aData, data)) {
-      MOZ_CRASH();
-      return NS_ERROR_DOM_DATA_CLONE_ERR;
-    }
-    if (browserParent->SendAsyncMessage(aMessage, data)) {
+    if (browserParent->SendAsyncMessage(aMessage, aData)) {
       return NS_OK;
     } else {
       return NS_ERROR_UNEXPECTED;

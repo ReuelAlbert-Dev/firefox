@@ -382,9 +382,15 @@ NativeMenuGtk::~NativeMenuGtk() {
 
 RefPtr<dom::Element> NativeMenuGtk::Element() { return mMenuModel->Element(); }
 
-void NativeMenuGtk::ShowAsContextMenu(nsIFrame* aClickedFrame,
-                                      const CSSIntPoint& aPosition,
-                                      bool aIsContextMenu) {
+void NativeMenuGtk::ShowMenuAnchored(nsIFrame* aClickedFrame,
+                                     const CSSIntRect& aRect,
+                                     const nsAString& aPosition) {
+  MOZ_ASSERT_UNREACHABLE("GTK native anchored menus are not implemented");
+}
+
+void NativeMenuGtk::ShowMenuAtPosition(nsIFrame* aClickedFrame,
+                                       const CSSIntPoint& aPosition,
+                                       bool aIsContextMenu) {
   if (mMenuModel->IsShowing()) {
     return;
   }

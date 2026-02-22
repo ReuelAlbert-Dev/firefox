@@ -72,10 +72,6 @@ add_task(async function test_essential_exclusion() {
   await withProxyServer(async proxyInfo => {
     // Create the IPP connection filter
     const filter = IPPChannelFilter.create();
-    // Add essential URL to exclusion list
-    filter.addEssentialExclusion(
-      "http://localhost:" + server.identity.primaryPort
-    );
 
     filter.initialize("", proxyInfo.server);
     proxyInfo.gotConnection.then(() => {
@@ -83,12 +79,12 @@ add_task(async function test_essential_exclusion() {
     });
     filter.start();
 
-    let tab = await BrowserTestUtils.openNewForegroundTab(
-      gBrowser,
+    let response = await fetch(
       // eslint-disable-next-line @microsoft/sdl/no-insecure-url
       "http://localhost:" + server.identity.primaryPort
     );
-    await BrowserTestUtils.removeTab(tab);
+    Assert.equal(response.status, 200, "Should successfully load the URL");
+
     filter.stop();
   });
 });
@@ -131,14 +127,6 @@ add_task(async function test_exclusion_manager() {
 });
 
 add_task(async function test_channel_suspend_resume() {
-  const server = new HttpServer();
-  server.registerPathHandler("/", (request, response) => {
-    response.setStatusLine(request.httpVersion, 200, "OK");
-    response.setHeader("Content-Type", "text/plain");
-    response.write("Hello World");
-  });
-  server.start(-1);
-
   await withProxyServer(async proxyInfo => {
     // Create the IPP connection filter
     const filter = IPPChannelFilter.create();
@@ -146,8 +134,9 @@ add_task(async function test_channel_suspend_resume() {
 
     let tab = BrowserTestUtils.openNewForegroundTab(
       gBrowser,
+      // Note: this will not be loaded as the proxy will refuse the connection
       // eslint-disable-next-line @microsoft/sdl/no-insecure-url
-      "http://localhost:" + server.identity.primaryPort
+      "http://example.com/"
     );
 
     const pendingChannels = new Promise(resolve => {

@@ -4,14 +4,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <signal.h>
-#include <string.h>
 #include <time.h>
 
 #include "mozilla/ProfilerState.h"
+#include "mozilla/SharedLibraries.h"
 #include "platform.h"
 #include "PlatformMacros.h"
 #include "LulMain.h"
-#include "SharedLibraries.h"
 #include "AutoObjectMapper.h"
 
 // Contains miscellaneous helpers that are used to connect the Gecko Profiler

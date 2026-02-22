@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// @ts-nocheck - TODO - Remove this to type check this file.
+
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = XPCOMUtils.declareLazy({
@@ -360,7 +362,6 @@ export class SecurityOrchestrator {
         });
         return { effect: lazy.EFFECT_ALLOW };
       }
-
       const policies = this.#policies.get(phase);
       if (!policies || policies.length === 0) {
         const decision = lazy.createAllowDecision({
@@ -380,25 +381,21 @@ export class SecurityOrchestrator {
         });
         return decision;
       }
-
       const fullContext = {
         ...context,
         sessionLedger,
         sessionId,
         timestamp: ChromeUtils.now(),
       };
-
       const { currentTabId, mentionedTabIds = [] } = context;
       const tabsToCheck = [currentTabId, ...mentionedTabIds];
       const linkLedger = sessionLedger.merge(tabsToCheck);
       fullContext.linkLedger = linkLedger;
-
       const decision = lazy.evaluatePhasePolicies(
         policies,
         action,
         fullContext
       );
-
       lazy.logSecurityEvent({
         requestId,
         sessionId,
@@ -411,7 +408,6 @@ export class SecurityOrchestrator {
         decision,
         durationMs: ChromeUtils.now() - startTime,
       });
-
       return decision;
     } catch (error) {
       const errorDecision = lazy.createDenyDecision(
@@ -419,7 +415,6 @@ export class SecurityOrchestrator {
         "Security evaluation failed with unexpected error",
         { error: error.message || String(error) }
       );
-
       lazy.logSecurityEvent({
         requestId,
         sessionId,
@@ -433,8 +428,13 @@ export class SecurityOrchestrator {
         durationMs: ChromeUtils.now() - startTime,
         error,
       });
-
       return errorDecision;
+    } finally {
+      ChromeUtils.addProfilerMarker(
+        "ML.Security.SecurityOrchestrator.evaluate",
+        { startTime },
+        `Evaluate security for action: ${JSON.stringify(envelope?.action)}, phase: ${envelope?.phase}, sessionId: ${sessionId}`
+      );
     }
   }
 

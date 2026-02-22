@@ -495,13 +495,11 @@ class LinkFlags(BaseCompileFlags):
 
         # TODO: This is pretty convoluted, and isn't really a per-context thing,
         # configure would be a better place to aggregate these.
-        if all(
-            [
-                self._context.config.substs.get("OS_ARCH") == "WINNT",
-                self._context.config.substs.get("CC_TYPE") == "clang-cl",
-                not self._context.config.substs.get("MOZ_DEBUG"),
-            ]
-        ):
+        if all([
+            self._context.config.substs.get("OS_ARCH") == "WINNT",
+            self._context.config.substs.get("CC_TYPE") == "clang-cl",
+            not self._context.config.substs.get("MOZ_DEBUG"),
+        ]):
             if self._context.config.substs.get("MOZ_OPTIMIZE"):
                 flags.append("-OPT:REF,ICF")
 
@@ -540,7 +538,7 @@ class TargetCompileFlags(BaseCompileFlags):
     def __setitem__(self, key, value):
         if key not in self._known_keys:
             raise ValueError(
-                "Invalid value. `%s` is not a compile flags " "category." % key
+                "Invalid value. `%s` is not a compile flags category." % key
             )
         if key in self and self[key] is None:
             raise ValueError(
@@ -851,11 +849,12 @@ class Path(ContextDerivedValue, str, metaclass=PathMeta):
 
     This class is used as a backing type for some of the sandbox variables.
     It expresses paths relative to a context. Supported paths are:
-      - '/topsrcdir/relative/paths'
-      - 'srcdir/relative/paths'
-      - '!/topobjdir/relative/paths'
-      - '!objdir/relative/paths'
-      - '%/filesystem/absolute/paths'
+
+    - '/topsrcdir/relative/paths'
+    - 'srcdir/relative/paths'
+    - '!/topobjdir/relative/paths'
+    - '!objdir/relative/paths'
+    - '%/filesystem/absolute/paths'
     """
 
     def __new__(cls, context, value=None):
@@ -1032,8 +1031,8 @@ def ContextDerivedTypedRecord(*fields):
     .. code-block:: python
 
         VARIABLE_NAME.property += [
-          'item1',
-          'item2',
+            "item1",
+            "item2",
         ]
     """
 
@@ -1190,9 +1189,12 @@ SchedulingComponents = ContextDerivedTypedRecord(
     ("exclusive", TypedList(str, StrictOrderingOnAppendList)),
 )
 
-GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory(
-    {"script": str, "inputs": list, "force": bool, "flags": list}
-)
+GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory({
+    "script": str,
+    "inputs": list,
+    "force": bool,
+    "flags": list,
+})
 
 
 class Files(SubContext):
@@ -1274,13 +1276,13 @@ class Files(SubContext):
             """Maps source files to the CI tasks that should be scheduled when
             they change.  The tasks are grouped by named components, and those
             names appear again in the taskgraph configuration
-            `($topsrcdir/taskgraph/).
+            (``$topsrcdir/taskgraph/``).
 
             Some components are "inclusive", meaning that changes to most files
             do not schedule them, aside from those described in a Files
             subcontext.  For example, py-lint tasks need not be scheduled for
             most changes, but should be scheduled when any Python file changes.
-            Such components are named by appending to `SCHEDULES.inclusive`:
+            Such components are named by appending to ``SCHEDULES.inclusive``:
 
             with Files('**.py'):
                 SCHEDULES.inclusive += ['py-lint']
@@ -1289,12 +1291,12 @@ class Files(SubContext):
             files schedule them, but some files affect only one or two
             components. For example, most files schedule builds and tests of
             Firefox for Android, OS X, Windows, and Linux, but files under
-            `mobile/android/` affect Android builds and tests exclusively, so
+            ``mobile/android/`` affect Android builds and tests exclusively, so
             builds for other operating systems are not needed.  Test suites
             provide another example: most files schedule reftests, but changes
             to reftest scripts need only schedule reftests and no other suites.
 
-            Exclusive components are named by setting `SCHEDULES.exclusive`:
+            Exclusive components are named by setting ``SCHEDULES.exclusive``:
 
             with Files('mobile/android/**'):
                 SCHEDULES.exclusive = ['android']
@@ -1463,6 +1465,24 @@ VARIABLES = {
 
         This variable should not be used directly; you should be using the
         HostRustLibrary template instead.
+        """,
+    ),
+    "RUST_PROGRAM_FEATURES": (
+        List,
+        list,
+        """Cargo features to activate for this program.
+
+        This variable should not be used directly; you should be using the
+        RustProgram template instead.
+        """,
+    ),
+    "HOST_RUST_PROGRAM_FEATURES": (
+        List,
+        list,
+        """Cargo features to activate for this host program.
+
+        This variable should not be used directly; you should be using the
+        HostRustProgram template instead.
         """,
     ),
     "RUST_TESTS": (
@@ -2359,17 +2379,15 @@ VARIABLES = {
         """,
     ),
     "GYP_DIRS": (
-        StrictOrderingOnAppendListWithFlagsFactory(
-            {
-                "variables": dict,
-                "input": str,
-                "sandbox_vars": dict,
-                "no_chromium": bool,
-                "no_unified": bool,
-                "non_unified_sources": StrictOrderingOnAppendList,
-                "action_overrides": dict,
-            }
-        ),
+        StrictOrderingOnAppendListWithFlagsFactory({
+            "variables": dict,
+            "input": str,
+            "sandbox_vars": dict,
+            "no_chromium": bool,
+            "no_unified": bool,
+            "non_unified_sources": StrictOrderingOnAppendList,
+            "action_overrides": dict,
+        }),
         list,
         """Defines a list of object directories handled by gyp configurations.
 

@@ -10,8 +10,6 @@
 #include "mozilla/RefPtr.h"  // RefPtr, mozilla::StaticRefPtr
 #include "mozilla/Utf8.h"    // mozilla::Utf8Unit
 
-#include <cstdarg>
-
 #include "mozilla/Logging.h"
 #include "mozilla/dom/RequestBinding.h"
 #ifdef ANDROID
@@ -786,24 +784,33 @@ nsresult mozJSModuleLoader::GetScriptForLocation(
   aInfo.EnsureResolvedURI();
 
   nsAutoCString cachePath;
+  scache::ResourceType resourceType;
   rv = PathifyURI(JS_CACHE_PREFIX("non-syntactic", "module"),
-                  aInfo.ResolvedURI(), cachePath);
+                  aInfo.ResolvedURI(), cachePath, &resourceType);
   NS_ENSURE_SUCCESS(rv, rv);
 
   JS::DecodeOptions decodeOptions;
   ScriptPreloader::FillDecodeOptionsForCachedStencil(decodeOptions);
 
-  RefPtr<JS::Stencil> stencil =
-      ScriptPreloader::GetSingleton().GetCachedStencil(aCx, decodeOptions,
-                                                       cachePath);
+  // Skip all caching for scripts not from omni.ja to avoid serving stale
+  // bytecode when JAR files from built-in add-ons installed in the profile
+  // directory are updated.
+  bool shouldUseCache = (resourceType == scache::ResourceType::Gre ||
+                         resourceType == scache::ResourceType::App);
 
-  if (!stencil && cache) {
-    ReadCachedStencil(cache, cachePath, aCx, decodeOptions,
-                      getter_AddRefs(stencil));
-    if (!stencil) {
-      JS_ClearPendingException(aCx);
+  RefPtr<JS::Stencil> stencil;
+  if (shouldUseCache) {
+    stencil = ScriptPreloader::GetSingleton().GetCachedStencil(
+        aCx, decodeOptions, cachePath);
 
-      storeIntoStartupCache = true;
+    if (!stencil && cache) {
+      ReadCachedStencil(cache, cachePath, aCx, decodeOptions,
+                        getter_AddRefs(stencil));
+      if (!stencil) {
+        JS_ClearPendingException(aCx);
+
+        storeIntoStartupCache = true;
+      }
     }
   }
 

@@ -15,7 +15,7 @@
 }
 
 :root[customizing] .customization-target:not(#widget-overflow-fixed-list) {
-  min-width: 100px;
+  min-width: var(--size-layout-xsmall);
 }
 
 /* When customizing, overflowable toolbars move automatically moved items back
@@ -36,13 +36,6 @@ toolbar[overflowable][customizing] > .customization-target {
     /* In a separate rule to avoid 'display:flex' causing the node to be
      * displayed while the container is still hidden. */
     display: flex;
-  }
-
-  :root[lwtheme] & {
-    /* Ensure toolbar color displays on top of the frame/toolbox color to
-     * guarantee full opacity */
-    background-color: var(--lwt-accent-color);
-    background-image: linear-gradient(var(--toolbar-bgcolor), var(--toolbar-bgcolor));
   }
 }
 

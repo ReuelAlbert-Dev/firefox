@@ -152,6 +152,26 @@ set_config("ENABLE_EXPLICIT_RESOURCE_MANAGEMENT", enable_explicit_resource_manag
 set_define("ENABLE_EXPLICIT_RESOURCE_MANAGEMENT", enable_explicit_resource_management)
 
 
+# Enable source phase imports
+# ===================================================
+option(
+    "--enable-source-phase-imports",
+    default=False,
+    help="Enable experimental source phase imports support",
+)
+
+
+@depends("--enable-source-phase-imports")
+def enable_source_phase_imports(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_SOURCE_PHASE_IMPORTS", enable_source_phase_imports)
+set_define("ENABLE_SOURCE_PHASE_IMPORTS", enable_source_phase_imports)
+
+
+
 # Portable Baseline Intepreter
 # =======================================================
 option(
@@ -1082,23 +1102,59 @@ def wasm_custom_page_sizes(value, simulator, target, no_experimental):
 set_config("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
 set_define("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
 
-
-# Enable static checking using sixgill
-# ====================================
-
-option("--with-sixgill", nargs=1, help="Enable static checking of code using sixgill")
+# Experimental support for GC concurrent marking
+# ==============================================
 
 
-@depends_if("--with-sixgill")
-@imports("os")
-def sixgill(value):
-    for f in ("bin/xdbfind", "gcc/xgill.so", "scripts/wrap_gcc/g++"):
-        if not os.path.exists(os.path.join(value[0], f)):
-            die("The sixgill plugin and binaries are not at the specified path")
-    return value[0]
+option(
+    "--enable-gc-concurrent-marking",
+    default=False,
+    help="{Enable|Disable} experimental support for GC concurrent marking",
+)
 
 
-set_config("SIXGILL_PATH", sixgill)
+@depends("--enable-gc-concurrent-marking", target)
+def gc_concurrent_marking(value, target):
+    if not value:
+        return
+
+    if target.cpu != "x86_64":
+        die("Concurrent marking is only supported on 64 bit x86 platforms")
+
+    return True
+
+
+set_config("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
+set_define("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
+
+
+# Support for WebAssembly compact imports.
+# ===========================
+
+
+@depends(milestone.is_nightly)
+def default_wasm_compact_imports(is_nightly):
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-compact-imports",
+    default=default_wasm_compact_imports,
+    help="{Enable|Disable} WebAssembly compact import section support",
+)
+
+
+@depends("--enable-wasm-compact-imports", "--wasm-no-experimental")
+def wasm_compact_imports(value, no_experimental):
+    if no_experimental or not value:
+        return
+
+    return True
+
+
+set_config("ENABLE_WASM_COMPACT_IMPORTS", wasm_compact_imports)
+set_define("ENABLE_WASM_COMPACT_IMPORTS", wasm_compact_imports)
 
 
 # Support for readline
@@ -1434,7 +1490,6 @@ with only_when(compile_environment & depends(target.os)(lambda os: os != "WINNT"
     set_define("HAVE_GETC_UNLOCKED", check_symbol("getc_unlocked"))
     set_define("HAVE_PTHREAD_GETNAME_NP", check_symbol("pthread_getname_np"))
     set_define("HAVE_PTHREAD_GET_NAME_NP", check_symbol("pthread_get_name_np"))
-    set_define("HAVE_STRERROR", check_symbol("strerror"))
 
     set_config(
         "HAVE_LANGINFO_CODESET",

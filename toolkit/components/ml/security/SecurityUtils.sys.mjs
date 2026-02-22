@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// @ts-nocheck - TODO - Remove this to type check this file.
+
 /**
  * Security utilities for Firefox Smart Window security layer.
  *
@@ -18,16 +20,6 @@
  * - URLs are normalized before storage and comparison
  * - Same eTLD+1 validation prevents injection via canonical/og:url
  */
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const lazy = XPCOMUtils.declareLazy({
-  console: () =>
-    console.createInstance({
-      maxLogLevelPref: "browser.ml.logLevel",
-      prefix: "SecurityUtils",
-    }),
-});
 
 /** TTL for ledger entries (30 minutes) */
 const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -123,28 +115,6 @@ export function normalizeUrl(urlString, baseUrl = null) {
 }
 
 /**
- * Validates that two URLs share the same eTLD+1 (effective top-level domain).
- *
- * @param {string} url1 - First URL (typically page URL)
- * @param {string} url2 - Second URL (typically canonical/og:url)
- * @returns {boolean} True if both URLs share the same eTLD+1
- */
-export function areSameSite(url1, url2) {
-  try {
-    const parsed1 = new URL(url1);
-    const parsed2 = new URL(url2);
-
-    const eTLD1 = Services.eTLD.getBaseDomainFromHost(parsed1.hostname);
-    const eTLD2 = Services.eTLD.getBaseDomainFromHost(parsed2.hostname);
-
-    return eTLD1 === eTLD2;
-  } catch (error) {
-    lazy.console.error("areSameSite error:", error.message);
-    return false;
-  }
-}
-
-/**
  * Per-tab storage for trusted URLs.
  *
  * Each tab maintains its own ledger of URLs that are authorized for
@@ -182,6 +152,7 @@ export class TabLedger {
    * @param {string} [baseUrl] - Optional base URL for resolving relative URLs
    */
   seed(urls, baseUrl = null) {
+    const startTime = ChromeUtils.now();
     this.#cleanup();
 
     const now = ChromeUtils.now();
@@ -199,6 +170,12 @@ export class TabLedger {
     }
 
     this.lastCleanup = now;
+
+    ChromeUtils.addProfilerMarker(
+      "ML.Security.TabLedger.seed",
+      { startTime },
+      `TabLedger.seed for ${urls?.length} urls and tabId: ${this.tabId}`
+    );
   }
 
   /**
@@ -227,30 +204,35 @@ export class TabLedger {
   }
 
   /**
-   * Checks if a URL is in the ledger and not expired.
+   * Returns the normalized URL if it is in the ledger and not expired.
    *
    * @param {string} url - URL to check (will be normalized)
    * @param {string} [baseUrl] - Optional base URL for resolving relatives
-   * @returns {boolean} True if URL is in ledger and not expired
+   * @returns {string|null} Normalized URL if valid, otherwise null
    */
-  has(url, baseUrl = null) {
+  lookup(url, baseUrl = null) {
+    const startTime = ChromeUtils.now();
+    let result = null;
+
     const normalized = normalizeUrl(url, baseUrl);
-    if (!normalized.success) {
-      return false;
+    if (normalized.success) {
+      const expiresAt = this.urls.get(normalized.url);
+      if (expiresAt !== undefined) {
+        if (ChromeUtils.now() > expiresAt) {
+          this.urls.delete(normalized.url);
+        } else {
+          result = normalized.url;
+        }
+      }
     }
 
-    const expiresAt = this.urls.get(normalized.url);
-    if (expiresAt === undefined) {
-      return false;
-    }
+    ChromeUtils.addProfilerMarker(
+      "ML.Security.TabLedger.lookup",
+      { startTime },
+      `TabLedger.lookup for url ${url} and tabId: ${this.tabId}`
+    );
 
-    // Check expiration
-    if (ChromeUtils.now() > expiresAt) {
-      this.urls.delete(normalized.url);
-      return false;
-    }
-
-    return true;
+    return result;
   }
 
   /**
@@ -369,18 +351,23 @@ export class SessionLedger {
     // Return a temporary read-only ledger
     return {
       /**
-       * Checks if URL is in any of the merged ledgers.
+       * Returns the normalized URL if it is in any of the merged ledgers.
        *
        * @param {string} url - URL to check
        * @param {string} [baseUrl] - Optional base URL
-       * @returns {boolean} True if URL is in any merged ledger
+       * @returns {string|null} Normalized URL if found, otherwise null
        */
-      has(url, baseUrl = null) {
+      lookup(url, baseUrl = null) {
         const normalized = normalizeUrl(url, baseUrl);
         if (!normalized.success) {
-          return false;
+          return null;
         }
-        return mergedUrls.has(normalized.url);
+
+        if (!mergedUrls.has(normalized.url)) {
+          return null;
+        }
+
+        return normalized.url;
       },
 
       /**

@@ -1270,7 +1270,6 @@ static nsLiteralCString sStyleSrcUnsafeInlineAllowList[] = {
     "chrome://browser/content/places/places.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/applicationManager.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/browserLanguages.xhtml"_ns,
-    "chrome://browser/content/preferences/dialogs/clearSiteData.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/colors.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/connection.xhtml"_ns,
     "chrome://browser/content/preferences/dialogs/containers.xhtml"_ns,
@@ -1285,7 +1284,6 @@ static nsLiteralCString sStyleSrcUnsafeInlineAllowList[] = {
     "chrome://browser/content/preferences/dialogs/translations.xhtml"_ns,
     "chrome://browser/content/preferences/fxaPairDevice.xhtml"_ns,
     "chrome://browser/content/safeMode.xhtml"_ns,
-    "chrome://browser/content/sanitize.xhtml"_ns,
     "chrome://browser/content/sanitize_v2.xhtml"_ns,
     "chrome://browser/content/search/addEngine.xhtml"_ns,
     "chrome://browser/content/setDesktopBackground.xhtml"_ns,
@@ -1329,6 +1327,7 @@ static nsLiteralCString sStyleSrcUnsafeInlineAllowList[] = {
 static nsLiteralCString sImgSrcMozRemoteImageAllowList[] = {
     "about:preferences"_ns,
     "about:settings"_ns,
+    "chrome://browser/content/aiwindow/aiWindow.html"_ns,
     "chrome://browser/content/preferences/dialogs/applicationManager.xhtml"_ns,
     "chrome://mozapps/content/handling/appChooser.xhtml"_ns,
 };
@@ -1358,6 +1357,7 @@ static nsLiteralCString sImgSrcDataBlobAllowList[] = {
     "about:welcome"_ns,
     "chrome://browser/content/aboutDialog.xhtml"_ns,
     "chrome://browser/content/aboutlogins/aboutLogins.html"_ns,
+    "chrome://browser/content/aiwindow/aiWindow.html"_ns,
     "chrome://browser/content/genai/chat.html"_ns,
     "chrome://browser/content/places/bookmarksSidebar.xhtml"_ns,
     "chrome://browser/content/places/places.xhtml"_ns,
@@ -1394,16 +1394,13 @@ static nsLiteralCString sImgSrcHttpsAllowList[] = {
     "chrome://devtools/content/application/index.html"_ns,
     "chrome://devtools/content/framework/browser-toolbox/window.html"_ns,
     "chrome://devtools/content/framework/toolbox-window.xhtml"_ns,
-    "chrome://global/content/alerts/alert.xhtml"_ns,
 };
 // img-src http:
 //  UNSAFE! Do not use.
 static nsLiteralCString sImgSrcHttpAllowList[] = {
-    "about:addons"_ns,
-    "chrome://devtools/content/application/index.html"_ns,
+    "about:addons"_ns, "chrome://devtools/content/application/index.html"_ns,
     "chrome://devtools/content/framework/browser-toolbox/window.html"_ns,
     "chrome://devtools/content/framework/toolbox-window.xhtml"_ns,
-    "chrome://global/content/alerts/alert.xhtml"_ns,
     // STOP! Do not add anything to this list.
 };
 // img-src jar: file:
@@ -1603,8 +1600,14 @@ class ImgSrcVisitor : public AllowBuiltinSrcVisitor {
     nsAutoString scheme;
     src.getScheme(scheme);
 
-    // moz-icon is used for loading known favicons.
+    // moz-icon is used for loading icons from the platform.
     if (scheme == u"moz-icon"_ns) {
+      return true;
+    }
+
+    // page-icon is used for loading favicons that are already stored by the
+    // favicon service.
+    if (scheme == u"page-icon"_ns) {
       return true;
     }
 
@@ -2174,17 +2177,6 @@ bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
           : "(None)",
       "Blocking a script load %s from file %s");
   MOZ_CRASH_UNSAFE_PRINTF("%s", crashString.get());
-#elif defined(EARLY_BETA_OR_EARLIER)
-  // Cause a crash (if we've never crashed before and we can ensure we won't do
-  // it again.)
-  // The details in the second arg, passed to UNSAFE_PRINTF, are also included
-  // in Event Telemetry and have received data review.
-  if (fileNameTypeAndDetails.second.isSome()) {
-    PossiblyCrash("js_load_1", aFilename,
-                  fileNameTypeAndDetails.second.value());
-  } else {
-    PossiblyCrash("js_load_1", aFilename, "(None)"_ns);
-  }
 #endif
 
   {
@@ -2214,15 +2206,7 @@ bool nsContentSecurityUtils::ValidateScriptFilename(JSContext* cx,
         }));
   }
 
-  // Presently we are only enforcing restrictions for the script filename
-  // on Nightly.  On all channels we are reporting Telemetry. In the future we
-  // will assert in debug builds and return false to prevent execution in
-  // non-debug builds.
-#ifdef NIGHTLY_BUILD
   return false;
-#else
-  return true;
-#endif
 }
 
 /* static */

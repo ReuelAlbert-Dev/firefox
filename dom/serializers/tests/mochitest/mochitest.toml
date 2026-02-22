@@ -3,6 +3,7 @@ support-files = [
   "copypaste.js",
   "copypaste_flat_tree.js",
   "copypaste_shadow_dom.js",
+  "image.png",
 ]
 
 ["test_bug116083.html"]
@@ -129,6 +130,14 @@ skip-if = [
 ["test_htmlcopyencoder.html"]
 
 ["test_htmlcopyencoder.xhtml"]
+
+["test_htmlcopyencoder_common_ancestor.html"]
+
+["test_htmlcopyencoder_details.html"]
+
+["test_htmlcopyencoder_list.html"]
+
+["test_htmlcopyencoder_table.html"]
 
 ["test_plaintext_linebreak.html"]
 

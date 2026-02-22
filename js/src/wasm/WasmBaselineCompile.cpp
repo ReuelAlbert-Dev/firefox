@@ -1729,27 +1729,6 @@ ABIArg BaseCompiler::reservePointerArgument(FunctionCall* call) {
   return call->abi.next(MIRType::Pointer);
 }
 
-// TODO / OPTIMIZE (Bug 1316821): Note passArg is used only in one place.
-// (Or it was, until Luke wandered through, but that can be fixed again.)
-// I'm not saying we should manually inline it, but we could hoist the
-// dispatch into the caller and have type-specific implementations of
-// passArg: passArgI32(), etc.  Then those might be inlined, at least in PGO
-// builds.
-//
-// The bulk of the work here (60%) is in the next() call, though.
-//
-// Notably, since next() is so expensive, StackArgAreaSizeUnaligned()
-// becomes expensive too.
-//
-// Somehow there could be a trick here where the sequence of argument types
-// (read from the input stream) leads to a cached entry for
-// StackArgAreaSizeUnaligned() and for how to pass arguments...
-//
-// But at least we could reduce the cost of StackArgAreaSizeUnaligned() by
-// first reading the argument types into a (reusable) vector, then we have
-// the outgoing size at low cost, and then we can pass args based on the
-// info we read.
-
 void BaseCompiler::passArg(ValType type, const Stk& arg, FunctionCall* call) {
   switch (type.kind()) {
     case ValType::I32: {
@@ -6633,7 +6612,8 @@ bool BaseCompiler::emitRefNull() {
 
 bool BaseCompiler::emitRefIsNull() {
   Nothing nothing;
-  if (!iter_.readRefIsNull(&nothing)) {
+  RefType unusedRefType;
+  if (!iter_.readRefIsNull(&nothing, &unusedRefType)) {
     return false;
   }
 
@@ -7062,7 +7042,7 @@ bool BaseCompiler::emitTableGet() {
 
   replaceTableAddressWithClampedInt32(
       codeMeta_.tables[tableIndex].addressType());
-  if (codeMeta_.tables[tableIndex].elemType.tableRepr() == TableRepr::Ref) {
+  if (codeMeta_.tables[tableIndex].elemType().tableRepr() == TableRepr::Ref) {
     return emitTableGetAnyRef(tableIndex);
   }
   pushI32(tableIndex);
@@ -7113,7 +7093,7 @@ bool BaseCompiler::emitTableSet() {
     replaceTableAddressWithClampedInt32(AddressType::I64);
     pushAny(value);
   }
-  if (codeMeta_.tables[tableIndex].elemType.tableRepr() == TableRepr::Ref) {
+  if (codeMeta_.tables[tableIndex].elemType().tableRepr() == TableRepr::Ref) {
     return emitTableSetAnyRef(tableIndex);
   }
   pushI32(tableIndex);
@@ -8108,7 +8088,7 @@ bool BaseCompiler::emitArrayAllocFixed(uint32_t typeIndex, RegRef object,
   static_assert(MaxArrayNewFixedElements * sizeof(wasm::LitVal) <
                 MaxArrayPayloadBytes);
   uint32_t storageBytes =
-      WasmArrayObject::calcStorageBytesUnchecked(elemSize, numElements);
+      WasmArrayObject::calcArrayDataBytesUnchecked(elemSize, numElements);
   if (storageBytes > WasmArrayObject_MaxInlineBytes) {
     freeRef(object);
     pushI32(numElements);
@@ -8821,27 +8801,25 @@ bool BaseCompiler::emitArrayFill() {
     freePtr(RegPtr(PreBarrierReg));
   }
 
-  // Perform an initialization loop using `numElements` as the loop variable,
-  // starting at `numElements` and counting down to zero.
+  // Perform the fill loop using `numElements` as the loop variable, counting
+  // down to zero.
   Label done;
   Label loop;
-  // Skip initialization if numElements = 0
   masm.branch32(Assembler::Equal, numElements, Imm32(0), &done);
-  masm.bind(&loop);
 
-  // Move to the next element
+  masm.bind(&loop);
   masm.sub32(Imm32(1), numElements);
 
   // Assign value to rdata[numElements]. All registers are preserved.
   if (!emitGcArraySet(rp, rdata, numElements, arrayType, value,
-                      PreBarrierKind::None, PostBarrierKind::Imprecise)) {
+                      PreBarrierKind::Normal, PostBarrierKind::Imprecise)) {
     return false;
   }
 
-  // Loop back if there are still elements to initialize
   masm.branch32(Assembler::NotEqual, numElements, Imm32(0), &loop);
   masm.bind(&done);
 
+  // Clean up
   freePtr(rdata);
   freeRef(rp);
   freeI32(numElements);
