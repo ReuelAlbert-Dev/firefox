@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -117,15 +115,8 @@ void HTMLTextAreaElement::Select() {
     }
   }
 
+  // FIXME: The <input> equivalent has ScrollAfterSelection::No
   SetSelectionRange(0, UINT32_MAX, Optional<nsAString>(), IgnoreErrors());
-}
-
-void HTMLTextAreaElement::SelectAll() {
-  // FIXME(emilio): Should we try to call Select(), which will avoid flushing?
-  if (nsTextControlFrame* tf =
-          do_QueryFrame(GetPrimaryFrame(FlushType::Frames))) {
-    tf->SelectAll();
-  }
 }
 
 enum class Wrap {
@@ -204,24 +195,6 @@ nsFrameSelection* HTMLTextAreaElement::GetIndependentFrameSelection() const {
   return mState->GetIndependentFrameSelection();
 }
 
-nsresult HTMLTextAreaElement::BindToFrame(nsTextControlFrame* aFrame) {
-  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript());
-  MOZ_ASSERT(mState);
-  return mState->BindToFrame(aFrame);
-}
-
-void HTMLTextAreaElement::UnbindFromFrame(nsTextControlFrame* aFrame) {
-  MOZ_ASSERT(mState);
-  if (aFrame) {
-    mState->UnbindFromFrame(aFrame);
-  }
-}
-
-nsresult HTMLTextAreaElement::CreateEditor() {
-  MOZ_ASSERT(mState);
-  return mState->PrepareEditor();
-}
-
 nsresult HTMLTextAreaElement::SetValueInternal(
     const nsAString& aValue, const ValueSetterOptions& aOptions) {
   MOZ_ASSERT(mState);
@@ -278,9 +251,6 @@ void HTMLTextAreaElement::SetValueChanged(bool aValueChanged) {
 
   bool previousValue = mValueChanged;
   mValueChanged = aValueChanged;
-  if (!aValueChanged && !mState->IsEmpty()) {
-    mState->EmptyValue();
-  }
   if (mValueChanged == previousValue) {
     return;
   }
@@ -408,10 +378,17 @@ bool HTMLTextAreaElement::IsDisabledForEvents(WidgetEvent* aEvent) {
   return IsElementDisabledForEvents(aEvent, GetPrimaryFrame());
 }
 
+MOZ_CAN_RUN_SCRIPT_BOUNDARY
 void HTMLTextAreaElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
   aVisitor.mCanHandle = false;
   if (IsDisabledForEvents(aVisitor.mEvent)) {
     return;
+  }
+
+  if (NeedToInitializeEditorForEvent(aVisitor)) {
+    // FIXME(bug 2020902): This is rather evil. Remove
+    // CAN_RUN_SCRIPT_BOUNDARY when removing this.
+    mState->EnsureEditorInitialized();
   }
 
   // Don't dispatch a second select event if we are already handling
@@ -467,6 +444,7 @@ nsresult HTMLTextAreaElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
   }
   if (aVisitor.mEvent->mMessage == eFocus) {
     GetValueInternal(mFocusedValue);
+    TextControlElement::OnFocus(*aVisitor.mEvent);
   }
   return NS_OK;
 }
@@ -615,11 +593,7 @@ nsresult HTMLTextAreaElement::Reset() {
   GetDefaultValue(resetVal, IgnoreErrors());
   SetValueChanged(false);
   SetUserInteracted(false);
-
-  nsresult rv = SetValueInternal(resetVal, ValueSetterOption::ByInternalAPI);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
+  return SetValueInternal(resetVal, ValueSetterOption::ByInternalAPI);
 }
 
 NS_IMETHODIMP
@@ -869,6 +843,9 @@ void HTMLTextAreaElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
     } else if (aName == nsGkAtoms::maxlength) {
       UpdateTooLongValidityState();
       UpdateValidityElementStates(aNotify);
+      if (auto* editor = GetExtantTextEditor()) {
+        editor->SetMaxTextLength(UsedMaxLength());
+      }
     } else if (aName == nsGkAtoms::minlength) {
       UpdateTooShortValidityState();
       UpdateValidityElementStates(aNotify);
@@ -1062,11 +1039,6 @@ bool HTMLTextAreaElement::ValueChanged() const { return mValueChanged; }
 void HTMLTextAreaElement::GetTextEditorValue(nsAString& aValue) const {
   MOZ_ASSERT(mState);
   mState->GetValue(aValue, /* aForDisplay = */ true);
-}
-
-void HTMLTextAreaElement::InitializeKeyboardEventListeners() {
-  MOZ_ASSERT(mState);
-  mState->InitializeKeyboardEventListeners();
 }
 
 void HTMLTextAreaElement::UpdatePlaceholderShownState() {

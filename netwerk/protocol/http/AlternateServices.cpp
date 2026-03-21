@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=8 et tw=80 : */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -298,7 +296,7 @@ AltSvcMapping::AltSvcMapping(nsIDataStorage* storage, int32_t epoch,
   }
 
   LOG(("AltSvcMapping ctor %p %s://%s:%d to %s:%d\n", this,
-       nsCString(originScheme).get(), mOriginHost.get(), mOriginPort,
+       PromiseFlatCString(originScheme).get(), mOriginHost.get(), mOriginPort,
        mAlternateHost.get(), mAlternatePort));
 
   if (mAlternateHost.IsEmpty()) {
@@ -511,19 +509,17 @@ AltSvcMapping::AltSvcMapping(nsIDataStorage* storage, int32_t epoch,
     _NS_NEXT_TOKEN;
     mOriginHost = Substring(str, start, idx - start);
     _NS_NEXT_TOKEN;
-    mOriginPort =
-        nsCString(Substring(str, start, idx - start)).ToInteger(&code);
+    mOriginPort = Substring(str, start, idx - start).ToInteger(&code);
     _NS_NEXT_TOKEN;
     mAlternateHost = Substring(str, start, idx - start);
     _NS_NEXT_TOKEN;
-    mAlternatePort =
-        nsCString(Substring(str, start, idx - start)).ToInteger(&code);
+    mAlternatePort = Substring(str, start, idx - start).ToInteger(&code);
     _NS_NEXT_TOKEN;
     mUsername = Substring(str, start, idx - start);
     _NS_NEXT_TOKEN;
     mPrivate = Substring(str, start, idx - start).EqualsLiteral("y");
     _NS_NEXT_TOKEN;
-    mExpiresAt = nsCString(Substring(str, start, idx - start)).ToInteger(&code);
+    mExpiresAt = Substring(str, start, idx - start).ToInteger(&code);
     _NS_NEXT_TOKEN;
     mNPNToken = Substring(str, start, idx - start);
     _NS_NEXT_TOKEN;
@@ -1172,11 +1168,15 @@ void AltSvcCache::UpdateAltServiceMapping(
   caps |= ci->GetAnonymous() ? NS_HTTP_LOAD_ANONYMOUS : 0;
   caps |= NS_HTTP_ERROR_SOFTLY;
 
+  if (StaticPrefs::network_http_happy_eyeballs_enabled()) {
+    ci->SetHappyEyeballsEnabled(true);
+  }
+
   if (map->HTTPS()) {
     LOG(
         ("AltSvcCache::UpdateAltServiceMapping %p validation via "
-         "speculative connect started\n",
-         this));
+         "speculative connect started http3=%d\n",
+         this, map->IsHttp3()));
     // for https resources we only establish a connection
     nsCOMPtr<nsIInterfaceRequestor> callbacks = new AltSvcOverride(aCallbacks);
     RefPtr<AltSvcMappingValidator> validator = new AltSvcMappingValidator(map);

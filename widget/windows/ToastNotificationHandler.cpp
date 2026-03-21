@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sts=2 sw=2 et cin: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -186,16 +184,17 @@ Result<nsString, nsresult> ToastNotificationHandler::GetLaunchArgument() {
   nsString launchArg;
 
   // When the preference is false, the COM notification server will be invoked,
-  // discover that there is no `program`, and exit (successfully), after which
-  // Windows will invoke the in-product Windows 8-style callbacks.  When true,
-  // the COM notification server will launch Firefox with sufficient arguments
-  // for Firefox to handle the notification.
+  // notice that this is a request that it should ignore, and exit
+  // (successfully), after which Windows will invoke the in-product Windows
+  // 8-style callbacks.  When true, the COM notification server will launch
+  // Firefox with sufficient arguments for Firefox to handle the notification.
   if (!Preferences::GetBool(
           "alerts.useSystemBackend.windows.notificationserver.enabled",
           false)) {
-    // Include dummy key/value so that newline appended arguments aren't off by
-    // one line.
-    launchArg += u"invalid key\ninvalid value"_ns;
+    // The COM notification server will look for this specific key and value to
+    // trigger the behavior mentioned above, of exiting and allowing Windows
+    // 8-style callbacks to run.
+    launchArg += u"skipNotificationServer\ntrue"_ns;
     return launchArg;
   }
 
@@ -297,23 +296,29 @@ void ToastNotificationHandler::HandleCloseFromBrowser() {
 nsresult ToastNotificationHandler::InitAlertAsync() {
   MOZ_TRY(mAlertNotification->GetId(mWindowsTag));
 
+  // The image file might already have been set by system principal APIs.
+  if (mImageUri.IsEmpty()) {
 #ifdef MOZ_BACKGROUNDTASKS
-  nsAutoString imageUrl;
-  if (BackgroundTasks::IsBackgroundTaskMode() &&
-      NS_SUCCEEDED(mAlertNotification->GetImageURL(imageUrl)) &&
-      !imageUrl.IsEmpty()) {
-    // Bug 1870750: Image decoding relies on gfx and runs on a thread pool,
-    // which expects to have been initialized early and on the main thread.
-    // Since background tasks run headless this never occurs. In this case we
-    // force gfx initialization.
-    (void)NS_WARN_IF(!gfxPlatform::GetPlatform());
-  }
+    nsAutoString imageUrl;
+    if (BackgroundTasks::IsBackgroundTaskMode() &&
+        NS_SUCCEEDED(mAlertNotification->GetImageURL(imageUrl)) &&
+        !imageUrl.IsEmpty()) {
+      // Bug 1870750: Image decoding relies on gfx and runs on a thread pool,
+      // which expects to have been initialized early and on the main thread.
+      // Since background tasks run headless this never occurs. In this case we
+      // force gfx initialization.
+      (void)NS_WARN_IF(!gfxPlatform::GetPlatform());
+    }
 #endif
 
-  nsCOMPtr<imgIContainer> image;
-  MOZ_TRY(mAlertNotification->GetImage(getter_AddRefs(image)));
+    nsCOMPtr<imgIContainer> image;
+    MOZ_TRY(mAlertNotification->GetImage(getter_AddRefs(image)));
 
-  return image ? AsyncSaveImage(image) : TryShowAlert();
+    // Defer showing alert until image has saved to disk.
+    return image ? AsyncSaveImage(image) : TryShowAlert();
+  }
+
+  return TryShowAlert();
 }
 
 nsString ToastNotificationHandler::ActionArgsJSONString(

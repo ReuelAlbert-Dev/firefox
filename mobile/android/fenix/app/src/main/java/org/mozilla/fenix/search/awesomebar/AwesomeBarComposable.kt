@@ -148,7 +148,7 @@ class AwesomeBarComposable(
                 onClick = {
                     url?.let {
                         toolbarStore.dispatch(
-                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = false),
+                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true),
                         )
                     }
                 },
@@ -247,7 +247,7 @@ class AwesomeBarComposable(
                 onClick = {
                     url?.let {
                         toolbarStore.dispatch(
-                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = false),
+                            SearchQueryUpdated(query = BrowserToolbarQuery(url), isQueryPrefilled = true),
                         )
                     }
                 },
@@ -270,8 +270,8 @@ class AwesomeBarComposable(
             initialState = it,
             middleware = listOf(
                 BrowserToolbarToFenixSearchMapperMiddleware(
-                    appStore = appStore,
                     toolbarStore = toolbarStore,
+                    browsingModeManager = activity.browsingModeManager,
                     scope = lifecycleScope,
                     browserStore = browserStore,
                 ),
@@ -289,6 +289,7 @@ class AwesomeBarComposable(
                     browserStore = browserStore,
                     toolbarStore = toolbarStore,
                     navController = navController,
+                    browsingModeManager = activity.browsingModeManager,
                 ),
             ),
         )

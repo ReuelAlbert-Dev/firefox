@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1278,6 +1277,12 @@ bool WidgetKeyboardEvent::ExecuteEditCommands(NativeKeyBindingsType aType,
   // This event should be trusted event here and we shouldn't expose native
   // key binding information to web contents with untrusted events.
   if (NS_WARN_IF(!IsTrusted())) {
+    return false;
+  }
+
+  // If this is a reply event, we shouldn't execute the native key bindings in
+  // the parent process.
+  if (NS_WARN_IF(IsHandledInRemoteProcess())) {
     return false;
   }
 

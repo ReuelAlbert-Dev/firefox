@@ -16,7 +16,7 @@
     "about:privatebrowsing":
       "chrome://browser/skin/privatebrowsing/favicon.svg",
     "chrome://browser/content/aiwindow/aiWindow.html":
-      "chrome://global/skin/icons/highlights.svg",
+      "chrome://browser/skin/smart-window-simplified.svg",
   };
 
   const {
@@ -674,6 +674,7 @@
         tab.setAttribute("usercontextid", userContextId);
         ContextualIdentityService.setTabStyle(tab);
       }
+      updateUserContextUIIndicator();
 
       this._tabForBrowser.set(browser, tab);
 
@@ -725,8 +726,90 @@
       return this.selectedBrowser.reload();
     }
 
-    reloadWithFlags(aFlags) {
-      return this.selectedBrowser.reloadWithFlags(aFlags);
+    reloadWithFlags(reloadFlags) {
+      const unchangedRemoteness = [];
+
+      for (const tab of this.selectedTabs) {
+        const browser = tab.linkedBrowser;
+        const url = browser.currentURI;
+        const urlSpec = url.spec;
+        // We need to cache the content principal here because the browser will be
+        // reconstructed when the remoteness changes and the content prinicpal will
+        // be cleared after reconstruction.
+        const principal = tab.linkedBrowser.contentPrincipal;
+        if (this.updateBrowserRemotenessByURL(browser, urlSpec)) {
+          // If the remoteness has changed, the new browser doesn't have any
+          // information of what was loaded before, so we need to load the previous
+          // URL again.
+          if (tab.linkedPanel) {
+            loadBrowserURI(browser, url, principal);
+          } else {
+            // Shift to fully loaded browser and make
+            // sure load handler is instantiated.
+            tab.addEventListener(
+              "SSTabRestoring",
+              () => loadBrowserURI(browser, url, principal),
+              { once: true }
+            );
+            this._insertBrowser(tab);
+          }
+        } else {
+          unchangedRemoteness.push(tab);
+        }
+      }
+
+      if (!unchangedRemoteness.length) {
+        return;
+      }
+
+      // Reset temporary permissions on the remaining tabs to reload.
+      // This is done here because we only want to reset
+      // permissions on user reload.
+      for (const tab of unchangedRemoteness) {
+        SitePermissions.clearTemporaryBlockPermissions(tab.linkedBrowser);
+        // Also reset DOS mitigations for the basic auth prompt on reload.
+        delete tab.linkedBrowser.authPromptAbuseCounter;
+      }
+      gIdentityHandler.hidePopup();
+      gPermissionPanel.hidePopup();
+
+      if (document.hasValidTransientUserGestureActivation) {
+        reloadFlags |= Ci.nsIWebNavigation.LOAD_FLAGS_USER_ACTIVATION;
+      }
+
+      for (const tab of unchangedRemoteness) {
+        reloadBrowser(tab);
+      }
+
+      function reloadBrowser(tab) {
+        if (tab.linkedPanel) {
+          const { browsingContext } = tab.linkedBrowser;
+          const { sessionHistory } = browsingContext;
+          if (sessionHistory) {
+            sessionHistory.reload(reloadFlags);
+          } else {
+            browsingContext.reload(reloadFlags);
+          }
+        } else {
+          // Shift to fully loaded browser and make
+          // sure load handler is instantiated.
+          tab.addEventListener(
+            "SSTabRestoring",
+            () => tab.linkedBrowser.browsingContext.reload(reloadFlags),
+            {
+              once: true,
+            }
+          );
+          this._insertBrowser(tab);
+        }
+      }
+
+      function loadBrowserURI(browser, url, principal) {
+        browser.loadURI(url, {
+          loadFlags: reloadFlags,
+          triggeringPrincipal: principal,
+        });
+      }
     }
 
     stop() {
@@ -1411,6 +1494,7 @@
 
       let profileIdentifier =
         SelectableProfileService?.isEnabled &&
+        SelectableProfileService.getCachedProfileCount() > 1 &&
         SelectableProfileService.currentProfile?.name.replace(/\0/g, "");
       // Note that empty/falsy bits get filtered below.
 
@@ -1712,7 +1796,7 @@
      */
     async _checkIfShouldTriggerTabSelectMessage(oldTab, newTab) {
       const ONE_MINUTE_MS = 60000;
-      const LIMIT_FOR_TRIGGER = 2;
+      const LIMIT_FOR_TRIGGER = 3;
       const now = Date.now();
 
       const oldTabSpec = oldTab.linkedBrowser.currentURI.spec;
@@ -2325,7 +2409,7 @@
     }
 
     updateBrowserRemoteness(aBrowser, { newFrameloader, remoteType } = {}) {
-      let isRemote = aBrowser.getAttribute("remote") == "true";
+      let isRemote = aBrowser.hasAttribute("remote");
 
       // We have to be careful with this here, as the "no remote type" is null,
       // not a string. Make sure to check only for undefined, since null is
@@ -2388,7 +2472,7 @@
         aBrowser.setAttribute("remote", "true");
         aBrowser.setAttribute("remoteType", remoteType);
       } else {
-        aBrowser.setAttribute("remote", "false");
+        aBrowser.removeAttribute("remote");
         aBrowser.removeAttribute("remoteType");
       }
 
@@ -2660,7 +2744,7 @@
             getter = () => () => this;
             break;
           case "isRemoteBrowser":
-            getter = () => browser.getAttribute("remote") == "true";
+            getter = () => browser.hasAttribute("remote");
             break;
           case "permitUnload":
             getter = () => () => ({ permitUnload: true });
@@ -3400,10 +3484,24 @@
      *   An optional argument that accepts a single tab, which, if passed, will
      *   cause the split view to be inserted just before this tab in the tab strip. By
      *   default, the split view will be created at the end of the tab strip.
+     * @param {string} [options.trigger]
+     *   The trigger method for creating the split view. Used for telemetry.
+     *   Valid values: "menu_add", "menu_open".
      */
-    addTabSplitView(tabs, { id = null, insertBefore = null } = {}) {
+    addTabSplitView(
+      tabs,
+      { id = null, insertBefore = null, trigger = null } = {}
+    ) {
       if (!tabs?.length) {
         throw new Error("Cannot create split view with zero tabs");
+      }
+
+      // Capture group information before tabs are moved
+      let tabGroupInfo = null;
+      if (trigger && tabs.length >= 2) {
+        const primaryGroup = tabs[0]?.group;
+        const secondaryGroup = tabs[1]?.group;
+        tabGroupInfo = { primaryGroup, secondaryGroup };
       }
 
       let splitview = this._createTabSplitView(id);
@@ -3420,6 +3518,33 @@
         return null;
       }
 
+      // Record telemetry for split view creation
+      if (trigger && tabGroupInfo) {
+        const tab_layout = this.tabContainer.verticalMode
+          ? "vertical"
+          : "horizontal";
+
+        let tabgroup;
+        const { primaryGroup, secondaryGroup } = tabGroupInfo;
+
+        if (!primaryGroup && !secondaryGroup) {
+          tabgroup = "none";
+        } else if (primaryGroup && secondaryGroup) {
+          tabgroup =
+            primaryGroup === secondaryGroup ? "both_same" : "both_different";
+        } else if (primaryGroup) {
+          tabgroup = "main";
+        } else {
+          tabgroup = "other";
+        }
+
+        Glean.splitview.start.record({
+          tab_layout,
+          trigger,
+          tabgroup,
+        });
+      }
+
       this.tabContainer.dispatchEvent(
         new CustomEvent("SplitViewCreated", {
           bubbles: true,
@@ -3433,10 +3558,25 @@
      *
      * @param {MozTabSplitViewWrapper} [splitView]
      *   The split view to remove.
+     * @param {string} [trigger]
+     *   The trigger method for ending the split view. Used for telemetry.
+     *   Valid values: "menu_separate", "icon_separate", "icon_close", "tab_close", "footer_separate".
      */
-    unsplitTabs(splitview) {
+    unsplitTabs(splitview, trigger = null) {
       if (!splitview) {
         return;
+      }
+
+      // Record telemetry for split view end
+      if (trigger) {
+        const tab_layout = this.tabContainer.verticalMode
+          ? "vertical"
+          : "horizontal";
+
+        Glean.splitview.end.record({
+          tab_layout,
+          trigger,
+        });
       }
 
       // If the split view has about:opentabs open, remove that tab
@@ -3487,17 +3627,6 @@
     }
 
     /**
-     * Hide the list of tabs <browsers> that are part of a split view.
-     *
-     * @param {MozTabbrowserTab[]} tabs
-     */
-    hideSplitViewPanels(tabs) {
-      for (const tab of tabs) {
-        this.tabpanels.removePanelFromSplitView(tab.linkedPanel);
-      }
-    }
-
-    /**
      * Toggle split view active attribute
      *
      * @param {boolean} isActive
@@ -3529,6 +3658,13 @@
 
     openSplitViewMenu(anchorElement) {
       const menu = document.getElementById("split-view-menu");
+      const isFromFooter =
+        anchorElement?.localName === "toolbarbutton" &&
+        anchorElement?.parentElement?.localName === "split-view-footer";
+      menu.setAttribute(
+        "data-trigger-source",
+        isFromFooter ? "footer" : "icon"
+      );
       menu.openPopup(anchorElement, "after_start");
     }
 
@@ -3853,10 +3989,6 @@
         selectTab && container.ownerGlobal.gBrowser.selectedTab;
       let newTabs = [];
 
-      if (typeof elementIndex == "number") {
-        tabIndex = this.#elementIndexToTabIndex(elementIndex);
-      }
-
       // When tabs are adopted across windows, they exit the tab split of the
       // source window, moved to the new window, and finally moved into a split
       // view in the new window. Although the splitViewId stays effectively the
@@ -3866,11 +3998,14 @@
       for (let tab of container.tabs) {
         tab.removedByAdoption = true;
         let adoptedTab = this.adoptTab(tab, {
-          tabIndex,
           selectTab: tab === oldSelectedTab,
+          tabIndex,
+          elementIndex,
         });
         adoptedTab.addedByAdoption = true;
         newTabs.push(adoptedTab);
+        // Put next tab after current one.
+        elementIndex = undefined;
         tabIndex = adoptedTab._tPos + 1;
       }
 
@@ -3932,7 +4067,11 @@
       }
 
       let lazyBrowserURI;
-      if (createLazyBrowser && uriString != "about:blank") {
+      if (
+        createLazyBrowser &&
+        uriString != "about:blank" &&
+        uriString != "about:opentabs"
+      ) {
         lazyBrowserURI = aURIObject;
         uriString = "about:blank";
       }
@@ -6630,7 +6769,7 @@
 
       // tell a new window to take the "dropped" tab
       let args = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
-      args.appendElement(aTab);
+      args.appendElement(aTab.splitview ?? aTab);
       return BrowserWindowTracker.openWindow({
         private: PrivateBrowsingUtils.isWindowPrivate(window),
         features: Object.entries(aOptions)
@@ -6652,27 +6791,27 @@
         return this.replaceTabWithWindow(contextTab, aOptions);
       }
 
-      let tabs;
+      let elements;
       if (contextTab.multiselected) {
-        tabs = this.selectedElements;
+        elements = this.selectedElements;
       } else {
-        tabs = [contextTab.splitview ?? contextTab];
+        elements = [contextTab.splitview ?? contextTab];
       }
 
-      if (this.tabs.length == tabs.length) {
+      if (this.tabs.length == elements.length) {
         return null;
       }
 
-      if (tabs.length == 1) {
-        return this.replaceTabWithWindow(tabs[0], aOptions);
+      if (elements.length == 1) {
+        return this.replaceTabWithWindow(elements[0], aOptions);
       }
 
       // Play the closing animation for all selected tabs to give
       // immediate feedback while waiting for the new window to appear.
       if (!gReduceMotion) {
-        for (let tab of tabs) {
-          tab.style.maxWidth = ""; // ensure that fade-out transition happens
-          tab.removeAttribute("fadein");
+        for (let element of elements) {
+          element.style.maxWidth = ""; // ensure that fade-out transition happens
+          element.removeAttribute("fadein");
         }
       }
 
@@ -6683,8 +6822,13 @@
       // However, to avoid multiple tab-switches in the original window, the other tabs
       // should be adopted before the selected one.
       let { selectedTab } = gBrowser;
-      if (!tabs.includes(selectedTab)) {
-        selectedTab = tabs[0];
+      if (
+        !elements.includes(selectedTab) &&
+        !elements.includes(selectedTab.splitview)
+      ) {
+        selectedTab = this.isSplitViewWrapper(elements[0])
+          ? elements[0].tabs[0]
+          : elements[0];
       }
 
       let win = this.replaceTabWithWindow(selectedTab, aOptions);
@@ -6692,18 +6836,19 @@
         "before-initial-tab-adopted",
         () => {
           let tabIndex = 0;
-          for (let tab of tabs) {
-            if (tab !== selectedTab) {
-              const newTab = win.gBrowser.isSplitViewWrapper(tab)
-                ? win.gBrowser.adoptSplitView(tab, { elementIndex: tabIndex })
-                : win.gBrowser.adoptTab(tab, { tabIndex });
+          for (let element of elements) {
+            if (element !== selectedTab && element !== selectedTab.splitview) {
+              const newTab = win.gBrowser.isSplitViewWrapper(element)
+                ? win.gBrowser.adoptSplitView(element, {
+                    elementIndex: tabIndex,
+                  })
+                : win.gBrowser.adoptTab(element, { tabIndex });
               if (!newTab) {
                 // The adoption failed. Restore "fadein" and don't increase the index.
-                tab.setAttribute("fadein", "true");
+                element.setAttribute("fadein", "true");
                 continue;
               }
             }
-
             ++tabIndex;
           }
           // Restore tab selection
@@ -7191,7 +7336,8 @@
      */
     #handleTabMove(element, moveActionCallback, metricsContext) {
       let tabs;
-      if (this.isTab(element) && element.splitview) {
+      // TODO bug 2024173: consider removing element.splitview check.
+      if (this.isTab(element) && element.splitview?.shouldMoveAllTabsAtOnce) {
         tabs = element.splitview.tabs;
       } else if (this.isTab(element)) {
         tabs = [element];
@@ -7218,8 +7364,8 @@
         this.selectedTab.focus();
       }
 
-      // When a tab group with multiple tabs is moved forwards, emit TabMove in
-      // the reverse order, so that the index in previousTabState values are
+      // When multiple tabs are moved forwards (tab group, split view), reverse
+      // the order of TabMove, so that the index in previousTabState values are
       // still accurate until the event is dispatched. If we were to start with
       // the front tab, then logically that tab moves, and all following tabs
       // would shift, which would invalidate the index in previousTabState.
@@ -7463,8 +7609,16 @@
      * @param {MozTabbrowserTab} aTab
      */
     addToMultiSelectedTabs(aTab) {
+      if (this.isSplitViewWrapper(aTab)) {
+        for (let tab of aTab.tabs) {
+          this.addToMultiSelectedTabs(tab);
+        }
+        return;
+      }
+
       if (aTab.splitview) {
         aTab.splitview.setAttribute("multiselected", "true");
+        aTab.splitview.setAttribute("aria-selected", "true");
       }
 
       if (aTab.multiselected) {
@@ -7514,10 +7668,13 @@
       if (!aTab.multiselected) {
         return;
       }
-      aTab.removeAttribute("multiselected");
+
       if (aTab.splitview) {
         aTab.splitview.removeAttribute("multiselected");
+        aTab.splitview.removeAttribute("aria-selected");
       }
+
+      aTab.removeAttribute("multiselected");
       aTab.removeAttribute("aria-selected");
       this._multiSelectedTabsSet.delete(aTab);
       this._startMultiSelectChange();
@@ -8826,15 +8983,18 @@
       });
 
       this.splitViewCommandSet.addEventListener("command", event => {
+        const source = document
+          .getElementById("split-view-menu")
+          ?.getAttribute("data-trigger-source");
         switch (event.target.id) {
           case "splitViewCmd_separateTabs":
-            this.#activeSplitView.unsplitTabs();
+            this.#activeSplitView.unsplitTabs(`${source}_separate`);
             break;
           case "splitViewCmd_reverseTabs":
-            this.#activeSplitView.reverseTabs();
+            this.#activeSplitView.reverseTabs(source);
             break;
           case "splitViewCmd_closeTabs":
-            this.#activeSplitView.close();
+            this.#activeSplitView.close(`${source}_close`);
             break;
         }
       });
@@ -10217,9 +10377,14 @@ var TabContextMenu = {
     let contextSeparateSplitView = document.getElementById(
       "context_separateSplitView"
     );
+    let contextReverseSplitView = document.getElementById(
+      "context_reverseSplitView"
+    );
     let hasSplitViewTab = this.contextTabs.some(tab => tab.splitview);
     contextMoveTabToNewSplitView.hidden = !splitViewEnabled || hasSplitViewTab;
     contextSeparateSplitView.hidden = !splitViewEnabled || !hasSplitViewTab;
+    contextReverseSplitView.hidden =
+      !splitViewEnabled || !hasSplitViewTab || this.multiselected;
     if (splitViewEnabled) {
       contextMoveTabToNewSplitView.removeAttribute("data-l10n-id");
       contextMoveTabToNewSplitView.setAttribute(
@@ -10456,6 +10621,7 @@ var TabContextMenu = {
 
     SharingUtils.updateShareURLMenuItem(
       this.contextTab.linkedBrowser,
+      this.multiselected ? this.contextTabs.map(t => t.linkedBrowser) : null,
       document.getElementById("context_moveTabOptions")
     );
   },
@@ -10693,28 +10859,44 @@ var TabContextMenu = {
   },
 
   addTabsToSavedGroup(groupId) {
+    let seen = new Set();
+    let tabs = [];
+    for (let tab of this.contextTabs) {
+      if (tab.splitview) {
+        for (let splitTab of tab.splitview.tabs) {
+          if (!seen.has(splitTab)) {
+            seen.add(splitTab);
+            tabs.push(splitTab);
+          }
+        }
+      } else if (!seen.has(tab)) {
+        seen.add(tab);
+        tabs.push(tab);
+      }
+    }
     SessionStore.addTabsToSavedGroup(
       groupId,
-      this.contextTabs,
+      tabs,
       gBrowser.TabMetrics.userTriggeredContext(
         gBrowser.TabMetrics.METRIC_SOURCE.TAB_MENU
       )
     );
-    this.closeContextTabs();
+    gBrowser.removeTabs(tabs, {
+      animate: true,
+      ...gBrowser.TabMetrics.userTriggeredContext(
+        gBrowser.TabMetrics.METRIC_SOURCE.TAB_STRIP
+      ),
+    });
   },
 
-  ungroupTabs() {
-    for (let i = this.contextTabs.length - 1; i >= 0; i--) {
-      gBrowser.ungroupTab(this.contextTabs[i]);
-    }
-  },
-
-  ungroupSplitViews() {
+  ungroupTabsAndSplitViews() {
     let splitViews = new Set();
     for (const tab of this.contextTabs) {
-      if (!splitViews.has(tab.splitview)) {
+      if (tab.splitview && !splitViews.has(tab.splitview)) {
         splitViews.add(tab.splitview);
         gBrowser.ungroupSplitView(tab.splitview);
+      } else if (!tab.splitview) {
+        gBrowser.ungroupTab(tab);
       }
     }
   },
@@ -10733,14 +10915,19 @@ var TabContextMenu = {
     }
 
     let newTab = null;
+    let trigger;
     if (this.contextTabs.length < 2) {
       // Open new tab to split with context tab
       newTab = gBrowser.addTrustedTab("about:opentabs");
       tabsToAdd = [this.contextTabs[0], newTab];
+      trigger = "menu_add";
+    } else {
+      trigger = "menu_open";
     }
 
     gBrowser.addTabSplitView(tabsToAdd, {
       insertBefore,
+      trigger,
     });
 
     if (newTab) {
@@ -10752,18 +10939,32 @@ var TabContextMenu = {
     const splitviews = new Set(
       this.contextTabs.map(tab => tab.splitview).filter(Boolean)
     );
-    splitviews.forEach(splitview => gBrowser.unsplitTabs(splitview));
+    splitviews.forEach(splitview =>
+      gBrowser.unsplitTabs(splitview, "menu_separate")
+    );
   },
 
+  reverseSplitView() {
+    this.contextTab.splitview?.reverseTabs("menu");
+  },
+
+  /**
+   * @param {MozMenuItem} menuItem
+   */
   addNewBadge(menuItem) {
     menuItem.setAttribute(
       "badge",
       gBrowser.tabLocalization.formatValueSync("tab-context-badge-new")
     );
+    menuItem.classList.add("badge-new");
   },
 
+  /**
+   * @param {MozMenuItem} menuItem
+   */
   removeNewBadge(menuItem) {
     menuItem.removeAttribute("badge");
+    menuItem.classList.remove("badge-new");
   },
 
   deleteTabNotes() {

@@ -1,4 +1,3 @@
-/* -*- Mode: IDL; tab-width: 1; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -9,6 +8,7 @@
 
 
 interface Principal;
+interface nsICookieJarSettings;
 
 typedef (Request or UTF8String) RequestInfo;
 typedef unsigned long nsContentPolicyType;
@@ -94,6 +94,14 @@ dictionary RequestInit {
   // processes.
   [ChromeOnly]
   boolean neverTaint;
+
+  // This allows setting the cookieJarSettings for the request. We might not
+  // be able to acquire the cookieJarSettings from the global object if the
+  // global object is not a window global nor a worker global. This can happen
+  // if the request is made from the reporting API. In this case, we can this
+  // field to set the cookieJarSettings for the request.
+  [ChromeOnly]
+  nsICookieJarSettings cookieJarSettings;
 
   AbortSignal? signal;
 

@@ -298,7 +298,7 @@ impl From<ImageBorderKey> for ImageBorderTemplate {
     fn from(key: ImageBorderKey) -> Self {
         let common = PrimTemplateCommonData::with_key_common(key.common);
 
-        let brush_segments = key.kind.nine_patch.create_segments(common.prim_rect.size());
+        let brush_segments = key.kind.nine_patch.create_brush_segments(common.prim_rect.size());
         ImageBorderTemplate {
             common,
             kind: ImageBorderData {

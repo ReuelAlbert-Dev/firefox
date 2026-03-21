@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1115,14 +1113,18 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   }
 
   if (StaticPrefs::security_sandbox_content_close_ksecdd_handle()) {
-    // bug 2006941 and bug 2008739 - Trellix DLP uses these functions, so don't
-    // do this if their DLLs are loaded
+    // bug 2006941 and bug 2008739 and bug 2022584 - Trellix DLP uses these
+    // functions, so don't do this if their DLLs are loaded
+    bool isTrellixDllLoaded;
 #if defined(_M_X64)
-    const wchar_t* trellixDllName = L"fcagff64.dll";
+    isTrellixDllLoaded = !!::GetModuleHandleW(L"fcagff64.dll") ||
+                         !!::GetModuleHandleW(L"fcagff64hc.dll");
+#elif defined(_M_ARM64)
+    isTrellixDllLoaded = !!::GetModuleHandleW(L"fcagffarm64hc.dll");
 #else
-    const wchar_t* trellixDllName = L"fcagff.dll";
+    isTrellixDllLoaded = !!::GetModuleHandleW(L"fcagff.dll");
 #endif
-    if (!::GetModuleHandleW(trellixDllName)) {
+    if (isTrellixDllLoaded) {
       result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
       MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                          "AddKernelObjectToClose should never fail.");

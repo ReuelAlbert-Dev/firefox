@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,8 +10,8 @@ using namespace mozilla;
 // Keep this in sync with the declaration in Preferences.cpp.
 //
 // It's declared here to avoid polluting Preferences.h with test-only stuff.
-void TestParseError(PrefValueKind aKind, const char* aText,
-                    nsCString& aErrorMsg);
+nsresult TestParseError(PrefValueKind aKind, const char* aText,
+                        nsCString& aErrorMsg);
 
 TEST(PrefsParser, Errors)
 {
@@ -583,6 +581,18 @@ pref("int.ok", 0);
   DEFAULT("pref(\"foo\\n\n foo\\r\r foo\\r\\n\r\n foo\", bad);",
     "test:4: prefs parse error: unknown keyword\n"
     "unknown keyword\n"
+  );
+
+  // UTF-8 BOM should be skipped at the start of the input.
+  USER("\xEF\xBB\xBF" R"(
+user_pref("int.ok", 1);
+    )",
+    ""
+  );
+
+  // UTF-8 BOM followed by no content.
+  USER("\xEF\xBB\xBF",
+    ""
   );
 
   // clang-format on

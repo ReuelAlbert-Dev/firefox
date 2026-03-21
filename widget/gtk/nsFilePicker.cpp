@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -32,6 +31,7 @@
 
 #include "gfxPlatform.h"
 #include "nsXULAppAPI.h"
+#include "GRefPtr.h"
 #include "nsFilePicker.h"
 
 #undef LOG
@@ -226,12 +226,11 @@ void nsFilePicker::ReadValuesFromNonPortalFileChooser(
 }
 
 void nsFilePicker::InitNative(nsIWidget* aParent, const nsAString& aTitle) {
-  mParentWidget = aParent;
+  mParentWidget = nsWindow::FromWidget(aParent);
   mTitle.Assign(aTitle);
 
   if (mParentWidget) {
-    auto window = static_cast<nsWindow*>(mParentWidget.get());
-    if (GtkWidget* widget = window->GetGtkWidget()) {
+    if (GtkWidget* widget = mParentWidget->GetGtkWidget()) {
       if (auto* title = gtk_window_get_title(GTK_WINDOW(widget))) {
         mTitle.AppendLiteral(" - ");
         mTitle.Append(NS_ConvertUTF8toUTF16(title));
@@ -468,17 +467,15 @@ void nsFilePicker::FinishOpeningPortal() {
   MOZ_DIAGNOSTIC_ASSERT(!mExportedParent);
   nsAutoCString parentWindow;
   if (mParentWidget) {
-    static_cast<nsWindow*>(mParentWidget.get())
-        ->ExportHandle()
-        ->Then(
-            GetCurrentSerialEventTarget(), __func__,
-            [self = RefPtr{this}](nsCString&& aResult) {
-              self->mExportedParent = true;
-              self->FinishOpeningPortalWithParent(aResult);
-            },
-            [self = RefPtr{this}](bool) {
-              self->FinishOpeningPortalWithParent(""_ns);
-            });
+    mParentWidget->ExportHandle()->Then(
+        GetCurrentSerialEventTarget(), __func__,
+        [self = RefPtr{this}](nsCString&& aResult) {
+          self->mExportedParent = true;
+          self->FinishOpeningPortalWithParent(aResult);
+        },
+        [self = RefPtr{this}](bool) {
+          self->FinishOpeningPortalWithParent(""_ns);
+        });
   } else {
     FinishOpeningPortalWithParent(""_ns);
   }
@@ -617,8 +614,8 @@ void nsFilePicker::ReadPortalUriList(GVariant* aUriList) {
 }
 
 void nsFilePicker::ClearPortalState() {
-  if (mExportedParent) {
-    static_cast<nsWindow*>(mParentWidget.get())->UnexportHandle();
+  if (mExportedParent && mParentWidget) {
+    mParentWidget->UnexportHandle();
     mExportedParent = false;
   }
   mPortalProxy = nullptr;
@@ -676,7 +673,9 @@ void nsFilePicker::OpenNonPortal() {
   NS_ConvertUTF16toUTF8 title(mTitle);
 
   GtkWindow* parent_widget =
-      GTK_WINDOW(mParentWidget->GetNativeData(NS_NATIVE_SHELLWIDGET));
+      mParentWidget
+          ? GTK_WINDOW(mParentWidget->GetNativeData(NS_NATIVE_SHELLWIDGET))
+          : nullptr;
 
   GtkFileChooserAction action = GetGtkFileChooserAction(mMode);
 
@@ -861,10 +860,10 @@ bool nsFilePicker::WarnForNonReadableFile() {
       mParentWidget
           ? GTK_WINDOW(mParentWidget->GetNativeData(NS_NATIVE_SHELLWIDGET))
           : nullptr;
-  auto* cancel_dialog = gtk_message_dialog_new(
+  RefPtr<GtkWidget> cancel_dialog = gtk_message_dialog_new(
       parent_window, flags, GTK_MESSAGE_ERROR, GTK_BUTTONS_CLOSE, "%s",
       NS_ConvertUTF16toUTF8(errorMessage).get());
-  gtk_dialog_run(GTK_DIALOG(cancel_dialog));
+  gtk_dialog_run(GTK_DIALOG(cancel_dialog.get()));
   gtk_widget_destroy(cancel_dialog);
 
   return true;

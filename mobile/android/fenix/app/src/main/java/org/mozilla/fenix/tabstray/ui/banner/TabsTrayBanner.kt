@@ -47,19 +47,18 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import mozilla.components.browser.state.state.ContentState
-import mozilla.components.browser.state.state.TabSessionState
 import mozilla.components.compose.base.menu.DropdownMenu
 import mozilla.components.compose.base.menu.MenuItem
 import mozilla.components.compose.base.text.Text
 import org.mozilla.fenix.R
 import org.mozilla.fenix.compose.Banner
-import org.mozilla.fenix.tabstray.Page
-import org.mozilla.fenix.tabstray.TabsTrayAction
-import org.mozilla.fenix.tabstray.TabsTrayState
-import org.mozilla.fenix.tabstray.TabsTrayState.Mode
-import org.mozilla.fenix.tabstray.TabsTrayStore
 import org.mozilla.fenix.tabstray.TabsTrayTestTag
+import org.mozilla.fenix.tabstray.data.createTab
+import org.mozilla.fenix.tabstray.redux.action.TabsTrayAction
+import org.mozilla.fenix.tabstray.redux.state.Page
+import org.mozilla.fenix.tabstray.redux.state.TabsTrayState
+import org.mozilla.fenix.tabstray.redux.state.TabsTrayState.Mode
+import org.mozilla.fenix.tabstray.redux.store.TabsTrayStore
 import org.mozilla.fenix.tabstray.ui.tabstray.TabsTray
 import org.mozilla.fenix.tabstray.ui.theme.TabManagerThemeProvider
 import org.mozilla.fenix.theme.FirefoxTheme
@@ -86,6 +85,7 @@ private val TopAppBarTitleInset = 16.dp
  * @param statusBarHeight The height of the system status bar.
  * @param shouldShowTabAutoCloseBanner Whether the tab auto-close banner should be displayed.
  * @param shouldShowLockPbmBanner Whether the lock private browsing mode banner should be displayed.
+ * @param shouldShowAddToTabGroupButton Whether the add to tab group button should be displayed.
  * @param scrollBehavior Defines how the [TabPageBanner] should behave when the content under it is scrolled.
  * @param onTabPageIndicatorClicked Invoked when the user clicks on a tab page indicator.
  * @param onSaveToCollectionClick Invoked when the user clicks the "Save to Collection" button in multi-select mode.
@@ -100,6 +100,7 @@ private val TopAppBarTitleInset = 16.dp
  * @param onTabAutoCloseBannerDismiss Invoked when the user dismisses the auto-close banner.
  * @param onTabAutoCloseBannerShown Invoked when the auto-close banner is shown to the user.
  * @param onExitSelectModeClick Invoked when the user exits multi-select mode.
+ * @param onAddToTabGroup Invoked when the user adds to a tab group.
  */
 @Suppress("LongParameterList", "LongMethod")
 @Composable
@@ -113,6 +114,7 @@ fun TabsTrayBanner(
     statusBarHeight: Dp,
     shouldShowTabAutoCloseBanner: Boolean,
     shouldShowLockPbmBanner: Boolean,
+    shouldShowAddToTabGroupButton: Boolean,
     scrollBehavior: TopAppBarScrollBehavior,
     onTabPageIndicatorClicked: (Page) -> Unit,
     onSaveToCollectionClick: () -> Unit,
@@ -126,6 +128,7 @@ fun TabsTrayBanner(
     onTabAutoCloseBannerDismiss: () -> Unit,
     onTabAutoCloseBannerShown: () -> Unit,
     onExitSelectModeClick: () -> Unit,
+    onAddToTabGroup: () -> Unit,
 ) {
     val isInMultiSelectMode by remember(selectionMode) {
         derivedStateOf {
@@ -155,12 +158,14 @@ fun TabsTrayBanner(
             MultiSelectBanner(
                 selectedTabCount = selectionMode.selectedTabs.size,
                 shouldShowInactiveButton = isInDebugMode,
+                shouldShowAddToTabGroupButton = shouldShowAddToTabGroupButton,
                 onExitSelectModeClick = onExitSelectModeClick,
                 onSaveToCollectionsClick = onSaveToCollectionClick,
                 onShareSelectedTabs = onShareSelectedTabsClick,
                 onBookmarkSelectedTabsClick = onBookmarkSelectedTabsClick,
                 onCloseSelectedTabsClick = onDeleteSelectedTabsClick,
                 onMakeSelectedTabsInactive = onForceSelectedTabsAsInactiveClick,
+                onAddToTabGroup = onAddToTabGroup,
             )
         } else {
             TabPageBanner(
@@ -378,6 +383,7 @@ private fun TabPageBanner(
  *
  * @param selectedTabCount The amount of selected tabs.
  * @param shouldShowInactiveButton Whether to show the inactive tabs menu item.
+ * @param shouldShowAddToTabGroupButton Whether the add to tab group button should be displayed.
  * @param onExitSelectModeClick Invoked when the user clicks to exit selection mode.
  * @param onSaveToCollectionsClick Invoked when the user clicks on the save to collection button.
  * @param onShareSelectedTabs Invoked when the user clicks on the share tabs button.
@@ -385,18 +391,21 @@ private fun TabPageBanner(
  * @param onCloseSelectedTabsClick Invoked when the user clicks the menu item to close the selected tabs.
  * @param onMakeSelectedTabsInactive Invoked when the user clicks the menu item to set the
  * selected tabs as inactive.
+ * @param onAddToTabGroup Invoked when the user adds to a tab group.
  */
 @Suppress("LongMethod", "LongParameterList")
 @Composable
 private fun MultiSelectBanner(
     selectedTabCount: Int,
     shouldShowInactiveButton: Boolean,
+    shouldShowAddToTabGroupButton: Boolean,
     onExitSelectModeClick: () -> Unit,
     onSaveToCollectionsClick: () -> Unit,
     onShareSelectedTabs: () -> Unit,
     onBookmarkSelectedTabsClick: () -> Unit,
     onCloseSelectedTabsClick: () -> Unit,
     onMakeSelectedTabsInactive: () -> Unit,
+    onAddToTabGroup: () -> Unit,
 ) {
     val buttonsEnabled by remember(selectedTabCount) {
         derivedStateOf {
@@ -411,9 +420,11 @@ private fun MultiSelectBanner(
     var showMenu by remember { mutableStateOf(false) }
     val menuItems = generateMultiSelectBannerMenuItems(
         shouldShowInactiveButton = shouldShowInactiveButton,
+        shouldShowAddToTabGroupButton = shouldShowAddToTabGroupButton,
         onShareSelectedTabs = onShareSelectedTabs,
         onSaveToCollectionsClick = onSaveToCollectionsClick,
         onMakeSelectedTabsInactive = onMakeSelectedTabsInactive,
+        onAddToTabGroup = onAddToTabGroup,
     )
 
     TopAppBar(
@@ -442,7 +453,7 @@ private fun MultiSelectBanner(
                 enabled = buttonsEnabled,
             ) {
                 Icon(
-                    painter = painterResource(id = R.drawable.ic_bookmark_outline),
+                    painter = painterResource(id = iconsR.drawable.mozac_ic_bookmark_24),
                     contentDescription = stringResource(
                         id = R.string.tab_manager_multiselect_menu_item_bookmark_content_description,
                     ),
@@ -488,20 +499,22 @@ private fun MultiSelectBanner(
 
 private fun generateMultiSelectBannerMenuItems(
     shouldShowInactiveButton: Boolean,
+    shouldShowAddToTabGroupButton: Boolean,
     onShareSelectedTabs: () -> Unit,
     onSaveToCollectionsClick: () -> Unit,
     onMakeSelectedTabsInactive: () -> Unit,
+    onAddToTabGroup: () -> Unit,
 ): List<MenuItem> {
     val menuItems = mutableListOf(
         MenuItem.IconItem(
             text = Text.Resource(R.string.tab_manager_multiselect_menu_item_share),
-            drawableRes = R.drawable.ic_share,
+            drawableRes = iconsR.drawable.mozac_ic_share_android_24,
             testTag = TabsTrayTestTag.SHARE_BUTTON,
             onClick = onShareSelectedTabs,
         ),
         MenuItem.IconItem(
             text = Text.Resource(R.string.tab_manager_multiselect_menu_item_add_to_collection),
-            drawableRes = R.drawable.ic_tab_collection,
+            drawableRes = iconsR.drawable.mozac_ic_collection_24,
             testTag = TabsTrayTestTag.COLLECTIONS_BUTTON,
             onClick = onSaveToCollectionsClick,
         ),
@@ -512,6 +525,15 @@ private fun generateMultiSelectBannerMenuItems(
                 text = Text.Resource(R.string.inactive_tabs_menu_item_2),
                 drawableRes = iconsR.drawable.mozac_ic_cross_circle_24,
                 onClick = onMakeSelectedTabsInactive,
+            ),
+        )
+    }
+    if (shouldShowAddToTabGroupButton) {
+        menuItems.add(
+            MenuItem.IconItem(
+                text = Text.Resource(R.string.tab_manager_multiselect_menu_item_add_to_tab_group),
+                drawableRes = iconsR.drawable.mozac_ic_tab_group_24,
+                onClick = onAddToTabGroup,
             ),
         )
     }
@@ -536,19 +558,9 @@ private fun TabsTrayBannerAutoClosePreview() {
 private fun TabsTrayBannerMultiselectPreview() {
     TabsTrayBannerPreviewRoot(
         selectMode = Mode.Select(
-            setOf(
-                TabSessionState(
-                    id = "1",
-                    content = ContentState(
-                        url = "www.mozilla.com",
-                    ),
-                ),
-                TabSessionState(
-                    id = "2",
-                    content = ContentState(
-                        url = "www.mozilla.com",
-                    ),
-                ),
+            selectedTabs = setOf(
+                createTab("www.mozilla.com"),
+                createTab("www.mozilla.com"),
             ),
         ),
     )
@@ -568,6 +580,7 @@ private fun TabsTrayBannerPreviewRoot(
     selectedPage: Page = Page.NormalTabs,
     shouldShowTabAutoCloseBanner: Boolean = false,
     shouldShowLockPbmBanner: Boolean = false,
+    shouldShowAddToTabGroupButton: Boolean = false,
 ) {
     val tabsTrayStore = remember {
         TabsTrayStore(
@@ -591,6 +604,7 @@ private fun TabsTrayBannerPreviewRoot(
                 statusBarHeight = 50.dp,
                 shouldShowTabAutoCloseBanner = shouldShowTabAutoCloseBanner,
                 shouldShowLockPbmBanner = shouldShowLockPbmBanner,
+                shouldShowAddToTabGroupButton = shouldShowAddToTabGroupButton,
                 scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior(),
                 onTabPageIndicatorClicked = { page ->
                     tabsTrayStore.dispatch(TabsTrayAction.PageSelected(page))
@@ -608,6 +622,7 @@ private fun TabsTrayBannerPreviewRoot(
                 onExitSelectModeClick = {
                     tabsTrayStore.dispatch(TabsTrayAction.ExitSelectMode)
                 },
+                onAddToTabGroup = {},
             )
         }
     }

@@ -36,6 +36,8 @@ const PREF_PASSWORD_GENERATION_AVAILABLE = "signon.generation.available";
 const { BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN } = Ci.nsICookieService;
 
 const PASSWORD_MANAGER_PREF_ID = "services.passwordSavingEnabled";
+const BACKUP_ENABLED_ON_PROFILES_PREF_NAME =
+  "browser.backup.enabled_on.profiles";
 
 ChromeUtils.defineLazyGetter(this, "AlertsServiceDND", function () {
   try {
@@ -79,6 +81,8 @@ XPCOMUtils.defineLazyPreferenceGetter(
 ChromeUtils.defineESModuleGetters(this, {
   AppUpdater: "resource://gre/modules/AppUpdater.sys.mjs",
   DoHConfigController: "moz-src:///toolkit/components/doh/DoHConfig.sys.mjs",
+  PreferencesBackupResource:
+    "resource:///modules/backup/PreferencesBackupResource.sys.mjs",
   Sanitizer: "resource:///modules/Sanitizer.sys.mjs",
   SelectableProfileService:
     "resource:///modules/profiles/SelectableProfileService.sys.mjs",
@@ -206,6 +210,7 @@ Preferences.addAll([
 
   // Firefox VPN
   { id: "browser.ipProtection.enabled", type: "bool" },
+  { id: "browser.ipProtection.added", type: "bool" },
   { id: "browser.ipProtection.entitlementCache", type: "string" },
   { id: "browser.ipProtection.features.siteExceptions", type: "bool" },
   { id: "browser.ipProtection.features.autoStart", type: "bool" },
@@ -219,6 +224,7 @@ Preferences.addAll([
 
   // Popups
   { id: "dom.disable_open_during_load", type: "bool" },
+  { id: "dom.security.framebusting_intervention.enabled", type: "bool" },
 
   // Passwords
   { id: "signon.rememberSignons", type: "bool" },
@@ -375,12 +381,12 @@ if (SECURITY_PRIVACY_STATUS_CARD_ENABLED) {
       id: "trackerCount",
       cachedValue: null,
       async loadTrackerCount(emitChange) {
-        const now = Date.now();
-        const aMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+        const now = new Date();
+        const aMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         /** @type {{ getResultByName: (_: string) => number }[]} */
         const events = await lazy.TrackingDBService.getEventsByDateRange(
-          now,
-          aMonthAgo
+          aMonthAgo,
+          now
         );
 
         const total = events.reduce((acc, day) => {
@@ -915,8 +921,12 @@ if (SECURITY_PRIVACY_STATUS_CARD_ENABLED) {
 }
 
 Preferences.addSetting({
-  id: "ipProtectionVisible",
+  id: "ipProtectionEnabled",
   pref: "browser.ipProtection.enabled",
+});
+Preferences.addSetting({
+  id: "ipProtectionVisible",
+  pref: "browser.ipProtection.added",
 });
 Preferences.addSetting({
   id: "ipProtectionNotOptedIn",
@@ -925,17 +935,40 @@ Preferences.addSetting({
 });
 Preferences.addSetting({
   id: "ipProtectionNotOptedInSection",
-  deps: ["ipProtectionVisible", "ipProtectionNotOptedIn"],
-  visible: ({ ipProtectionVisible, ipProtectionNotOptedIn }) =>
-    ipProtectionVisible.value && ipProtectionNotOptedIn.value,
+  deps: [
+    "ipProtectionEnabled",
+    "ipProtectionVisible",
+    "ipProtectionNotOptedIn",
+  ],
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    ipProtectionNotOptedIn.value,
 });
 Preferences.addSetting({
   id: "getStartedButton",
-  deps: ["ipProtectionVisible", "ipProtectionNotOptedIn"],
-  visible: ({ ipProtectionVisible, ipProtectionNotOptedIn }) =>
-    ipProtectionVisible.value && ipProtectionNotOptedIn.value,
+  deps: [
+    "ipProtectionEnabled",
+    "ipProtectionVisible",
+    "ipProtectionNotOptedIn",
+  ],
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    ipProtectionNotOptedIn.value,
   onUserClick() {
-    IPProtection.getPanel(window.browsingContext.topChromeWindow)?.enroll();
+    IPProtection.getPanel(window.browsingContext.topChromeWindow)?.enroll({
+      entrypoint: "vpn_integration_settings",
+      utm_source: "settings",
+    });
   },
 });
 
@@ -946,15 +979,18 @@ Preferences.addSetting({
 Preferences.addSetting({
   id: "ipProtectionExceptions",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionSiteExceptionsFeatureEnabled",
     "ipProtectionNotOptedIn",
   ],
   visible: ({
+    ipProtectionEnabled,
     ipProtectionVisible,
     ipProtectionSiteExceptionsFeatureEnabled,
     ipProtectionNotOptedIn,
   }) =>
+    ipProtectionEnabled.value &&
     ipProtectionVisible.value &&
     ipProtectionSiteExceptionsFeatureEnabled.value &&
     !ipProtectionNotOptedIn.value,
@@ -963,6 +999,7 @@ Preferences.addSetting({
 Preferences.addSetting({
   id: "ipProtectionExceptionAllListButton",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionSiteExceptionsFeatureEnabled",
     "ipProtectionNotOptedIn",
@@ -984,10 +1021,12 @@ Preferences.addSetting({
     };
   },
   visible: ({
+    ipProtectionEnabled,
     ipProtectionVisible,
     ipProtectionSiteExceptionsFeatureEnabled,
     ipProtectionNotOptedIn,
   }) =>
+    ipProtectionEnabled.value &&
     ipProtectionVisible.value &&
     ipProtectionSiteExceptionsFeatureEnabled.value &&
     !ipProtectionNotOptedIn.value,
@@ -1033,15 +1072,18 @@ Preferences.addSetting({
 Preferences.addSetting({
   id: "ipProtectionAutoStart",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionAutoStartFeatureEnabled",
     "ipProtectionNotOptedIn",
   ],
   visible: ({
+    ipProtectionEnabled,
     ipProtectionVisible,
     ipProtectionAutoStartFeatureEnabled,
     ipProtectionNotOptedIn,
   }) =>
+    ipProtectionEnabled.value &&
     ipProtectionVisible.value &&
     ipProtectionAutoStartFeatureEnabled.value &&
     !ipProtectionNotOptedIn.value,
@@ -1050,41 +1092,78 @@ Preferences.addSetting({
   id: "ipProtectionAutoStartCheckbox",
   pref: "browser.ipProtection.autoStartEnabled",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionAutoStart",
     "ipProtectionNotOptedIn",
   ],
-  visible: ({ ipProtectionVisible, ipProtectionNotOptedIn }) =>
-    ipProtectionVisible.value && !ipProtectionNotOptedIn.value,
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    !ipProtectionNotOptedIn.value,
 });
 Preferences.addSetting({
   id: "ipProtectionAutoStartPrivateCheckbox",
   pref: "browser.ipProtection.autoStartPrivateEnabled",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionAutoStart",
     "ipProtectionNotOptedIn",
   ],
-  visible: ({ ipProtectionVisible, ipProtectionNotOptedIn }) =>
-    ipProtectionVisible.value && !ipProtectionNotOptedIn.value,
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    !ipProtectionNotOptedIn.value,
 });
 Preferences.addSetting({
   id: "ipProtectionBandwidthVisible",
-  deps: ["ipProtectionVisible"],
+  deps: ["ipProtectionEnabled", "ipProtectionVisible"],
   pref: "browser.ipProtection.bandwidth.enabled",
 });
 Preferences.addSetting({
-  id: "ipProtectionBandwidth",
+  id: "ipProtectionBandwidthSection",
   deps: [
+    "ipProtectionEnabled",
     "ipProtectionVisible",
     "ipProtectionBandwidthVisible",
     "ipProtectionNotOptedIn",
   ],
   visible: ({
+    ipProtectionEnabled,
     ipProtectionVisible,
     ipProtectionBandwidthVisible,
     ipProtectionNotOptedIn,
   }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    ipProtectionBandwidthVisible.value &&
+    !ipProtectionNotOptedIn.value,
+});
+Preferences.addSetting({
+  id: "ipProtectionBandwidth",
+  deps: [
+    "ipProtectionEnabled",
+    "ipProtectionVisible",
+    "ipProtectionBandwidthVisible",
+    "ipProtectionBandwidthSection",
+    "ipProtectionNotOptedIn",
+  ],
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionBandwidthVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
     ipProtectionVisible.value &&
     ipProtectionBandwidthVisible.value &&
     !ipProtectionNotOptedIn.value,
@@ -1112,9 +1191,19 @@ Preferences.addSetting({
 });
 Preferences.addSetting({
   id: "ipProtectionLinks",
-  deps: ["ipProtectionVisible", "ipProtectionNotOptedIn"],
-  visible: ({ ipProtectionVisible, ipProtectionNotOptedIn }) =>
-    ipProtectionVisible.value && !ipProtectionNotOptedIn.value,
+  deps: [
+    "ipProtectionEnabled",
+    "ipProtectionVisible",
+    "ipProtectionNotOptedIn",
+  ],
+  visible: ({
+    ipProtectionEnabled,
+    ipProtectionVisible,
+    ipProtectionNotOptedIn,
+  }) =>
+    ipProtectionEnabled.value &&
+    ipProtectionVisible.value &&
+    !ipProtectionNotOptedIn.value,
 });
 
 // Study opt out
@@ -1974,12 +2063,46 @@ Preferences.addSetting({
   pref: "dom.disable_open_during_load",
 });
 Preferences.addSetting({
-  id: "popupPolicyButton",
-  deps: ["popupPolicy"],
-  onUserClick: () => gPrivacyPane.showPopupExceptions(),
-  disabled: ({ popupPolicy }) => {
-    return !popupPolicy.value || popupPolicy.locked;
+  id: "redirectPolicy",
+  pref: "dom.security.framebusting_intervention.enabled",
+});
+// This button controls both the pop-up and framebusting prefs. They are split
+// up for testing reasons, but user-facing, they can only be modified together.
+// Thus, we need some special handling here. We only consider the checkbox to be
+// checked if both prefs are enabled, otherwise it is unchecked. In the special
+// case that one of the prefs is locked, the checkbox should only control the
+// other pref.
+Preferences.addSetting({
+  id: "popupAndRedirectPolicy",
+  deps: ["popupPolicy", "redirectPolicy"],
+  get: (_val, deps) => {
+    if (deps.popupPolicy.locked && !deps.redirectPolicy.locked) {
+      return deps.redirectPolicy.value;
+    }
+    if (!deps.popupPolicy.locked && deps.redirectPolicy.locked) {
+      return deps.popupPolicy.value;
+    }
+    return deps.popupPolicy.value && deps.redirectPolicy.value;
   },
+  set: (val, deps) => {
+    if (!deps.popupPolicy.locked) {
+      deps.popupPolicy.value = val;
+    }
+    if (!deps.redirectPolicy.locked) {
+      deps.redirectPolicy.value = val;
+    }
+  },
+  disabled: ({ popupPolicy, redirectPolicy }) =>
+    popupPolicy.locked && redirectPolicy.locked,
+});
+Preferences.addSetting({
+  id: "popupAndRedirectPolicyButton",
+  deps: ["popupPolicy", "redirectPolicy"],
+  onUserClick: () => gPrivacyPane.showPopupExceptions(),
+  disabled: ({ popupPolicy, redirectPolicy }) =>
+    !popupPolicy.value ||
+    !redirectPolicy.value ||
+    (popupPolicy.locked && redirectPolicy.locked),
 });
 Preferences.addSetting({
   id: "warnAddonInstall",
@@ -2028,8 +2151,8 @@ Preferences.addSetting({
   },
 });
 Preferences.addSetting({
-  id: "localHostSettingsButton",
-  onUserClick: () => gPrivacyPane.showLocalHostExceptions(),
+  id: "loopbackNetworkSettingsButton",
+  onUserClick: () => gPrivacyPane.showLoopbackNetworkExceptions(),
   deps: ["enabledLNA"],
   visible: deps => {
     return deps.enabledLNA.value;
@@ -2938,6 +3061,8 @@ var gPrivacyPane = {
    */
   _shouldPromptForRestart: true,
 
+  _originalStateOfDataCollectionPrefs: new Map(),
+
   /**
    * Update the tracking protection UI to deal with extension control.
    */
@@ -3542,6 +3667,36 @@ var gPrivacyPane = {
         this.initOptOutStudyCheckbox();
       }
       this.initAddonRecommendationsCheckbox();
+    }
+
+    if (SelectableProfileService.currentProfile) {
+      let dataCollectionPrefs = PreferencesBackupResource.dataCollectionPrefs;
+      for (let pref of dataCollectionPrefs) {
+        this._originalStateOfDataCollectionPrefs.set(
+          pref,
+          Services.prefs.getBoolPref(pref, false)
+        );
+
+        Services.prefs.addObserver(
+          pref,
+          gPrivacyPane.updateBackupBannerVisibility
+        );
+      }
+      window.addEventListener("unload", () => {
+        for (let pref of dataCollectionPrefs) {
+          Services.prefs.removeObserver(
+            pref,
+            gPrivacyPane.updateBackupBannerVisibility
+          );
+        }
+      });
+
+      document
+        .getElementById("backup-multi-profile-warning-message-bar")
+        .addEventListener("message-bar:user-dismissed", event => {
+          event.preventDefault();
+          event.target.hidden = true;
+        });
     }
 
     let signonBundle = document.getElementById("signonBundle");
@@ -4541,14 +4696,14 @@ var gPrivacyPane = {
     );
   },
 
-  // LOCALHOST
+  // LOOPBACK-NETWORK
 
   /**
-   * Displays the localhost exceptions dialog where specific site localhost
+   * Displays the loopback network exceptions dialog where specific site loopback network
    * preferences can be set.
    */
-  showLocalHostExceptions() {
-    let params = { permissionType: "localhost" };
+  showLoopbackNetworkExceptions() {
+    let params = { permissionType: "loopback-network" };
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
@@ -5143,6 +5298,29 @@ var gPrivacyPane = {
     telemetryContainer.hidden = checkbox.checked;
   },
 
+  updateBackupBannerVisibility() {
+    let anyPrefChanged = false;
+    for (let [
+      pref,
+      originalValue,
+    ] of gPrivacyPane._originalStateOfDataCollectionPrefs) {
+      if (Services.prefs.getBoolPref(pref, false) !== originalValue) {
+        anyPrefChanged = true;
+        break;
+      }
+    }
+
+    let profilesEnabledOn = JSON.parse(
+      Services.prefs.getStringPref(BACKUP_ENABLED_ON_PROFILES_PREF_NAME, "{}")
+    );
+    let currentId = SelectableProfileService.currentProfile.id;
+    let otherProfilesEnabled = Object.keys(profilesEnabledOn).some(
+      id => id != currentId
+    );
+    document.getElementById("backup-multi-profile-warning-message-bar").hidden =
+      !otherProfilesEnabled || !anyPrefChanged;
+  },
+
   /**
    * Initialize the opt-out-study preference checkbox into about:preferences and
    * handles events coming from the UI for it.
@@ -5208,6 +5386,12 @@ var gPrivacyPane = {
   _initProfilesInfo() {
     setEventListener(
       "dataCollectionViewProfiles",
+      "click",
+      gMainPane.manageProfiles
+    );
+
+    setEventListener(
+      "dataCollectionViewProfilesMultiProfileBackupWarning",
       "click",
       gMainPane.manageProfiles
     );

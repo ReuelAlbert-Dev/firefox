@@ -9,7 +9,6 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   HiddenBrowserManager: "resource://gre/modules/HiddenFrame.sys.mjs",
-  Preferences: "resource://gre/modules/Preferences.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
   ProcessType: "resource://gre/modules/ProcessType.sys.mjs",
@@ -393,7 +392,7 @@ export class UserCharacteristicsPageService {
   // metrics, so we do this in a wrapper function
   async filterAllCanvasRawData(allCanvasData) {
     // Check if we should skip compression (test mode)
-    const skipCompression = lazy.Preferences.get(
+    const skipCompression = Services.prefs.getBoolPref(
       "toolkit.telemetry.user_characteristics_ping.test_skip_compression",
       false
     );
@@ -465,7 +464,7 @@ export class UserCharacteristicsPageService {
     // and the collect probability.
 
     // Check if we should ignore probability filtering
-    const ignoreProbability = lazy.Preferences.get(
+    const ignoreProbability = Services.prefs.getBoolPref(
       "toolkit.telemetry.user_characteristics_ping.ignore_canvas_probability",
       false
     );
@@ -1358,6 +1357,8 @@ export class UserCharacteristicsPageService {
       v1: [
         "ALIASED_LINE_WIDTH_RANGE",
         "ALIASED_POINT_SIZE_RANGE",
+        "IMPLEMENTATION_COLOR_READ_FORMAT",
+        "IMPLEMENTATION_COLOR_READ_TYPE",
         "MAX_COMBINED_TEXTURE_IMAGE_UNITS",
         "MAX_CUBE_MAP_TEXTURE_SIZE",
         "MAX_FRAGMENT_UNIFORM_VECTORS",
@@ -1413,7 +1414,7 @@ export class UserCharacteristicsPageService {
           "MAX_COLOR_ATTACHMENTS_WEBGL",
           "MAX_DRAW_BUFFERS_WEBGL",
         ],
-        EXT_disjoint_timer_query: ["TIMESTAMP_EXT"],
+        EXT_disjoint_timer_query: ["QUERY_COUNTER_BITS_EXT", "TIMESTAMP_EXT"],
         OVR_multiview2: ["MAX_VIEWS_OVR"],
       },
     };
@@ -1553,6 +1554,8 @@ export class UserCharacteristicsPageService {
       };
     }
 
+    const contextAttrs = gl.getContextAttributes();
+
     const map = {
       // Debug Params
       Extensions: results.debugParams.extensions,
@@ -1575,6 +1578,9 @@ export class UserCharacteristicsPageService {
         results.shaderPrecision.FRAGMENT_SHADER
       ),
       PrecisionVertex: JSON.stringify(results.shaderPrecision.VERTEX_SHADER),
+      // Context Attributes
+      Antialias: String(contextAttrs.antialias),
+      Alpha: String(contextAttrs.alpha),
     };
 
     this.collectGleanMetricsFromMap(map, {
@@ -1612,13 +1618,15 @@ export class UserCharacteristicsPageService {
       "media.mediasource.vp9.enabled",
     ];
 
-    const defaultPrefs = new lazy.Preferences({ defaultBranch: true });
+    const defaultBranch = Services.prefs.getDefaultBranch("");
     const changedPrefs = {};
     for (const pref of PREFS) {
-      const value = lazy.Preferences.get(pref);
-      if (lazy.Preferences.isSet(pref) && defaultPrefs.get(pref) !== value) {
-        const key = pref.substring(6).substring(0, pref.length - 8 - 6);
-        changedPrefs[key] = value;
+      if (Services.prefs.prefHasUserValue(pref)) {
+        const value = Services.prefs.getBoolPref(pref);
+        if (defaultBranch.getBoolPref(pref) !== value) {
+          const key = pref.substring(6).substring(0, pref.length - 8 - 6);
+          changedPrefs[key] = value;
+        }
       }
     }
     Glean.characteristics.changedMediaPrefs.set(JSON.stringify(changedPrefs));

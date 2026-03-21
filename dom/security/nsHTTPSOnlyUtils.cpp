@@ -1,17 +1,17 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsHTTPSOnlyUtils.h"
 
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/Components.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/OriginAttributes.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/extensions/WebExtensionPolicy.h"
 #include "mozilla/glean/DomSecurityMetrics.h"
 #include "mozilla/net/DNS.h"
 #include "nsContentUtils.h"
@@ -175,6 +175,15 @@ bool nsHTTPSOnlyUtils::ShouldUpgradeRequest(nsIURI* aURI,
                                 HTTPS_ONLY_MODE)) {
       return false;
     }
+  }
+
+  if (IsExemptedExtensionRequest(aURI, aLoadInfo)) {
+    AutoTArray<nsString, 1> params = {
+        NS_ConvertUTF8toUTF16(aURI->GetSpecOrDefault())};
+    nsHTTPSOnlyUtils::LogLocalizedString("HTTPSOnlyNoUpgradeException", params,
+                                         nsIScriptError::infoFlag, aLoadInfo,
+                                         aURI);
+    return false;
   }
 
   // We can not upgrade "Save-As" downloads, since we have no way of detecting
@@ -700,6 +709,30 @@ bool nsHTTPSOnlyUtils::TestIfPrincipalIsExempt(nsIPrincipal* aPrincipal,
          perm == nsIHttpsOnlyModePermission::LOAD_INSECURE_ALLOW_SESSION ||
          (checkForHTTPSFirst &&
           perm == nsIHttpsOnlyModePermission::HTTPSFIRST_LOAD_INSECURE_ALLOW);
+}
+
+/* static */
+bool nsHTTPSOnlyUtils::IsExemptedExtensionRequest(nsIURI* aURI,
+                                                  nsILoadInfo* aLoadInfo) {
+  nsCOMPtr<nsIPrincipal> triggeringPrincipal = aLoadInfo->TriggeringPrincipal();
+  if (!triggeringPrincipal) {
+    return false;
+  }
+
+  RefPtr<mozilla::extensions::WebExtensionPolicyCore> core =
+      mozilla::BasePrincipal::Cast(triggeringPrincipal)->AddonPolicyCore();
+  if (!core) {
+    return false;
+  }
+
+  mozilla::OriginAttributes oa = aLoadInfo->GetOriginAttributes();
+  nsCOMPtr<nsIPrincipal> targetPrincipal =
+      mozilla::BasePrincipal::CreateContentPrincipal(aURI, oa);
+  if (!targetPrincipal) {
+    return false;
+  }
+
+  return TestIfPrincipalIsExempt(targetPrincipal, HTTPS_ONLY_MODE);
 }
 
 /* static */

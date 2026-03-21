@@ -28,6 +28,7 @@
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/List.h"           // js::ListObject
 #include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject, js::PromiseSlot_*
 #include "vm/SelfHosting.h"
@@ -39,6 +40,7 @@
 #include "vm/ErrorObject-inl.h"
 #include "vm/JSContext-inl.h"  // JSContext::check
 #include "vm/JSObject-inl.h"
+#include "vm/List-inl.h"  // js::ListObject
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
@@ -117,9 +119,10 @@ enum PromiseCombinatorElementFunctionSlots {
   // It's also used to represent the [[AlreadyCalled]] flag: we set this slot to
   // UndefinedValue when [[AlreadyCalled]] is set to true in the spec.
   //
-  // The onRejected functions for Promise.allSettled have a NullValue stored in
-  // this slot. In this case the slot shouldn't be used because the
-  // [[AlreadyCalled]] state must be shared by the two functions.
+  // The onRejected functions for Promise.allSettled and Promise.allSettledKeyed
+  // have a NullValue stored in this slot. In this case the slot shouldn't be
+  // used because the [[AlreadyCalled]] state must be shared by the two
+  // functions.
   PromiseCombinatorElementFunctionSlot_Data
 };
 
@@ -187,6 +190,7 @@ class MutableWrappedPtrOperations<PromiseCapability, Wrapper>
 struct PromiseCombinatorElements;
 
 class PromiseCombinatorDataHolder : public NativeObject {
+ protected:
   enum {
     Slot_Promise = 0,
     Slot_RemainingElements,
@@ -220,14 +224,54 @@ class PromiseCombinatorDataHolder : public NativeObject {
   }
 
   static PromiseCombinatorDataHolder* New(
-      JSContext* cx, HandleObject resultPromise,
-      Handle<PromiseCombinatorElements> elements, HandleObject resolveOrReject);
+      JSContext* cx, JS::Handle<JSObject*> resultPromise,
+      JS::Handle<PromiseCombinatorElements> elements,
+      JS::Handle<JSObject*> resolveOrReject);
 };
 
 const JSClass PromiseCombinatorDataHolder::class_ = {
     "PromiseCombinatorDataHolder",
     JSCLASS_HAS_RESERVED_SLOTS(SlotsCount),
 };
+
+// Specialized data holder for Promise.allKeyed and Promise.allSettledKeyed
+// that includes a slot for storing the keys array.
+#ifdef NIGHTLY_BUILD
+class PromiseCombinatorKeyedDataHolder : public PromiseCombinatorDataHolder {
+  enum {
+    // Inherits Slot_Promise, Slot_RemainingElements, Slot_ValuesArray,
+    // and Slot_ResolveOrRejectFunction from PromiseCombinatorDataHolder.
+
+    // Additional slot for keyed variant: starts after parent's last slot.
+    Slot_KeysList = PromiseCombinatorDataHolder::SlotsCount,
+    SlotsCount,
+  };
+
+ public:
+  static const JSClass class_;
+
+  ListObject* keysList() {
+    return &getFixedSlot(Slot_KeysList).toObject().as<ListObject>();
+  }
+
+  ListObject* valuesList() {
+    return &getFixedSlot(Slot_ValuesArray).toObject().as<ListObject>();
+  }
+
+  static PromiseCombinatorKeyedDataHolder* New(
+      JSContext* cx, JS::Handle<JSObject*> resultPromise,
+      JS::Handle<ListObject*> keys, JS::Handle<ListObject*> values,
+      JS::Handle<JSObject*> resolveOrReject);
+
+ private:
+  using PromiseCombinatorDataHolder::valuesArray;
+};
+
+const JSClass PromiseCombinatorKeyedDataHolder::class_ = {
+    "PromiseCombinatorKeyedDataHolder",
+    JSCLASS_HAS_RESERVED_SLOTS(SlotsCount),
+};
+#endif
 
 // Smart pointer to the "F.[[Values]]" part of the state of a Promise.all or
 // Promise.allSettled invocation, or the "F.[[Errors]]" part of the state of a
@@ -353,8 +397,9 @@ class MutableWrappedPtrOperations<PromiseCombinatorElements, Wrapper>
 }  // namespace js
 
 PromiseCombinatorDataHolder* PromiseCombinatorDataHolder::New(
-    JSContext* cx, HandleObject resultPromise,
-    Handle<PromiseCombinatorElements> elements, HandleObject resolveOrReject) {
+    JSContext* cx, JS::Handle<JSObject*> resultPromise,
+    JS::Handle<PromiseCombinatorElements> elements,
+    JS::Handle<JSObject*> resolveOrReject) {
   auto* dataHolder = NewBuiltinClassInstance<PromiseCombinatorDataHolder>(cx);
   if (!dataHolder) {
     return nullptr;
@@ -369,6 +414,32 @@ PromiseCombinatorDataHolder* PromiseCombinatorDataHolder::New(
                             ObjectValue(*resolveOrReject));
   return dataHolder;
 }
+
+#ifdef NIGHTLY_BUILD
+PromiseCombinatorKeyedDataHolder* PromiseCombinatorKeyedDataHolder::New(
+    JSContext* cx, JS::Handle<JSObject*> resultPromise,
+    JS::Handle<ListObject*> keys, JS::Handle<ListObject*> values,
+    JS::Handle<JSObject*> resolveOrReject) {
+  auto* dataHolder =
+      NewBuiltinClassInstance<PromiseCombinatorKeyedDataHolder>(cx);
+  if (!dataHolder) {
+    return nullptr;
+  }
+
+  cx->check(resultPromise);
+  cx->check(keys);
+  cx->check(values);
+  cx->check(resolveOrReject);
+
+  dataHolder->setFixedSlot(Slot_Promise, ObjectValue(*resultPromise));
+  dataHolder->setFixedSlot(Slot_RemainingElements, Int32Value(1));
+  dataHolder->setFixedSlot(Slot_ValuesArray, ObjectValue(*values));
+  dataHolder->setFixedSlot(Slot_ResolveOrRejectFunction,
+                           ObjectValue(*resolveOrReject));
+  dataHolder->setFixedSlot(Slot_KeysList, ObjectValue(*keys));
+  return dataHolder;
+}
+#endif
 
 namespace {
 // Generator used by PromiseObject::getID.
@@ -670,20 +741,24 @@ class MicroTaskEntry : public NativeObject {
     return getFixedSlot(Slots::Promise).toObjectOrNull();
   }
 
-  void setPromise(JSObject* obj) {
-    setFixedSlot(Slots::Promise, ObjectOrNullValue(obj));
+  void initPromise(JSObject* obj) {
+    initFixedSlot(Slots::Promise, ObjectOrNullValue(obj));
   }
 
   Value getHostDefinedData() const {
     return getFixedSlot(Slots::HostDefinedData);
   }
 
-  void setHostDefinedData(const Value& val) {
-    setFixedSlot(Slots::HostDefinedData, val);
+  void initHostDefinedData(const Value& val) {
+    initFixedSlot(Slots::HostDefinedData, val);
   }
 
   JSObject* allocationStack() const {
     return getFixedSlot(Slots::AllocationStack).toObjectOrNull();
+  }
+
+  void initAllocationStack(JSObject* stack) {
+    initFixedSlot(Slots::AllocationStack, ObjectOrNullValue(stack));
   }
 
   void setAllocationStack(JSObject* stack) {
@@ -693,6 +768,11 @@ class MicroTaskEntry : public NativeObject {
   JSObject* hostDefinedGlobalRepresentative() const {
     Value v = getFixedSlot(Slots::HostDefinedGlobalRepresentative);
     return v.isObjectOrNull() ? v.toObjectOrNull() : nullptr;
+  }
+
+  void initHostDefinedGlobalRepresentative(JSObject* global) {
+    initFixedSlot(Slots::HostDefinedGlobalRepresentative,
+                  ObjectOrNullValue(global));
   }
 
   void setHostDefinedGlobalRepresentative(JSObject* global) {
@@ -999,12 +1079,6 @@ class PromiseReactionRecord : public MicroTaskEntry {
     return getFixedSlot(handlerArgSlot());
   }
 
-  JSObject* getAndClearHostDefinedData() {
-    JSObject* obj = getFixedSlot(Slots::HostDefinedData).toObjectOrNull();
-    setFixedSlot(Slots::HostDefinedData, UndefinedValue());
-    return obj;
-  }
-
   JSObject* enqueueGlobalRepresentative() const {
     return getFixedSlot(Slots::EnqueueGlobalRepresentative).toObjectOrNull();
   }
@@ -1042,19 +1116,20 @@ class ThenableJob : public MicroTaskEntry {
 
   Value thenable() const { return getFixedSlot(Slots::Thenable); }
 
-  void setThenable(const Value& val) { setFixedSlot(Slots::Thenable, val); }
+  void initThenable(const Value& val) { initFixedSlot(Slots::Thenable, val); }
 
   JSObject* then() const { return getFixedSlot(Slots::Then).toObjectOrNull(); }
 
-  void setThen(JSObject* obj) {
-    setFixedSlot(Slots::Then, ObjectOrNullValue(obj));
+  void initThen(JSObject* obj) {
+    initFixedSlot(Slots::Then, ObjectOrNullValue(obj));
   }
 
   TargetFunction targetFunction() const {
     return static_cast<TargetFunction>(getFixedSlot(Slots::Callback).toInt32());
   }
-  void setTargetFunction(TargetFunction target) {
-    setFixedSlot(Slots::Callback, JS::Int32Value(static_cast<int32_t>(target)));
+  void initTargetFunction(TargetFunction target) {
+    initFixedSlot(Slots::Callback,
+                  JS::Int32Value(static_cast<int32_t>(target)));
   }
 };
 
@@ -1083,12 +1158,12 @@ ThenableJob* NewThenableJob(JSContext* cx, ThenableJob::TargetFunction target,
   if (!job) {
     return nullptr;
   }
-  job->setPromise(promise);
-  job->setThen(then);
-  job->setThenable(thenable);
-  job->setTargetFunction(target);
-  job->setHostDefinedData(ObjectOrNullValue(hostDefined));
-  job->setAllocationStack(stack);
+  job->initPromise(promise);
+  job->initThen(then);
+  job->initThenable(thenable);
+  job->initTargetFunction(target);
+  job->initHostDefinedData(ObjectOrNullValue(hostDefined));
+  job->initAllocationStack(stack);
 
   return job;
 }
@@ -2768,7 +2843,7 @@ static bool PromiseResolveBuiltinThenableJob(JSContext* cx,
     return false;
   }
 
-  thenableJob->setHostDefinedGlobalRepresentative(
+  thenableJob->initHostDefinedGlobalRepresentative(
       hostDefinedGlobalRepresentative);
   return EnqueueJob(cx, thenableJob);
 }
@@ -3173,30 +3248,10 @@ class MOZ_STACK_CLASS PromiseForOfIterator : public JS::ForOfIterator {
   }
 };
 
-[[nodiscard]] static bool PerformPromiseAll(
-    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
-    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
-    bool* done);
-
-[[nodiscard]] static bool PerformPromiseAllSettled(
-    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
-    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
-    bool* done);
-
-[[nodiscard]] static bool PerformPromiseAny(
-    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
-    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
-    bool* done);
-
-[[nodiscard]] static bool PerformPromiseRace(
-    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
-    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
-    bool* done);
-
 /**
  * ES2022 draft rev d03c1ec6e235a5180fa772b6178727c17974cb14
  *
- * Unified implementation of
+ * Unified implementation of iterable and property-based variants:
  *
  * Promise.all ( iterable )
  * https://tc39.es/ecma262/#sec-promise.all
@@ -3206,6 +3261,10 @@ class MOZ_STACK_CLASS PromiseForOfIterator : public JS::ForOfIterator {
  * https://tc39.es/ecma262/#sec-promise.race
  * Promise.any ( iterable )
  * https://tc39.es/ecma262/#sec-promise.any
+ * Promise.allKeyed ( promises )
+ * https://tc39.es/proposal-await-dictionary/#sec-promise.allkeyed
+ * Promise.allSettledKeyed ( promises )
+ * https://tc39.es/proposal-await-dictionary/#sec-promise.allsettledkeyed
  * GetPromiseResolve ( promiseConstructor )
  * https://tc39.es/ecma262/#sec-getpromiseresolve
  */
@@ -3266,6 +3325,8 @@ template <typename IterT, typename PerformFuncT, typename InitIterFuncT,
   // Step 5.
   IterT iter(cx);
   if (!initIter(iter)) {
+    // Note: This applies only to the iterator-based combinators
+    // (Promise.all, Promise.allSettled, Promise.race, Promise.any).
     // Step 6. IfAbruptRejectPromise(iteratorRecord, promiseCapability).
     return AbruptRejectPromise(cx, args, promiseCapability);
   }
@@ -3286,6 +3347,19 @@ template <typename IterT, typename PerformFuncT, typename InitIterFuncT,
   // Step 7. Let result be
   //         PerformPromiseAny(iteratorRecord, C, promiseCapability,
   //                           promiseResolve).
+  // Promise.allKeyed
+  // Step 6. Let result be
+  //         PerformPromiseAllKeyed(all, promises, C, promiseCapability,
+  //                                promiseResolve).
+  // Promise.allSettledKeyed
+  // Step 6. Let result be
+  //         PerformPromiseAllKeyed(all-settled, promises, C,
+  //                                promiseCapability, promiseResolve).
+  // Note: Although the spec defines steps 8-9 differently for iterable
+  // variants (Promise.all, etc.) vs. property-based variants (Promise.allKeyed,
+  // etc.), the control flow is identical: check for error from the perform
+  // function, close the iterator if needed, and return the promise. This
+  // allows them to share the same code path.
   bool done;
   bool result =
       performFunc(cx, iter, C, promiseCapability, promiseResolve, &done);
@@ -3339,6 +3413,11 @@ template <typename PerformFuncT>
       initIter, maybeCloseIter);
 }
 
+[[nodiscard]] static bool PerformPromiseAll(
+    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
+    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
+    bool* done);
+
 /**
  * ES2026 draft rev 00146687f225a64e1b1e2d303acc6139a1adee7d
  *
@@ -3356,24 +3435,85 @@ static bool Promise_static_all(JSContext* cx, unsigned argc, Value* vp) {
 /**
  * Await Dictionary Proposal
  *
- * Promise.allKeyed
+ * Unified implementation for property-based promise combinators.
+ *
+ * Promise.allKeyed ( promises )
  * https://tc39.es/proposal-await-dictionary/#sec-promise.allkeyed
+ * Promise.allSettledKeyed ( promises )
+ * https://tc39.es/proposal-await-dictionary/#sec-promise.allsettledkeyed
  */
-static bool Promise_static_allKeyed(JSContext* cx, unsigned argc, Value* vp) {
-  JS_ReportErrorASCII(cx, "Promise.allKeyed is not yet implemented");
-  return false;
+template <typename PerformFuncT>
+[[nodiscard]] static bool CommonPromiseCombinatorKeyed(
+    JSContext* cx, CallArgs& args, PerformFuncT performFunc,
+    const char* nonObjectThisErrorMessage,
+    const char* nonObjectArgumentErrorMessage) {
+  JS::Handle<JS::Value> promisesVal = args.get(0);
+
+  auto initPromises = [&](JS::Rooted<JSObject*>& promises) {
+    // Step 5. If promises is not an Object, then
+    if (!promisesVal.isObject()) {
+      // Step 5.a. Let error be a newly created TypeError object.
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_OBJECT_REQUIRED,
+                                nonObjectArgumentErrorMessage);
+      return false;
+    }
+
+    promises = &promisesVal.toObject();
+    return true;
+  };
+
+  auto maybeClosePromises = [](JS::Rooted<JSObject*>& promises, bool done) {};
+
+  auto perform = [&](JSContext* cx, JS::Rooted<JSObject*>& promises,
+                     JS::Handle<JSObject*> C,
+                     JS::Handle<PromiseCapability> promiseCapability,
+                     JS::Handle<JS::Value> promiseResolve, bool* done) {
+    *done = true;
+    return performFunc(cx, promises, C, promiseCapability, promiseResolve);
+  };
+
+  return CommonPromiseCombinator<JS::Rooted<JSObject*>>(
+      cx, args, perform, nonObjectThisErrorMessage,
+      nonObjectArgumentErrorMessage, initPromises, maybeClosePromises);
 }
 
 /**
  * Await Dictionary Proposal
  *
- * Promise.allSettledKeyed
+ * Promise.allKeyed ( promises )
+ * https://tc39.es/proposal-await-dictionary/#sec-promise.allkeyed
+ */
+[[nodiscard]] static bool PerformPromiseAllKeyed(
+    JSContext* cx, JS::Handle<JSObject*> promises, JS::Handle<JSObject*> C,
+    JS::Handle<PromiseCapability> resultCapability,
+    JS::Handle<JS::Value> promiseResolve);
+
+static bool Promise_static_allKeyed(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CommonPromiseCombinatorKeyed(cx, args, PerformPromiseAllKeyed,
+                                      "Receiver of Promise.allKeyed call",
+                                      "Argument of Promise.allKeyed");
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * Promise.allSettledKeyed ( promises )
  * https://tc39.es/proposal-await-dictionary/#sec-promise.allsettledkeyed
  */
+[[nodiscard]] static bool PerformPromiseAllSettledKeyed(
+    JSContext* cx, JS::Handle<JSObject*> promises, JS::Handle<JSObject*> C,
+    JS::Handle<PromiseCapability> resultCapability,
+    JS::Handle<JS::Value> promiseResolve);
+
 static bool Promise_static_allSettledKeyed(JSContext* cx, unsigned argc,
                                            Value* vp) {
-  JS_ReportErrorASCII(cx, "Promise.allSettledKeyed is not yet implemented");
-  return false;
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CommonPromiseCombinatorKeyed(
+      cx, args, PerformPromiseAllSettledKeyed,
+      "Receiver of Promise.allSettledKeyed call",
+      "Argument of Promise.allSettledKeyed");
 }
 #endif
 
@@ -4193,13 +4333,23 @@ static JSFunction* NewPromiseCombinatorElementFunction(
  *
  * Steps 1-4.
  *
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Step 6.b.vi.1-2.
+ * Step 6.b.ix.2.a-b.
+ *
  * Common implementation for Promise combinator element functions to check if
  * they've already been called.
  */
+template <typename DataHolderT>
 static bool PromiseCombinatorElementFunctionAlreadyCalled(
-    const CallArgs& args, MutableHandle<PromiseCombinatorDataHolder*> data,
-    uint32_t* index) {
+    const CallArgs& args, MutableHandle<DataHolderT*> data, uint32_t* index) {
   // Step 1. Let F be the active function object.
+  // (implicit for PerformPromiseAllKeyed)
   JSFunction* fn = &args.callee().as<JSFunction>();
 
   // Promise.{all,any} functions
@@ -4207,19 +4357,23 @@ static bool PromiseCombinatorElementFunctionAlreadyCalled(
   // Promise.allSettled functions
   // Step 2. Let alreadyCalled be F.[[AlreadyCalled]].
   // Step 3. If alreadyCalled.[[Value]] is true, return undefined.
+  // PerformPromiseAllKeyed
+  // Step 6.b.vi.1 / Step 6.b.ix.2.a.
+  //   If alreadyCalled.[[Value]] is true, return undefined.
   //
   // We use the existence of the data holder as a signal for whether the Promise
   // combinator element function was already called. Upon resolution, it's reset
   // to `undefined`.
   //
-  // For Promise.allSettled, the [[AlreadyCalled]] state must be shared by the
-  // two functions, so we always use the resolve function's state.
+  // For Promise.allSettled and Promise.allSettledKeyed, the [[AlreadyCalled]]
+  // state must be shared by the two functions, so we always use the resolve
+  // function's state.
 
   constexpr size_t indexOrResolveFuncSlot =
       PromiseCombinatorElementFunctionSlot_ElementIndexOrResolveFunc;
   if (fn->getExtendedSlot(indexOrResolveFuncSlot).isObject()) {
-    // This is a reject function for Promise.allSettled. Get the corresponding
-    // resolve function.
+    // This is a reject function for Promise.allSettled and
+    // Promise.allSettledKeyed. Get the corresponding resolve function.
     Value slotVal = fn->getExtendedSlot(indexOrResolveFuncSlot);
     fn = &slotVal.toObject().as<JSFunction>();
   }
@@ -4231,12 +4385,15 @@ static bool PromiseCombinatorElementFunctionAlreadyCalled(
     return true;
   }
 
-  data.set(&dataVal.toObject().as<PromiseCombinatorDataHolder>());
+  data.set(&dataVal.toObject().as<DataHolderT>());
 
   // Promise.{all,any} functions
   // Step 3. Set F.[[AlreadyCalled]] to true.
   // Promise.allSettled functions
   // Step 4. Set alreadyCalled.[[Value]] to true.
+  // PerformPromiseAllKeyed
+  // Step 6.b.vi.2 / Step 6.b.ix.2.b.
+  //   Set alreadyCalled.[[Value]] to true.
   fn->setExtendedSlot(PromiseCombinatorElementFunctionSlot_Data,
                       UndefinedValue());
 
@@ -4244,6 +4401,8 @@ static bool PromiseCombinatorElementFunctionAlreadyCalled(
   // Step 4. Let index be F.[[Index]].
   // Promise.allSettled functions
   // Step 5. Let index be F.[[Index]].
+  // PerformPromiseAllKeyed
+  // (implicit)
   int32_t idx = fn->getExtendedSlot(indexOrResolveFuncSlot).toInt32();
   MOZ_ASSERT(idx >= 0);
   *index = uint32_t(idx);
@@ -4359,7 +4518,8 @@ static bool PromiseAllResolveElementFunction(JSContext* cx, unsigned argc,
   // Steps 1-4.
   Rooted<PromiseCombinatorDataHolder*> data(cx);
   uint32_t index;
-  if (PromiseCombinatorElementFunctionAlreadyCalled(args, &data, &index)) {
+  if (PromiseCombinatorElementFunctionAlreadyCalled<
+          PromiseCombinatorDataHolder>(args, &data, &index)) {
     args.rval().setUndefined();
     return true;
   }
@@ -4405,6 +4565,11 @@ static bool PromiseAllResolveElementFunction(JSContext* cx, unsigned argc,
   args.rval().setUndefined();
   return true;
 }
+
+[[nodiscard]] static bool PerformPromiseRace(
+    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
+    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
+    bool* done);
 
 /**
  * ES2026 draft rev bdfd596ffad5aeb2957aed4e1db36be3665c69ec
@@ -4459,6 +4624,11 @@ enum class PromiseAllSettledElementFunctionKind { Resolve, Reject };
 template <PromiseAllSettledElementFunctionKind Kind>
 static bool PromiseAllSettledElementFunction(JSContext* cx, unsigned argc,
                                              Value* vp);
+
+[[nodiscard]] static bool PerformPromiseAllSettled(
+    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
+    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
+    bool* done);
 
 /**
  * ES2026 draft rev bdfd596ffad5aeb2957aed4e1db36be3665c69ec
@@ -4600,7 +4770,8 @@ static bool PromiseAllSettledElementFunction(JSContext* cx, unsigned argc,
   // Steps 1-5.
   Rooted<PromiseCombinatorDataHolder*> data(cx);
   uint32_t index;
-  if (PromiseCombinatorElementFunctionAlreadyCalled(args, &data, &index)) {
+  if (PromiseCombinatorElementFunctionAlreadyCalled<
+          PromiseCombinatorDataHolder>(args, &data, &index)) {
     args.rval().setUndefined();
     return true;
   }
@@ -4681,6 +4852,11 @@ static bool PromiseAllSettledElementFunction(JSContext* cx, unsigned argc,
   args.rval().setUndefined();
   return true;
 }
+
+[[nodiscard]] static bool PerformPromiseAny(
+    JSContext* cx, PromiseForOfIterator& iterator, HandleObject C,
+    Handle<PromiseCapability> resultCapability, HandleValue promiseResolve,
+    bool* done);
 
 /**
  * ES2026 draft rev bdfd596ffad5aeb2957aed4e1db36be3665c69ec
@@ -4811,7 +4987,8 @@ static bool PromiseAnyRejectElementFunction(JSContext* cx, unsigned argc,
   // Steps 1-4.
   Rooted<PromiseCombinatorDataHolder*> data(cx);
   uint32_t index;
-  if (PromiseCombinatorElementFunctionAlreadyCalled(args, &data, &index)) {
+  if (PromiseCombinatorElementFunctionAlreadyCalled<
+          PromiseCombinatorDataHolder>(args, &data, &index)) {
     args.rval().setUndefined();
     return true;
   }
@@ -4929,6 +5106,522 @@ static void ThrowAggregateError(JSContext* cx,
   // Step 4.b.ii.3. Return ThrowCompletion(error).
   cx->setPendingException(error, stack);
 }
+
+#ifdef NIGHTLY_BUILD
+/**
+ * Await Dictionary Proposal
+ *
+ * CreateKeyedPromiseCombinatorResultObject ( keys, values )
+ * https://tc39.es/proposal-await-dictionary/#sec-createkeyedpromisecombinatorresultobject
+ *
+ * Takes parallel lists of keys and values and creates an object with those
+ * properties.
+ */
+[[nodiscard]] static JSObject* CreateKeyedPromiseCombinatorResultObject(
+    JSContext* cx, JS::Handle<ListObject*> keys,
+    JS::Handle<ListObject*> values) {
+  // Step 1. Assert: The number of elements in keys is the same as the number
+  //         of elements in values.
+  MOZ_ASSERT(keys->length() == values->length());
+
+  // Step 2. Let obj be OrdinaryObjectCreate(null).
+  JS::Rooted<PlainObject*> obj(cx, NewPlainObjectWithProto(cx, nullptr));
+  if (!obj) {
+    return nullptr;
+  }
+
+  // Step 3. For each integer i such that 0 ≤ i < the number of elements in
+  //         keys, in ascending order, do
+  uint32_t len = keys->length();
+  for (uint32_t i = 0; i < len; i++) {
+    JS::Rooted<JS::Value> keyVal(cx, keys->get(i));
+
+    JS::Rooted<JS::PropertyKey> id(cx);
+    if (!ToPropertyKey(cx, keyVal, &id)) {
+      return nullptr;
+    }
+
+    JS::Rooted<JS::Value> val(cx, values->get(i));
+
+    // Step 3.a. Perform ! CreateDataPropertyOrThrow(obj, keys[i], values[i]).
+    if (!NativeDefineDataProperty(cx, obj, id, val, JSPROP_ENUMERATE)) {
+      return nullptr;
+    }
+  }
+
+  // Step 4. Return obj.
+  return obj;
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( variant, promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Common implementation for both Promise.allKeyed and Promise.allSettledKeyed.
+ * The spec defines a single PerformPromiseAllKeyed operation that takes a
+ * 'variant' parameter (either "all" or "all-settled"). This implementation
+ * parameterizes the variant-specific behavior (creating element functions in
+ * steps 6.b.v-ix) via the createElementFunctions callback.
+ */
+template <typename CreateElementFunctionsCallback>
+[[nodiscard]] static bool CommonPerformPromiseKeyedCombinator(
+    JSContext* cx, JS::Handle<JSObject*> promises, JS::Handle<JSObject*> C,
+    JS::Handle<PromiseCapability> resultCapability,
+    JS::Handle<JS::Value> promiseResolve,
+    CreateElementFunctionsCallback createElementFunctions) {
+  MOZ_ASSERT(C->isConstructor());
+
+  // Step 1. Let allKeys be ? promises.[[OwnPropertyKeys]]().
+  JS::RootedVector<JS::PropertyKey> allKeys(cx);
+  if (!GetPropertyKeys(cx, promises,
+                       JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS,
+                       &allKeys)) {
+    return false;
+  }
+
+  // Step 2. Let keys be a new empty List.
+  JS::Rooted<ListObject*> keys(cx, ListObject::create(cx));
+  if (!keys) {
+    return false;
+  }
+
+  // Step 3. Let values be a new empty List.
+  JS::Rooted<ListObject*> values(cx, ListObject::create(cx));
+  if (!values) {
+    return false;
+  }
+
+  // Step 4. Let remainingElementsCount be the Record { [[Value]]: 1 }.
+  JS::Rooted<PromiseCombinatorKeyedDataHolder*> dataHolder(
+      cx, PromiseCombinatorKeyedDataHolder::New(cx, resultCapability.promise(),
+                                                keys, values,
+                                                resultCapability.resolve()));
+  if (!dataHolder) {
+    return false;
+  }
+
+  JS::Rooted<JS::PropertyKey> key(cx);
+  JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>> desc(cx);
+  JS::Rooted<JS::Value> keyVal(cx);
+
+  // Step 5. Let index be 0.
+  uint32_t index = 0;
+  size_t keyIndex = 0;
+  auto getNextFunc = [&](JS::MutableHandle<JS::Value> nextValue, bool* done) {
+    // The outer loop in CommonPerformPromiseCombinator corresponds to Step 6.
+    // This helper advances through allKeys and skips non-enumerable entries
+    // to produce the next key/value pair for one Step 6 iteration.
+    while (true) {
+      if (keyIndex == allKeys.length()) {
+        *done = true;
+        return true;
+      }
+      key = allKeys[keyIndex++];
+
+      // Step 6.a. Let desc be ? promises.[[GetOwnProperty]](key).
+      if (!GetOwnPropertyDescriptor(cx, promises, key, &desc)) {
+        return false;
+      }
+
+      // Step 6.b. If desc is not undefined and desc.[[Enumerable]] is true,
+      //           then
+      if (desc.isNothing() || !desc->enumerable()) {
+        continue;
+      }
+      break;
+    }
+
+    // Step 6.b.i. Let value be ? Get(promises, key).
+    if (!GetProperty(cx, promises, promises, key, nextValue)) {
+      return false;
+    }
+
+    // Step 6.b.ii. Append key to keys.
+    keyVal = IdToValue(key);
+    if (!keys->append(cx, keyVal)) {
+      return false;
+    }
+
+    // Step 6.b.iii. Append undefined to values.
+    if (!values->append(cx, UndefinedHandleValue)) {
+      return false;
+    }
+    *done = false;
+    return true;
+  };
+
+  auto getResolveAndReject = [&](JS::MutableHandle<JS::Value> resolveFunVal,
+                                 JS::MutableHandle<JS::Value> rejectFunVal) {
+    // Steps 6.b.v-ix.
+    // Create onFulfilled and onRejected closures.
+    if (!createElementFunctions(dataHolder, index, resolveFunVal,
+                                rejectFunVal)) {
+      return false;
+    }
+
+    // Step 6.b.x. Set remainingElementsCount.[[Value]] to
+    //             remainingElementsCount.[[Value]] + 1.
+    dataHolder->increaseRemainingCount();
+
+    // Step 6.b.xii. Set index to index + 1.
+    index++;
+    return true;
+  };
+
+  // Step 6.
+  bool done = false;
+  if (!CommonPerformPromiseCombinator(cx, C, resultCapability.promise(),
+                                      promiseResolve, true, &done, true,
+                                      getNextFunc, getResolveAndReject)) {
+    return false;
+  }
+
+  // Step 7. Set remainingElementsCount.[[Value]] to
+  //         remainingElementsCount.[[Value]] - 1.
+  int32_t remainingCount = dataHolder->decreaseRemainingCount();
+
+  // Step 8. If remainingElementsCount.[[Value]] is 0, then
+  if (remainingCount == 0) {
+    // Step 8.a. NOTE: This can happen even if keys was non-empty if an
+    //           ill-behaved thenable synchronously invoked the callback passed
+    //           to its "then" method.
+
+    // Step 8.b. Let result be CreateKeyedPromiseCombinatorResultObject(keys,
+    //                                                                  values).
+    JS::Rooted<JSObject*> resultObj(
+        cx, CreateKeyedPromiseCombinatorResultObject(cx, keys, values));
+    if (!resultObj) {
+      return false;
+    }
+
+    // Step 8.c. Perform ? Call(resultCapability.[[Resolve]], undefined, «
+    //                          result »).
+    JS::Rooted<JS::Value> resultVal(cx, ObjectValue(*resultObj));
+    if (!CallPromiseResolveFunction(cx, resultCapability.resolve(), resultVal,
+                                    resultCapability.promise())) {
+      return false;
+    }
+  }
+
+  // Step 9. Return resultCapability.[[Promise]].
+  // NOTE: The promise is returned by the caller
+  //       (PerformPromiseAllKeyed/PerformPromiseAllSettledKeyed).
+  return true;
+}
+
+static bool PromiseAllKeyedResolveElementFunction(JSContext* cx, unsigned argc,
+                                                  Value* vp);
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( variant, promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Implements PerformPromiseAllKeyed with variant="all".
+ */
+[[nodiscard]] static bool PerformPromiseAllKeyed(
+    JSContext* cx, JS::Handle<JSObject*> promises, JS::Handle<JSObject*> C,
+    JS::Handle<PromiseCapability> resultCapability,
+    JS::Handle<JS::Value> promiseResolve) {
+  auto createElementFunctions =
+      [&](JS::Handle<PromiseCombinatorKeyedDataHolder*> dataHolder,
+          uint32_t index, JS::MutableHandle<JS::Value> resolveFunVal,
+          JS::MutableHandle<JS::Value> rejectFunVal) {
+        // Step 6.b.vi. Let onFulfilled be a new Abstract Closure with
+        //              parameters (x) that captures variant, alreadyCalled,
+        //              index, keys, values, resultCapability, and
+        //              remainingElementsCount and performs the following steps
+        //              when called:
+        // Step 6.b.v. Let alreadyCalled be the Record { [[Value]]: false }.
+        JSFunction* resolveFunc = NewPromiseCombinatorElementFunction(
+            cx, PromiseAllKeyedResolveElementFunction, dataHolder, index,
+            UndefinedHandleValue);
+        if (!resolveFunc) {
+          return false;
+        }
+
+        resolveFunVal.setObject(*resolveFunc);
+
+        // Step 6.b.viii. If variant is all, then
+        // Step 6.b.viii.1. Let onRejected be resultCapability.[[Reject]].
+        rejectFunVal.setObject(*resultCapability.reject());
+        return true;
+      };
+
+  // Steps 1-9.
+  return CommonPerformPromiseKeyedCombinator(cx, promises, C, resultCapability,
+                                             promiseResolve,
+                                             createElementFunctions);
+}
+
+static bool PromiseAllSettledKeyedResolveElementFunction(JSContext* cx,
+                                                         unsigned argc,
+                                                         Value* vp);
+static bool PromiseAllSettledKeyedRejectElementFunction(JSContext* cx,
+                                                        unsigned argc,
+                                                        Value* vp);
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( variant, promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Implements PerformPromiseAllKeyed with variant="all-settled".
+ */
+[[nodiscard]] static bool PerformPromiseAllSettledKeyed(
+    JSContext* cx, JS::Handle<JSObject*> promises, JS::Handle<JSObject*> C,
+    JS::Handle<PromiseCapability> resultCapability,
+    JS::Handle<JS::Value> promiseResolve) {
+  auto createElementFunctions =
+      [&](JS::Handle<PromiseCombinatorKeyedDataHolder*> dataHolder,
+          uint32_t index, JS::MutableHandle<JS::Value> resolveFunVal,
+          JS::MutableHandle<JS::Value> rejectFunVal) {
+        // Step 6.b.vi. Let onFulfilled be a new Abstract Closure with
+        //              parameters (x) that captures variant, alreadyCalled,
+        //              index, keys, values, resultCapability, and
+        //              remainingElementsCount and performs the following steps
+        //              when called:
+        // Step 6.b.v. Let alreadyCalled be the Record { [[Value]]: false }.
+        JSFunction* resolveFunc = NewPromiseCombinatorElementFunction(
+            cx, PromiseAllSettledKeyedResolveElementFunction, dataHolder, index,
+            UndefinedHandleValue);
+        if (!resolveFunc) {
+          return false;
+        }
+
+        resolveFunVal.setObject(*resolveFunc);
+
+        // Step 6.b.ix.2. Let onRejected be a new Abstract Closure with
+        //                parameters (x) that captures alreadyCalled, index,
+        //                keys, values, resultCapability, and
+        //                remainingElementsCount and performs the following
+        //                steps when called:
+        JSFunction* rejectFunc = NewPromiseCombinatorElementFunction(
+            cx, PromiseAllSettledKeyedRejectElementFunction, dataHolder, index,
+            resolveFunVal);
+        if (!rejectFunc) {
+          return false;
+        }
+
+        rejectFunVal.setObject(*rejectFunc);
+        return true;
+      };
+
+  // Steps 1-9.
+  return CommonPerformPromiseKeyedCombinator(cx, promises, C, resultCapability,
+                                             promiseResolve,
+                                             createElementFunctions);
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * Unified implementation of:
+ *
+ * PerformPromiseAllKeyed ( promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Step 6.b.vi. - Promise.allKeyed Resolve Element Functions, and
+ *                Promise.allSettledKeyed Resolve Element Functions
+ * Step 6.b.ix.2. - Promise.allSettledKeyed Reject Element Functions
+ *
+ * Template function that handles common logic for all keyed combinator
+ * element functions. The ProcessValueFn lambda handles the variant-specific
+ * logic for processing the input value before storing it in the values list.
+ */
+template <typename ProcessValueFn>
+static bool PromiseKeyedElementFunction(JSContext* cx, unsigned argc, Value* vp,
+                                        ProcessValueFn&& processValue) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  JS::Handle<JS::Value> xVal = args.get(0);
+
+  // Step 6.b.vi.1-2.
+  // Step 6.b.ix.2.a-b.
+  JS::Rooted<PromiseCombinatorKeyedDataHolder*> data(cx);
+  uint32_t index;
+  if (PromiseCombinatorElementFunctionAlreadyCalled<
+          PromiseCombinatorKeyedDataHolder>(args, &data, &index)) {
+    args.rval().setUndefined();
+    return true;
+  }
+
+  // Variant-specific processing: process the value before storing.
+  // For allKeyed: just use the value directly
+  // For allSettledKeyed resolve: create {status: "fulfilled", value: x}
+  // For allSettledKeyed reject: create {status: "rejected", reason: x}
+  JS::Rooted<JS::Value> processedValue(cx);
+  if (!processValue(cx, xVal, index, &processedValue)) {
+    return false;
+  }
+
+  // Step 6.b.vi.3.a / Step 6.b.vi.4.e / Step 6.b.ix.2.f.
+  // Set values[index] to the processed value.
+  JS::Rooted<ListObject*> values(cx, data->valuesList());
+  values->setDenseElement(index, processedValue);
+
+  // Step 6.b.vi.5 / Step 6.b.ix.2.g. Set remainingElementsCount.[[Value]] to
+  //                                      remainingElementsCount.[[Value]] - 1.
+  uint32_t remainingCount = data->decreaseRemainingCount();
+
+  // Step 6.b.vi.6 / Step 6.b.ix.2.h. If remainingElementsCount.[[Value]] = 0,
+  //                                     then
+  if (remainingCount == 0) {
+    JS::Rooted<ListObject*> keys(cx, data->keysList());
+    JS::Rooted<JSObject*> resolveAllFun(cx, data->resolveOrRejectObj());
+    JS::Rooted<JSObject*> promiseObj(cx, data->promiseObj());
+
+    // Step 6.b.vi.6.a / Step 6.b.ix.2.h.i. Let result be
+    // CreateKeyedPromiseCombinatorResultObject(keys, values).
+    JS::Rooted<JSObject*> resultObj(
+        cx, CreateKeyedPromiseCombinatorResultObject(cx, keys, values));
+    if (!resultObj) {
+      return false;
+    }
+
+    // Step 6.b.vi.6.b / Step 6.b.ix.2.h.ii. Return ?
+    // Call(resultCapability.[[Resolve]], undefined, « result »).
+    JS::Rooted<JS::Value> resultVal(cx, ObjectValue(*resultObj));
+    if (!CallPromiseResolveFunction(cx, resolveAllFun, resultVal, promiseObj)) {
+      return false;
+    }
+  }
+
+  // Step 6.b.vi.7 / Step 6.b.ix.2.i. Return undefined.
+  args.rval().setUndefined();
+  return true;
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Step 6.b.vi.
+ * onFulfilled callback for variant="all".
+ *
+ * Promise.allKeyed Resolve Element Functions.
+ */
+static bool PromiseAllKeyedResolveElementFunction(JSContext* cx, unsigned argc,
+                                                  Value* vp) {
+  // For allKeyed, just use the value directly
+  auto processAllKeyedValue = [](JSContext* cx, JS::Handle<JS::Value> xVal,
+                                 uint32_t index,
+                                 JS::MutableHandle<JS::Value> outVal) {
+    // Step 6.b.vi.3. If variant is all, then
+    // Step 6.b.vi.3.a. Set values[index] to x.
+    outVal.set(xVal);
+    return true;
+  };
+
+  return PromiseKeyedElementFunction(cx, argc, vp, processAllKeyedValue);
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Step 6.b.vi.
+ * onFulfilled callback for variant="all-settled".
+ *
+ * Promise.allSettledKeyed Resolve Element Functions.
+ */
+static bool PromiseAllSettledKeyedResolveElementFunction(JSContext* cx,
+                                                         unsigned argc,
+                                                         Value* vp) {
+  // For allSettledKeyed resolve, create {status: "fulfilled", value: x}
+  auto processAllSettledResolveValue =
+      [](JSContext* cx, JS::Handle<JS::Value> xVal, uint32_t index,
+         JS::MutableHandle<JS::Value> outVal) {
+        // Step 6.b.vi.4. Else,
+        // Step 6.b.vi.4.a. Assert: variant is all-settled.
+        // Step 6.b.vi.4.b. Let obj be OrdinaryObjectCreate(%Object.prototype%).
+        JS::Rooted<JSObject*> obj(cx, NewPlainObjectWithProto(cx, nullptr));
+        if (!obj) {
+          return false;
+        }
+
+        // Step 6.b.vi.4.c. Perform ! CreateDataPropertyOrThrow(obj, "status",
+        //                                                      "fulfilled").
+        JS::Rooted<JS::Value> statusVal(cx, StringValue(cx->names().fulfilled));
+        if (!DefineDataProperty(cx, obj, cx->names().status, statusVal)) {
+          return false;
+        }
+
+        // Step 6.b.vi.4.d. Perform ! CreateDataPropertyOrThrow(obj, "value",
+        //                                                      x).
+        if (!DefineDataProperty(cx, obj, cx->names().value, xVal)) {
+          return false;
+        }
+
+        // Step 6.b.vi.4.e. Set values[index] to obj.
+        outVal.setObject(*obj);
+        return true;
+      };
+
+  return PromiseKeyedElementFunction(cx, argc, vp,
+                                     processAllSettledResolveValue);
+}
+
+/**
+ * Await Dictionary Proposal
+ *
+ * PerformPromiseAllKeyed ( promises, constructor, resultCapability,
+ *                          promiseResolve )
+ * https://tc39.es/proposal-await-dictionary/#sec-performpromiseallkeyed
+ *
+ * Step 6.b.ix.2.
+ * onRejected callback for variant="all-settled".
+ *
+ * Promise.allSettledKeyed Reject Element Functions.
+ */
+static bool PromiseAllSettledKeyedRejectElementFunction(JSContext* cx,
+                                                        unsigned argc,
+                                                        Value* vp) {
+  // For allSettledKeyed reject, create {status: "rejected", reason: x}
+  auto processAllSettledRejectValue =
+      [](JSContext* cx, JS::Handle<JS::Value> xVal, uint32_t index,
+         JS::MutableHandle<JS::Value> outVal) {
+        // Step 6.b.ix.2.c. Let obj be OrdinaryObjectCreate(%Object.prototype%).
+        JS::Rooted<JSObject*> obj(cx, NewPlainObjectWithProto(cx, nullptr));
+        if (!obj) {
+          return false;
+        }
+
+        // Step 6.b.ix.2.d. Perform ! CreateDataPropertyOrThrow(obj, "status",
+        //                                                      "rejected").
+        JS::Rooted<JS::Value> statusVal(cx, StringValue(cx->names().rejected));
+        if (!DefineDataProperty(cx, obj, cx->names().status, statusVal)) {
+          return false;
+        }
+
+        // Step 6.b.ix.2.e. Perform ! CreateDataPropertyOrThrow(obj, "reason",
+        //                                                      x).
+        if (!DefineDataProperty(cx, obj, cx->names().reason, xVal)) {
+          return false;
+        }
+
+        // Step 6.b.ix.2.f. Set values[index] to obj.
+        outVal.setObject(*obj);
+        return true;
+      };
+
+  return PromiseKeyedElementFunction(cx, argc, vp,
+                                     processAllSettledRejectValue);
+}
+#endif
 
 /**
  * ES2022 draft rev d03c1ec6e235a5180fa772b6178727c17974cb14
@@ -7309,8 +8002,9 @@ void PromiseObject::dumpOwnStringContent(js::GenericPrinter& out) const {}
 
   if (!iter.isFunctionFrame() && iter.isModuleFrame()) {
     // The iterator is not a function frame, it is a module frame.
-    // Ignore this optimization for now.
-    return true;
+    // The await cannot be skipped for modules. During InnerModuleEvaluation, it
+    // must yield execution so other modules in the same module graph can run.
+    return false;
   }
 
   MOZ_ASSERT(iter.calleeTemplate()->isAsync());

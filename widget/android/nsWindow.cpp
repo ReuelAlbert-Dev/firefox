@@ -1,6 +1,4 @@
-/* -*- Mode: c++; c-basic-offset: 2; tab-width: 4; indent-tabs-mode: nil; -*-
- * vim: set sw=2 ts=4 expandtab:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -2210,6 +2208,15 @@ void GeckoViewSupport::PrintToPdf(
   }
   CreatePdf(geckoResult, cbc);
 }
+
+void GeckoViewSupport::PerformHapticFeedback(int32_t aEffect) {
+  GeckoSession::Window::LocalRef window(mGeckoViewWindow);
+  if (!window) {
+    return;
+  }
+  window->PerformHapticFeedback(aEffect);
+}
+
 }  // namespace widget
 }  // namespace mozilla
 
@@ -2565,6 +2572,19 @@ void nsWindow::DoResize(double aX, double aY, double aWidth, double aHeight,
 
   // Should we skip honoring aRepaint here?
   if (aRepaint && FindTopLevel() == nsWindow::TopWindow()) RedrawAll();
+}
+
+void nsWindow::PerformHapticFeedback(HapticFeedbackType aType) {
+  if (Destroyed()) {
+    return;
+  }
+
+  auto acc(mGeckoViewSupport.Access());
+  if (!acc) {
+    return;
+  }
+
+  acc->PerformHapticFeedback(static_cast<int32_t>(aType));
 }
 
 void nsWindow::SetSizeMode(nsSizeMode aMode) {

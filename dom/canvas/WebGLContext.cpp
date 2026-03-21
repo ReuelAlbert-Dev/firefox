@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1729,14 +1728,6 @@ void WebGLContext::RecycleSnapshotSharedSurface(
 void WebGLContext::ClearVRSwapChain() { mWebVRSwapChain.ClearPool(); }
 
 // ------------------------
-
-RefPtr<gfx::DataSourceSurface> GetTempSurface(const gfx::IntSize& aSize,
-                                              gfx::SurfaceFormat& aFormat) {
-  uint32_t stride =
-      gfx::GetAlignedStride<8>(aSize.width, BytesPerPixel(aFormat));
-  return gfx::Factory::CreateDataSourceSurfaceWithStride(aSize, aFormat,
-                                                         stride);
-}
 
 void WebGLContext::DummyReadFramebufferOperation() {
   if (!mBoundReadFramebuffer) return;  // Infallible.

@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=8 et tw=80 : */
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -631,7 +628,7 @@ void HttpChannelChild::DoOnStartRequest(nsIRequest* aRequest) {
 
 void HttpChannelChild::ProcessOnTransportAndData(
     const nsresult& aChannelStatus, const nsresult& aTransportStatus,
-    const uint64_t& aOffset, const uint32_t& aCount, const nsACString& aData,
+    const uint64_t& aOffset, const nsACString& aData,
     const TimeStamp& aOnDataAvailableStartTime) {
   LOG(("HttpChannelChild::ProcessOnTransportAndData [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
@@ -640,18 +637,17 @@ void HttpChannelChild::ProcessOnTransportAndData(
         return self->GetODATarget();
       },
       [self = UnsafePtr<HttpChannelChild>(this), aChannelStatus,
-       aTransportStatus, aOffset, aCount, aData = nsCString(aData),
+       aTransportStatus, aOffset, aData = nsCString(aData),
        aOnDataAvailableStartTime]() {
         self->mOnDataAvailableStartTime = aOnDataAvailableStartTime;
         self->OnTransportAndData(aChannelStatus, aTransportStatus, aOffset,
-                                 aCount, aData);
+                                 aData);
       }));
 }
 
 void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
                                           const nsresult& aTransportStatus,
                                           const uint64_t& aOffset,
-                                          const uint32_t& aCount,
                                           const nsACString& aData) {
   LOG(("HttpChannelChild::OnTransportAndData [this=%p]\n", this));
 
@@ -677,7 +673,7 @@ void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
     progressMax = -1;
   }
 
-  const int64_t progress = aOffset + aCount;
+  const int64_t progress = aOffset + aData.Length();
 
   // OnTransportAndData will be run on retargeted thread if applicable, however
   // OnStatus/OnProgress event can only be fired on main thread. We need to
@@ -710,21 +706,20 @@ void HttpChannelChild::OnTransportAndData(const nsresult& aChannelStatus,
   // support only reading part of the data, allowing later calls to read the
   // rest.
   nsCOMPtr<nsIInputStream> stringStream;
-  nsresult rv =
-      NS_NewByteInputStream(getter_AddRefs(stringStream),
-                            Span(aData).To(aCount), NS_ASSIGNMENT_DEPEND);
+  nsresult rv = NS_NewByteInputStream(getter_AddRefs(stringStream), Span(aData),
+                                      NS_ASSIGNMENT_DEPEND);
   if (NS_FAILED(rv)) {
     CancelWithReason(rv, "HttpChannelChild NS_NewByteInputStream failed"_ns);
     return;
   }
 
-  DoOnDataAvailable(this, stringStream, aOffset, aCount);
+  DoOnDataAvailable(this, stringStream, aOffset, aData.Length());
   stringStream->Close();
 
   // TODO: Bug 1523916 backpressure needs to take into account if the data is
   // coming from the main process or from the socket process via PBackground.
   if (NeedToReportBytesRead()) {
-    mUnreportBytesRead += aCount;
+    mUnreportBytesRead += aData.Length();
     if (mUnreportBytesRead >= gHttpHandler->SendWindowSize() >> 2) {
       if (NS_IsMainThread()) {
         (void)SendBytesRead(mUnreportBytesRead);
@@ -877,13 +872,9 @@ void HttpChannelChild::ProcessOnStopRequest(
        "aFromSocketProcess=%d]\n",
        this, aFromSocketProcess));
   MOZ_ASSERT(OnSocketThread());
-  {  // assign some of the members that would be accessed by the listeners
-     // upon getting OnDataFinished notications
-    MutexAutoLock lock(mOnDataFinishedMutex);
-    mTransferSize = aTiming.transferSize();
-    mEncodedBodySize = aTiming.encodedBodySize();
-    mDecodedBodySize = aTiming.decodedBodySize();
-  }
+  mTransferSize = aTiming.transferSize();
+  mEncodedBodySize = aTiming.encodedBodySize();
+  mDecodedBodySize = aTiming.decodedBodySize();
 
   if (StaticPrefs::network_send_OnDataFinished()) {
     mEventQ->RunOrEnqueue(new ChannelFunctionEvent(
@@ -957,7 +948,9 @@ void HttpChannelChild::OnStopRequest(
 
   nsCOMPtr<nsICompressConvStats> conv = do_QueryInterface(mCompressListener);
   if (conv) {
-    conv->GetDecodedDataLength(&mDecodedBodySize);
+    uint64_t decodedDataLength = 0;
+    conv->GetDecodedDataLength(&decodedDataLength);
+    mDecodedBodySize = decodedDataLength;
   }
 
   ResourceTimingStructArgsToTimingsStruct(aTiming, mTransactionTimings);
@@ -1578,7 +1571,7 @@ mozilla::ipc::IPCResult HttpChannelChild::RecvReportLNAToConsole(
   if (triggeringPrincipal) {
     nsCOMPtr<nsIURI> principalURI = triggeringPrincipal->GetURI();
     if (principalURI) {
-      sourceURI = principalURI;
+      sourceURI = std::move(principalURI);
     }
   }
 
@@ -2385,7 +2378,7 @@ nsresult HttpChannelChild::AsyncOpenInternal(nsIStreamListener* aListener) {
   }
   StoreIsPending(true);
   StoreWasOpened(true);
-  mListener = listener;
+  mListener = std::move(listener);
 
   if (mCanceled) {
     // We may have been canceled already, either by on-modify-request

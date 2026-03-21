@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -116,8 +114,8 @@ class nsCSPContext : public nsIContentSecurityPolicy {
   nsresult FireViolationEvent(
       mozilla::dom::Element* aTriggeringElement,
       nsICSPEventListener* aCSPEventListener,
-      const mozilla::dom::SecurityPolicyViolationEventInit&
-          aViolationEventInit);
+      const mozilla::dom::SecurityPolicyViolationEventInit& aViolationEventInit,
+      const nsAString& aReportGroupName);
 
   /**
    * Asynchronously notifies any nsIObservers listening to the CSP violation
@@ -159,6 +157,9 @@ class nsCSPContext : public nsIContentSecurityPolicy {
   void AddIPCPolicy(const mozilla::ipc::ContentSecurityPolicy& aPolicy);
   void SerializePolicies(
       nsTArray<mozilla::ipc::ContentSecurityPolicy>& aPolicies);
+
+  // Returns an empty string if aPolicyIndex > num of policies.
+  nsString GetReportGroupFor(uint64_t aPolicyIndex) const;
 
   static nsCSPContext* Cast(nsIContentSecurityPolicy* aCSP) {
     return static_cast<nsCSPContext*>(aCSP);

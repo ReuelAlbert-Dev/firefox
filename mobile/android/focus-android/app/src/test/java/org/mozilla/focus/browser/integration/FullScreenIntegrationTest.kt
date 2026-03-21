@@ -5,7 +5,6 @@
 package org.mozilla.focus.browser.integration
 
 import android.app.Activity
-import android.content.pm.ApplicationInfo
 import android.content.res.Resources
 import android.view.View
 import android.view.Window
@@ -23,11 +22,11 @@ import org.junit.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.runner.RunWith
 import org.mockito.Mockito.anyInt
-import org.mockito.Mockito.atLeast
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.inOrder
 import org.mockito.Mockito.never
 import org.mockito.Mockito.spy
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mozilla.focus.ext.disableDynamicBehavior
 import org.mozilla.focus.ext.enableDynamicBehavior
@@ -98,7 +97,6 @@ internal class FullScreenIntegrationTest {
         val activity: Activity = mock()
         val layoutParams: WindowManager.LayoutParams = mock()
         doReturn(activityWindow).`when`(activity).window
-        doReturn(activity).`when`(activityWindow).context
         doReturn(decorView).`when`(activityWindow).decorView
         doReturn(layoutParams).`when`(activityWindow).attributes
 
@@ -122,8 +120,6 @@ internal class FullScreenIntegrationTest {
         val insetsController: WindowInsetsController = mock()
 
         doReturn(activityWindow).`when`(activity).window
-        doReturn(mock<ApplicationInfo>()).`when`(activity).applicationInfo
-        doReturn(activity).`when`(activityWindow).context
         doReturn(decorView).`when`(activityWindow).decorView
         doReturn(layoutParams).`when`(activityWindow).attributes
         doReturn(insetsController).`when`(activityWindow).insetsController
@@ -134,6 +130,11 @@ internal class FullScreenIntegrationTest {
 
         // verify hiding system bars
         verify(insetsController).hide(WindowInsetsCompat.Type.systemBars())
+
+        verify(activityWindow).setFlags(
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        )
 
         assertEquals(
             WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES,
@@ -158,7 +159,7 @@ internal class FullScreenIntegrationTest {
         // Hiding the system bar hides the status and navigation bars.
         // setSystemUiVisibility will be called twice by WindowInsetsControllerCompat
         // once for setting the status bar and another for setting the navigation bar
-        verify(decorView, atLeast(2)).systemUiVisibility
+        verify(decorView, times(2)).systemUiVisibility
         verify(decorView).setOnApplyWindowInsetsListener(null)
     }
 
@@ -181,6 +182,7 @@ internal class FullScreenIntegrationTest {
 
         verify(insetsController).show(WindowInsetsCompat.Type.systemBars())
         verify(decorView).setOnApplyWindowInsetsListener(null)
+        verify(activityWindow).clearFlags(WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS)
 
         assertEquals(
             WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT,

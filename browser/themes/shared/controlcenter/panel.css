@@ -870,7 +870,7 @@
 }
 
 .trustpanel-header {
-  font-weight: var(--heading-font-weight);
+  font-weight: var(--font-weight-heading);
   margin-block-end: var(--space-medium);
 
   #trustpanel-blockerDetailsView &,
@@ -902,6 +902,10 @@
     )
     & {
     list-style-image: url(chrome://global/skin/icons/security.svg);
+  }
+
+  #trustpanel-popup[connection="net-error-page"] & {
+    list-style-image: url(chrome://global/skin/icons/info.svg);
   }
 }
 

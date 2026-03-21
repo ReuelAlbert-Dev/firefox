@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -804,9 +803,8 @@ void ChromiumCDMChild::ReturnOutput(WidevineVideoFrame& aFrame) {
                       aFrame.Stride(cdm::kVPlane)};
   output.mTimestamp() = aFrame.Timestamp();
 
-  uint64_t duration = 0;
-  if (mFrameDurations.Find(aFrame.Timestamp(), duration)) {
-    output.mDuration() = duration;
+  if (Maybe<uint64_t> duration = mFrameDurations.Take(aFrame.Timestamp())) {
+    output.mDuration() = *duration;
   }
 
   CDMBuffer* base = reinterpret_cast<CDMBuffer*>(aFrame.FrameBuffer());

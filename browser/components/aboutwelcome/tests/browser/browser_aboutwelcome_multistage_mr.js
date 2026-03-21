@@ -16,7 +16,7 @@ const { InternalTestingProfileMigrator } = ChromeUtils.importESModule(
 
 async function clickVisibleButton(browser, selector) {
   // eslint-disable-next-line no-shadow
-  await ContentTask.spawn(browser, { selector }, async ({ selector }) => {
+  await SpecialPowers.spawn(browser, [{ selector }], async ({ selector }) => {
     function getVisibleElement() {
       for (const el of content.document.querySelectorAll(selector)) {
         if (el.offsetParent !== null) {
@@ -59,14 +59,6 @@ add_task(function () {
  */
 add_task(async function test_aboutwelcome_mr_template_telemetry() {
   const sandbox = sinon.createSandbox();
-
-  // Prevent Smart Window screens from rendering
-  sandbox
-    .stub(AWScreenUtils, "evaluateScreenTargeting")
-    .callThrough()
-    .withArgs(sinon.match(/smart_window/))
-    .resolves(false);
-
   let { browser, cleanup } = await openMRAboutWelcome();
   let aboutWelcomeActor = await getAboutWelcomeParent(browser);
   // Stub AboutWelcomeParent's Content Message Handler
@@ -164,7 +156,7 @@ add_task(async function test_aboutwelcome_gratitude() {
         position: "split",
         split_narrow_bkg_position: "-228px",
         background:
-          "url('chrome://activity-stream/content/data/content/assets/mr-gratitude.svg') var(--mr-secondary-position) no-repeat, var(--mr-screen-background-color)",
+          "url('chrome://activity-stream/content/data/content/assets/br-gratitude-fox-rock.svg') var(--mr-secondary-position) no-repeat, var(--mr-screen-background-color)",
         progress_bar: true,
         logo: {},
         title: {
@@ -200,6 +192,7 @@ add_task(async function test_aboutwelcome_gratitude() {
   await clickVisibleButton(browser, ".action-buttons button.primary");
 
   // make sure the button navigates to newtab
+  await BrowserTestUtils.browserLoaded(browser, false, "about:home");
   await test_screen_content(
     browser,
     "home",
@@ -842,7 +835,7 @@ add_task(async function test_aboutwelcome_gratitude() {
         position: "split",
         split_narrow_bkg_position: "-228px",
         background:
-          "url('chrome://activity-stream/content/data/content/assets/fox-doodle-waving-laptop.svg') center center / 80% no-repeat var(--mr-screen-background-color)",
+          "url('chrome://activity-stream/content/data/content/assets/br-fxa-fox-mirror.svg') var(--mr-secondary-position) no-repeat light-dark(rgba(252, 245, 240, 1), rgba(33, 3, 64, 1))",
         progress_bar: true,
         logo: {},
         title: {
@@ -889,6 +882,8 @@ add_task(async function test_aboutwelcome_gratitude() {
 
   // make sure the secondary button navigates to newtab
   await clickVisibleButton(browser, ".action-buttons button.secondary");
+
+  await BrowserTestUtils.browserLoaded(browser, false, "about:home");
   await test_screen_content(
     browser,
     "home",

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -94,6 +92,7 @@ class LinuxGamepadService {
   void AddMonitor();
   void RemoveMonitor();
   bool IsDeviceGamepad(struct udev_device* dev);
+  bool IsXpadDevice(struct udev_device* aDev);
   void ReadUdevChange();
 
   // handler for data from /dev/input/eventN
@@ -208,6 +207,17 @@ void LinuxGamepadService::AddDevice(struct udev_device* dev) {
     for (uint8_t button = 0; button < BUTTON_INDEX_COUNT; button++) {
       gamepad->key_map[kStandardButtons[button]] = button;
     }
+
+    if (IsXpadDevice(dev)) {
+      // The xpad driver for X-Box like gamepads maps the button labelled X to
+      // BTN_X (== BTN_NORTH) and the button labelled Y to BTN_Y (== BTN_WEST).
+      // However, unlike Nintendo controllers (where X is north and Y is west),
+      // Xbox gamepads have X on the left (west) and Y on the top (north). We
+      // swap them here to provide consistent results to the Gamepad API.
+
+      std::swap(gamepad->key_map[BTN_WEST], gamepad->key_map[BTN_NORTH]);
+    }
+
     numButtons = BUTTON_INDEX_COUNT;
   }
 
@@ -398,6 +408,15 @@ bool LinuxGamepadService::IsDeviceGamepad(struct udev_device* aDev) {
   }
 
   return strncmp(devpath, kEvdevPath, strlen(kEvdevPath)) == 0;
+}
+
+bool LinuxGamepadService::IsXpadDevice(struct udev_device* aDev) {
+  const char* driver =
+      mUdev.udev_device_get_property_value(aDev, "ID_USB_DRIVER");
+  if (!driver) {
+    return false;
+  }
+  return strcmp(driver, "xpad") == 0;
 }
 
 void LinuxGamepadService::ReadUdevChange() {

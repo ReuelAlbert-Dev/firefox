@@ -27,12 +27,8 @@ import mozilla.components.service.nimbus.evalJexlSafe
 import mozilla.components.service.nimbus.messaging.use
 import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
 import mozilla.components.support.base.log.logger.Logger
-import mozilla.components.support.ktx.android.view.tryDisableEdgeToEdge
-import mozilla.components.support.ktx.android.view.tryEnableEnterEdgeToEdge
-import mozilla.components.support.utils.BrowsersCache
-import org.mozilla.fenix.FenixApplication
+import mozilla.components.support.utils.Browsers
 import org.mozilla.fenix.GleanMetrics.Pings
-import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.accounts.FenixFxAEntryPoint
 import org.mozilla.fenix.components.appstate.AppAction
@@ -89,12 +85,17 @@ class OnboardingFragment : Fragment() {
     private val pagesToDisplay by lazy {
         with(requireContext()) {
             pagesToDisplay(
-                showDefaultBrowserPage = isNotDefaultBrowser(this) && !isDefaultBrowserPromptSupported(),
+                showDefaultBrowserPage = displayDefaultBrowserPage(this),
                 showNotificationPage = canShowNotificationPage(),
                 showAddWidgetPage = canShowAddSearchWidgetPrompt(AppWidgetManager.getInstance(activity)),
             ).toMutableList()
         }
     }
+
+    private fun displayDefaultBrowserPage(context: Context): Boolean = with(context) {
+        isNotDefaultBrowser(this) && (!isDefaultBrowserPromptSupported() || settings().useOnboardingRedesign)
+    }
+
     private val telemetryRecorder by lazy {
         OnboardingTelemetryRecorder(
             onboardingReason = if (requireComponents.settings.enablePersistentOnboarding) {
@@ -188,25 +189,7 @@ class OnboardingFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        if (requireContext().settings().useOnboardingRedesign) {
-            activity?.tryEnableEnterEdgeToEdge()
-        }
         hideToolbar()
-        maybeResetBrowserCache()
-    }
-
-    /**
-     * If the user was shown the default browser prompt, we reset the browsers cache.
-     *
-     * In a general case, the cache is cleared every [HomeActivity.onPause] to guarantee correct
-     * data, but in a case of a default browser prompt during onboarding, a queued
-     * [FenixApplication.setStartupMetrics] call breaks that mechanism. The call repopulates
-     * the cache while the user is still choosing a browser.
-     */
-    private fun maybeResetBrowserCache() {
-        if (defaultBrowserPromptStorage.promptToSetAsDefaultBrowserDisplayedInOnboarding) {
-            BrowsersCache.resetAll()
-        }
     }
 
     @SuppressLint("SourceLockedOrientationActivity")
@@ -221,9 +204,6 @@ class OnboardingFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (requireContext().settings().useOnboardingRedesign) {
-            activity?.tryDisableEdgeToEdge()
-        }
         if (!isLargeScreenSize()) {
             activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
@@ -534,7 +514,7 @@ class OnboardingFragment : Fragment() {
     }
 
     private fun isNotDefaultBrowser(context: Context) =
-        !BrowsersCache.all(context.applicationContext).isDefaultBrowser
+        !Browsers.isDefaultBrowser(context)
 
     private fun canShowNotificationPage() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 

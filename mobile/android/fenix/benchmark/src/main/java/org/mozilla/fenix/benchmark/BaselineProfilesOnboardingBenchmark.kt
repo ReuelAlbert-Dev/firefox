@@ -10,6 +10,7 @@ import androidx.benchmark.macro.StartupMode
 import androidx.benchmark.macro.StartupTimingMetric
 import androidx.benchmark.macro.junit4.MacrobenchmarkRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,6 +19,7 @@ import org.mozilla.fenix.benchmark.utils.clearPackageData
 import org.mozilla.fenix.benchmark.utils.completeOnboarding
 import org.mozilla.fenix.benchmark.utils.measureRepeatedDefault
 import org.mozilla.fenix.benchmark.utils.revokeNotificationPermission
+import org.mozilla.fenix.benchmark.utils.waitForHomepage
 
 /**
  * This test class benchmarks the speed of completing onboarding. Run this benchmark to verify how effective
@@ -71,6 +73,7 @@ class BaselineProfilesOnboardingBenchmark {
         ) {
             startActivityAndWait()
             device.completeOnboarding()
+            device.waitForHomepage()
             killProcess()
         }
 }

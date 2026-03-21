@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim:expandtab:shiftwidth=2:tabstop=2:cin:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -2552,7 +2550,7 @@ nsresult nsExternalAppHandler::ContinueSave(nsIFile* aNewFileLocation) {
 
   nsresult rv = NS_OK;
   nsCOMPtr<nsIFile> fileToUse = aNewFileLocation;
-  mFinalFileDestination = fileToUse;
+  mFinalFileDestination = std::move(fileToUse);
 
   // Move what we have in the final directory, but append .part
   // to it, to indicate that it's unfinished.  Do not call SetTarget on the
@@ -2613,7 +2611,7 @@ nsresult nsExternalAppHandler::ContinueSave(nsIFile* aNewFileLocation) {
           return NS_OK;
         }
 
-        mTempFile = movedFile;
+        mTempFile = std::move(movedFile);
       }
     }
   }
@@ -2674,7 +2672,7 @@ NS_IMETHODIMP nsExternalAppHandler::SetDownloadToLaunch(
 
   nsresult rv = fileToUse->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
   if (NS_SUCCEEDED(rv)) {
-    mFinalFileDestination = fileToUse;
+    mFinalFileDestination = std::move(fileToUse);
     // launch the progress window now that the user has picked the desired
     // action.
     rv = CreateTransfer();

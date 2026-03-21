@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -273,14 +271,15 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
           }
 
           size_t bufSize = shmem.Size<char>();
-          size_t reqSize = SIZE_MAX;
+          Maybe<size_t> reqSize;
           switch (desc.type()) {
             case BufferDescriptor::TYCbCrDescriptor: {
               const YCbCrDescriptor& ycbcr = desc.get_YCbCrDescriptor();
               reqSize = ImageDataSerializer::ComputeYCbCrBufferSize(
-                  ycbcr.ySize(), ycbcr.yStride(), ycbcr.cbCrSize(),
-                  ycbcr.cbCrStride(), ycbcr.yOffset(), ycbcr.cbOffset(),
-                  ycbcr.crOffset());
+                  ycbcr.display(), ycbcr.ySize(), ycbcr.yStride(),
+                  ycbcr.cbCrSize(), ycbcr.cbCrStride(), ycbcr.yOffset(),
+                  ycbcr.cbOffset(), ycbcr.crOffset(), ycbcr.colorDepth(),
+                  ycbcr.chromaSubsampling());
               break;
             }
             case BufferDescriptor::TRGBDescriptor: {
@@ -295,7 +294,7 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
               MOZ_CRASH("GFX: Bad descriptor");
           }
 
-          if (reqSize == 0 || bufSize < reqSize) {
+          if (reqSize.isNothing() || bufSize < reqSize.value()) {
             NS_ERROR(
                 "A client process gave a shmem too small to fit for its "
                 "descriptor!");
@@ -460,6 +459,8 @@ BufferTextureHost::BufferTextureHost(const BufferDescriptor& aDesc,
   switch (mDescriptor.type()) {
     case BufferDescriptor::TYCbCrDescriptor: {
       const YCbCrDescriptor& ycbcr = mDescriptor.get_YCbCrDescriptor();
+      MOZ_ASSERT(gfx::IntRect(gfx::IntPoint(), ycbcr.ySize())
+                     .Contains(ycbcr.display()));
       mSize = ycbcr.display().Size();
       mFormat = gfx::SurfaceFormat::YUV420;
       break;
@@ -538,10 +539,13 @@ void BufferTextureHost::PushResourceUpdates(
   if (GetFormat() != gfx::SurfaceFormat::YUV420) {
     MOZ_ASSERT(aImageKeys.length() == 1);
 
-    wr::ImageDescriptor descriptor(
-        GetSize(),
-        ImageDataSerializer::ComputeRGBStride(GetFormat(), GetSize().width),
-        GetFormat());
+    auto stride =
+        ImageDataSerializer::ComputeRGBStride(GetFormat(), GetSize().width);
+    if (NS_WARN_IF(stride.isNothing())) {
+      return;
+    }
+
+    wr::ImageDescriptor descriptor(GetSize(), stride.value(), GetFormat());
     (aResources.*method)(aImageKeys[0], descriptor, aExtID, imageType, 0,
                          /* aNormalizedUvs */ false);
   } else {
@@ -719,10 +723,13 @@ already_AddRefed<gfx::DataSourceSurface> BufferTextureHost::GetAsSurface(
       return nullptr;
     }
   } else {
+    auto stride =
+        ImageDataSerializer::GetRGBStride(mDescriptor.get_RGBDescriptor());
+    if (stride.isNothing()) {
+      return nullptr;
+    }
     result = gfx::Factory::CreateWrappingDataSourceSurface(
-        GetBuffer(),
-        ImageDataSerializer::GetRGBStride(mDescriptor.get_RGBDescriptor()),
-        mSize, mFormat);
+        GetBuffer(), stride.value(), mSize, mFormat);
   }
   return result.forget();
 }

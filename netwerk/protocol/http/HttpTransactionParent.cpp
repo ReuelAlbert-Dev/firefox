@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* vim:set ts=4 sw=4 sts=4 et cin: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -541,16 +539,16 @@ mozilla::ipc::IPCResult HttpTransactionParent::RecvOnTransportStatus(
 }
 
 mozilla::ipc::IPCResult HttpTransactionParent::RecvOnDataAvailable(
-    const nsCString& aData, const uint64_t& aOffset, const uint32_t& aCount,
+    const nsCString& aData, const uint64_t& aOffset,
     const TimeStamp& aOnDataAvailableStartTime) {
   LOG(("HttpTransactionParent::RecvOnDataAvailable [this=%p, aOffset= %" PRIu64
-       " aCount=%" PRIu32,
-       this, aOffset, aCount));
+       " aCount=%zu",
+       this, aOffset, aData.Length()));
 
   // The final transfer size is updated in OnStopRequest ipc message, but in the
   // case that the socket process is crashed or something went wrong, we might
   // not get the OnStopRequest. So, let's update the transfer size here.
-  mTransferSize += aCount;
+  mTransferSize += aData.Length();
 
   if (mCanceled) {
     return IPC_OK();
@@ -560,16 +558,15 @@ mozilla::ipc::IPCResult HttpTransactionParent::RecvOnDataAvailable(
       [self = UnsafePtr<HttpTransactionParent>(this)]() {
         return self->GetODATarget();
       },
-      [self = UnsafePtr<HttpTransactionParent>(this), aData, aOffset, aCount,
+      [self = UnsafePtr<HttpTransactionParent>(this), aData, aOffset,
        aOnDataAvailableStartTime]() {
-        self->DoOnDataAvailable(aData, aOffset, aCount,
-                                aOnDataAvailableStartTime);
+        self->DoOnDataAvailable(aData, aOffset, aOnDataAvailableStartTime);
       }));
   return IPC_OK();
 }
 
 void HttpTransactionParent::DoOnDataAvailable(
-    const nsCString& aData, const uint64_t& aOffset, const uint32_t& aCount,
+    const nsCString& aData, const uint64_t& aOffset,
     const TimeStamp& aOnDataAvailableStartTime) {
   LOG(("HttpTransactionParent::DoOnDataAvailable [this=%p]\n", this));
   if (mCanceled) {
@@ -577,9 +574,9 @@ void HttpTransactionParent::DoOnDataAvailable(
   }
 
   nsCOMPtr<nsIInputStream> stringStream;
-  nsresult rv =
-      NS_NewByteInputStream(getter_AddRefs(stringStream),
-                            Span(aData.get(), aCount), NS_ASSIGNMENT_DEPEND);
+  nsresult rv = NS_NewByteInputStream(getter_AddRefs(stringStream),
+                                      Span(aData.get(), aData.Length()),
+                                      NS_ASSIGNMENT_DEPEND);
 
   if (NS_FAILED(rv)) {
     CancelOnMainThread(rv);
@@ -588,7 +585,7 @@ void HttpTransactionParent::DoOnDataAvailable(
 
   mOnDataAvailableStartTime = aOnDataAvailableStartTime;
   AutoEventEnqueuer ensureSerialDispatch(mEventQ);
-  rv = mChannel->OnDataAvailable(this, stringStream, aOffset, aCount);
+  rv = mChannel->OnDataAvailable(this, stringStream, aOffset, aData.Length());
   if (NS_FAILED(rv)) {
     CancelOnMainThread(rv);
   }

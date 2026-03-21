@@ -480,13 +480,18 @@ class WaitForUiaEvent(comtypes.COMObject):
 
 
 def getUiaPattern(element, patternName):
-    """Get a control pattern interface from an IUIAutomationElement."""
-    patternId = getattr(uiaMod, f"UIA_{patternName}PatternId")
+    """Get a control pattern interface from an IUIAutomationElement.
+    For convenience, if patternName doesn't contain "Pattern", "Pattern" will be
+    added to the name; e.g. "Text" becomes "TextPattern".
+    """
+    if "Pattern" not in patternName:
+        patternName += "Pattern"
+    patternId = getattr(uiaMod, f"UIA_{patternName}Id")
     unknown = element.GetCurrentPattern(patternId)
     if not unknown:
         return None
     # GetCurrentPattern returns an IUnknown. We have to QI to the real
     # interface.
     # Get the comtypes interface object.
-    interface = getattr(uiaMod, f"IUIAutomation{patternName}Pattern")
+    interface = getattr(uiaMod, f"IUIAutomation{patternName}")
     return unknown.QueryInterface(interface)

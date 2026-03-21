@@ -4,16 +4,26 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  AIWindow:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   AIWindowUI:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindowUI.sys.mjs",
   AIWindowAccountAuth:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindowAccountAuth.sys.mjs",
   Chat: "moz-src:///browser/components/aiwindow/models/Chat.sys.mjs",
+  ChatConversation:
+    "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs",
+  IntentClassifier:
+    "moz-src:///browser/components/aiwindow/models/IntentClassifier.sys.mjs",
   openAIEngine: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
+  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
+  SessionWindowUI: "resource:///modules/sessionstore/SessionWindowUI.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 const AIWINDOW_URL = "chrome://browser/content/aiwindow/aiWindow.html";
+
+let gIntentEngineStub;
 
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
@@ -21,23 +31,102 @@ add_setup(async function () {
       ["browser.smartwindow.endpoint", "http://localhost:0/v1"],
       ["browser.smartwindow.enabled", true],
       ["browser.smartwindow.firstrun.hasCompleted", true],
+      ["browser.smartwindow.chat.interactionCount", 0],
     ],
   });
+
+  // Stub intent engine so it doesn't attempt network requests
+  const fakeIntentEngine = {
+    run() {
+      return [
+        { label: "chat", score: 0.95 },
+        { label: "search", score: 0.05 },
+      ];
+    },
+  };
+  gIntentEngineStub = sinon
+    .stub(IntentClassifier, "_createEngine")
+    .resolves(fakeIntentEngine);
+  registerCleanupFunction(() => gIntentEngineStub.restore());
 });
 
 /**
  * Opens a new AI Window
  *
+ * @param {object} options
+ * @param {string|boolean} options.waitForTabURL - URL to wait for or false to skip waiting
  * @returns {Promise<Window>}
  */
-async function openAIWindow() {
-  const win = await BrowserTestUtils.openNewBrowserWindow({ aiWindow: true });
+async function openAIWindow({ waitForTabURL = AIWINDOW_URL } = {}) {
+  info("Opening new AI Window");
+  const win = await BrowserTestUtils.openNewBrowserWindow({
+    aiWindow: true,
+    waitForTabURL,
+  });
+  info("Waiting for AI window attr");
   await BrowserTestUtils.waitForMutationCondition(
     win.document.documentElement,
     { attributes: true },
     () => win.document.documentElement.hasAttribute("ai-window")
   );
+  info("Promising focus");
+  await SimpleTest.promiseFocus(win);
   return win;
+}
+
+/**
+ * Opens a new AI Window with about:blank
+ * and the chat assistant sidebar open
+ *
+ * @returns {Promise<{win: Window, sidebarBrowser: MozBrowser}>}
+ */
+async function openAIWindowWithSidebar() {
+  const win = await openAIWindow();
+  BrowserTestUtils.startLoadingURIString(
+    win.gBrowser.selectedBrowser,
+    "about:blank"
+  );
+  await BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser, {
+    wantLoad: "about:blank",
+  });
+  if (!AIWindowUI.isSidebarOpen(win)) {
+    info("Opening sidebar");
+    AIWindowUI.toggleSidebar(win);
+  }
+  const sidebarBrowser = win.document.getElementById("ai-window-browser");
+  await BrowserTestUtils.waitForCondition(
+    () => sidebarBrowser.contentDocument?.querySelector("ai-window:defined"),
+    "Sidebar ai-window should be loaded"
+  );
+  return { win, sidebarBrowser };
+}
+
+function promiseNavigateAndLoad(browser, url) {
+  let loaded = BrowserTestUtils.browserLoaded(browser, {
+    wantLoad: url,
+  });
+  BrowserTestUtils.startLoadingURIString(browser, url);
+  return loaded;
+}
+
+async function getPromptButtons(browser) {
+  const aiWindow = await TestUtils.waitForCondition(
+    () => browser.contentDocument?.querySelector("ai-window"),
+    "Wait for ai-window element"
+  );
+  const promptsEl = await TestUtils.waitForCondition(
+    () => aiWindow.shadowRoot.querySelector("smartwindow-prompts"),
+    "Wait for smartwindow-prompts element"
+  );
+  return promptsEl.shadowRoot.querySelectorAll(".sw-prompt-button");
+}
+
+async function getConversationId(browser) {
+  const aiWindow = await TestUtils.waitForCondition(
+    () => browser.contentDocument?.querySelector("ai-window"),
+    "Wait for ai-window element"
+  );
+  return aiWindow.conversationId.toString();
 }
 
 /**
@@ -54,6 +143,23 @@ function skipSignIn() {
 }
 
 /**
+ * Submits the current smartbar input by pressing Enter.
+ *
+ * @param {MozBrowser} browser - The browser element
+ */
+async function submitSmartbar(browser) {
+  await SpecialPowers.spawn(browser, [], async () => {
+    const aiWindowElement = content.document.querySelector("ai-window");
+    const smartbar = aiWindowElement.shadowRoot.querySelector(
+      "#ai-window-smartbar"
+    );
+    const inputField = smartbar.inputField;
+    inputField.focus();
+    EventUtils.synthesizeKey("KEY_Enter", {}, content);
+  });
+}
+
+/**
  * Type text into the smartbar and wait for a pending query to complete.
  *
  * @param {MozBrowser} browser - The browser element
@@ -66,10 +172,17 @@ async function typeInSmartbar(browser, text) {
       () => aiWindowElement.shadowRoot?.querySelector("#ai-window-smartbar"),
       "Wait for Smartbar to be rendered"
     );
-    const editor = smartbar.querySelector("moz-multiline-editor");
-    editor.focus();
+    info("typeInSmartbar: smartbar found, calling focus()");
+    smartbar.focus();
+    await ContentTaskUtils.waitForCondition(
+      () => smartbar.matches(":focus-within"),
+      "Wait for smartbar to receive focus"
+    );
+    info("typeInSmartbar: focus received, sending string");
     EventUtils.sendString(searchText, content);
+    info("typeInSmartbar: string sent, awaiting lastQueryContextPromise");
     await smartbar.lastQueryContextPromise;
+    info("typeInSmartbar: query complete");
   });
 }
 
@@ -78,7 +191,6 @@ async function typeInSmartbar(browser, text) {
  *
  * @param {MozBrowser} browser - The browser element
  * @param {Function} openFn - A function that should trigger the view opening
- * @returns {Promise} A promise that resolves when the view is open
  */
 async function promiseSmartbarSuggestionsOpen(browser, openFn) {
   if (!openFn) {
@@ -96,14 +208,11 @@ async function promiseSmartbarSuggestionsOpen(browser, openFn) {
     if (smartbar.view.isOpen) {
       return;
     }
-    await new Promise(resolve => {
-      smartbar.controller.addListener({
-        onViewOpen() {
-          smartbar.controller.removeListener(this);
-          resolve();
-        },
-      });
-    });
+    await ContentTaskUtils.waitForMutationCondition(
+      smartbar,
+      { attributes: true },
+      () => smartbar.hasAttribute("open")
+    );
   });
   await openFn();
   await opened;
@@ -113,7 +222,6 @@ async function promiseSmartbarSuggestionsOpen(browser, openFn) {
  * Waits for the Smartbar suggestions view to close.
  *
  * @param {MozBrowser} browser - The browser element
- * @returns {Promise} A promise that resolves when the view is closed
  */
 async function promiseSmartbarSuggestionsClose(browser) {
   await SpecialPowers.spawn(browser, [], async () => {
@@ -125,15 +233,11 @@ async function promiseSmartbarSuggestionsClose(browser) {
     if (!smartbar.view.isOpen) {
       return;
     }
-
-    await new Promise(resolve => {
-      smartbar.controller.addListener({
-        onViewClose() {
-          smartbar.controller.removeListener(this);
-          resolve();
-        },
-      });
-    });
+    await ContentTaskUtils.waitForMutationCondition(
+      smartbar,
+      { attributes: true },
+      () => !smartbar.hasAttribute("open")
+    );
   });
 }
 
@@ -229,7 +333,13 @@ function startMockOpenAI({
     };
 
     const sendSSE = obj => {
-      response.write(`data: ${JSON.stringify(obj)}\n\n`);
+      // Encode data so special §followup:§-type tokens preserves utf-8
+      response.write(
+        Array.from(
+          new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`),
+          b => String.fromCharCode(b)
+        ).join("")
+      );
     };
 
     if (wantsStream && toolCall && askedForTools && !hasToolResult) {
@@ -358,9 +468,14 @@ async function withServer(serverOptions, task) {
     set: [["browser.smartwindow.endpoint", `http://localhost:${port}/v1`]],
   });
 
+  const getFxAccountTokenStub = sinon
+    .stub(openAIEngine, "getFxAccountToken")
+    .resolves("mock-fxa-token");
+
   try {
     await task({ port });
   } finally {
+    getFxAccountTokenStub.restore();
     await SpecialPowers.popPrefEnv();
     await stopMockOpenAI(server);
   }

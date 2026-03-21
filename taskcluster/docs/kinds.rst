@@ -452,6 +452,11 @@ Publishes signed langpacks to archive.mozilla.org
 release-update-verify
 ---------------------
 Verifies the contents and package of release update MARs.
+
+test-update-integrity
+---------------------
+Verifies that update MARs match installers. See `tools/update-verify/marannon` for more details.
+
 release-update-verify-next
 --------------------------
 Verifies the contents and package of release and updare MARs from the previous ESR release.
@@ -605,6 +610,10 @@ These repackage tasks take the signed langpacks (.xpi) binaries and puts them in
 repackage-rpm
 ----------------
 These repackage tasks take signed Firefox Linux binaries and puts them in RPM packages.
+
+repackage-rpm-signing
+---------------------
+Repackage-rpm-signing takes the repackaged RPMs and signs them.
 
 repackage-flatpak
 -----------------

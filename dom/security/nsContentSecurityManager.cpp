@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -311,7 +309,7 @@ static nsresult DoCheckLoadURIChecks(nsIURI* aURI, nsILoadInfo* aLoadInfo) {
   if (addonPrincipal) {
     // call CheckLoadURIWithPrincipal() as below to continue other checks, but
     // with the addon principal.
-    triggeringPrincipal = addonPrincipal;
+    triggeringPrincipal = std::move(addonPrincipal);
   }
 
   // Only call CheckLoadURIWithPrincipal() using the TriggeringPrincipal and not
@@ -1344,12 +1342,6 @@ static nsresult CheckAllowLoadByTriggeringRemoteType(nsIChannel* aChannel) {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread(),
                         "Unexpected off-the-main-thread call to "
                         "CheckAllowLoadByTriggeringRemoteType");
-
-  // Due to the way that session history is handled without SHIP, we cannot run
-  // these checks when SHIP is disabled.
-  if (!mozilla::SessionHistoryInParent()) {
-    return NS_OK;
-  }
 
   nsAutoCString triggeringRemoteType;
   nsresult rv = loadInfo->GetTriggeringRemoteType(triggeringRemoteType);

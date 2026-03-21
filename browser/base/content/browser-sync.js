@@ -11,9 +11,6 @@ const {
   "resource://gre/modules/FxAccountsCommon.sys.mjs"
 );
 
-const { TRUSTED_FAVICON_SCHEMES, getMozRemoteImageURL } =
-  ChromeUtils.importESModule("moz-src:///toolkit/modules/FaviconUtils.sys.mjs");
-
 const { UIState } = ChromeUtils.importESModule(
   "resource://services-sync/UIState.sys.mjs"
 );
@@ -213,6 +210,7 @@ this.SyncedTabsPanelList = class SyncedTabsPanelList {
     // Create the element for the remote client.
     let clientItem = document.createXULElement("label");
     clientItem.setAttribute("id", labelId);
+    clientItem.className = "subview-subheader";
     clientItem.setAttribute("itemtype", "client");
     clientItem.setAttribute(
       "tooltiptext",
@@ -301,25 +299,7 @@ this.SyncedTabsPanelList = class SyncedTabsPanelList {
       tabInfo.title != "" ? tabInfo.title : tabInfo.url
     );
     if (tabInfo.icon) {
-      let icon = tabInfo.icon;
-      if (gSync.REMOTE_SVG_ICON_DECODING) {
-        try {
-          const uri = NetUtil.newURI(icon);
-          if (!TRUSTED_FAVICON_SCHEMES.includes(uri.scheme)) {
-            icon = getMozRemoteImageURL(uri.spec, {
-              size: Math.floor(16 * window.devicePixelRatio),
-              colorScheme: window.matchMedia("(prefers-color-scheme: dark)")
-                .matches
-                ? "dark"
-                : "light",
-            });
-          }
-        } catch (e) {
-          console.error(e);
-          icon = "";
-        }
-      }
-      item.setAttribute("image", icon);
+      item.setAttribute("image", tabInfo.icon);
     }
     item.setAttribute("tooltiptext", tooltipText);
     // We need to use "click" instead of "command" here so openUILink
@@ -588,11 +568,6 @@ var gSync = {
       "FXA_CTA_MENU_ENABLED",
       "identity.fxaccounts.toolbar.pxiToolbarEnabled"
     );
-    XPCOMUtils.defineLazyPreferenceGetter(
-      this,
-      "REMOTE_SVG_ICON_DECODING",
-      "identity.tabs.remoteSVGIconDecoding"
-    );
   },
 
   maybeUpdateUIState() {
@@ -687,11 +662,11 @@ var gSync = {
     PanelMultiView.getViewNode(
       document,
       "PanelUI-fxa-menu-sendtab-not-configured-button"
-    ).addEventListener("command", this);
+    ).addEventListener("click", this);
     PanelMultiView.getViewNode(
       document,
       "PanelUI-fxa-menu-sendtab-connect-device-button"
-    ).addEventListener("command", this);
+    ).addEventListener("click", this);
 
     PanelUI.mainView.addEventListener("ViewShowing", this);
 
@@ -728,7 +703,8 @@ var gSync = {
       case "mouseover":
         this.refreshSyncButtonsTooltip();
         break;
-      case "command": {
+      case "command":
+      case "click": {
         this.onCommand(event.target);
         break;
       }

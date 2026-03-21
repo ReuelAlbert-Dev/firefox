@@ -2,6 +2,7 @@
 support-files = [
   "canvas-fingerprinter.html",
   "empty.html",
+  "iframe_orientation.html",
   "font-fingerprinter.html",
   "head-fpp-matrix.js",
   "head.js",
@@ -30,6 +31,9 @@ support-files = [
 ["browser_fingerprintingWebCompat.js"]
 
 ["browser_fingerprinting_randomization_key.js"]
+skip-if = [
+  "os == 'win' && os_version == '11.26200' && asan", # Bug 2019745
+]
 
 ["browser_font_fingerprinter_telemetry.js"]
 
@@ -56,6 +60,8 @@ skip-if = [
 ]
 
 ["browser_fpp_remote_settings_jexl.js"]
+
+["browser_iframe_orientation.js"]
 
 ["browser_js_locale.js"]
 

@@ -10,7 +10,7 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-async function runPopupPositionTest(parentDocumentFileName) {
+async function runPopupPositionTest(parentDocumentFileName, oop) {
   function httpURL(filename) {
     let chromeURL = getRootDirectory(gTestPath) + filename;
     return chromeURL.replace(
@@ -30,10 +30,9 @@ async function runPopupPositionTest(parentDocumentFileName) {
   const pageUrl = httpURL(parentDocumentFileName);
   let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, pageUrl);
 
-  // Load the OOP iframe.
-  const iframeUrl = httpCrossOriginURL(
-    "helper_test_select_popup_position.html"
-  );
+  const iframeUrl = oop
+    ? httpCrossOriginURL("helper_test_select_popup_position.html")
+    : httpURL("helper_test_select_popup_position.html");
   const iframe = await SpecialPowers.spawn(
     tab.linkedBrowser,
     [iframeUrl],
@@ -100,10 +99,11 @@ async function runPopupPositionTest(parentDocumentFileName) {
   // On platforms other than MaxOSX the popup menu is positioned below the
   // option element.
   if (!navigator.platform.includes("Mac")) {
-    is(
+    isfuzzy(
       popupRect.top - popupMarginTop,
       tab.linkedBrowser.getBoundingClientRect().top +
         (selectRect.y + selectRect.height) * 2.0,
+      1,
       "select popup position y should be scaled by the desktop zoom"
     );
   } else {
@@ -111,9 +111,10 @@ async function runPopupPositionTest(parentDocumentFileName) {
     const offsetToSelectedItem =
       selectPopup.querySelector("menuitem[selected]").getBoundingClientRect()
         .top - popupRect.top;
-    is(
+    isfuzzy(
       popupRect.top - popupMarginTop + offsetToSelectedItem,
       tab.linkedBrowser.getBoundingClientRect().top + selectRect.y * 2.0,
+      1,
       "select popup position y should be scaled by the desktop zoom"
     );
   }
@@ -123,19 +124,30 @@ async function runPopupPositionTest(parentDocumentFileName) {
   BrowserTestUtils.removeTab(tab);
 }
 
-add_task(async function () {
-  if (!SpecialPowers.useRemoteSubframes) {
-    ok(
-      true,
-      "popup window position in non OOP iframe will be fixed by bug 1691346"
-    );
-    return;
-  }
+add_task(async function test_popup_transformed_in_parent_same_origin() {
   await runPopupPositionTest(
-    "helper_test_select_popup_position_transformed_in_parent.html"
+    "helper_test_select_popup_position_transformed_in_parent.html",
+    false
   );
 });
 
-add_task(async function () {
-  await runPopupPositionTest("helper_test_select_popup_position_zoomed.html");
+add_task(async function test_popup_transformed_in_parent_oop() {
+  await runPopupPositionTest(
+    "helper_test_select_popup_position_transformed_in_parent.html",
+    true
+  );
+});
+
+add_task(async function test_popup_positioned_zoomed_same_origin() {
+  await runPopupPositionTest(
+    "helper_test_select_popup_position_zoomed.html",
+    false
+  );
+});
+
+add_task(async function test_popup_positioned_zoomed_oop() {
+  await runPopupPositionTest(
+    "helper_test_select_popup_position_zoomed.html",
+    true
+  );
 });

@@ -95,6 +95,16 @@ export default class MozSelect extends MozBaseInputElement {
     }
   }
 
+  updated() {
+    if (
+      this.panelTrigger &&
+      this.panelList &&
+      this.panelTrigger.popoverTargetElement !== this.panelList
+    ) {
+      this.panelTrigger.popoverTargetElement = this.panelList;
+    }
+  }
+
   /**
    * Gets the icon source for the currently selected option.
    *
@@ -165,7 +175,10 @@ export default class MozSelect extends MozBaseInputElement {
    * Handles the panel being hidden and returns focus to the trigger button.
    */
   handlePanelHidden() {
-    this.panelTrigger?.focus();
+    let active = document.activeElement;
+    if (!active || active === document.body || active === this) {
+      this.panelTrigger?.focus();
+    }
   }
 
   /**
@@ -179,6 +192,16 @@ export default class MozSelect extends MozBaseInputElement {
     if (event.button !== 0) {
       return;
     }
+    /**
+     * Bug 2017668 - This is required for the "Default search engine"
+     * and private search engine moz-selects. Otherwise, clicking on one
+     * of the select elements, using arrow keys to navigate, and then clicking
+     * on the other select element will cause focus to jump between the two
+     * moz-select elements while toggling their respective panels.
+     */
+    if (navigator.platform.includes("Mac")) {
+      this.panelTrigger?.focus();
+    }
     this.panelList?.toggle(event);
   }
 
@@ -189,8 +212,10 @@ export default class MozSelect extends MozBaseInputElement {
    * @param {MouseEvent} event - The click event.
    */
   handlePanelClick(event) {
-    // Only handle keyboard-initiated clicks; mouse clicks are handled by mousedown
-    // event.detail is 0 for keyboard clicks, >0 for mouse clicks
+    // Only handle keyboard-initiated clicks. Mouse clicks are handled
+    // by mousedown. event.detail is 0 for keyboard clicks, >0 for
+    // mouse clicks.
+    event.preventDefault();
     if (event.detail === 0) {
       this.panelList?.toggle(event);
     }
@@ -328,9 +353,20 @@ export default class MozSelect extends MozBaseInputElement {
    */
   panelTargetTemplate() {
     return html`<button
+      id="input"
+      name=${this.name}
+      .value=${this.value}
       class="panel-trigger"
+      type="button"
+      role="combobox"
+      aria-label=${ifDefined(this.ariaLabel)}
+      aria-description=${ifDefined(
+        this.hasDescription ? undefined : this.ariaDescription
+      )}
+      aria-describedby="description"
       aria-haspopup="menu"
       aria-expanded=${this.panelList?.open ? "true" : "false"}
+      accesskey=${ifDefined(this.accessKey)}
       @mousedown=${this.handlePanelMousedown}
       @click=${this.handlePanelClick}
       @keydown=${this.handlePanelKeydown}
@@ -349,7 +385,6 @@ export default class MozSelect extends MozBaseInputElement {
     return html`<panel-list
       .value=${this.value}
       min-width-from-anchor
-      id="input"
       @click=${this.handlePanelChange}
       @hidden=${this.handlePanelHidden}
     >

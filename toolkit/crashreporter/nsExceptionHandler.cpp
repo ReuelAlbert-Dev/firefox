@@ -216,7 +216,7 @@ static const XP_CHAR dumpFileExtension[] = XP_TEXT(".dmp");
 
 static const XP_CHAR extraFileExtension[] = XP_TEXT(".extra");
 static const XP_CHAR memoryReportExtension[] = XP_TEXT(".memory.json.gz");
-MOZ_RUNINIT static std::optional<xpstring> defaultMemoryReportPath = {};
+constinit static std::optional<xpstring> defaultMemoryReportPath;
 
 static const char kCrashMainID[] = "crash.main.3\n";
 
@@ -227,13 +227,13 @@ static google_breakpad::ExceptionHandler* gExceptionHandler = nullptr;
 static mozilla::Atomic<bool> gEncounteredChildException(false);
 constinit static nsCString gServerURL;
 
-MOZ_RUNINIT static xpstring pendingDirectory;
-MOZ_RUNINIT static xpstring crashReporterPath;
-MOZ_RUNINIT static xpstring crashHelperPath;
-MOZ_RUNINIT static xpstring memoryReportPath;
+static MOZ_GLIBCXX_CONSTINIT xpstring pendingDirectory;
+static MOZ_GLIBCXX_CONSTINIT xpstring crashReporterPath;
+static MOZ_GLIBCXX_CONSTINIT xpstring crashHelperPath;
+static MOZ_GLIBCXX_CONSTINIT xpstring memoryReportPath;
 
 // Where crash events should go.
-MOZ_RUNINIT static xpstring eventsDirectory;
+static MOZ_GLIBCXX_CONSTINIT xpstring eventsDirectory;
 
 // If this is false, we don't launch the crash reporter
 static bool doReport = true;
@@ -278,7 +278,7 @@ static bool sIncludeContextHeap = false;
 static std::terminate_handler oldTerminateHandler = nullptr;
 
 #if defined(XP_WIN) || defined(XP_MACOSX)
-MOZ_RUNINIT static nsCString childCrashNotifyPipe;
+MOZ_GLIBCXX_CONSTINIT static nsCString childCrashNotifyPipe;
 
 #elif defined(XP_LINUX)
 static int clientSocketFd = -1;
@@ -372,21 +372,16 @@ static void SetJitExceptionHandler() {
 #  endif
 #endif  // defined(XP_WIN)
 
-MOZ_RUNINIT static struct ReservedResources {
 #if defined(XP_WIN) && !defined(HAVE_64BIT_BUILD)
+constinit static struct ReservedResources {
   // This should be bigger than xul.dll plus a bit of extra space for
   // MinidumpWriteDump allocations.
   static const SIZE_T kReserveSize = 0x5000000;  // 80 MB
   void* mVirtualMemory;
-#endif
 
-  ReservedResources()
-#if defined(XP_WIN) && !defined(HAVE_64BIT_BUILD)
-      : mVirtualMemory(nullptr)
-#endif
-  {
-  }
+  constexpr ReservedResources() : mVirtualMemory(nullptr) {}
 } gReservedResources;
+#endif
 
 static void ReserveResources() {
 #if defined(XP_WIN) && !defined(HAVE_64BIT_BUILD)
@@ -2550,13 +2545,14 @@ static void AddCommonAnnotations(AnnotationTable& aAnnotations) {
   const time_t crashTime = time(nullptr);
   nsAutoCString crashTimeStr;
   crashTimeStr.AppendInt(static_cast<uint64_t>(crashTime));
-  aAnnotations[Annotation::CrashTime] = crashTimeStr;
+  aAnnotations[Annotation::CrashTime] = std::move(crashTimeStr);
 
   if (inactiveStateStart) {
     nsAutoCString inactiveDuration;
     inactiveDuration.AppendInt(
         static_cast<uint64_t>(crashTime - inactiveStateStart));
-    aAnnotations[Annotation::LastInteractionDuration] = inactiveDuration;
+    aAnnotations[Annotation::LastInteractionDuration] =
+        std::move(inactiveDuration);
   }
 
   // ToSeconds preserves the full precision of the TimeDuration. It is assumed
@@ -2565,7 +2561,7 @@ static void AddCommonAnnotations(AnnotationTable& aAnnotations) {
       (TimeStamp::NowLoRes() - TimeStamp::ProcessCreation()).ToSeconds();
   nsAutoCString uptimeStr;
   uptimeStr.AppendFloat(uptimeTS);
-  aAnnotations[Annotation::UptimeTS] = uptimeStr;
+  aAnnotations[Annotation::UptimeTS] = std::move(uptimeStr);
 }
 
 nsresult SetGarbageCollecting(bool collecting) {
@@ -3382,12 +3378,10 @@ bool SetRemoteExceptionHandler(int& aArgc, char** aArgv) {
     return false;
   }
 
-  struct RawIPCConnector raw_connector = {
+  RawIPCConnector raw_connector = {
       .send = send_right->release(),
       .recv = recv_right->release(),
   };
-
-  crash_helper_rendezvous(raw_connector);
 #else
   auto endpoint = geckoargs::sCrashHelper.Get(aArgc, aArgv);
 
@@ -3400,9 +3394,9 @@ bool SetRemoteExceptionHandler(int& aArgc, char** aArgv) {
 #  else
   RawIPCConnector raw_connector = {.socket = endpoint->release()};
 #  endif  // defined(XP_WIN)
-
-  crash_helper_rendezvous(raw_connector);
 #endif    // defined(XP_DARWIN)
+
+  crash_helper_rendezvous(raw_connector, GetGeckoChildID());
   RegisterRuntimeExceptionModule();
   InitializeAppNotes();
   RegisterAnnotations();
@@ -3462,7 +3456,7 @@ bool SetRemoteExceptionHandler(int& aArgc, char** aArgv) {
   return gExceptionHandler->IsOutOfProcess();
 }  // namespace CrashReporter
 
-bool TakeMinidumpForChild(ProcessId childPid, nsIFile** dump,
+bool TakeMinidumpForChild(GeckoChildID aChildId, nsIFile** dump,
                           AnnotationTable& aAnnotations) {
   if (!GetEnabled()) {
     return false;
@@ -3473,7 +3467,7 @@ bool TakeMinidumpForChild(ProcessId childPid, nsIFile** dump,
   {
     StaticMutexAutoLock lock(gCrashHelperClientMutex);
     if (gCrashHelperClient) {
-      crash_report = transfer_crash_report(gCrashHelperClient, childPid);
+      crash_report = transfer_crash_report(gCrashHelperClient, aChildId);
     }
   }
 
@@ -3514,18 +3508,18 @@ bool TakeMinidumpForChild(ProcessId childPid, nsIFile** dump,
   AddSharedAnnotations(aAnnotations);
 
   if (error.Length() > 0) {
-    aAnnotations[Annotation::DumperError] = error;
+    aAnnotations[Annotation::DumperError] = std::move(error);
   }
 
   return true;
 }
 
-bool FinalizeOrphanedMinidump(ProcessId aChildPid, GeckoProcessType aType,
+bool FinalizeOrphanedMinidump(GeckoChildID aChildId, GeckoProcessType aType,
                               nsString* aDumpId) {
   AnnotationTable annotations;
   nsCOMPtr<nsIFile> minidump;
 
-  if (!TakeMinidumpForChild(aChildPid, getter_AddRefs(minidump), annotations)) {
+  if (!TakeMinidumpForChild(aChildId, getter_AddRefs(minidump), annotations)) {
     return false;
   }
 
@@ -3753,18 +3747,18 @@ void GetCurrentProcessAuxvInfo(DirectAuxvDumpInfo* aAuxvInfo) {
   aAuxvInfo->entry_address = getauxval(AT_ENTRY);
 }
 
-void RegisterChildAuxvInfo(pid_t aChildPid,
+void RegisterChildAuxvInfo(GeckoChildID aChildId,
                            const DirectAuxvDumpInfo& aAuxvInfo) {
   StaticMutexAutoLock lock(gCrashHelperClientMutex);
   if (gCrashHelperClient) {
-    register_child_auxv_info(gCrashHelperClient, aChildPid, &aAuxvInfo);
+    register_child_auxv_info(gCrashHelperClient, aChildId, &aAuxvInfo);
   }
 }
 
-void UnregisterChildAuxvInfo(pid_t aChildPid) {
+void UnregisterChildAuxvInfo(GeckoChildID aChildId) {
   StaticMutexAutoLock lock(gCrashHelperClientMutex);
   if (gCrashHelperClient) {
-    unregister_child_auxv_info(gCrashHelperClient, aChildPid);
+    unregister_child_auxv_info(gCrashHelperClient, aChildId);
   }
 }
 

@@ -388,8 +388,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
       BaseScript* base = &cellptr.as<BaseScript>();
       RealmStats& realmStats = base->realm()->realmStats();
       realmStats.scriptsGCHeap += thingSize;
-      realmStats.scriptsMallocHeapData +=
-          base->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+      realmStats.scriptsGCBuffers += base->sizeOfExcludingThis();
       if (base->hasJitScript()) {
         JSScript* script = static_cast<JSScript*>(base);
         script->addSizeOfJitScript(rtStats->mallocSizeOf_,
@@ -453,8 +452,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
         size += Nursery::nurseryCellHeaderSize();
       }
       zStats->bigIntsGCHeap += size;
-      zStats->bigIntsMallocHeap +=
-          bi->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+      zStats->bigIntsGCBuffers += bi->sizeOfExcludingThis();
       break;
     }
 
@@ -516,7 +514,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
     case JS::TraceKind::Scope: {
       Scope* scope = &cellptr.as<Scope>();
       zStats->scopesGCHeap += thingSize;
-      zStats->scopesMallocHeap += scope->sizeOfExcludingThis();
+      zStats->scopesGCBuffers += scope->sizeOfExcludingThis();
       break;
     }
 
@@ -552,10 +550,9 @@ static bool FindNotableStrings(ZoneStats& zStats) {
   // We should only run FindNotableStrings once per ZoneStats object.
   MOZ_ASSERT(zStats.notableStrings.empty());
 
-  for (ZoneStats::StringsHashMap::Range r = zStats.allStrings->all();
-       !r.empty(); r.popFront()) {
-    JSString* str = r.front().key();
-    StringInfo& info = r.front().value();
+  for (auto iter = zStats.allStrings->iter(); !iter.done(); iter.next()) {
+    JSString* str = iter.get().key();
+    StringInfo& info = iter.get().value();
 
     if (!info.isNotable()) {
       continue;
@@ -581,10 +578,9 @@ static bool FindNotableClasses(RealmStats& realmStats) {
   // We should only run FindNotableClasses once per ZoneStats object.
   MOZ_ASSERT(realmStats.notableClasses.empty());
 
-  for (RealmStats::ClassesHashMap::Range r = realmStats.allClasses->all();
-       !r.empty(); r.popFront()) {
-    const char* className = r.front().key();
-    ClassInfo& info = r.front().value();
+  for (auto iter = realmStats.allClasses->iter(); !iter.done(); iter.next()) {
+    const char* className = iter.get().key();
+    ClassInfo& info = iter.get().value();
 
     // If this class isn't notable, or if we can't grow the notableStrings
     // vector, skip this string.
@@ -612,11 +608,10 @@ static bool FindNotableScriptSources(JS::RuntimeSizes& runtime) {
   // We should only run FindNotableScriptSources once per RuntimeSizes.
   MOZ_ASSERT(runtime.notableScriptSources.empty());
 
-  for (RuntimeSizes::ScriptSourcesHashMap::Range r =
-           runtime.allScriptSources->all();
-       !r.empty(); r.popFront()) {
-    const char* filename = r.front().key();
-    ScriptSourceInfo& info = r.front().value();
+  for (auto iter = runtime.allScriptSources->iter(); !iter.done();
+       iter.next()) {
+    const char* filename = iter.get().key();
+    ScriptSourceInfo& info = iter.get().value();
 
     if (!info.isNotable()) {
       continue;

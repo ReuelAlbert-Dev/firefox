@@ -4,9 +4,11 @@
 
 package org.mozilla.fenix.search
 
+import android.content.Intent
 import io.mockk.MockKAnnotations
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
+import io.mockk.impl.annotations.RelaxedMockK
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
@@ -28,6 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
+import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.appstate.AppState
@@ -45,18 +48,22 @@ class SearchFragmentStoreTest {
 
     @MockK private lateinit var activity: HomeActivity
 
-    @MockK(relaxed = true)
+    @RelaxedMockK
     private lateinit var components: Components
 
-    @MockK(relaxed = true)
+    @RelaxedMockK
     private lateinit var settings: Settings
 
-    @MockK(relaxed = true)
+    @RelaxedMockK
     private lateinit var appStore: AppStore
 
     @Before
     fun setup() {
         MockKAnnotations.init(this)
+        every { activity.browsingModeManager } returns object : BrowsingModeManager {
+            override var mode: BrowsingMode = BrowsingMode.Normal
+            override fun updateMode(intent: Intent?) = Unit
+        }
         every { components.settings } returns settings
         every { searchEngine.trendingUrl } returns null
 
@@ -78,6 +85,10 @@ class SearchFragmentStoreTest {
         every { settings.showSponsoredSuggestions } returns true
         every { settings.showNonSponsoredSuggestions } returns true
         every { settings.shouldUseBottomToolbar } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         val expected = EMPTY_SEARCH_FRAGMENT_STATE.copy(
             searchSuggestionsOrientedAtBottom = true,
@@ -88,6 +99,8 @@ class SearchFragmentStoreTest {
             showAllSessionSuggestions = true,
             showSponsoredSuggestions = true,
             showNonSponsoredSuggestions = true,
+            showStocksSuggestions = true,
+            showSportsSuggestions = true,
             showQrButton = true,
             pastedText = "pastedText",
             searchAccessPoint = MetricsUtils.Source.ACTION,
@@ -142,7 +155,12 @@ class SearchFragmentStoreTest {
         every { settings.shouldShowSearchSuggestionsInPrivate } returns false
         every { settings.enableFxSuggest } returns true
         every { settings.showSponsoredSuggestions } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
         every { settings.shouldUseBottomToolbar } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         val expected = EMPTY_SEARCH_FRAGMENT_STATE.copy(
             searchSuggestionsOrientedAtBottom = true,
@@ -150,6 +168,8 @@ class SearchFragmentStoreTest {
             showSearchTermHistory = true,
             showAllHistorySuggestions = true,
             showAllSessionSuggestions = true,
+            showStocksSuggestions = true,
+            showSportsSuggestions = true,
             showQrButton = true,
             pastedText = "pastedText",
             searchAccessPoint = MetricsUtils.Source.ACTION,
@@ -227,6 +247,112 @@ class SearchFragmentStoreTest {
         )
         assertFalse(initialState.showSponsoredSuggestions)
         assertFalse(initialState.showNonSponsoredSuggestions)
+    }
+
+    @Test
+    fun `GIVEN non-sponsored suggestions is disabled WHEN the initial state is created THEN all suggestion cards are not displayed`() {
+        every { components.core.store.state } returns BrowserState()
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns false
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        val initialState = createInitialSearchFragmentState(
+            activity,
+            components,
+            tabId = null,
+            pastedText = "pastedText",
+            searchAccessPoint = MetricsUtils.Source.ACTION,
+            isAndroidAutomotiveAvailable = false,
+        )
+        assertFalse(initialState.showStocksSuggestions)
+        assertFalse(initialState.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN search optimization is disabled WHEN the initial state is created THEN all suggestion cards are not displayed`() {
+        every { components.core.store.state } returns BrowserState()
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns false
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        val initialState = createInitialSearchFragmentState(
+            activity,
+            components,
+            tabId = null,
+            pastedText = "pastedText",
+            searchAccessPoint = MetricsUtils.Source.ACTION,
+            isAndroidAutomotiveAvailable = false,
+        )
+        assertFalse(initialState.showStocksSuggestions)
+        assertFalse(initialState.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN suggestion cards is disabled WHEN the initial state is created THEN all suggestion cards are not displayed`() {
+        every { components.core.store.state } returns BrowserState()
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns false
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        val initialState = createInitialSearchFragmentState(
+            activity,
+            components,
+            tabId = null,
+            pastedText = "pastedText",
+            searchAccessPoint = MetricsUtils.Source.ACTION,
+            isAndroidAutomotiveAvailable = false,
+        )
+        assertFalse(initialState.showStocksSuggestions)
+        assertFalse(initialState.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN stock cards is disabled WHEN the initial state is created THEN the stock card is not displayed`() {
+        every { components.core.store.state } returns BrowserState()
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns false
+
+        val initialState = createInitialSearchFragmentState(
+            activity,
+            components,
+            tabId = null,
+            pastedText = "pastedText",
+            searchAccessPoint = MetricsUtils.Source.ACTION,
+            isAndroidAutomotiveAvailable = false,
+        )
+        assertFalse(initialState.showStocksSuggestions)
+    }
+
+    @Test
+    fun `GIVEN sport cards is disabled WHEN the initial state is created THEN the sport card is not displayed`() {
+        every { components.core.store.state } returns BrowserState()
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns false
+
+        val initialState = createInitialSearchFragmentState(
+            activity,
+            components,
+            tabId = null,
+            pastedText = "pastedText",
+            searchAccessPoint = MetricsUtils.Source.ACTION,
+            isAndroidAutomotiveAvailable = false,
+        )
+        assertFalse(initialState.showSportsSuggestions)
     }
 
     @Test
@@ -594,6 +720,122 @@ class SearchFragmentStoreTest {
     }
 
     @Test
+    fun `GIVEN non-sponsored suggestion is disabled WHEN the default search engine is selected THEN all suggestion cards are not displayed`() = runTest {
+        val initialState = emptyDefaultState(showStocksSuggestions = true)
+        val store = SearchFragmentStore(initialState)
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns false
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        store.dispatch(
+            SearchFragmentAction.SearchDefaultEngineSelected(
+                engine = searchEngine,
+                browsingMode = BrowsingMode.Normal,
+                settings = settings,
+            ),
+        )
+
+        assertNotSame(initialState, store.state)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN search optimization is disabled WHEN the default search engine is selected THEN all suggestion cards are not displayed`() = runTest {
+        val initialState = emptyDefaultState(showStocksSuggestions = true)
+        val store = SearchFragmentStore(initialState)
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns false
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        store.dispatch(
+            SearchFragmentAction.SearchDefaultEngineSelected(
+                engine = searchEngine,
+                browsingMode = BrowsingMode.Normal,
+                settings = settings,
+            ),
+        )
+
+        assertNotSame(initialState, store.state)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN suggestion cards is disabled WHEN the default search engine is selected THEN all suggestion cards are not displayed`() = runTest {
+        val initialState = emptyDefaultState(showStocksSuggestions = true)
+        val store = SearchFragmentStore(initialState)
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns false
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
+
+        store.dispatch(
+            SearchFragmentAction.SearchDefaultEngineSelected(
+                engine = searchEngine,
+                browsingMode = BrowsingMode.Normal,
+                settings = settings,
+            ),
+        )
+
+        assertNotSame(initialState, store.state)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
+    }
+
+    @Test
+    fun `GIVEN stock cards is disabled WHEN the default search engine is selected THEN stock suggestions are not displayed`() = runTest {
+        val initialState = emptyDefaultState(showStocksSuggestions = true)
+        val store = SearchFragmentStore(initialState)
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns false
+
+        store.dispatch(
+            SearchFragmentAction.SearchDefaultEngineSelected(
+                engine = searchEngine,
+                browsingMode = BrowsingMode.Normal,
+                settings = settings,
+            ),
+        )
+
+        assertNotSame(initialState, store.state)
+        assertFalse(store.state.showStocksSuggestions)
+    }
+
+    @Test
+    fun `GIVEN sport cards is disabled WHEN the default search engine is selected THEN sport suggestions are not displayed`() = runTest {
+        val initialState = emptyDefaultState(showStocksSuggestions = true)
+        val store = SearchFragmentStore(initialState)
+        every { settings.enableFxSuggest } returns true
+        every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns false
+
+        store.dispatch(
+            SearchFragmentAction.SearchDefaultEngineSelected(
+                engine = searchEngine,
+                browsingMode = BrowsingMode.Normal,
+                settings = settings,
+            ),
+        )
+
+        assertNotSame(initialState, store.state)
+        assertFalse(store.state.showSportsSuggestions)
+    }
+
+    @Test
     fun `GIVEN private browsing mode WHEN the search engine is the default one THEN search suggestions providers are updated`() = runTest {
         val initialState = emptyDefaultState(showHistorySuggestionsForCurrentEngine = false)
         val store = SearchFragmentStore(initialState)
@@ -608,6 +850,10 @@ class SearchFragmentStoreTest {
         every { settings.enableFxSuggest } returns true
         every { settings.showSponsoredSuggestions } returns true
         every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         store.dispatch(
             SearchFragmentAction.SearchDefaultEngineSelected(
@@ -631,6 +877,8 @@ class SearchFragmentStoreTest {
         assertTrue(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertTrue(store.state.showStocksSuggestions)
+        assertTrue(store.state.showSportsSuggestions)
         verify { shouldShowSearchSuggestions(BrowsingMode.Private, settings) }
     }
 
@@ -649,6 +897,10 @@ class SearchFragmentStoreTest {
         every { settings.enableFxSuggest } returns true
         every { settings.showSponsoredSuggestions } returns true
         every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         store.dispatch(
             SearchFragmentAction.SearchDefaultEngineSelected(
@@ -672,6 +924,8 @@ class SearchFragmentStoreTest {
         assertTrue(store.state.showAllSessionSuggestions)
         assertTrue(store.state.showSponsoredSuggestions)
         assertTrue(store.state.showNonSponsoredSuggestions)
+        assertTrue(store.state.showStocksSuggestions)
+        assertTrue(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -692,6 +946,10 @@ class SearchFragmentStoreTest {
         every { settings.enableFxSuggest } returns true
         every { settings.showSponsoredSuggestions } returns true
         every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         store.dispatch(
             SearchFragmentAction.SearchShortcutEngineSelected(
@@ -717,6 +975,8 @@ class SearchFragmentStoreTest {
         assertFalse(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
 
         every { settings.shouldShowSearchSuggestions } returns false
         val generalEngine: SearchEngine = mockk {
@@ -746,6 +1006,8 @@ class SearchFragmentStoreTest {
         assertFalse(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -766,6 +1028,10 @@ class SearchFragmentStoreTest {
         every { settings.showNonSponsoredSuggestions } returns true
         every { settings.trendingSearchSuggestionsEnabled } returns true
         every { settings.shouldShowRecentSearchSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         store.dispatch(
             SearchFragmentAction.SearchShortcutEngineSelected(
@@ -791,6 +1057,8 @@ class SearchFragmentStoreTest {
         assertFalse(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
         assertFalse(store.state.showTrendingSearches)
         assertTrue(store.state.showRecentSearches)
     }
@@ -810,6 +1078,10 @@ class SearchFragmentStoreTest {
         every { settings.enableFxSuggest } returns true
         every { settings.showSponsoredSuggestions } returns true
         every { settings.showNonSponsoredSuggestions } returns true
+        every { settings.isSearchOptimizationEnabled } returns true
+        every { settings.shouldShowSearchOptimizationCards } returns true
+        every { settings.shouldShowSearchOptimizationStockCard } returns true
+        every { settings.shouldShowSearchOptimizationSportCard } returns true
 
         store.dispatch(
             SearchFragmentAction.SearchShortcutEngineSelected(
@@ -832,6 +1104,8 @@ class SearchFragmentStoreTest {
         assertTrue(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -953,6 +1227,8 @@ class SearchFragmentStoreTest {
         assertFalse(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -975,6 +1251,8 @@ class SearchFragmentStoreTest {
         assertFalse(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -997,6 +1275,8 @@ class SearchFragmentStoreTest {
         assertTrue(store.state.showAllSessionSuggestions)
         assertFalse(store.state.showSponsoredSuggestions)
         assertFalse(store.state.showNonSponsoredSuggestions)
+        assertFalse(store.state.showStocksSuggestions)
+        assertFalse(store.state.showSportsSuggestions)
     }
 
     @Test
@@ -1346,6 +1626,8 @@ class SearchFragmentStoreTest {
         showHistorySuggestionsForCurrentEngine: Boolean = true,
         showSponsoredSuggestions: Boolean = true,
         showNonSponsoredSuggestions: Boolean = true,
+        showStocksSuggestions: Boolean = true,
+        showSportsSuggestions: Boolean = true,
     ): SearchFragmentState = EMPTY_SEARCH_FRAGMENT_STATE.copy(
         searchEngineSource = searchEngineSource,
         defaultEngine = defaultEngine,
@@ -1355,6 +1637,8 @@ class SearchFragmentStoreTest {
         showHistorySuggestionsForCurrentEngine = showHistorySuggestionsForCurrentEngine,
         showSponsoredSuggestions = showSponsoredSuggestions,
         showNonSponsoredSuggestions = showNonSponsoredSuggestions,
+        showStocksSuggestions = showStocksSuggestions,
+        showSportsSuggestions = showSportsSuggestions,
         showQrButton = true,
     )
 }

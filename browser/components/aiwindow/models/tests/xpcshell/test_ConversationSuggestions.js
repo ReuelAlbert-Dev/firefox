@@ -23,7 +23,7 @@ const { MemoriesManager } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/memories/MemoriesManager.sys.mjs"
 );
 const { MESSAGE_ROLE } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/aiwindow/ui/modules/ChatConstants.sys.mjs"
+  "moz-src:///browser/components/aiwindow/ui/modules/AIWindowConstants.sys.mjs"
 );
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
@@ -892,10 +892,10 @@ add_task(
 );
 
 /**
- * Tests that assistant limitations are included in conversation starter prompts
+ * Tests that the system prompt, assistant limitations, and memories prompt are included in conversation starter prompts
  */
 add_task(
-  async function test_generateConversationStartersSidebar_includes_assistant_limitations() {
+  async function test_generateConversationStartersSidebar_includes_subcomponents() {
     Services.prefs.setStringPref(PREF_API_KEY, API_KEY);
     Services.prefs.setStringPref(PREF_ENDPOINT, ENDPOINT);
     Services.prefs.setStringPref(PREF_MODEL, MODEL);
@@ -916,23 +916,34 @@ add_task(
       sb.stub(
         MemoriesGetterForSuggestionPrompts,
         "getMemorySummariesForPrompt"
-      ).resolves([]);
+      ).resolves(["memory 1", "memory 2"]);
 
       const n = 3;
       const contextTabs = [
         { title: "Test Tab", url: "https://test.example.com" },
       ];
 
-      await generateConversationStartersSidebar(contextTabs, n, false);
+      await generateConversationStartersSidebar(contextTabs, n, true);
 
       Assert.ok(fakeEngine.run.calledOnce, "Engine run should be called once");
 
       const callArgs = fakeEngine.run.firstCall.args[0];
+      console.log("Prompt content:", callArgs.args);
+      Assert.ok(
+        callArgs.args[0].content.includes(
+          "Generate the requested number of starters."
+        ),
+        "Prompt should include system prompt from remote settings"
+      );
       Assert.ok(
         callArgs.args[1].content.includes(
           "You can do this and cannot do that."
         ),
         "Prompt should include assistant limitations from remote settings"
+      );
+      Assert.ok(
+        callArgs.args[1].content.includes("Use the following memories"),
+        "Prompt should include memories prompt from remote settings"
       );
     } finally {
       sb.restore();

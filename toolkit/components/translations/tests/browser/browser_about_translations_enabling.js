@@ -3,25 +3,6 @@
 
 "use strict";
 
-const AI_PREFS = [
-  ["browser.translations.enable", false],
-  ["browser.ai.control.default", "blocked"],
-  ["browser.ai.control.translations", "blocked"],
-];
-
-const HIDDEN_UI = {
-  pageHeader: false,
-  mainUserInterface: false,
-  sourceLanguageSelector: false,
-  targetLanguageSelector: false,
-  copyButton: false,
-  swapLanguagesButton: false,
-  sourceSectionTextArea: false,
-  targetSectionTextArea: false,
-  unsupportedInfoMessage: false,
-  languageLoadErrorMessage: false,
-};
-
 const VISIBLE_UI = {
   pageHeader: true,
   mainUserInterface: true,
@@ -32,8 +13,95 @@ const VISIBLE_UI = {
   sourceSectionTextArea: true,
   targetSectionTextArea: true,
   unsupportedInfoMessage: false,
+  policyDisabledInfoMessage: false,
+  featureBlockedInfoMessage: false,
   languageLoadErrorMessage: false,
 };
+
+const FEATURE_BLOCKED_UI = {
+  pageHeader: true,
+  mainUserInterface: true,
+  sourceLanguageSelector: true,
+  targetLanguageSelector: true,
+  copyButton: true,
+  swapLanguagesButton: true,
+  sourceSectionTextArea: true,
+  targetSectionTextArea: true,
+  unsupportedInfoMessage: false,
+  featureBlockedInfoMessage: true,
+  policyDisabledInfoMessage: false,
+  languageLoadErrorMessage: false,
+};
+
+/**
+ * Asserts that the main controls are enabled or disabled.
+ *
+ * @param {boolean} enabled
+ */
+async function assertMainUserInterfaceEnabledState(enabled) {
+  // TODO: Switch to SpecialPowers.spawn
+  // eslint-disable-next-line mozilla/reject-contenttask-spawn
+  const controlStates = await ContentTask.spawn(
+    gBrowser.selectedBrowser,
+    {},
+    function () {
+      const { document } = content;
+      return {
+        sourceLanguageSelectorDisabled: document
+          .querySelector("#about-translations-source-select")
+          .hasAttribute("disabled"),
+        targetLanguageSelectorDisabled: document
+          .querySelector("#about-translations-target-select")
+          .hasAttribute("disabled"),
+        sourceTextAreaDisabled: document
+          .querySelector("#about-translations-source-textarea")
+          .hasAttribute("disabled"),
+        targetTextAreaDisabled: document
+          .querySelector("#about-translations-target-textarea")
+          .hasAttribute("disabled"),
+        copyButtonDisabled: document
+          .querySelector("#about-translations-copy-button")
+          .hasAttribute("disabled"),
+        swapLanguagesButtonDisabled: document
+          .querySelector("#about-translations-swap-languages-button")
+          .hasAttribute("disabled"),
+      };
+    }
+  );
+
+  const expectedDisabled = !enabled;
+  is(
+    controlStates.sourceLanguageSelectorDisabled,
+    expectedDisabled,
+    `Expected source selector disabled state to be ${expectedDisabled}.`
+  );
+  is(
+    controlStates.targetLanguageSelectorDisabled,
+    expectedDisabled,
+    `Expected target selector disabled state to be ${expectedDisabled}.`
+  );
+  is(
+    controlStates.sourceTextAreaDisabled,
+    expectedDisabled,
+    `Expected source textarea disabled state to be ${expectedDisabled}.`
+  );
+  is(
+    controlStates.targetTextAreaDisabled,
+    expectedDisabled,
+    `Expected target textarea disabled state to be ${expectedDisabled}.`
+  );
+
+  if (!enabled) {
+    ok(
+      controlStates.copyButtonDisabled,
+      "Expected copy button to be disabled."
+    );
+    ok(
+      controlStates.swapLanguagesButtonDisabled,
+      "Expected swap-languages button to be disabled."
+    );
+  }
+}
 
 /**
  * Checks the about:translations UI updates with AIFeature enable/disable starting from disabled.
@@ -42,17 +110,12 @@ add_task(
   async function test_about_translations_ai_feature_toggle_from_disabled() {
     const { aboutTranslationsTestUtils, cleanup } = await openAboutTranslations(
       {
-        disabled: true,
+        featureEnabled: false,
         autoDownloadFromRemoteSettings: true,
-        prefs: [
-          ["browser.translations.enable", false],
-          ["browser.ai.control.default", "blocked"],
-          ["browser.ai.control.translations", "blocked"],
-        ],
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(HIDDEN_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -82,7 +145,7 @@ add_task(
         await TranslationsParent.AIFeature.disable();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(HIDDEN_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
 
     await cleanup();
   }
@@ -95,7 +158,7 @@ add_task(
   async function test_about_translations_ai_feature_toggle_from_enabled() {
     const { aboutTranslationsTestUtils, cleanup } = await openAboutTranslations(
       {
-        disabled: false,
+        featureEnabled: true,
         autoDownloadFromRemoteSettings: true,
         prefs: [
           ["browser.translations.enable", true],
@@ -120,7 +183,7 @@ add_task(
         await TranslationsParent.AIFeature.disable();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(HIDDEN_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -153,6 +216,8 @@ add_task(async function test_about_translations_engine_unsupported() {
   await aboutTranslationsTestUtils.assertIsVisible({
     pageHeader: true,
     unsupportedInfoMessage: true,
+    policyDisabledInfoMessage: false,
+    featureBlockedInfoMessage: false,
     mainUserInterface: false,
     sourceLanguageSelector: false,
     targetLanguageSelector: false,
@@ -165,3 +230,173 @@ add_task(async function test_about_translations_engine_unsupported() {
 
   await cleanup();
 });
+
+/**
+ * Checks that a policy-locked disabled feature shows the policy info message.
+ */
+add_task(async function test_about_translations_feature_blocked_by_policy() {
+  const { aboutTranslationsTestUtils, cleanup } = await openAboutTranslations({
+    featureEnabled: false,
+    lockEnabledState: true,
+    autoDownloadFromRemoteSettings: true,
+  });
+
+  await aboutTranslationsTestUtils.assertIsVisible({
+    pageHeader: true,
+    unsupportedInfoMessage: false,
+    policyDisabledInfoMessage: true,
+    featureBlockedInfoMessage: false,
+    mainUserInterface: false,
+    sourceLanguageSelector: false,
+    targetLanguageSelector: false,
+    copyButton: false,
+    swapLanguagesButton: false,
+    sourceSectionTextArea: false,
+    targetSectionTextArea: false,
+    languageLoadErrorMessage: false,
+  });
+
+  await cleanup();
+});
+
+/**
+ * Checks that clicking unblock from an initially disabled state enables the feature.
+ */
+add_task(
+  async function test_about_translations_feature_unblock_from_disabled() {
+    const { aboutTranslationsTestUtils, cleanup } = await openAboutTranslations(
+      {
+        featureEnabled: false,
+        autoDownloadFromRemoteSettings: true,
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await assertMainUserInterfaceEnabledState(false);
+
+    await aboutTranslationsTestUtils.assertEvents(
+      {
+        expected: [
+          [
+            AboutTranslationsTestUtils.Events.EnabledStateChanged,
+            { enabled: true },
+          ],
+        ],
+      },
+      async () => {
+        await aboutTranslationsTestUtils.clickUnblockFeatureButton();
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await assertMainUserInterfaceEnabledState(true);
+    await aboutTranslationsTestUtils.assertEvents(
+      {
+        expected: [
+          [
+            AboutTranslationsTestUtils.Events.TranslationRequested,
+            ({ translationId }) => translationId >= 1,
+          ],
+          [
+            AboutTranslationsTestUtils.Events.TranslationComplete,
+            ({ translationId }) => translationId >= 1,
+          ],
+        ],
+      },
+      async () => {
+        await aboutTranslationsTestUtils.updateCurrentPageHash({
+          sourceLanguage: "en",
+          targetLanguage: "fr",
+          sourceText: "Hello",
+        });
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertTranslatedText({
+      sourceLanguage: "en",
+      targetLanguage: "fr",
+      sourceText: "Hello",
+    });
+
+    await cleanup();
+  }
+);
+
+/**
+ * Checks that clicking unblock after disabling at runtime enables the feature without reload.
+ */
+add_task(
+  async function test_about_translations_feature_unblock_after_runtime_disable() {
+    const { aboutTranslationsTestUtils, cleanup } = await openAboutTranslations(
+      {
+        autoDownloadFromRemoteSettings: true,
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await assertMainUserInterfaceEnabledState(true);
+
+    await aboutTranslationsTestUtils.assertEvents(
+      {
+        expected: [
+          [
+            AboutTranslationsTestUtils.Events.EnabledStateChanged,
+            { enabled: false },
+          ],
+        ],
+      },
+      async () => {
+        await TranslationsParent.AIFeature.disable();
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await assertMainUserInterfaceEnabledState(false);
+
+    await aboutTranslationsTestUtils.assertEvents(
+      {
+        expected: [
+          [
+            AboutTranslationsTestUtils.Events.EnabledStateChanged,
+            { enabled: true },
+          ],
+        ],
+      },
+      async () => {
+        await aboutTranslationsTestUtils.clickUnblockFeatureButton();
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await assertMainUserInterfaceEnabledState(true);
+    await aboutTranslationsTestUtils.assertEvents(
+      {
+        expected: [
+          [
+            AboutTranslationsTestUtils.Events.TranslationRequested,
+            ({ translationId }) => translationId >= 1,
+          ],
+          [
+            AboutTranslationsTestUtils.Events.TranslationComplete,
+            ({ translationId }) => translationId >= 1,
+          ],
+        ],
+      },
+      async () => {
+        await aboutTranslationsTestUtils.updateCurrentPageHash({
+          sourceLanguage: "en",
+          targetLanguage: "fr",
+          sourceText: "Hello",
+        });
+      }
+    );
+
+    await aboutTranslationsTestUtils.assertTranslatedText({
+      sourceLanguage: "en",
+      targetLanguage: "fr",
+      sourceText: "Hello",
+    });
+
+    await cleanup();
+  }
+);

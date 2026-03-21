@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -336,18 +335,11 @@ class WidgetMouseEvent : public WidgetMouseEventBase,
   ALLOW_DEPRECATED_READPARAM
 
  public:
-  typedef bool ReasonType;
-  enum Reason : ReasonType { eReal, eSynthesized };
+  enum Reason : bool { eReal, eSynthesized };
 
-  typedef uint8_t ContextMenuTriggerType;
-  enum ContextMenuTrigger : ContextMenuTriggerType {
-    eNormal,
-    eContextMenuKey,
-    eControlClick
-  };
+  enum ContextMenuTrigger : uint8_t { eNormal, eContextMenuKey, eControlClick };
 
-  typedef uint8_t ExitFromType;
-  enum ExitFrom : ExitFromType {
+  enum ExitFrom : uint8_t {
     ePlatformChild,
     ePlatformTopLevel,
     ePuppet,

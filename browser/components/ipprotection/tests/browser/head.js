@@ -10,11 +10,11 @@ const { IPProtection, IPProtectionWidget } = ChromeUtils.importESModule(
 );
 
 const { IPProtectionService, IPProtectionStates } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs"
 );
 
 const { IPPProxyManager, IPPProxyStates } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs"
 );
 
 const { IPProtectionAlertManager } = ChromeUtils.importESModule(
@@ -22,11 +22,11 @@ const { IPProtectionAlertManager } = ChromeUtils.importESModule(
 );
 
 const { IPPSignInWatcher } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/IPPSignInWatcher.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/IPPSignInWatcher.sys.mjs"
 );
 
 const { IPPEnrollAndEntitleManager } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/IPPEnrollAndEntitleManager.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/IPPEnrollAndEntitleManager.sys.mjs"
 );
 
 const { HttpServer, HTTP_403 } = ChromeUtils.importESModule(
@@ -38,7 +38,7 @@ const { NimbusTestUtils } = ChromeUtils.importESModule(
 );
 
 const { Server } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/IPProtectionServerlist.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/IPProtectionServerlist.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
@@ -49,10 +49,14 @@ ChromeUtils.defineESModuleGetters(this, {
 });
 
 const { ProxyPass, ProxyUsage, Entitlement } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/ipprotection/GuardianClient.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/GuardianClient.sys.mjs"
 );
 const { RemoteSettings } = ChromeUtils.importESModule(
   "resource://services-settings/remote-settings.sys.mjs"
+);
+
+const { SpecialMessageActions } = ChromeUtils.importESModule(
+  "resource://messaging-system/lib/SpecialMessageActions.sys.mjs"
 );
 
 // Adapted from devtools/client/performance-new/test/browser/helpers.js
@@ -148,13 +152,16 @@ async function setPanelState(state = defaultState, win = window) {
  * Closes the IP Protection panel and resets the state to the default.
  *
  * @param {Window} win - The window the panel is in.
+ * @param {boolean} resetState - Whether to reset the panel state to default before closing.
  * @returns {Promise<void>}
  */
-async function closePanel(win = window) {
+async function closePanel(win = window, resetState = true) {
   // Reset the state
   let panel = IPProtection.getPanel(win);
 
-  panel.setState(defaultState);
+  if (resetState) {
+    panel.setState(defaultState);
+  }
   // Close the panel
   let panelHiddenPromise = waitForPanelEvent(win.document, "popuphidden");
   panel.close();
@@ -168,10 +175,12 @@ async function closePanel(win = window) {
  * Does not proxy anything really.
  * Given it refuses the proxy connection, it will be removed from as proxy-info of the channel.
  *
- * @param {*} testFn
- * @param {Function<Promise<void>>} handler - A custom path handler for "/" requests.
+ * Use with `await using` for automatic cleanup:
+ *   await using proxyInfo = withProxyServer();
+ *
+ * @param {Function} [handler] - A custom path handler for "/" and "CONNECT" requests.
  */
-async function withProxyServer(testFn, handler) {
+function withProxyServer(handler) {
   const server = new HttpServer();
   let { promise, resolve } = Promise.withResolvers();
 
@@ -217,7 +226,7 @@ async function withProxyServer(testFn, handler) {
   server.identity.add("http", "example.com", "443");
 
   server.start(-1);
-  await testFn({
+  return {
     server: new Server({
       hostname: "localhost",
       port: server.identity.primaryPort,
@@ -233,8 +242,10 @@ async function withProxyServer(testFn, handler) {
     }),
     type: "http",
     gotConnection: promise,
-  });
-  return server;
+    async [Symbol.asyncDispose]() {
+      await new Promise(r => server.stop(r));
+    },
+  };
 }
 /* exported withProxyServer */
 
@@ -249,6 +260,7 @@ let DEFAULT_SERVICE_STATUS = {
   isSignedIn: false,
   isEnrolledAndEntitled: undefined,
   canEnroll: true,
+  isLinkedToGuardian: false,
   entitlement: {
     status: 200,
     error: undefined,
@@ -260,16 +272,63 @@ let DEFAULT_SERVICE_STATUS = {
     pass: makePass(),
     usage: makeUsage(),
   },
+  usageInfo: makeUsage(),
+  signInFlow: true,
 };
 /* exported DEFAULT_SERVICE_STATUS */
 
 let STUBS = {
   isEnrolledAndEntitled: undefined,
+  hasUpgraded: undefined,
   enroll: undefined,
   fetchUserInfo: undefined,
   fetchProxyPass: undefined,
+  fetchProxyUsage: undefined,
+  isLinkedToGuardian: undefined,
+  fxaSignInFlow: undefined,
 };
 /* exported STUBS */
+
+async function waitForServiceInitialized() {
+  if (IPProtectionService.state !== IPProtectionStates.UNINITIALIZED) {
+    return;
+  }
+  await BrowserTestUtils.waitForEvent(
+    IPProtectionService,
+    "IPProtectionService:StateChanged",
+    false,
+    () => IPProtectionService.state !== IPProtectionStates.UNINITIALIZED
+  );
+}
+/* exported waitForServiceInitialized */
+
+async function waitForServiceState(state) {
+  if (IPProtectionService.state === state) {
+    return;
+  }
+
+  await BrowserTestUtils.waitForEvent(
+    IPProtectionService,
+    "IPProtectionService:StateChanged",
+    false,
+    () => IPProtectionService.state === state
+  );
+}
+/* exported waitForServiceState */
+
+async function waitForProxyState(state) {
+  if (IPPProxyManager.state === state) {
+    return;
+  }
+
+  await BrowserTestUtils.waitForEvent(
+    IPPProxyManager,
+    "IPPProxyManager:StateChanged",
+    false,
+    () => IPPProxyManager.state === state
+  );
+}
+/* exported waitForProxyState */
 
 let setupSandbox = sinon.createSandbox();
 add_setup(async function setupVPN() {
@@ -283,9 +342,15 @@ add_setup(async function setupVPN() {
     set: [["browser.ipProtection.enabled", true]],
   });
 
+  await waitForServiceInitialized();
+
   registerCleanupFunction(async () => {
     cleanupService();
+
     Services.prefs.clearUserPref("browser.ipProtection.enabled");
+
+    await waitForServiceState(IPProtectionStates.UNINITIALIZED);
+
     setupSandbox.restore();
     CustomizableUI.reset();
     Services.prefs.clearUserPref(IPProtectionWidget.ADDED_PREF);
@@ -308,15 +373,29 @@ function setupStubs(stubs = STUBS) {
     IPPEnrollAndEntitleManager,
     "isEnrolledAndEntitled"
   );
-  stubs.enroll = setupSandbox.stub(IPProtectionService.guardian, "enroll");
-  stubs.fetchUserInfo = setupSandbox.stub(
-    IPProtectionService.guardian,
-    "fetchUserInfo"
+  stubs.hasUpgraded = setupSandbox.stub(
+    IPPEnrollAndEntitleManager,
+    "hasUpgraded"
   );
-  stubs.fetchProxyPass = setupSandbox.stub(
-    IPProtectionService.guardian,
-    "fetchProxyPass"
+
+  const guardianStub = {
+    enroll: setupSandbox.stub(),
+    fetchUserInfo: setupSandbox.stub(),
+    fetchProxyPass: setupSandbox.stub(),
+    fetchProxyUsage: setupSandbox.stub(),
+    isLinkedToGuardian: setupSandbox.stub(),
+  };
+  stubs.enroll = guardianStub.enroll;
+  stubs.fetchUserInfo = guardianStub.fetchUserInfo;
+  stubs.fetchProxyPass = guardianStub.fetchProxyPass;
+  stubs.fetchProxyUsage = guardianStub.fetchProxyUsage;
+  stubs.isLinkedToGuardian = guardianStub.isLinkedToGuardian;
+  stubs.fxaSignInFlow = setupSandbox.stub(
+    SpecialMessageActions,
+    "fxaSignInFlow"
   );
+
+  setupSandbox.stub(IPProtectionService, "guardian").get(() => guardianStub);
 }
 /* exported setupStubs */
 
@@ -324,9 +403,13 @@ function setupService(
   {
     isSignedIn,
     isEnrolledAndEntitled,
+    hasUpgraded,
     canEnroll,
     entitlement,
     proxyPass,
+    usageInfo,
+    isLinkedToGuardian,
+    signInFlow,
   } = DEFAULT_SERVICE_STATUS,
   stubs = STUBS
 ) {
@@ -336,6 +419,10 @@ function setupService(
 
   if (typeof isEnrolledAndEntitled != "undefined") {
     stubs.isEnrolledAndEntitled.get(() => isEnrolledAndEntitled);
+  }
+
+  if (typeof hasUpgraded != "undefined") {
+    stubs.hasUpgraded.get(() => hasUpgraded);
   }
 
   if (typeof canEnroll != "undefined") {
@@ -352,6 +439,18 @@ function setupService(
 
   if (typeof proxyPass != "undefined") {
     stubs.fetchProxyPass.resolves(proxyPass);
+  }
+
+  if (typeof usageInfo != "undefined") {
+    stubs.fetchProxyUsage.resolves(usageInfo);
+  }
+
+  if (typeof isLinkedToGuardian != "undefined") {
+    stubs.isLinkedToGuardian.resolves(isLinkedToGuardian);
+  }
+
+  if (typeof signInFlow != "undefined") {
+    stubs.fxaSignInFlow.resolves(signInFlow);
   }
 }
 /* exported setupService */
@@ -402,13 +501,8 @@ async function cleanupExperiment() {
  */
 function createTestEntitlement(overrides = {}) {
   return new Entitlement({
-    autostart: false,
-    created_at: "2023-01-01T12:00:00.000Z",
-    limited_bandwidth: false,
-    location_controls: false,
     subscribed: false,
     uid: 42,
-    website_inclusion: false,
     maxBytes: "0",
     ...overrides,
   });
@@ -440,7 +534,7 @@ function makePass(
 function makeUsage(
   max = "5368709120",
   remaining = "4294967296",
-  reset = "2026-01-01T00:00:00.000Z"
+  reset = Temporal.Now.instant().add({ hours: 24 }).toString()
 ) {
   return new ProxyUsage(max, remaining, reset);
 }

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=4 sw=2 sts=2 et cin: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -147,7 +145,14 @@ nsCString NetAddr::ToString() const {
 void NetAddr::ToAddrPortString(nsACString& aOutput) const {
   uint16_t port = 0;
   GetPort(&port);
-  aOutput.Assign(nsPrintfCString("%s:%d", ToString().get(), port));
+  aOutput.SetLength(kNetAddrMaxCStrBufSize);
+  if (ToStringBuffer(aOutput.BeginWriting(), kNetAddrMaxCStrBufSize)) {
+    aOutput.SetLength(strlen(aOutput.BeginReading()));
+  } else {
+    aOutput.Truncate();
+  }
+  aOutput.Append(':');
+  aOutput.AppendInt(port);
 }
 
 bool NetAddr::IsLoopbackAddr() const {
@@ -267,7 +272,7 @@ nsILoadInfo::IPAddressSpace NetAddr::GetIpAddressSpace() const {
 }
 
 nsresult NetAddr::InitFromString(const nsACString& aString, uint16_t aPort) {
-  PRNetAddr prAddr{};
+  PRNetAddr prAddr;
   memset(&prAddr, 0, sizeof(PRNetAddr));
   if (PR_StringToNetAddr(PromiseFlatCString(aString).get(), &prAddr) !=
       PR_SUCCESS) {

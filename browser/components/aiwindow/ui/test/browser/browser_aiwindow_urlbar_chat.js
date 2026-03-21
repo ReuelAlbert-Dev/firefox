@@ -12,8 +12,6 @@
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
-  IntentClassifier:
-    "moz-src:///browser/components/aiwindow/models/IntentClassifier.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
 });
 
@@ -33,8 +31,6 @@ ChromeUtils.defineLazyGetter(lazy, "UrlbarSearchUtils", () => {
   return UrlbarSearchUtils;
 });
 
-let gIntentEngineStub;
-
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.smartwindow.enabled", true]],
@@ -48,7 +44,6 @@ add_setup(async function () {
         formattedPrompt.includes(keyword)
       );
 
-      // Simulate model confidence scores
       if (isSearch) {
         return [
           { label: "search", score: 0.95 },
@@ -62,12 +57,7 @@ add_setup(async function () {
     },
   };
 
-  gIntentEngineStub = sinon
-    .stub(lazy.IntentClassifier, "_createEngine")
-    .resolves(fakeIntentEngine);
-  registerCleanupFunction(() => {
-    sinon.restore();
-  });
+  gIntentEngineStub.resolves(fakeIntentEngine);
 
   await lazy.UrlbarSearchUtils.init();
 
@@ -80,8 +70,6 @@ add_setup(async function () {
 
 add_task(async function test_chat_intent_in_aiwindow() {
   const win = await openAIWindow();
-  const browser = win.gBrowser.selectedBrowser;
-  await BrowserTestUtils.browserLoaded(browser, false, AIWINDOW_URL);
 
   // Open new tab - regular page
   const url = "https://example.com/";

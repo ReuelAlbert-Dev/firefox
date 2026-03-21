@@ -269,6 +269,7 @@ impl ImageData {
                     // Request a pre-rendered image task.
                     let cached_task_handle = frame_state.resource_cache.request_render_task(
                         Some(RenderTaskCacheKey {
+                            origin: DeviceIntPoint::zero(),
                             size,
                             kind: RenderTaskCacheKeyKind::Image(image_cache_key),
                         }),

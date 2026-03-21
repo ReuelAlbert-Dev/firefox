@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,6 +5,7 @@
 #ifndef mozilla_TextControlElement_h
 #define mozilla_TextControlElement_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/dom/FromParser.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "nsGenericHTMLElement.h"
@@ -142,27 +141,6 @@ class TextControlElement : public nsGenericHTMLFormControlElementWithState {
   virtual TextControlState* GetTextControlState() const = 0;
 
   /**
-   * Binds a frame to the text control.  This is performed when a frame
-   * is created for the content node.
-   * Be aware, this must be called with script blocker.
-   */
-  virtual nsresult BindToFrame(nsTextControlFrame* aFrame) = 0;
-
-  /**
-   * Unbinds a frame from the text control.  This is performed when a frame
-   * belonging to a content node is destroyed.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual void UnbindFromFrame(
-      nsTextControlFrame* aFrame) = 0;
-
-  /**
-   * Creates an editor for the text control.  This should happen when
-   * a frame has been created for the text control element, but the created
-   * editor may outlive the frame itself.
-   */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult CreateEditor() = 0;
-
-  /**
    * Update preview value for the text control.
    */
   void SetPreviewValue(const nsAString& aValue);
@@ -181,11 +159,6 @@ class TextControlElement : public nsGenericHTMLFormControlElementWithState {
    * Get the current preview or autofilled state for the text control.
    */
   virtual void GetAutofillState(nsAString& aState) = 0;
-
-  /**
-   * Initialize the keyboard event listeners.
-   */
-  virtual void InitializeKeyboardEventListeners() = 0;
 
   enum class ValueChangeKind {
     Internal,
@@ -248,11 +221,20 @@ class TextControlElement : public nsGenericHTMLFormControlElementWithState {
   // Updates the text node when not managed by editor.
   void UpdateValueDisplay(bool aNotify);
 
+  enum class ScrollAncestors : bool { No, Yes };
+  void ScrollSelectionIntoViewAsync(ScrollAncestors = ScrollAncestors::No);
+
  protected:
+  MOZ_CAN_RUN_SCRIPT void OnFocus(const WidgetEvent&);
+  MOZ_CAN_RUN_SCRIPT void SelectAll();
+  MOZ_CAN_RUN_SCRIPT void ShowSelection();
+  bool NeedToInitializeEditorForEvent(EventChainPreVisitor&) const;
+
   void SetupShadowTree(dom::ShadowRoot&, bool aNotify);
   Element* FindShadowPseudo(PseudoStyleType) const;
   void UpdatePlaceholder(const nsAttrValue* aOldValue,
                          const nsAttrValue* aNewValue);
+  void UpdateTextEditorShadowTree();
 
   virtual ~TextControlElement() = default;
 

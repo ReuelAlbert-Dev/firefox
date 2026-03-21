@@ -63,6 +63,7 @@
 
       this._hover = false;
       this._selectedOnFirstMouseDown = false;
+      this._noteIconHover = false;
 
       /**
        * Describes how the tab ended up in this mute state. May be any of:
@@ -383,6 +384,14 @@
       return this.querySelector(".tab-close-button");
     }
 
+    get noteIcon() {
+      return this.querySelector(".tab-note-icon");
+    }
+
+    get noteIconOverlay() {
+      return this.querySelector(".tab-note-icon-overlay");
+    }
+
     get group() {
       return this.closest("tab-group");
     }
@@ -444,6 +453,28 @@
         : this;
       gBrowser.warmupTab(tabToWarm);
 
+      if (this.hasTabNote) {
+        const noteIcon = this.noteIcon;
+        const noteIconOverlay = this.noteIconOverlay;
+        const isOverNoteIcon =
+          (noteIcon && noteIcon.contains(event.target)) ||
+          (noteIconOverlay && noteIconOverlay.contains(event.target));
+
+        if (isOverNoteIcon && !this._noteIconHover) {
+          this._noteIconHover = true;
+          this.dispatchEvent(
+            new CustomEvent("TabNoteIconHoverStart", {
+              bubbles: true,
+              detail: {
+                noteIconElement: noteIcon?.contains(event.target)
+                  ? noteIcon
+                  : noteIconOverlay,
+              },
+            })
+          );
+        }
+      }
+
       // If the previous target wasn't part of this tab then this is a mouseenter event.
       if (!this.contains(event.relatedTarget)) {
         this._mouseenter();
@@ -451,6 +482,24 @@
     }
 
     on_mouseout(event) {
+      if (this._noteIconHover) {
+        const noteIcon = this.noteIcon;
+        const noteIconOverlay = this.noteIconOverlay;
+        const stillOverNoteIcon =
+          (noteIcon && noteIcon.contains(event.relatedTarget)) ||
+          (noteIconOverlay && noteIconOverlay.contains(event.relatedTarget));
+
+        if (!stillOverNoteIcon) {
+          this._noteIconHover = false;
+          this.dispatchEvent(
+            new CustomEvent("TabNoteIconHoverEnd", {
+              bubbles: true,
+              detail: { returningToTab: this.contains(event.relatedTarget) },
+            })
+          );
+        }
+      }
+
       // If the new target is not part of this tab then this is a mouseleave event.
       if (!this.contains(event.relatedTarget)) {
         this._mouseleave();
@@ -521,6 +570,8 @@
             gBrowser.addToMultiSelectedTabs(this);
             gBrowser.lastMultiSelectedTab = this;
           }
+        } else if (event.altKey) {
+          eventMaySelectTab = false;
         } else if (!this.selected && this.multiselected) {
           gBrowser.lockClearMultiSelectionOnce();
         }
@@ -545,6 +596,27 @@
 
     on_click(event) {
       if (event.button != 0) {
+        return;
+      }
+
+      if (event.altKey) {
+        if (
+          !event.target.classList.contains("tab-close-button") &&
+          !event.target.classList.contains("tab-icon-overlay") &&
+          !event.target.classList.contains("tab-audio-button") &&
+          !this.selected &&
+          !gBrowser.selectedTab.hidden &&
+          Services.prefs.getBoolPref("browser.tabs.splitView.enabled", false) &&
+          !this.splitview &&
+          !gBrowser.selectedTab.splitview &&
+          !this.pinned &&
+          !gBrowser.selectedTab.pinned
+        ) {
+          gBrowser.addTabSplitView([gBrowser.selectedTab, this], {
+            insertBefore: gBrowser.selectedTab,
+            trigger: "alt_click",
+          });
+        }
         return;
       }
 

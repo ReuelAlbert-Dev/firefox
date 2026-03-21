@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -310,6 +309,10 @@ class WidgetKeyboardEvent final : public WidgetInputEvent {
   }
 
   bool CanUserGestureActivateTarget() const {
+    if (IsModifierKeyEvent()) {
+      return false;
+    }
+
     if (mFlags.mIsShortcutKey) {
       // Space is quite common shortcut for playing media.
       return mKeyCode == NS_VK_SPACE ||
@@ -583,10 +586,23 @@ class WidgetKeyboardEvent final : public WidgetInputEvent {
   }
 
   /**
+   * Return true if this stores one or more edit commands for at least one
+   * editor type. This does not initialize them when they have not been
+   * initialized yet. Therefore, this returns just current status.
+   */
+  [[nodiscard]] bool HasEditCommands() const {
+    return !mEditCommandsForSingleLineEditor.IsEmpty() ||
+           !mEditCommandsForMultiLineEditor.IsEmpty() ||
+           !mEditCommandsForRichTextEditor.IsEmpty();
+  }
+
+  /**
    * EditCommandsConstRef() returns reference to edit commands for aType.
    */
   const nsTArray<CommandInt>& EditCommandsConstRef(
       NativeKeyBindingsType aType) const {
+    MOZ_ASSERT(!IsHandledInRemoteProcess(),
+               "Editor commands is not available on reply event");
     return const_cast<WidgetKeyboardEvent*>(this)->EditCommandsRef(aType);
   }
 

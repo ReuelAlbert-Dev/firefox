@@ -13,7 +13,6 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.core.content.getSystemService
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.coroutineScope
 import androidx.lifecycle.lifecycleScope
@@ -26,6 +25,7 @@ import mozilla.components.compose.browser.toolbar.store.BrowserToolbarStore
 import mozilla.components.compose.browser.toolbar.store.Mode
 import mozilla.components.lib.state.helpers.StoreProvider.Companion.fragmentStore
 import mozilla.components.support.base.feature.ViewBoundFeatureWrapper
+import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.NavGraphDirections
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.QrScanFenixFeature
@@ -34,6 +34,7 @@ import org.mozilla.fenix.components.accounts.FenixFxAEntryPoint
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.metrics.MetricsUtils
 import org.mozilla.fenix.components.search.BOOKMARKS_SEARCH_ENGINE_ID
+import org.mozilla.fenix.e2e.SystemInsetsPaddedFragment
 import org.mozilla.fenix.ext.bookmarkStorage
 import org.mozilla.fenix.ext.hideToolbar
 import org.mozilla.fenix.ext.nav
@@ -49,7 +50,7 @@ import org.mozilla.fenix.search.FenixSearchMiddleware
 import org.mozilla.fenix.search.SearchFragmentState
 import org.mozilla.fenix.search.SearchFragmentStore
 import org.mozilla.fenix.search.createInitialSearchFragmentState
-import org.mozilla.fenix.tabstray.Page
+import org.mozilla.fenix.tabstray.redux.state.Page
 import org.mozilla.fenix.theme.FirefoxTheme
 import org.mozilla.fenix.utils.lastSavedFolderCache
 
@@ -57,7 +58,7 @@ import org.mozilla.fenix.utils.lastSavedFolderCache
  * The screen that displays the user's bookmark list in their Library.
  */
 @Suppress("TooManyFunctions", "LargeClass")
-class BookmarkFragment : Fragment() {
+class BookmarkFragment : Fragment(), SystemInsetsPaddedFragment {
 
     private val verificationResultLauncher = registerForVerification()
     private var qrScanFenixFeature: ViewBoundFeatureWrapper<QrScanFenixFeature>? =
@@ -115,7 +116,6 @@ class BookmarkFragment : Fragment() {
                             BookmarksMiddleware(
                                 lifecycleScope = lifecycleScope,
                                 bookmarksStorage = requireContext().bookmarkStorage,
-                                clipboardManager = requireActivity().getSystemService(),
                                 addNewTabUseCase = requireComponents.useCases.tabsUseCases.addTab,
                                 fenixBrowserUseCases = requireComponents.useCases.fenixBrowserUseCases,
                                 useNewSearchUX = settings().shouldUseComposableToolbar,
@@ -208,7 +208,6 @@ class BookmarkFragment : Fragment() {
             // Default empty store. This is not used without the composable toolbar.
             BrowserToolbarStore(BrowserToolbarState(mode = Mode.EDIT))
         }
-
         else -> fragmentStore(BrowserToolbarState(mode = Mode.EDIT)) {
             val lifecycleScope = viewLifecycleOwner.lifecycle.coroutineScope
 
@@ -217,6 +216,7 @@ class BookmarkFragment : Fragment() {
                 middleware = listOf(
                     BrowserToolbarSearchStatusSyncMiddleware(
                         appStore = requireComponents.appStore,
+                        browsingModeManager = (requireActivity() as HomeActivity).browsingModeManager,
                         scope = lifecycleScope,
                     ),
                     BrowserToolbarSearchMiddleware(
@@ -225,6 +225,7 @@ class BookmarkFragment : Fragment() {
                         browserStore = requireComponents.core.store,
                         components = requireComponents,
                         navController = findNavController(),
+                        browsingModeManager = (requireActivity() as HomeActivity).browsingModeManager,
                         settings = requireComponents.settings,
                         scope = lifecycleScope,
                     ),
@@ -240,7 +241,6 @@ class BookmarkFragment : Fragment() {
             // Default empty store. This is not used without the composable toolbar.
             SearchFragmentStore(SearchFragmentState.EMPTY)
         }
-
         else -> fragmentStore(
             createInitialSearchFragmentState(
                 context = requireContext(),
@@ -256,8 +256,8 @@ class BookmarkFragment : Fragment() {
                 initialState = it,
                 middleware = listOf(
                     BrowserToolbarToFenixSearchMapperMiddleware(
-                        appStore = requireComponents.appStore,
                         toolbarStore = toolbarStore,
+                        browsingModeManager = (requireActivity() as HomeActivity).browsingModeManager,
                         scope = lifecycleScope,
                     ),
                     BrowserStoreToFenixSearchMapperMiddleware(
@@ -274,6 +274,7 @@ class BookmarkFragment : Fragment() {
                         browserStore = requireComponents.core.store,
                         toolbarStore = toolbarStore,
                         navController = this@BookmarkFragment.findNavController(),
+                        browsingModeManager = (requireActivity() as HomeActivity).browsingModeManager,
                     ),
                 ),
             )

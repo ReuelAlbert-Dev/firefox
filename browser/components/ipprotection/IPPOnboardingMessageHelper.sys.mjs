@@ -8,9 +8,9 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   IPPProxyManager:
-    "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
   IPPProxyStates:
-    "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
 });
 
 const ONBOARDING_MESSAGE_MASK_PREF =
@@ -79,6 +79,9 @@ class IPPOnboardingMessageHelper {
   }
 
   observe(subject, topic, data) {
+    if (!subject) {
+      return;
+    }
     let permission = subject.QueryInterface(Ci.nsIPermission);
     if (
       topic === "perm-changed" &&

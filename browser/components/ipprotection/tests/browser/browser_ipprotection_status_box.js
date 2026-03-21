@@ -4,8 +4,11 @@
 
 "use strict";
 
-const { BANDWIDTH, LINKS, ERRORS } = ChromeUtils.importESModule(
+const { BANDWIDTH, LINKS } = ChromeUtils.importESModule(
   "chrome://browser/content/ipprotection/ipprotection-constants.mjs"
+);
+const { ERRORS } = ChromeUtils.importESModule(
+  "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs"
 );
 const lazy = {};
 
@@ -78,6 +81,18 @@ add_task(async function test_paused_content() {
 });
 
 add_task(async function test_paused_content_upgraded() {
+  setupService({
+    isSignedIn: true,
+    isEnrolledAndEntitled: true,
+    hasUpgraded: true,
+    canEnroll: true,
+    proxyPass: {
+      status: 200,
+      error: undefined,
+      pass: makePass(),
+    },
+  });
+
   let content = await openPanel({
     isSignedOut: false,
     paused: true,
@@ -102,6 +117,7 @@ add_task(async function test_paused_content_upgraded() {
 
   await setPanelState();
   await closePanel();
+  cleanupService();
 });
 
 /**

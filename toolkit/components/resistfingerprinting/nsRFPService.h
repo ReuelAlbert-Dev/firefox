@@ -58,7 +58,7 @@
 #  define SPOOFED_UA_OS SPOOFED_UA_OS_OTHER
 #  define SPOOFED_APPVERSION "5.0 (X11)"
 #  define SPOOFED_OSCPU "Linux x86_64"
-#  define SPOOFED_MAX_TOUCH_POINTS 0
+#  define SPOOFED_MAX_TOUCH_POINTS 5
 #endif
 
 #define LEGACY_BUILD_ID "20181001000000"
@@ -116,7 +116,7 @@ class KeyboardHashKey : public PLDHashEntryHdr {
   typedef const KeyboardHashKey* KeyTypePointer;
 
   KeyboardHashKey(const KeyboardLangs aLang, const KeyboardRegions aRegion,
-                  const KeyNameIndexType aKeyIdx, const nsAString& aKey);
+                  const KeyNameIndex aKeyIdx, const nsAString& aKey);
 
   explicit KeyboardHashKey(KeyTypePointer aOther);
 
@@ -134,7 +134,7 @@ class KeyboardHashKey : public PLDHashEntryHdr {
 
   KeyboardLangs mLang;
   KeyboardRegions mRegion;
-  KeyNameIndexType mKeyIdx;
+  KeyNameIndex mKeyIdx;
   nsString mKey;
 };
 

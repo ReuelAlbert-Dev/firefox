@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1885,14 +1883,18 @@ class MediaDecoderStateMachine::AccurateSeekingState
   void HandleAudioWaited(MediaData::Type aType) override {
     MOZ_ASSERT(!mDoneAudioSeeking || !mDoneVideoSeeking,
                "Seek shouldn't be finished");
-
+    if (mSeekRequest.Exists()) {
+      return;
+    }
     RequestAudioData();
   }
 
   void HandleVideoWaited(MediaData::Type aType) override {
     MOZ_ASSERT(!mDoneAudioSeeking || !mDoneVideoSeeking,
                "Seek shouldn't be finished");
-
+    if (mSeekRequest.Exists()) {
+      return;
+    }
     RequestVideoData();
   }
 
@@ -3369,6 +3371,7 @@ RefPtr<ShutdownPromise> MediaDecoderStateMachine::ShutdownState::Enter() {
   master->mMetadataManager.Disconnect();
   master->mOnMediaNotSeekable.Disconnect();
   master->mAudibleListener.DisconnectIfExists();
+  master->mPlaybackRateFallbackListener.DisconnectIfExists();
 
   // Disconnect canonicals and mirrors before shutting down our task queue.
   master->mStreamName.DisconnectIfConnected();
@@ -3465,6 +3468,11 @@ void MediaDecoderStateMachine::AudioAudibleChanged(bool aAudible) {
   mIsAudioDataAudible = aAudible;
 }
 
+void MediaDecoderStateMachine::OnPlaybackRateFallback() {
+  MOZ_ASSERT(OnTaskQueue());
+  mOnPlaybackEvent.Notify(MediaPlaybackEvent::PlaybackRateFallback);
+}
+
 MediaSink* MediaDecoderStateMachine::CreateAudioSink() {
   if (mOutputCaptureInfo.Ref().mState !=
       MediaDecoder::OutputCaptureState::None) {
@@ -3480,6 +3488,9 @@ MediaSink* MediaDecoderStateMachine::CreateAudioSink() {
     mAudibleListener.DisconnectIfExists();
     mAudibleListener = stream->AudibleEvent().Connect(
         OwnerThread(), this, &MediaDecoderStateMachine::AudioAudibleChanged);
+    mPlaybackRateFallbackListener.DisconnectIfExists();
+    mPlaybackRateFallbackListener = stream->PlaybackRateFallbackEvent().Connect(
+        OwnerThread(), this, &MediaDecoderStateMachine::OnPlaybackRateFallback);
     return stream;
   }
 

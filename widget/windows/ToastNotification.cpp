@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sts=2 sw=2 et cin: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -426,6 +424,7 @@ ToastNotification::ShowAlert(nsIAlertNotification* aAlert,
   bool isSystemPrincipal = principal && principal->IsSystemPrincipal();
 
   auto imagePlacement = ImagePlacement::eInline;
+  nsAutoString imagePath;
   if (isSystemPrincipal) {
     nsCOMPtr<nsIWindowsAlertNotification> winAlert(do_QueryInterface(aAlert));
     if (winAlert) {
@@ -446,6 +445,8 @@ ToastNotification::ShowAlert(nsIAlertNotification* aAlert,
                   ("Invalid image placement enum value: %hhu", placement));
           return NS_ERROR_UNEXPECTED;
       }
+
+      MOZ_TRY(winAlert->GetImagePathUnchecked(imagePath));
     }
   }
 
@@ -458,7 +459,8 @@ ToastNotification::ShowAlert(nsIAlertNotification* aAlert,
   RefPtr<ToastNotificationHandler> handler = new ToastNotificationHandler(
       this, mAumid.ref(), aAlert, aAlertListener, name, cookie, title, text,
       hostPort, textClickable, requireInteraction, actions, isSystemPrincipal,
-      opaqueRelaunchData, inPrivateBrowsing, isSilent, imagePlacement);
+      opaqueRelaunchData, inPrivateBrowsing, isSilent, imagePlacement,
+      imagePath);
   mActiveHandlers.InsertOrUpdate(name, RefPtr{handler});
 
   MOZ_LOG(sWASLog, LogLevel::Debug,
@@ -866,6 +868,18 @@ NS_IMETHODIMP WindowsAlertNotification::SetImagePlacement(
 
   return NS_OK;
 }
+
+NS_IMETHODIMP WindowsAlertNotification::GetImagePathUnchecked(
+    nsAString& aImagePathUnchecked) {
+  aImagePathUnchecked = mImagePathUnchecked;
+  return NS_OK;
+};
+
+NS_IMETHODIMP WindowsAlertNotification::SetImagePathUnchecked(
+    const nsAString& aImagePathUnchecked) {
+  mImagePathUnchecked = aImagePathUnchecked;
+  return NS_OK;
+};
 
 }  // namespace widget
 }  // namespace mozilla

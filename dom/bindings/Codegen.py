@@ -11523,9 +11523,10 @@ class CGSpecializedTemplatedGetter(CGAbstractStaticMethod):
     getter that forwards to a common template getter.
     """
 
-    def __init__(self, descriptor, attr, template, additionalArg):
+    def __init__(self, descriptor, attr, template, templateType, additionalArg):
         self.attr = attr
         self.template = template
+        self.templateType = templateType
         self.additionalArg = additionalArg
         name = "get_" + IDLToCIdentifier(attr.identifier.name)
         args = [
@@ -11545,19 +11546,16 @@ class CGSpecializedTemplatedGetter(CGAbstractStaticMethod):
         )
 
     def definition_body(self):
-        if self.additionalArg is None:
-            additionalArg = self.attr.identifier.name
-        else:
-            additionalArg = self.additionalArg
-
+        additionalArg = self.additionalArg or self.attr.identifier.name
         return fill(
             """
-            return ${namespace}::${getter}(cx, obj, void_self, args, ${additionalArg});
+            return ${namespace}::${getter}(cx, obj, void_self, args, ${ty}::${additionalArg});
             """,
             namespace=toBindingNamespace(
                 self.template.descriptor.interface.identifier.name
             ),
             getter=self.template.getter,
+            ty=self.templateType,
             additionalArg=additionalArg,
         )
 
@@ -11817,9 +11815,10 @@ class CGSpecializedTemplatedSetter(CGAbstractStaticMethod):
     setter that forwards to a common template setter.
     """
 
-    def __init__(self, descriptor, attr, template, additionalArg):
+    def __init__(self, descriptor, attr, template, templateType, additionalArg):
         self.attr = attr
         self.template = template
+        self.templateType = templateType
         self.additionalArg = additionalArg
         name = "set_" + IDLToCIdentifier(attr.identifier.name)
         args = [
@@ -11833,21 +11832,18 @@ class CGSpecializedTemplatedSetter(CGAbstractStaticMethod):
         )
 
     def definition_body(self):
-        additionalArgs = []
-        if self.additionalArg is None:
-            additionalArgs.append(self.attr.identifier.name)
-        else:
-            additionalArgs.append(self.additionalArg)
+        additionalArg = self.additionalArg or self.attr.identifier.name
 
         return fill(
             """
-            return ${namespace}::${setter}(cx, obj, void_self, args, ${additionalArgs});
+            return ${namespace}::${setter}(cx, obj, void_self, args, ${ty}::${additionalArg});
             """,
             namespace=toBindingNamespace(
                 self.template.descriptor.interface.identifier.name
             ),
             setter=self.template.setter,
-            additionalArgs=", ".join(additionalArgs),
+            ty=self.templateType,
+            additionalArg=additionalArg,
         )
 
 
@@ -14257,20 +14253,27 @@ class ClassMember(ClassItem):
         visibility="private",
         static=False,
         body=None,
+        defaultValue=None,
         hasIgnoreInitCheckFlag=False,
     ):
         self.type = type
         self.static = static
         self.body = body
         self.hasIgnoreInitCheckFlag = hasIgnoreInitCheckFlag
+        self.defaultValue = defaultValue
         ClassItem.__init__(self, name, visibility)
 
     def declare(self, cgClass):
-        return "%s%s%s %s;\n" % (
+        if self.defaultValue:
+            default = " = %s" % (self.defaultValue)
+        else:
+            default = ""
+        return "%s%s%s %s%s;\n" % (
             "static " if self.static else "",
             "MOZ_INIT_OUTSIDE_CTOR " if self.hasIgnoreInitCheckFlag else "",
             self.type,
             self.name,
+            default,
         )
 
     def define(self, cgClass):
@@ -17229,7 +17232,8 @@ class CGDescriptor(CGThing):
                     template = m.getExtendedAttribute("BindingTemplate")
                     if template is not None:
                         templateName = template[0][0]
-                        additionalArg = template[0][1]
+                        templateType = template[0][1]
+                        additionalArg = template[0][2]
                         if not (m.type.isPrimitive() or m.type.isString()):
                             raise TypeError(
                                 "We only support primitives or strings on templated attributes. "
@@ -17244,7 +17248,7 @@ class CGDescriptor(CGThing):
                             )
                         template = attributeTemplates.get(templateName)
                         specializedGetter = CGSpecializedTemplatedGetter(
-                            descriptor, m, template, additionalArg
+                            descriptor, m, template, templateType, additionalArg
                         )
                     else:
                         specializedGetter = CGSpecializedGetter(descriptor, m)
@@ -17262,15 +17266,12 @@ class CGDescriptor(CGThing):
                     elif descriptor.interface.hasInterfacePrototypeObject():
                         template = m.getExtendedAttribute("BindingTemplate")
                         if template is not None:
-                            if isinstance(template[0], list):
-                                templateName = template[0][0]
-                                additionalArg = template[0][1]
-                            else:
-                                templateName = template[0]
-                                additionalArg = None
+                            templateName = template[0][0]
+                            templateType = template[0][1]
+                            additionalArg = template[0][2]
                             template = attributeTemplates.get(templateName)
                             specializedSetter = CGSpecializedTemplatedSetter(
-                                descriptor, m, template, additionalArg
+                                descriptor, m, template, templateType, additionalArg
                             )
                         else:
                             specializedSetter = CGSpecializedSetter(descriptor, m)
@@ -17681,7 +17682,10 @@ class CGDictionary(CGThing):
     def base(self):
         if self.dictionary.parent:
             return self.makeClassName(self.dictionary.parent)
-        return "DictionaryBase"
+        elif self.dictionary.needsConversionFromJS:
+            return "MaybeEmptyDictionaryBase"
+        else:
+            return "DictionaryBase"
 
     def initMethod(self):
         """
@@ -17797,6 +17801,19 @@ class CGDictionary(CGThing):
             body=body,
         )
 
+    def hasConstexprDefaultConstructor(self):
+        """
+        Checks if the default constructor can be made constexpr
+        """
+        return (
+            not self.dictionary.needsConversionFromJS
+            and not self.dictionary.parent
+            and all(
+                m[0].type.isPrimitive() and m[0].optional and m[0].defaultValue
+                for m in self.memberInfo
+            )
+        )
+
     def simpleInitMethod(self):
         """
         This function outputs the body of the Init() method for the dictionary,
@@ -17872,11 +17889,27 @@ class CGDictionary(CGThing):
             body=body,
         )
 
-    def initFromJSONMethod(self):
+    def emptyInitMethod(self):
+        """
+        This function outputs an empty body of the Init() when all elements are
+        already default constructed.
+
+        """
         return ClassMethod(
             "Init",
             "bool",
-            [Argument("const nsAString&", "aJSON")],
+            [
+                Argument("const char*", "sourceDescription", default='"Value"'),
+                Argument("bool", "passedToJSImpl", default="false"),
+            ],
+            body="return true;\n",
+        )
+
+    def initFromJSONMethod(self, string):
+        return ClassMethod(
+            "Init",
+            "bool",
+            [Argument(f"const {string}&", "aJSON")],
             body=dedent(
                 """
                 AutoJSAPI jsapi;
@@ -17896,11 +17929,11 @@ class CGDictionary(CGThing):
             ),
         )
 
-    def toJSONMethod(self):
+    def toJSONMethod(self, string):
         return ClassMethod(
             "ToJSON",
             "bool",
-            [Argument("nsAString&", "aJSON")],
+            [Argument(f"{string}&", "aJSON")],
             body=dedent(
                 """
                 AutoJSAPI jsapi;
@@ -18169,9 +18202,12 @@ class CGDictionary(CGThing):
                 self.getMemberType(m),
                 visibility="public",
                 body=self.getMemberInitializer(m),
-                hasIgnoreInitCheckFlag=True,
+                hasIgnoreInitCheckFlag=memberDefault is None,
+                defaultValue=memberDefault,
             )
-            for m in self.memberInfo
+            for m, memberDefault in [
+                (m, self.getMemberDefaultValue(m)) for m in self.memberInfo
+            ]
         ]
         if d.parent:
             # We always want to init our parent with our non-initializing
@@ -18188,16 +18224,31 @@ class CGDictionary(CGThing):
             initArgs = "nullptr, JS::NullHandleValue"
         else:
             initArgs = ""
-        ctors = [
-            ClassConstructor(
-                [],
-                visibility="public",
-                baseConstructors=baseConstructors,
-                body=(
-                    "// Safe to pass a null context if we pass a null value\n"
-                    "Init(%s);\n" % initArgs
-                ),
-            ),
+        ctors = []
+        if self.hasConstexprDefaultConstructor():
+            ctors.append(
+                ClassConstructor(
+                    [],
+                    visibility="public",
+                    baseConstructors=baseConstructors,
+                    default=True,
+                    constexpr=True,
+                )
+            )
+        else:
+            ctors.append(
+                ClassConstructor(
+                    [],
+                    visibility="public",
+                    baseConstructors=baseConstructors,
+                    body=(
+                        "// Safe to pass a null context if we pass a null value\n"
+                        "Init(%s);\n" % initArgs
+                    ),
+                )
+            )
+
+        ctors.append(
             ClassConstructor(
                 [Argument("const FastDictionaryInitializer&", "")],
                 visibility="public",
@@ -18205,8 +18256,8 @@ class CGDictionary(CGThing):
                 explicit=True,
                 bodyInHeader=True,
                 body='// Do nothing here; this is used by our "Fast" subclass\n',
-            ),
-        ]
+            )
+        )
         methods = []
 
         if self.needToInitIds:
@@ -18215,18 +18266,22 @@ class CGDictionary(CGThing):
         if d.needsConversionFromJS:
             methods.append(self.initMethod())
             methods.append(self.initWithoutCallContextMethod())
+        elif self.hasConstexprDefaultConstructor():
+            methods.append(self.emptyInitMethod())
         else:
             methods.append(self.simpleInitMethod())
 
         canBeRepresentedAsJSON = self.dictionarySafeToJSONify(d)
         if canBeRepresentedAsJSON and d.getExtendedAttribute("GenerateInitFromJSON"):
-            methods.append(self.initFromJSONMethod())
+            methods.append(self.initFromJSONMethod("nsAString"))
+            methods.append(self.initFromJSONMethod("nsACString"))
 
         if d.needsConversionToJS:
             methods.append(self.toObjectInternalMethod())
 
         if canBeRepresentedAsJSON and d.getExtendedAttribute("GenerateToJSON"):
-            methods.append(self.toJSONMethod())
+            methods.append(self.toJSONMethod("nsAString"))
+            methods.append(self.toJSONMethod("nsACString"))
 
         methods.append(self.traceDictionaryMethod())
 
@@ -18326,6 +18381,21 @@ class CGDictionary(CGThing):
     def makeMemberName(name):
         return "m" + name[0].upper() + IDLToCIdentifier(name[1:])
 
+    def getMemberDefaultValue(self, memberInfo):
+        member, _ = memberInfo
+        if (
+            member.defaultValue
+            and member.type.isPrimitive()
+            and not member.type.nullable()
+        ):
+            tag = member.type.tag()
+            if tag == IDLType.Tags.bool:
+                return toStringBool(member.defaultValue.value)
+            else:
+                return numericValue(member.type.tag(), member.defaultValue.value)
+        else:
+            return None
+
     def getMemberType(self, memberInfo):
         member, conversionInfo = memberInfo
         # We can't handle having a holderType here
@@ -18403,7 +18473,8 @@ class CGDictionary(CGThing):
         # The conversion code will only run where a default value or a value passed
         # by the author needs to get converted, so we can remember if we have any
         # members present here.
-        conversionReplacements["convert"] += "mIsAnyMemberPresent = true;\n"
+        if self.dictionary.needsConversionFromJS:
+            conversionReplacements["convert"] += "mIsAnyMemberPresent = true;\n"
         if isKnownMissing:
             conversion = ""
         else:

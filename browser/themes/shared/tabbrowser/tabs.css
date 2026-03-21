@@ -4,16 +4,19 @@
 
 :root {
   --tabstrip-inner-border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-  --tabstrip-min-height: calc(var(--tab-min-height) + 2 * var(--tab-block-margin));
+  --tab-label-height: 2.7em;
   --tab-min-height: 36px;
   --tab-group-suggestions-loading-animation-color-1: color-mix(in srgb, currentColor 5%, transparent);
   --tab-group-suggestions-loading-animation-color-2: color-mix(in srgb, currentColor 35%, transparent);
   &[uidensity="compact"] {
+    --tab-label-height: 2em;
     --tab-min-height: 29px;
   }
   &[uidensity="touch"] {
+    --tab-label-height: 2.8em;
     --tab-min-height: 41px;
   }
+  --tabstrip-min-height: calc(var(--tab-min-height) + 2 * var(--tab-block-margin));
   --tab-group-label-height: max(1.5em, var(--tab-min-height) - 14px);
   --tab-group-label-padding: 4px;
   --tab-group-label-highlight-thickness: 3px;
@@ -46,7 +49,7 @@
   &[lwt-tab-selected="dark"] {
     --tab-selected-color-scheme: dark;
   }
-  --tab-selected-shadow: var(--box-shadow-tab);
+  --tab-selected-shadow: var(--tab-box-shadow);
   --tab-outline: 1px solid var(--tab-outline-color);
   --tab-outline-color: transparent;
   --tab-outline-offset: -1px;
@@ -853,7 +856,7 @@ tab-split-view-wrapper[dragtarget] {
   overflow: hidden;
 
   #tabbrowser-tabs:not([secondarytext-unsupported], [orient="vertical"]) & {
-    height: 2.7em;
+    height: var(--tab-label-height);
   }
 
   &[pinned] {
@@ -931,9 +934,6 @@ tab-split-view-wrapper[dragtarget] {
 }
 
 .tab-icon-sound-label {
-  /* Set height back to equivalent of parent's 1em based
-     on the .tab-icon-sound having a reduced font-size */
-  height: 1.3333em;
   white-space: nowrap;
   margin: 0;
 }
@@ -1048,7 +1048,7 @@ tab-split-view-wrapper[dragtarget] {
 .tabbrowser-tab:is([image], [pinned]) > .tab-stack > .tab-content[attention]:not([selected]),
 .tabbrowser-tab > .tab-stack > .tab-content[pinned][titlechanged]:not([selected]),
 #tabbrowser-tabs[orient="vertical"] .tabbrowser-tab > .tab-stack > .tab-content[titlechanged]:not([selected]) {
-  background-image: radial-gradient(circle, var(--attention-dot-color), var(--attention-dot-color) 2px, transparent 2px);
+  background-image: radial-gradient(circle, var(--tab-attention-dot-color), var(--tab-attention-dot-color) 2px, transparent 2px);
   background-position: center bottom 6.5px;
   background-size: 4px 4px;
   background-repeat: no-repeat;
@@ -1254,20 +1254,32 @@ tab-group > tab-split-view-wrapper {
   .tabbrowser-tab {
     padding-inline: 2px;
     .tab-background {
-      --tab-min-height: 32px;
+      min-height: calc(var(--tab-min-height) - 4px); /* exclude the 4px padding normally added */
 
       .tab-group-line {
         inset-block-end: calc(((var(--tab-block-margin) / 2) + var(--space-xsmall)) * -1);
         inset-inline-start: calc(var(--space-small) * -2);
       }
     }
+    .tab-label-container {
+      /* Nip and tuck: we can't subtract all the padding and margin added for the
+         split-view-wrapper without potentially regressing secondarytext labels but
+         8px seems a good compromise. */
+      height: calc(var(--tab-label-height) - 8px);
+    }
 
     tab-group & {
+      overflow: visible;
+    }
+
+    /* prettier-ignore */
+    #tabbrowser-tabs[movingtab-addToGroup] tab-split-view-wrapper[dragtarget] & {
       overflow: visible;
     }
   }
 }
 
+/* Tabs in split-view-wrapper defaults */
 #tabbrowser-tabs tab-split-view-wrapper {
   display: grid;
   grid-template-columns: 50% 50%;
@@ -1275,6 +1287,7 @@ tab-group > tab-split-view-wrapper {
   padding: var(--space-xsmall);
   border-radius: var(--tab-border-radius);
   position: relative; /* prevents splitview wrappers from shifting during other drag events*/
+  -moz-window-dragging: no-drag;
 
   &[hasactivetab] {
     background-color: var(--tab-hover-background-color);
@@ -1283,12 +1296,6 @@ tab-group > tab-split-view-wrapper {
       border: 1px solid SelectedItem;
       background: SelectedItemText;
     }
-  }
-
-  /* Prevent the close button from being cutoff by the bookmarks toolbar / nav bar
-  if split view is first in list if non-pinned vertical tabs */
-  #tabbrowser-tabs[orient="vertical"]:not([expanded]) &:first-child {
-    margin-block-start: var(--space-xsmall);
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -1305,11 +1312,6 @@ tab-group > tab-split-view-wrapper {
   .tabbrowser-tab {
     padding-block: 0 !important;
 
-    /* Allow close button to overflow the split view wrapper */
-    #tabbrowser-tabs[orient="vertical"]:not([expanded]) & {
-      overflow: visible;
-    }
-
     .tab-background {
       margin-inline: var(--space-xxsmall);
       margin-block: 0;
@@ -1325,23 +1327,27 @@ tab-group > tab-split-view-wrapper {
       }
     }
 
-    &:first-child {
-      .tab-background {
-        margin-inline-end: 0;
+    /* For explicitly horizontally-oriented split-view-wrapped tabs only.
+       We do want the specificity granted by :is (vs. :where) in this case */
+    :is(#tabbrowser-tabs[orient="horizontal"], #tabbrowser-tabs[orient="vertical"][expanded]) tab-split-view-wrapper & {
+      &:first-child {
+        .tab-background {
+          margin-inline-end: 0;
+        }
+
+        tab-split-view-wrapper:not([hasactivetab]) & {
+          border-block-end: transparent;
+        }
       }
 
-      tab-split-view-wrapper:not([hasactivetab]) & {
-        border-block-end: transparent;
-      }
-    }
+      &:last-child {
+        .tab-background {
+          margin-inline-start: 0;
+        }
 
-    &:last-child {
-      .tab-background {
-        margin-inline-start: 0;
-      }
-
-      .tab-content {
-        padding-inline-start: var(--space-medium);
+        .tab-content {
+          padding-inline-start: var(--space-medium);
+        }
       }
     }
   }
@@ -1372,36 +1378,60 @@ tab-group > tab-split-view-wrapper {
       }
     }
   }
+}
 
-  #tabbrowser-tabs[orient="vertical"] & {
-    border-radius: var(--tab-border-radius);
-    gap: var(--space-xsmall);
-    grid-template-columns: 49.5% 49.5%;
+/* Overrides for split-view-wrapped tabs in a vertical tabstrip */
+#tabbrowser-tabs[orient="vertical"] tab-split-view-wrapper {
+  border-radius: var(--tab-border-radius);
+  gap: var(--space-xsmall);
+  grid-template-columns: 49.5% 49.5%;
 
-    @container vertical-tabs-container (max-width: 210px) {
-      grid-template-columns: 1fr;
+  @container vertical-tabs-container (max-width: 210px) {
+    grid-template-columns: 1fr;
 
-      &:not([hasactivetab]) .tabbrowser-tab {
-        &:first-child {
-          border-block-end: 1px solid var(--toolbarbutton-icon-fill);
-          border-inline-end: transparent;
-        }
-
-        &:last-child {
-          border-inline-start: transparent !important;
-        }
+    &:not([hasactivetab]) .tabbrowser-tab {
+      &:first-child {
+        border-block-end: 1px solid var(--toolbarbutton-icon-fill);
+        border-inline-end: transparent;
       }
-    }
-  }
 
-  #tabbrowser-tabs[orient="vertical"]:not([expanded]) & {
-    .tab-close-button {
-      top: -5px;
-      inset-inline-start: -7px;
+      &:last-child {
+        border-inline-start: transparent !important;
+      }
     }
   }
 }
 
+/* Overrides for split-view-wrapped tabs in a collapsed vertical tabstrip */
+#tabbrowser-tabs[orient="vertical"]:not([expanded]) tab-split-view-wrapper {
+  /* Prevent the close button from being cutoff by the bookmarks toolbar / nav bar
+  if split view is first in list if non-pinned vertical tabs */
+  &:first-child {
+    margin-block-start: var(--space-xsmall);
+  }
+
+  /* Allow close button to overflow the split view wrapper */
+  .tabbrowser-tab {
+    overflow: visible;
+
+    .tab-background {
+      margin-inline: 0;
+      margin-block: 0;
+    }
+
+    .tab-content {
+      padding-inline: unset;
+      justify-content: center;
+    }
+  }
+
+  .tab-close-button {
+    top: -5px;
+    inset-inline-start: -7px;
+  }
+}
+
+/* Drag/drop of split-view-wrapped tabs */
 #tabbrowser-tabs[orient="vertical"] tab-split-view-wrapper {
   &[small-stack] {
     box-shadow:
@@ -1474,6 +1504,32 @@ tab-group > tab-split-view-wrapper {
   position: absolute;
   background-color: var(--tab-group-line-color);
 
+  /* prettier-ignore */
+  #tabbrowser-tabs:is([movingtab-ungroup], [movingtab-group]) tab-split-view-wrapper[dragtarget] & {
+    display: none;
+  }
+
+  /* prettier-ignore */
+  #tabbrowser-tabs[orient="vertical"]:is([movingtab-ungroup], [movingtab-group]) tab-split-view-wrapper[dragtarget] .tabbrowser-tab:first-child & {
+    display: flex;
+  }
+
+  /* prettier-ignore */
+  #tabbrowser-tabs[movingtab][movingtab-addToGroup]:not([movingtab-group], [movingtab-ungroup]) tab-split-view-wrapper[dragtarget] & {
+    display: flex;
+    background-color: light-dark(var(--dragover-tab-group-color), var(--dragover-tab-group-color-invert));
+  }
+
+  /* prettier-ignore */
+  #tabbrowser-tabs[orient="vertical"][movingtab][movingtab-addToGroup]:not([expanded]) tab-split-view-wrapper[dragtarget] & {
+    inset-inline-start: calc(((var(--space-medium)) * -1) + 2px) !important;
+  }
+
+  /* prettier-ignore */
+  #tabbrowser-tabs[orient="vertical"][movingtab]:is([expanded]) tab-split-view-wrapper[dragtarget] .tabbrowser-tab:last-child & {
+    display: none;
+  }
+
   #tabbrowser-tabs[orient="horizontal"] & {
     height: var(--tab-group-line-thickness);
     inset-inline: calc(-1 * var(--tab-overflow-clip-margin));
@@ -1506,6 +1562,11 @@ tab-group > tab-split-view-wrapper {
 
   tab-group & {
     display: flex;
+  }
+
+  /* prettier-ignore */
+  #tabbrowser-tabs:is([movingtab-ungroup], [movingtab-group]) tab-group > tab-split-view-wrapper:active .tabbrowser-tab > .tab-stack > .tab-background > & {
+    display: none;
   }
 
   /* prettier-ignore */
@@ -1554,7 +1615,7 @@ tab-group {
 
 #tabbrowser-tabs[orient="vertical"][expanded] {
   tab-group > :is(.tab-group-label-container, .tabbrowser-tab),
-  &[movingtab][movingtab-addToGroup]:not([movingtab-group], [movingtab-ungroup]) .tabbrowser-tab:is(:active, [multiselected]) {
+  &[movingtab][movingtab-addToGroup]:not([movingtab-group], [movingtab-ungroup]) tab-group > .tabbrowser-tab:is(:active, [multiselected]) {
     margin-inline-start: var(--space-medium);
   }
 }
@@ -1793,19 +1854,10 @@ tab-group {
 
 .tab-group-editor-panel {
   --panel-width: 22em;
-  --panel-padding: var(--space-large);
-  --panel-separator-padding: var(--space-medium) 0;
   font: menu;
 
-  .panel-header {
-    min-height: auto;
-    > h1 {
-      margin-top: 0;
-    }
-  }
-
-  .panel-body {
-    padding-block: var(--space-medium);
+  &.tab-group-editor-panel-expanded {
+    --panel-width: 25em;
   }
 
   &.tab-group-editor-mode-create .tab-group-edit-mode-only,
@@ -1816,6 +1868,9 @@ tab-group {
   .tab-group-editor-name {
     display: flex;
     flex-direction: column;
+    margin: var(--arrowpanel-menuitem-margin);
+    padding-top: var(--arrowpanel-menuitem-padding-block);
+
     > label {
       margin-inline: 0;
       margin-bottom: var(--space-small);
@@ -1829,6 +1884,8 @@ tab-group {
     display: flex;
     flex-flow: row nowrap;
     justify-content: space-between;
+    margin: var(--arrowpanel-menuitem-margin);
+    padding-block: var(--arrowpanel-menuitem-padding-block);
   }
 
   input[name="tab-group-color"] {
@@ -1865,22 +1922,6 @@ tab-group {
       outline-offset: 1px;
     }
   }
-
-  .tab-group-edit-actions,
-  .tab-group-delete {
-    padding-block: 0;
-    > toolbarbutton {
-      justify-content: flex-start;
-    }
-  }
-
-  toolbarbutton {
-    margin: 0;
-  }
-}
-
-.tab-group-editor-panel.tab-group-editor-panel-expanded {
-  --panel-width: 25em;
 }
 
 @media not (prefers-contrast) {
@@ -2664,11 +2705,6 @@ toolbar:not(#TabsToolbar) #firefox-view-button {
   }
 }
 
-#tab-group-suggestions-heading,
-#tab-group-main {
-  flex-direction: column;
-}
-
 #tab-group-default-actions {
   padding-top: var(--space-medium);
 }
@@ -2711,7 +2747,8 @@ toolbar:not(#TabsToolbar) #firefox-view-button {
 #tab-group-suggestion-button {
   --button-border-color-ghost: var(--border-color-selected);
   color: var(--color-accent-primary);
-  width: 100%;
+  width: auto;
+  padding: 0;
 
   &:hover {
     --button-border-color-ghost-hover: var(--border-color-selected);
@@ -2741,6 +2778,11 @@ toolbar:not(#TabsToolbar) #firefox-view-button {
     margin-top: 0;
     padding-inline: 35px var(--space-medium);
   }
+}
+
+#tab-group-suggestions-container,
+#tab-group-suggestions-optin-container {
+  margin: var(--arrowpanel-menuitem-margin);
 }
 
 .tab-group-suggestions-loading-header,

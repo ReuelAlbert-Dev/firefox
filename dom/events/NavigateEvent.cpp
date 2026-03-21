@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -165,6 +163,11 @@ void NavigateEvent::Intercept(const NavigationInterceptOptions& aOptions,
 
   // Step 4
   if (aOptions.mPrecommitHandler.WasPassed()) {
+    if (RefPtr<Document> doc = GetAssociatedDocument()) {
+      doc->SetUseCounter(
+          eUseCounter_custom_NavigateEventInterceptWithPrecommitHandler);
+    }
+
     // Step 4.1
     if (!Cancelable()) {
       aRv.ThrowInvalidStateError("Event is not cancelable");
@@ -214,7 +217,7 @@ void NavigateEvent::Intercept(const NavigationInterceptOptions& aOptions,
     }
 
     // Step 9.2
-    mScrollBehavior.emplace(aOptions.mScroll.Value());
+    mScrollBehavior = Some(aOptions.mScroll.Value());
   }
 }
 

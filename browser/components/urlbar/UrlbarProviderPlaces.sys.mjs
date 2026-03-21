@@ -409,14 +409,6 @@ function makeUrlbarResult(queryContext, info) {
     });
   }
 
-  if (!title && info.url) {
-    try {
-      // If there's no title, show the domain as the title. Not all valid URLs
-      // have a domain.
-      title = new URL(info.url).URI.displayHostPort;
-    } catch (e) {}
-  }
-
   return new lazy.UrlbarResult({
     type: UrlbarUtils.RESULT_TYPE.URL,
     source,

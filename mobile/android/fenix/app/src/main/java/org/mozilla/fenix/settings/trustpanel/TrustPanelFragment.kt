@@ -23,6 +23,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,10 +51,11 @@ import mozilla.components.support.base.log.logger.Logger
 import mozilla.components.support.ktx.android.view.setNavigationBarColorCompat
 import mozilla.components.support.ktx.kotlinx.coroutines.flow.ifAnyChanged
 import org.mozilla.fenix.BuildConfig
+import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.R
+import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.components
 import org.mozilla.fenix.components.menu.compose.MenuDialogBottomSheet
-import org.mozilla.fenix.ext.requireComponents
 import org.mozilla.fenix.settings.PhoneFeature
 import org.mozilla.fenix.settings.trustpanel.middleware.TrustPanelMiddleware
 import org.mozilla.fenix.settings.trustpanel.middleware.TrustPanelNavigationMiddleware
@@ -91,10 +93,15 @@ class TrustPanelFragment : BottomSheetDialogFragment() {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { isGranted: Map<String, Boolean> -> permissionsCallback.invoke(isGranted) }
 
+    private lateinit var browsingModeManager: BrowsingModeManager
+
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog =
         (super.onCreateDialog(savedInstanceState) as BottomSheetDialog).apply {
             setOnShowListener {
-                val navigationBarColor = if (requireComponents.appStore.state.mode.isPrivate) {
+                val safeActivity = activity ?: return@setOnShowListener
+                browsingModeManager = (safeActivity as HomeActivity).browsingModeManager
+
+                val navigationBarColor = if (browsingModeManager.mode.isPrivate) {
                     ContextCompat.getColor(context, R.color.fx_mobile_private_layer_color_3)
                 } else {
                     ContextCompat.getColor(context, R.color.fx_mobile_layer_color_3)
@@ -174,6 +181,9 @@ class TrustPanelFragment : BottomSheetDialogFragment() {
                 onRequestDismiss = ::dismiss,
                 handlebarContentDescription = "",
             ) {
+                val websiteInfoState by remember {
+                    store.stateFlow.map { state -> state.websiteInfoState }
+                }.collectAsState(initial = store.state.websiteInfoState)
                 val baseDomain by remember {
                     store.stateFlow.map { state -> state.baseDomain }
                 }.collectAsState(initial = null)
@@ -251,6 +261,10 @@ class TrustPanelFragment : BottomSheetDialogFragment() {
                     )
                 }
 
+                LaunchedEffect(Unit) {
+                    store.dispatch(TrustPanelAction.RequestQWAC)
+                }
+
                 AnimatedContent(
                     targetState = contentState,
                     transitionSpec = trustPanelTransitionSpec(contentState),
@@ -259,7 +273,7 @@ class TrustPanelFragment : BottomSheetDialogFragment() {
                     when (route) {
                         Route.ProtectionPanel -> {
                             ProtectionPanel(
-                                websiteInfoState = store.state.websiteInfoState,
+                                websiteInfoState = websiteInfoState,
                                 icon = sessionState?.content?.icon,
                                 isTrackingProtectionEnabled = isTrackingProtectionEnabled,
                                 isGlobalTrackingProtectionEnabled = isGlobalTrackingProtectionEnabled,
@@ -287,6 +301,9 @@ class TrustPanelFragment : BottomSheetDialogFragment() {
                                 },
                                 onViewCertificateClick = {
                                     store.dispatch(TrustPanelAction.Navigate.SecurityCertificate)
+                                },
+                                onViewQWACClick = {
+                                    store.dispatch(TrustPanelAction.Navigate.QWAC)
                                 },
                             )
                         }

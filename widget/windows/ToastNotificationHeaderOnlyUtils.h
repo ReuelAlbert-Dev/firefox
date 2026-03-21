@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -55,6 +53,7 @@ const wchar_t kLaunchArgProfile[] = L"profile";
 const wchar_t kLaunchArgTag[] = L"windowsTag";
 const wchar_t kLaunchArgLogging[] = L"logging";
 const wchar_t kLaunchArgAction[] = L"action";
+const wchar_t kSkipNotificationKey[] = L"skipNotificationServer";
 
 const DWORD kNotificationServerTimeoutMs = (10 * 1000);
 

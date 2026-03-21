@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -520,6 +518,13 @@ uiaRawElmProvider::GetPatternProvider(
     case UIA_TextPatternId:
       if (HasTextPattern(acc)) {
         RefPtr<ITextProvider> text =
+            new UiaText(static_cast<MsaaAccessible*>(this));
+        text.forget(aPatternProvider);
+      }
+      return S_OK;
+    case UIA_TextPattern2Id:
+      if (HasTextPattern(acc)) {
+        RefPtr<ITextProvider2> text =
             new UiaText(static_cast<MsaaAccessible*>(this));
         text.forget(aPatternProvider);
       }

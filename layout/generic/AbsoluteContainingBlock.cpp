@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -138,14 +136,14 @@ static LogicalPoint* GetUnfragmentedPosition(const ReflowInput& aCBReflowInput,
   // If the absolute containing block is in a measuring reflow, then aFrame's
   // unfragmented position is going to be updated. Don't return the obsolete
   // value in the property.
-  return aCBReflowInput.mFlags.mIsInColumnMeasuringReflow
+  return aCBReflowInput.mFlags.mIsInFragmentainerMeasuringReflow
              ? nullptr
              : aFrame->GetProperty(UnfragmentedPositionProperty());
 }
 
 static LogicalSize* GetUnfragmentedSize(const ReflowInput& aCBReflowInput,
                                         const nsIFrame* aFrame) {
-  return aCBReflowInput.mFlags.mIsInColumnMeasuringReflow
+  return aCBReflowInput.mFlags.mIsInFragmentainerMeasuringReflow
              ? nullptr
              // Later fragment frames need to know the size for resolving
              // automatic sizes.
@@ -613,7 +611,7 @@ void AbsoluteContainingBlock::Reflow(nsContainerFrame* aDelegatingFrame,
 
   const auto* unfragmentedContainingBlockRects =
       [&]() -> const ContainingBlockRects* {
-    if (aReflowInput.mFlags.mIsInColumnMeasuringReflow) {
+    if (aReflowInput.mFlags.mIsInFragmentainerMeasuringReflow) {
       // Doing the measuring reflow, so set the unfragmented containing sizes
       // here.
       NS_WARNING_ASSERTION(aDelegatingFrame->FirstInFlow() == aDelegatingFrame,
@@ -738,8 +736,6 @@ void AbsoluteContainingBlock::Reflow(nsContainerFrame* aDelegatingFrame,
       }
     }
     if (kidNeedsReflow && !aPresContext->HasPendingInterrupt()) {
-      // TODO(TYLin, Bug 2009643): To get the correct cbSize, we should refactor
-      // the lambda that gets |cb| in ReflowAbsoluteFrame(), and call it here.
       const LogicalSize cbSize(containerWM,
                                unfragmentedContainingBlockRects->mLocal.Size());
       const LogicalMargin border =
@@ -772,10 +768,7 @@ void AbsoluteContainingBlock::Reflow(nsContainerFrame* aDelegatingFrame,
                             anchorPosResolutionCache.ptrOr(nullptr),
                             reuseUnfragmentedAnchorPosReferences);
 
-        // TODO(TYLin, Bug 2009647): We'll support a measuring reflow in
-        // printing scenario for fragmentainer-aware abspos positioning such
-        // that nsIFrame::UnfragmentedPositionProperty() will be set.
-        if (aReflowInput.mFlags.mIsInColumnMeasuringReflow) {
+        if (aReflowInput.mFlags.mIsInFragmentainerMeasuringReflow) {
           kidFrame->SetOrUpdateDeletableProperty(
               UnfragmentedPositionProperty(),
               kidFrame->GetLogicalPosition(containerWM, cbBorderBoxSize));
@@ -1836,6 +1829,7 @@ void AbsoluteContainingBlock::ReflowAbsoluteFrame(
       availBSize = NS_UNCONSTRAINEDSIZE;
     }
     StyleSizeOverrides sizeOverrides;
+    Maybe<nscoord> unfragmentedBSizeAsMinBSize;
     if (const auto* unfragmentedSize =
             GetUnfragmentedSize(aReflowInput, aKidFrame)) {
       // ReflowInput for fragmented absolute frames will not compute absolute
@@ -1843,13 +1837,13 @@ void AbsoluteContainingBlock::ReflowAbsoluteFrame(
       // size and skip it.
       auto resolutionParams =
           AnchorPosResolutionParams::From(aKidFrame, aAnchorPosResolutionCache);
-      if (aKidFrame->StylePosition()->ISize(wm, resolutionParams)->IsAuto()) {
+      const auto* stylePos = aKidFrame->StylePosition();
+      if (stylePos->ISize(wm, resolutionParams)->IsAuto()) {
         sizeOverrides.mStyleISize.emplace(
             StyleSize::FromAppUnits(unfragmentedSize->ISize(wm)));
       }
-      if (aKidFrame->StylePosition()->BSize(wm, resolutionParams)->IsAuto()) {
-        sizeOverrides.mStyleBSize.emplace(
-            StyleSize::FromAppUnits(unfragmentedSize->BSize(wm)));
+      if (stylePos->BSize(wm, resolutionParams)->IsAuto()) {
+        unfragmentedBSizeAsMinBSize = Some(unfragmentedSize->BSize(wm));
       }
     }
     const LogicalSize availSize(outerWM, cbSize.ISize(outerWM), availBSize);
@@ -1857,6 +1851,19 @@ void AbsoluteContainingBlock::ReflowAbsoluteFrame(
                                availSize.ConvertTo(wm, outerWM),
                                Some(cbSize.ConvertTo(wm, outerWM)), initFlags,
                                sizeOverrides, {}, aAnchorPosResolutionCache);
+
+    if (unfragmentedBSizeAsMinBSize) {
+      // The kid has 'auto' block-size. Instead of setting unfragmented
+      // block-size to sizeOverrides above, use it as a min-block-size lower
+      // bound to keep allowing fragmentation-imposed block-size growth.
+      const nscoord contentBSize =
+          *unfragmentedBSizeAsMinBSize -
+          (kidReflowInput.mStylePosition->mBoxSizing ==
+                   StyleBoxSizing::BorderBox
+               ? kidReflowInput.ComputedLogicalBorderPadding(wm).BStartEnd(wm)
+               : 0);
+      kidReflowInput.SetComputedMinBSize(contentBSize);
+    }
 
     if (unfragmentedPosition) {
       // Do nothing. If aKidFrame may split, we've adjusted availBSize before

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -39,7 +37,6 @@
 #include "mozilla/RenderingPhase.h"
 #include "mozilla/Result.h"
 #include "mozilla/SegmentedVector.h"
-#include "mozilla/ServoStyleSet.h"
 #include "mozilla/StorageAccessAPIHelper.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
@@ -273,6 +270,7 @@ enum class OrientationType : uint8_t;
 enum class PopoverAttributeState : uint8_t;
 class ProcessingInstruction;
 class Promise;
+struct PropertyDefinition;
 class ScriptLoader;
 class Selection;
 class ServiceWorkerDescriptor;
@@ -1094,6 +1092,17 @@ class Document : public nsINode,
     mInitialAboutBlankLoadCompleting = false;
   }
 
+  // Returns true if the load event should be forced right now, despite
+  // possible blockers due to the initial sync load of about:blank.
+  bool ShouldForceInitialSyncLoad() {
+    // Force load if
+    // - we are currently in the synchronous load path of the docshell, i.e. we
+    //   are completing the initial about:blank load
+    // - and Document::EndLoad was already called, so the method is almost done
+    //   (we're likely called from there right now).
+    return InitialAboutBlankLoadCompleting() && !IsExpectingEndLoad();
+  }
+
   void SetLoadedAsData(bool aLoadedAsData, bool aConsiderForMemoryReporting);
 
   TimeStamp GetLoadingOrRestoredFromBFCacheTimeStamp() const {
@@ -1601,6 +1610,7 @@ class Document : public nsINode,
   nsresult InitPolicyContainer(nsIChannel* aChannel);
   nsresult InitCSP(nsIChannel* aChannel);
   nsresult InitIntegrityPolicy(nsIChannel* aChannel);
+  nsresult InitIntegrityPolicyWAICT(nsIChannel* aChannel);
   nsresult InitCOEP(nsIChannel* aChannel);
   nsresult InitDocPolicy(nsIChannel* aChannel);
   nsresult InitTLSCertificateBinding(nsIChannel* aChannel);
@@ -2355,6 +2365,10 @@ class Document : public nsINode,
   already_AddRefed<Element> CreateElem(const nsAString& aName, nsAtom* aPrefix,
                                        int32_t aNamespaceID,
                                        const nsAString* aIs = nullptr);
+
+  // https://dom.spec.whatwg.org/#effective-global-custom-element-registry
+  mozilla::dom::CustomElementRegistry*
+  GetEffectiveGlobalCustomElementRegistry();
 
   /**
    * Get the security info (i.e. SSL state etc) that the document got
@@ -3339,6 +3353,10 @@ class Document : public nsINode,
   // features values changing.
   void NotifyMediaFeatureValuesChanged();
 
+  // Observe loading=lazy sizes=auto image for size changes.
+  void ObserveAutoSizesImage(HTMLImageElement& aElement);
+  void UnobserveAutoSizesImage(HTMLImageElement& aElement);
+
   nsresult GetStateObject(JS::MutableHandle<JS::Value> aState);
 
   nsDOMNavigationTiming* GetNavigationTiming() const { return mTiming; }
@@ -3521,6 +3539,7 @@ class Document : public nsINode,
     return GetFuncStringContentList<nsCachableElementsByNameNodeList>(
         this, MatchNameAttribute, nullptr, UseExistingNameString, aName);
   }
+  MOZ_CAN_RUN_SCRIPT
   Document* Open(const mozilla::dom::Optional<nsAString>& /* unused */,
                  const mozilla::dom::Optional<nsAString>& /* unused */,
                  mozilla::ErrorResult& aError);
@@ -3700,6 +3719,12 @@ class Document : public nsINode,
    */
   already_AddRefed<nsDOMCaretPosition> CaretPositionFromPoint(
       float aX, float aY, const CaretPositionFromPointOptions& aOptions);
+
+  /**
+   * Wrapper around CaretPositionFromPoint that returns Range instead of
+   * CaretPosition.
+   */
+  already_AddRefed<nsRange> CaretRangeFromPoint(int32_t aX, int32_t aY);
 
   Element* GetScrollingElement();
   // A way to check whether a given element is what would get returned from
@@ -5779,6 +5804,9 @@ class Document : public nsINode,
   nsTArray<CanvasUsage> mCanvasUsageData;
   // Timestamp (PR_Now microseconds) of the last update to mCanvasUsageData.
   uint64_t mCanvasUsageLastTimestamp = 0;
+
+  // ResizeObserver for loading=lazy sizes=auto images.
+  RefPtr<ResizeObserver> mAutoSizeImageObserver;
 
   RefPtr<class FragmentDirective> mFragmentDirective;
   UniquePtr<RadioGroupContainer> mRadioGroupContainer;

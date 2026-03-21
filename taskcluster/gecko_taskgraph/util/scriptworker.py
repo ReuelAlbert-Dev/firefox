@@ -23,7 +23,6 @@ import os
 from datetime import datetime
 
 import jsone
-from mozbuild.util import memoize
 from taskgraph.util.copy import deepcopy
 from taskgraph.util.schema import resolve_keyed_by
 from taskgraph.util.taskcluster import get_artifact_prefix
@@ -430,7 +429,7 @@ get_balrog_server_scope = functools.partial(
     alias_to_scope_map=BALROG_SERVER_SCOPES,
 )
 
-cached_load_yaml = memoize(load_yaml)
+cached_load_yaml = functools.cache(load_yaml)
 
 
 # release_config {{{1
@@ -630,7 +629,7 @@ def generate_artifact_registry_gcs_sources_rpm(dep):
     """
     gcs_sources = []
     for config in dep.task["payload"]["artifactMap"]:
-        if config["taskId"]["task-reference"] == "<repackage-rpm>":
+        if config["taskId"]["task-reference"] == "<repackage-rpm-signing>":
             for path_info in config["paths"].values():
                 if "destinations" in path_info and path_info["destinations"]:
                     gcs_sources.append(path_info["destinations"][0])

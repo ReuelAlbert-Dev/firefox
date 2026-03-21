@@ -73,6 +73,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "resource:///modules/profiles/SelectableProfileService.sys.mjs",
   SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
   TargetingContext: "resource://messaging-system/targeting/Targeting.sys.mjs",
+  TabNotes: "moz-src:///browser/components/tabnotes/TabNotes.sys.mjs",
   TaskbarTabs: "resource:///modules/taskbartabs/TaskbarTabs.sys.mjs",
   TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
   TelemetrySession: "resource://gre/modules/TelemetrySession.sys.mjs",
@@ -611,11 +612,8 @@ async function getAutofillRecords(data) {
     // JSActors, but that would import a lot of code for a targeting attribute.
     return 0;
   }
-  let records = await actor?.receiveMessage({
-    name: "FormAutofill:GetRecords",
-    data,
-  });
-  return records?.records?.length ?? 0;
+  let records = await actor?.getRecords(data);
+  return records?.length ?? 0;
 }
 
 // Attribution data can be encoded multiple times so we need this function to
@@ -1261,6 +1259,18 @@ const TargetingGetters = {
   },
 
   /**
+   * Whether the user installed via the Smart Window marketing site.
+   *
+   * @return {boolean} `true` when the link to download the browser was part
+   * of the Smart Window campaign. `false` otherwise.
+   */
+  get isSmartWindowOnboarding() {
+    const { attributionData } = this;
+
+    return attributionData?.campaign === "smart_window";
+  },
+
+  /**
    * Whether the user opted into a special message action represented by an
    * installer attribution campaign and this choice still needs to be honored.
    *
@@ -1399,6 +1409,33 @@ const TargetingGetters = {
       return false;
     }
     return lazy.PrivateBrowsingUtils.isContentWindowPrivate(win);
+  },
+
+  /**
+   * @returns {Promise<number>}
+   *   The total number of tab notes the user has stored in their current profile.
+   */
+  get tabNotesCount() {
+    return lazy.TabNotes.init().then(() => lazy.TabNotes.count());
+  },
+
+  // Number of weekdays in the past month the user was active
+  get userWeekdaysActiveInLastMonth() {
+    return QueryCache.queries.UserMonthlyActivity.get().then(activity => {
+      return activity.filter(entry => {
+        const [year, month, date] = String(entry[1]).split("-").map(Number);
+        //JavaScript's Date constructor takes a 0-indexed month — January is 0, December is 11. So if the date string is "2024-01-08", splitting gives you month = 1, and you need to pass 0 to get January.
+        const day = new Date(year, month - 1, date).getDay(); // 0 = Sun, 6 = Sat, local time avoids UTC shift
+        return day !== 0 && day !== 6;
+      }).length;
+    });
+  },
+
+  // Number of days in the past month with 100+ site visits
+  get userActiveDaysWithHundredPlusSites() {
+    return QueryCache.queries.UserMonthlyActivity.get().then(activity => {
+      return activity.filter(entry => entry[0] >= 100).length;
+    });
   },
 };
 

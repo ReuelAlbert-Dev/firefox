@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1103,19 +1102,19 @@ bool TexUnpackSurface::TexOrSubImage(bool isSubImage, bool needsRespec,
       MOZ_ASSERT(data.type() == layers::MemoryOrShmem::TShmem);
       const auto& shmem = data.get_Shmem();
       size_t shmemSize = shmem.Size<uint8_t>();
-      int32_t stride = layers::ImageDataSerializer::GetRGBStride(rgb);
-      if (stride <= 0) {
+      auto stride = layers::ImageDataSerializer::GetRGBStride(rgb);
+      if (stride.isNothing()) {
         gfxCriticalError() << "TexUnpackSurface failed to get rgb stride";
         return false;
       }
-      size_t bufSize = layers::ImageDataSerializer::ComputeRGBBufferSize(
+      Maybe<size_t> bufSize = layers::ImageDataSerializer::ComputeRGBBufferSize(
           rgb.size(), rgb.format());
-      if (!bufSize || bufSize > shmemSize) {
+      if (bufSize.isNothing() || bufSize.value() > shmemSize) {
         gfxCriticalError() << "TexUnpackSurface failed to get rgb buffer size";
         return false;
       }
       surf = gfx::Factory::CreateWrappingDataSourceSurface(
-          shmem.get<uint8_t>(), stride, rgb.size(), rgb.format());
+          shmem.get<uint8_t>(), stride.value(), rgb.size(), rgb.format());
     } else if (SDIsNullRemoteDecoder(sd)) {
       const auto& sdrd = sd.get_SurfaceDescriptorGPUVideo()
                              .get_SurfaceDescriptorRemoteDecoder();
@@ -1173,10 +1172,6 @@ bool TexUnpackSurface::TexOrSubImage(bool isSubImage, bool needsRespec,
   ////
 
   const auto surfSize = surf->GetSize();
-  if (uint32_t(surfSize.width) < size.x || uint32_t(surfSize.height) < size.y) {
-    gfxCriticalError() << "Source surface size too small for upload.";
-    return false;
-  }
 
   WebGLTexelFormat srcFormat;
   uint8_t srcBPP;
@@ -1227,6 +1222,12 @@ bool TexUnpackSurface::TexOrSubImage(bool isSubImage, bool needsRespec,
   }
   const auto& dstUnpacking = dstUnpackingRes.inspect();
   MOZ_ASSERT(dstUnpacking.metrics.bytesPerRowStride == dstStride);
+
+  if (uint32_t(surfSize.width) < dstUnpacking.metrics.usedPixelsPerRow ||
+      uint32_t(surfSize.height) < dstUnpacking.metrics.totalRows) {
+    gfxCriticalError() << "Source surface size too small for upload.";
+    return false;
+  }
 
   // -
 

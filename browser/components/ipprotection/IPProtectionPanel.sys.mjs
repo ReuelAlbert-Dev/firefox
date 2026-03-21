@@ -6,26 +6,32 @@ const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   ASRouter: "resource:///modules/asrouter/ASRouter.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
   IPPEnrollAndEntitleManager:
-    "moz-src:///browser/components/ipprotection/IPPEnrollAndEntitleManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPEnrollAndEntitleManager.sys.mjs",
   IPPExceptionsManager:
-    "moz-src:///browser/components/ipprotection/IPPExceptionsManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPExceptionsManager.sys.mjs",
   IPPOnboardingMessage:
     "moz-src:///browser/components/ipprotection/IPPOnboardingMessageHelper.sys.mjs",
+  ERRORS: "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
   IPPProxyManager:
-    "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
   IPPProxyStates:
-    "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
+  IPPUsageHelper:
+    "moz-src:///browser/components/ipprotection/IPPUsageHelper.sys.mjs",
+  UsageStates:
+    "moz-src:///browser/components/ipprotection/IPPUsageHelper.sys.mjs",
   IPProtectionService:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   IPProtection:
     "moz-src:///browser/components/ipprotection/IPProtection.sys.mjs",
   IPPSignInWatcher:
-    "moz-src:///browser/components/ipprotection/IPPSignInWatcher.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPSignInWatcher.sys.mjs",
   IPProtectionStates:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   SpecialMessageActions:
     "resource://messaging-system/lib/SpecialMessageActions.sys.mjs",
 });
@@ -33,7 +39,6 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import {
   BANDWIDTH,
-  ERRORS,
   ONBOARDING_PREF_FLAGS,
   LINKS,
   SIGNIN_DATA,
@@ -111,8 +116,6 @@ export class IPProtectionPanel {
    *  The location country code
    * @property {"generic-error" | "network-error" | ""} error
    *  The error type as a string if an error occurred, or empty string if there are no errors.
-   * @property {boolean} isAlpha
-   *  True if we're running the Alpha variant, else false.
    * @property {boolean} hasUpgraded
    *  True if a Mozilla VPN subscription is linked to the user's Mozilla account.
    * @property {string} onboardingMessage
@@ -136,7 +139,7 @@ export class IPProtectionPanel {
   panel = null;
   initiatedUpgrade = false;
   #window = null;
-  #lastBandwidthWarningMessageDismissed = 0;
+  #lastDismissedUsageState = "none";
 
   /**
    * Gets the gBrowser from the weak reference to the window.
@@ -147,6 +150,17 @@ export class IPProtectionPanel {
   get gBrowser() {
     const win = this.#window.get();
     return win?.gBrowser;
+  }
+
+  /**
+   * Gets the toolbar for this panel's window
+   *
+   * @return {IPProtectionToolbarButton|undefined}
+   *  The toolbarbutton element, or undefined if the window has been garbage collected.
+   */
+  get toolbarButton() {
+    const win = this.#window.get();
+    return lazy.IPProtection.getToolbarButton(win);
   }
 
   /**
@@ -195,11 +209,10 @@ export class IPProtectionPanel {
         lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVE,
       location: lazy.EGRESS_LOCATION_ENABLED ? DEFAULT_EGRESS_LOCATION : null,
       error: "",
-      isAlpha: lazy.IPPEnrollAndEntitleManager.isAlpha,
       hasUpgraded: lazy.IPPEnrollAndEntitleManager.hasUpgraded,
       onboardingMessage: "",
       bandwidthWarning: false,
-      paused: false,
+      paused: lazy.IPPProxyManager.state === lazy.IPPProxyStates.PAUSED,
       isSiteExceptionsEnabled: this.isExceptionsFeatureEnabled,
       siteData: this.#getSiteData(),
       bandwidthUsage: this.#getBandwidthUsage(),
@@ -281,12 +294,25 @@ export class IPProtectionPanel {
     panelEl.requestUpdate();
   }
 
-  #startProxy() {
-    lazy.IPPProxyManager.start();
+  async #startProxy() {
+    const win = this.#window.get();
+    const inPrivateBrowsing =
+      !!win && lazy.PrivateBrowsingUtils.isWindowPrivate(win);
+    const { error } = await lazy.IPPProxyManager.start(true, inPrivateBrowsing);
+    if (error && error !== lazy.ERRORS.CANCELED) {
+      const errorMessage =
+        error == lazy.ERRORS.NETWORK
+          ? lazy.ERRORS.NETWORK
+          : lazy.ERRORS.GENERIC;
+      this.setState({
+        error: errorMessage,
+      });
+      this.toolbarButton?.updateState(null, { error: errorMessage });
+    }
   }
 
-  #stopProxy() {
-    lazy.IPPProxyManager.stop();
+  async #stopProxy() {
+    await lazy.IPPProxyManager.stop();
   }
 
   /**
@@ -297,7 +323,11 @@ export class IPProtectionPanel {
   static showHelpPage(e) {
     let win = e.target?.ownerGlobal;
     if (win) {
-      win.openWebLinkIn(LINKS.SUPPORT_URL, "tab");
+      win.openWebLinkIn(
+        Services.urlFormatter.formatURLPref("app.support.baseURL") +
+          LINKS.SUPPORT_SLUG,
+        "tab"
+      );
     }
 
     let panelParent = e.target?.closest("panel");
@@ -326,6 +356,7 @@ export class IPProtectionPanel {
 
     this.setState({
       isSiteExceptionsEnabled: this.isExceptionsFeatureEnabled,
+      bandwidthWarning: this.#shouldShowBandwidthWarning(),
     });
 
     if (this.panel) {
@@ -444,20 +475,29 @@ export class IPProtectionPanel {
 
   /**
    * Start flow for signing in and then opening the panel on success
+   *
+   * @param {object} options
+   * @param {string} options.entrypoint
+   *  The entrypoint to pass for the sign in flow
+   * @param {string} options.utm_source
+   *  The utm_source to pass for the sign in flow
    */
-  async startLoginFlow() {
+  async startLoginFlow({
+    entrypoint = "vpn_integration_panel",
+    utm_source = "panel",
+  } = {}) {
     let window = this.#window.get();
     let browser = window.gBrowser;
-
-    if (lazy.IPPSignInWatcher.isSignedIn) {
-      return true;
-    }
 
     // Close the panel if the user will need to sign in.
     this.close();
 
     const signedIn = await lazy.SpecialMessageActions.fxaSignInFlow(
-      SIGNIN_DATA,
+      {
+        ...SIGNIN_DATA,
+        entrypoint,
+        extraParams: { ...SIGNIN_DATA.extraParams, utm_source },
+      },
       browser
     );
     return signedIn;
@@ -465,9 +505,12 @@ export class IPProtectionPanel {
 
   /**
    * Ensure there is a signed in account and then open the panel after enrolling.
+   *
+   * @param {object} options
    */
-  async enroll() {
-    const signedIn = await this.startLoginFlow();
+  async enroll(options = {}) {
+    Glean.ipprotection.getStarted.record();
+    const signedIn = await this.startLoginFlow(options);
     if (!signedIn) {
       return;
     }
@@ -479,10 +522,14 @@ export class IPProtectionPanel {
 
     // Asynchronously enroll and entitle the user.
     // It will only need to finish before the proxy can start.
-    lazy.IPPEnrollAndEntitleManager.maybeEnrollAndEntitle();
+    const enrolling = lazy.IPPEnrollAndEntitleManager.maybeEnrollAndEntitle();
     if (!this.active) {
       await this.open();
     }
+    const result = await enrolling;
+    Glean.ipprotection.enrollment.record({
+      enrolled: result?.isEnrolledAndEntitled,
+    });
   }
 
   /**
@@ -498,6 +545,7 @@ export class IPProtectionPanel {
         this.setState({
           error: "",
         });
+        this.toolbarButton?.updateState(null, { error: "" });
       }
     }
   }
@@ -561,6 +609,10 @@ export class IPProtectionPanel {
       "IPPProxyManager:UsageChanged",
       this.handleEvent
     );
+    lazy.IPPUsageHelper.addEventListener(
+      "IPPUsageHelper:StateChanged",
+      this.handleEvent
+    );
     lazy.IPPEnrollAndEntitleManager.addEventListener(
       "IPPEnrollAndEntitleManager:StateChanged",
       this.handleEvent
@@ -584,6 +636,10 @@ export class IPProtectionPanel {
       "IPPProxyManager:UsageChanged",
       this.handleEvent
     );
+    lazy.IPPUsageHelper.removeEventListener(
+      "IPPUsageHelper:StateChanged",
+      this.handleEvent
+    );
     lazy.IPProtectionService.removeEventListener(
       "IPProtectionService:StateChanged",
       this.handleEvent
@@ -592,6 +648,18 @@ export class IPProtectionPanel {
       "IPPExceptionsManager:ExclusionChanged",
       this.handleEvent
     );
+  }
+
+  #shouldShowBandwidthWarning() {
+    const state = lazy.IPPUsageHelper.state;
+    if (
+      (state == "warning-75-percent" || state == "warning-90-percent") &&
+      state !== this.#lastDismissedUsageState
+    ) {
+      return true;
+    }
+
+    return false;
   }
 
   #addProgressListener() {
@@ -650,16 +718,32 @@ export class IPProtectionPanel {
   /**
    * BigInts throw when using JSON.stringify or when using arithmetic with
    * numbers so we convert them to numbers here so they max and remaining can
-   * be safely used.
+   * be safely used. Check usageInfo first, if that doesn't exist, check the
+   * entitlement. If neither exist, return null.
    *
    * @returns {object} An object with max and remaining as numbers
    */
   #getBandwidthUsage() {
-    if (lazy.BANDWIDTH_USAGE_ENABLED && lazy.IPPProxyManager.usageInfo) {
+    if (
+      lazy.BANDWIDTH_USAGE_ENABLED &&
+      lazy.IPPProxyManager.usageInfo?.max != null
+    ) {
       return {
         max: Number(lazy.IPPProxyManager.usageInfo.max),
         remaining: Number(lazy.IPPProxyManager.usageInfo.remaining),
         reset: lazy.IPPProxyManager.usageInfo.reset,
+      };
+    } else if (
+      lazy.BANDWIDTH_USAGE_ENABLED &&
+      lazy.IPPEnrollAndEntitleManager.entitlement?.maxBytes != null
+    ) {
+      // Usage info doesn't exist yet. Check the entitlement
+      return {
+        max: Number(lazy.IPPEnrollAndEntitleManager.entitlement?.maxBytes),
+        remaining: Number(
+          lazy.IPPEnrollAndEntitleManager.entitlement?.maxBytes
+        ),
+        reset: null,
       };
     }
 
@@ -717,23 +801,15 @@ export class IPProtectionPanel {
       this.initiatedUpgrade = true;
       this.close();
     } else if (event.type == "IPProtection:OptIn") {
-      this.enroll();
+      this.enroll({ entrypoint: "vpn_integration_panel" });
     } else if (
       event.type == "IPPProxyManager:StateChanged" ||
       event.type == "IPProtectionService:StateChanged" ||
       event.type === "IPPEnrollAndEntitleManager:StateChanged"
     ) {
-      let hasError =
-        lazy.IPPProxyManager.state === lazy.IPPProxyStates.ERROR &&
-        (lazy.IPPProxyManager.errors.includes(ERRORS.GENERIC) ||
-          lazy.IPPProxyManager.errors.includes(ERRORS.NETWORK));
-
       let errorType = "";
-      if (hasError) {
-        // Prioritize network error over generic error
-        errorType = lazy.IPPProxyManager.errors.includes(ERRORS.NETWORK)
-          ? ERRORS.NETWORK
-          : ERRORS.GENERIC;
+      if (lazy.IPPProxyManager.state === lazy.IPPProxyStates.ERROR) {
+        errorType = lazy.ERRORS.GENERIC;
       }
 
       this.setState({
@@ -748,6 +824,11 @@ export class IPProtectionPanel {
         isActivating:
           lazy.IPPProxyManager.state === lazy.IPPProxyStates.ACTIVATING,
         bandwidthUsage: this.#getBandwidthUsage(),
+        bandwidthWarning:
+          lazy.IPProtectionService.state === lazy.IPProtectionStates.READY
+            ? this.#shouldShowBandwidthWarning()
+            : false,
+        paused: lazy.IPPProxyManager.state === lazy.IPPProxyStates.PAUSED,
       });
     } else if (event.type == "IPPExceptionsManager:ExclusionChanged") {
       this.#updateSiteData();
@@ -756,14 +837,15 @@ export class IPProtectionPanel {
       const principal = win?.gBrowser.contentPrincipal;
 
       lazy.IPPExceptionsManager.setExclusion(principal, false);
+      Glean.ipprotection.exclusionToggled.record({ excluded: false });
     } else if (event.type == "IPProtection:UserDisableVPNForSite") {
       const win = event.target.ownerGlobal;
       const principal = win?.gBrowser.contentPrincipal;
 
       lazy.IPPExceptionsManager.setExclusion(principal, true);
+      Glean.ipprotection.exclusionToggled.record({ excluded: true });
     } else if (event.type == "IPProtection:DismissBandwidthWarning") {
-      // Store the dismissed threshold level
-      this.#lastBandwidthWarningMessageDismissed = event.detail.threshold;
+      this.#lastDismissedUsageState = lazy.IPPUsageHelper.state;
       this.setState({ bandwidthWarning: false });
     } else if (event.type == "IPPProxyManager:UsageChanged") {
       const usage = event.detail.usage;
@@ -792,18 +874,25 @@ export class IPProtectionPanel {
         remainingPercent > BANDWIDTH.THIRD_THRESHOLD
       ) {
         threshold = firstWarning;
-      } else if (remainingPercent <= BANDWIDTH.THIRD_THRESHOLD) {
+      } else if (
+        remainingPercent > 0 &&
+        remainingPercent <= BANDWIDTH.THIRD_THRESHOLD
+      ) {
         threshold = secondWarning;
+      } else if (remainingPercent === 0) {
+        threshold = 100;
       }
 
+      const lastRecordedThreshold = Services.prefs.getIntPref(
+        BANDWIDTH_THRESHOLD_PREF,
+        threshold
+      );
       Services.prefs.setIntPref(BANDWIDTH_THRESHOLD_PREF, threshold);
 
-      // Reset dismissed warnings when usage is reset
-      if (threshold === 0) {
-        this.#lastBandwidthWarningMessageDismissed = 0;
+      if (lastRecordedThreshold !== threshold) {
+        this.#measureBandwidthThreshold(threshold, lastRecordedThreshold);
       }
 
-      // Update bandwidthUsage state with byte values
       if (lazy.BANDWIDTH_USAGE_ENABLED) {
         this.setState({
           bandwidthUsage: {
@@ -813,17 +902,21 @@ export class IPProtectionPanel {
           },
         });
       }
-
-      // Show warning only if threshold is 75 or 90 and higher than dismissed threshold
-      if (
-        (threshold === firstWarning || threshold === secondWarning) &&
-        threshold > this.#lastBandwidthWarningMessageDismissed
-      ) {
-        this.setState({ bandwidthWarning: true });
-      } else if (threshold <= this.#lastBandwidthWarningMessageDismissed) {
-        // Keep warning dismissed if threshold hasn't increased
-        this.setState({ bandwidthWarning: false });
+    } else if (event.type == "IPPUsageHelper:StateChanged") {
+      if (lazy.IPPUsageHelper.state === lazy.UsageStates.NONE) {
+        this.#lastDismissedUsageState = lazy.UsageStates.NONE;
       }
+      this.setState({ bandwidthWarning: this.#shouldShowBandwidthWarning() });
     }
+  }
+
+  #measureBandwidthThreshold(threshold, lastRecordedThreshold) {
+    if (!threshold || threshold == lastRecordedThreshold) {
+      return;
+    }
+
+    Glean.ipprotection.bandwidthUsedThreshold.record({
+      percentage: threshold,
+    });
   }
 }

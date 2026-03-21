@@ -6,146 +6,341 @@
  *
  * These tests verify that:
  * - Prompts are rendered correctly in both sidebar and fullpage modes
- * - Clicking a prompt triggers the correct event with proper data
+ * - Submitting starter prompts respects the memories preference
  * - Prompts are removed after selection
- * - Mode changes update the layout correctly
  */
 
 "use strict";
 
-/**
- * Get prompt buttons from the prompts element.
- * Waits for the prompts element to be rendered before returning buttons.
- *
- * @param {MozBrowser} browser - The browser element
- * @returns {Promise<Array>} Array of prompt button text content
- */
-async function getPromptButtons(browser) {
-  return SpecialPowers.spawn(browser, [], async () => {
-    const smartWindowElement = content.document.querySelector("ai-window");
-
-    const promptsElement = await ContentTaskUtils.waitForCondition(
-      () => smartWindowElement.shadowRoot.querySelector("smartwindow-prompts"),
-      "Wait for smartwindow-prompts element"
-    );
-
-    const buttons =
-      promptsElement.shadowRoot.querySelectorAll(".sw-prompt-button");
-    return Array.from(buttons).map(button => button.textContent.trim());
-  });
+function getSidebarPromptButtons(win) {
+  const sidebarBrowser = win.document.getElementById("ai-window-browser");
+  const aiWindowEl =
+    sidebarBrowser?.contentDocument?.querySelector("ai-window");
+  const promptsEl = aiWindowEl?.shadowRoot?.querySelector(
+    "smartwindow-prompts"
+  );
+  if (!promptsEl) {
+    return [];
+  }
+  const buttons = promptsEl.shadowRoot.querySelectorAll(".sw-prompt-button");
+  return Array.from(buttons).map(b => b.textContent.trim());
 }
 
-/**
- * Click a prompt button by index.
- *
- * @param {MozBrowser} browser - The browser element
- * @param {number} index - The index of the button to click
- */
-async function clickPromptButton(browser, index) {
-  await SpecialPowers.spawn(browser, [index], async buttonIndex => {
-    const smartWindowElement = content.document.querySelector("ai-window");
-
-    const promptsElement = await ContentTaskUtils.waitForCondition(
-      () => smartWindowElement.shadowRoot.querySelector("smartwindow-prompts"),
-      "Wait for smartwindow-prompts element"
-    );
-
-    const buttons =
-      promptsElement.shadowRoot.querySelectorAll(".sw-prompt-button");
-
-    buttons[buttonIndex].click();
-  });
+async function navigateTo(url, window) {
+  const parentBrowser = window.gBrowser.selectedBrowser;
+  const loaded = BrowserTestUtils.browserLoaded(parentBrowser);
+  BrowserTestUtils.startLoadingURIString(parentBrowser, url);
+  await loaded;
 }
 
-add_task(async function test_prompt_click_triggers_chat() {
-  // TODO:  Bug 2016859 - Test broken after fetchWithHistory signature change
-  //   const sb = this.sinon.createSandbox();
+function startMockNonStreamingServer(responseContent) {
+  const mockServer = new HttpServer();
+  let reqCount = 0;
 
-  //   try {
-  //     const fetchWithHistoryStub = sb.stub(this.Chat, "fetchWithHistory");
-  //     sb.stub(this.openAIEngine, "build");
+  mockServer.registerPathHandler("/v1/chat/completions", (_req, res) => {
+    reqCount++;
+    res.setStatusLine(_req.httpVersion, 200, "OK");
+    res.setHeader("Content-Type", "application/json", false);
+    res.write(
+      JSON.stringify({
+        id: "chatcmpl-mock",
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: "mock",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: responseContent[0] },
+            finish_reason: "stop",
+          },
+        ],
+      })
+    );
+  });
 
-  //     await SpecialPowers.pushPrefEnv({
-  //       set: [["browser.smartwindow.endpoint", "http://localhost:0/v1"]],
-  //     });
+  mockServer.start(-1);
+  return {
+    server: mockServer,
+    port: mockServer.identity.primaryPort,
+    get requestCount() {
+      return reqCount;
+    },
+  };
+}
 
-  //     const win = await openAIWindow();
-  //     const browser = win.gBrowser.selectedBrowser;
+describe("sidebar conversation starter prompts", () => {
+  let responseContent, mock, gAiWindow;
 
-  //     await BrowserTestUtils.browserLoaded(browser, false, AIWINDOW_URL);
+  beforeEach(async () => {
+    responseContent = ["prompt 1\nprompt 2"];
+    mock = startMockNonStreamingServer(responseContent);
 
-  //     const buttons = await getPromptButtons(browser);
-  //     const firstPromptText = buttons[0];
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["browser.smartwindow.endpoint", `http://localhost:${mock.port}/v1`],
+      ],
+    });
 
-  //     await clickPromptButton(browser, 0);
-  //     await TestUtils.waitForTick();
+    gAiWindow = await openAIWindow();
+  });
 
-  //     Assert.ok(
-  //       fetchWithHistoryStub.calledOnce,
-  //       "Should call fetchWithHistory when prompt is clicked"
-  //     );
+  afterEach(async () => {
+    await BrowserTestUtils.closeWindow(gAiWindow);
+    await SpecialPowers.popPrefEnv();
+    await stopMockOpenAI(mock.server);
 
-  //     const conversation = fetchWithHistoryStub.firstCall.args[0];
-  //     const messages = conversation.getMessagesInOpenAiFormat();
-  //     const userMessage = messages.find(message => message.role === "user");
+    gAiWindow = null;
+  });
 
-  //     Assert.equal(
-  //       userMessage.content,
-  //       firstPromptText,
-  //       "Should submit the prompt text as user message"
-  //     );
+  describe("when the conversation is empty", () => {
+    it("should load new prompts when the tab changes URL", async () => {
+      await navigateTo("https://example.com", gAiWindow);
 
-  //     await BrowserTestUtils.closeWindow(win);
-  //     await SpecialPowers.popPrefEnv();
-  //   } finally {
-  //     sb.restore();
-  //   }
-  // });
-  ok(true, "Test temporarily skipped ");
+      await TestUtils.waitForCondition(
+        () => AIWindowUI.isSidebarOpen(gAiWindow),
+        "Sidebar should be open"
+      );
+      await TestUtils.waitForCondition(
+        () => getSidebarPromptButtons(gAiWindow).includes("prompt 1"),
+        "First set of prompts should be rendered"
+      );
+
+      Assert.deepEqual(
+        getSidebarPromptButtons(gAiWindow),
+        ["prompt 1", "prompt 2"],
+        "Should display first set of prompts"
+      );
+
+      responseContent[0] = "prompt 3\nprompt 4";
+
+      await navigateTo("https://example.org", gAiWindow);
+      await TestUtils.waitForCondition(
+        () => getSidebarPromptButtons(gAiWindow).includes("prompt 3"),
+        "Second set of prompts should be rendered"
+      );
+      Assert.deepEqual(
+        getSidebarPromptButtons(gAiWindow),
+        ["prompt 3", "prompt 4"],
+        "Should display updated prompts after URL change"
+      );
+    });
+  });
 });
 
-add_task(async function test_prompt_click_respects_memories_setting() {
-  // TODO:  Bug 2016859 - Test broken after fetchWithHistory signature change
-  //   const sb = this.sinon.createSandbox();
+add_task(async function test_starter_prompts_click_triggers_chat_on_new_tab() {
+  const sb = sinon.createSandbox();
 
-  //   try {
-  //     const fetchWithHistoryStub = sb.stub(this.Chat, "fetchWithHistory");
-  //     sb.stub(this.openAIEngine, "build");
+  try {
+    const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory");
+    sb.stub(openAIEngine, "build").resolves({
+      loadPrompt: () => Promise.resolve("Mock system prompt"),
+    });
 
-  //     await SpecialPowers.pushPrefEnv({
-  //       set: [
-  //         ["browser.aiwindow.memories", true],
-  //         ["browser.smartwindow.endpoint", "http://localhost:0/v1"],
-  //       ],
-  //     });
+    const win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
 
-  //     const win = await openAIWindow();
-  //     const browser = win.gBrowser.selectedBrowser;
+    const buttons = await getPromptButtons(browser);
+    const firstPromptText = buttons[0].textContent.trim();
+    buttons[0].click();
 
-  //     await BrowserTestUtils.browserLoaded(browser, false, AIWINDOW_URL);
+    await TestUtils.waitForCondition(
+      () => fetchWithHistoryStub.calledOnce,
+      "fetchWithHistory should be called after clicking prompt"
+    );
 
-  //     await getPromptButtons(browser);
-  //     await clickPromptButton(browser, 0);
-  //     await TestUtils.waitForTick();
+    const conversation = fetchWithHistoryStub.firstCall.args[0];
+    const messages = conversation.getMessagesInOpenAiFormat();
+    const userMessage = messages.findLast(m => m.role === "user");
 
-  //     const conversation = fetchWithHistoryStub.firstCall.args[0];
-  //     const userMessage = conversation.messages.find(m => m.role === 0);
+    Assert.equal(
+      userMessage.content,
+      firstPromptText,
+      "Should submit starter prompt text as user message on New Tab"
+    );
 
-  //     Assert.ok(
-  //       userMessage.memoriesEnabled,
-  //       "Should pass memories enabled state to user message"
-  //     );
-  //     Assert.equal(
-  //       userMessage.memoriesFlagSource,
-  //       0,
-  //       "Should indicate memories flag came from global setting"
-  //     );
+    await BrowserTestUtils.closeWindow(win);
+  } finally {
+    sb.restore();
+  }
+});
 
-  //     await BrowserTestUtils.closeWindow(win);
-  //     await SpecialPowers.popPrefEnv();
-  //   } finally {
-  //     sb.restore();
-  //   }
-  // });
-  ok(true, "Test temporarily skipped ");
+add_task(async function test_starter_prompts_click_triggers_chat_in_sidebar() {
+  const sb = sinon.createSandbox();
+
+  try {
+    const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory");
+    sb.stub(openAIEngine, "build").resolves({
+      loadPrompt: () => Promise.resolve("Mock system prompt"),
+    });
+
+    const win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
+
+    const buttons = await getPromptButtons(browser);
+    const firstPromptText = buttons[0].textContent.trim();
+    buttons[0].click();
+
+    await TestUtils.waitForCondition(
+      () => fetchWithHistoryStub.calledOnce,
+      "fetchWithHistory should be called after clicking prompt"
+    );
+
+    const conversation = fetchWithHistoryStub.firstCall.args[0];
+    const messages = conversation.getMessagesInOpenAiFormat();
+    const userMessage = messages.findLast(m => m.role === "user");
+
+    Assert.equal(
+      userMessage.content,
+      firstPromptText,
+      "Should submit starter prompt text as user message in the sidebar"
+    );
+
+    await BrowserTestUtils.closeWindow(win);
+  } finally {
+    sb.restore();
+  }
+});
+
+add_task(
+  async function test_starter_prompts_click_fetches_memories_when_enabled() {
+    const sb = sinon.createSandbox();
+
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["browser.smartwindow.memories.generateFromConversation", true],
+        ["browser.smartwindow.memories.generateFromHistory", true],
+      ],
+    });
+
+    try {
+      sb.stub(Chat, "fetchWithHistory");
+      sb.stub(openAIEngine, "build").resolves({
+        loadPrompt: () => Promise.resolve("Mock system prompt"),
+      });
+      const memoriesStub = sb
+        .stub(this.ChatConversation.prototype, "getMemoriesContext")
+        .resolves(null);
+
+      const win = await openAIWindow();
+      const browser = win.gBrowser.selectedBrowser;
+
+      (await getPromptButtons(browser))[0].click();
+
+      await TestUtils.waitForCondition(
+        () => memoriesStub.called,
+        "getMemoriesContext should be called with memories enabled"
+      );
+
+      Assert.ok(
+        memoriesStub.calledOnce,
+        "getMemoriesContext should be called once"
+      );
+
+      await BrowserTestUtils.closeWindow(win);
+    } finally {
+      sb.restore();
+      await SpecialPowers.popPrefEnv();
+    }
+  }
+);
+
+add_task(
+  async function test_starter_prompts_click_skips_memories_when_disabled() {
+    const sb = sinon.createSandbox();
+
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        ["browser.smartwindow.memories.generateFromConversation", false],
+        ["browser.smartwindow.memories.generateFromHistory", false],
+      ],
+    });
+
+    try {
+      const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory");
+      sb.stub(openAIEngine, "build").resolves({
+        loadPrompt: () => Promise.resolve("Mock system prompt"),
+      });
+      const memoriesStub = sb
+        .stub(this.ChatConversation.prototype, "getMemoriesContext")
+        .resolves(null);
+
+      const win = await openAIWindow();
+      const browser = win.gBrowser.selectedBrowser;
+
+      (await getPromptButtons(browser))[0].click();
+
+      await TestUtils.waitForCondition(
+        () => fetchWithHistoryStub.calledOnce,
+        "fetchWithHistory should be called after clicking prompt"
+      );
+
+      Assert.ok(
+        memoriesStub.notCalled,
+        "getMemoriesContext should not be called when memories are disabled"
+      );
+
+      await BrowserTestUtils.closeWindow(win);
+    } finally {
+      sb.restore();
+      await SpecialPowers.popPrefEnv();
+    }
+  }
+);
+
+add_task(async function test_starter_prompts_hidden_after_click_on_new_tab() {
+  const sb = sinon.createSandbox();
+
+  try {
+    sb.stub(Chat, "fetchWithHistory");
+    sb.stub(openAIEngine, "build").resolves({
+      loadPrompt: () => Promise.resolve("Mock system prompt"),
+    });
+
+    const win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
+
+    (await getPromptButtons(browser))[0].click();
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const aiWindowElement = content.document.querySelector("ai-window");
+      await ContentTaskUtils.waitForMutationCondition(
+        aiWindowElement.shadowRoot,
+        { childList: true, subtree: true },
+        () => !aiWindowElement.shadowRoot.querySelector("smartwindow-prompts")
+      );
+    });
+
+    await BrowserTestUtils.closeWindow(win);
+  } finally {
+    sb.restore();
+  }
+});
+
+add_task(async function test_starter_prompts_hidden_after_click_in_sidebar() {
+  const sb = sinon.createSandbox();
+
+  try {
+    sb.stub(Chat, "fetchWithHistory");
+    sb.stub(openAIEngine, "build").resolves({
+      loadPrompt: () => Promise.resolve("Mock system prompt"),
+    });
+
+    const win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
+
+    (await getPromptButtons(browser))[0].click();
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const aiWindowElement = content.document.querySelector("ai-window");
+      await ContentTaskUtils.waitForMutationCondition(
+        aiWindowElement.shadowRoot,
+        { childList: true, subtree: true },
+        () => !aiWindowElement.shadowRoot.querySelector("smartwindow-prompts")
+      );
+    });
+
+    await BrowserTestUtils.closeWindow(win);
+  } finally {
+    sb.restore();
+  }
 });

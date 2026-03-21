@@ -19,6 +19,7 @@ var gBrowserInit = {
   _tabToAdopt: undefined,
   _firstContentWindowPaintDeferred: Promise.withResolvers(),
   idleTasksFinished: Promise.withResolvers(),
+  _reducedProtectionPrefObserver: null,
 
   /**
    * Handles considerations when the enabled state of the Translations feature
@@ -157,14 +158,20 @@ var gBrowserInit = {
       if (extraOptions.hasKey("taskbartab")) {
         let taskbarTabId = extraOptions.getPropertyAsAString("taskbartab");
         window.document.documentElement.setAttribute(
+          "windowclass",
+          "org.mozilla.firefox.webapp-" + taskbarTabId
+        );
+        window.document.documentElement.setAttribute(
           "taskbartab",
           taskbarTabId
         );
         window.document.documentElement.id = "taskbartab-" + taskbarTabId;
       }
-
       if (extraOptions.hasKey("ai-window")) {
         document.documentElement.setAttribute("ai-window", true);
+      }
+      if (extraOptions.hasKey("aiwindow-immersive-view")) {
+        document.documentElement.setAttribute("aiwindow-immersive-view", true);
       }
     }
 
@@ -260,12 +267,7 @@ var gBrowserInit = {
       FullPageTranslationsPanel
     );
     gBrowser.tabContainer.addEventListener("TabSelect", () => {
-      // This ensures that the Translations URL-bar button becomes hidden when
-      // the feature becomes disabled, even when switching from tabs such as
-      // about:newtab that do not have an actor instance available to them.
-      if (!TranslationsParent.AIFeature.isEnabled) {
-        FullPageTranslationsPanel.buttonElements.button.hidden = true;
-      }
+      FullPageTranslationsPanel.onLocationChange(gBrowser.selectedBrowser);
     });
     gBrowser.addTabsProgressListener(FullPageTranslationsPanel);
 
@@ -356,10 +358,17 @@ var gBrowserInit = {
           Glean.tabgroup.groupInteractions.move_window.add(1);
         } else if (gBrowser.isSplitViewWrapper(tabToAdopt)) {
           let tempBlankTab = gBrowser.selectedTab;
-          gBrowser.adoptSplitView(tabToAdopt, {
+          let splitview = gBrowser.adoptSplitView(tabToAdopt, {
             elementIndex: 0,
             selectTab: true,
           });
+          // If tabs are multiselected, add the newly adopted splitview back into the selection
+          if (gBrowser.selectedTabs.length > 1) {
+            gBrowser.addRangeToMultiSelectedTabs(
+              splitview.tabs[0],
+              splitview.tabs[splitview.tabs.length - 1]
+            );
+          }
           gBrowser.removeTab(tempBlankTab);
         } else {
           if (tabToAdopt.group) {
@@ -405,6 +414,12 @@ var gBrowserInit = {
       )?.removeAttribute("key");
     }
 
+    if (window.browsingContext.isDocumentPiP) {
+      for (const cmd of ["Browser:AddBookmarkAs", "Browser:Reload"]) {
+        document.getElementById(cmd).setAttribute("disabled", "true");
+      }
+    }
+
     this._loadHandled = true;
   },
 
@@ -414,10 +429,6 @@ var gBrowserInit = {
   },
 
   _delayedStartup() {
-    let { TelemetryTimestamps } = ChromeUtils.importESModule(
-      "resource://gre/modules/TelemetryTimestamps.sys.mjs"
-    );
-    TelemetryTimestamps.add("delayedStartupStarted");
     Glean.browserTimings.startupTimeline.delayedStartupStarted.set(
       Services.telemetry.msSinceProcessStart()
     );
@@ -550,6 +561,8 @@ var gBrowserInit = {
 
     ctrlTab.readPref();
     Services.prefs.addObserver(ctrlTab.prefName, ctrlTab);
+
+    ReducedProtectionNotification.observePref();
 
     // The object handling the downloads indicator is initialized here in the
     // delayed startup function, but the actual indicator element is not loaded
@@ -726,7 +739,6 @@ var gBrowserInit = {
     this.delayedStartupFinished = true;
     _resolveDelayedStartup();
     Services.obs.notifyObservers(window, "browser-delayed-startup-finished");
-    TelemetryTimestamps.add("delayedStartupFinished");
     Glean.browserTimings.startupTimeline.delayedStartupFinished.set(
       Services.telemetry.msSinceProcessStart()
     );

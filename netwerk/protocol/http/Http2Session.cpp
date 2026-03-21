@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=8 et tw=80 : */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -2164,7 +2162,11 @@ nsresult Http2Session::RecvWindowUpdate(Http2Session* self) {
 
 nsresult Http2Session::RecvContinuation(Http2Session* self) {
   MOZ_ASSERT(self->mInputFrameType == FRAME_TYPE_CONTINUATION);
-  MOZ_ASSERT(self->mInputFrameID);
+  if (!self->mInputFrameID) {  // must be checked before the other assertions
+    LOG3(("Http2Session::RecvContinuation %p stream ID of 0 - PROTOCOL_ERROR\n",
+          self));
+    return self->SessionError(PROTOCOL_ERROR);
+  }
   MOZ_ASSERT(self->mExpectedPushPromiseID || self->mExpectedHeaderID);
   MOZ_ASSERT(!(self->mExpectedPushPromiseID && self->mExpectedHeaderID));
 
@@ -3091,9 +3093,8 @@ nsresult Http2Session::WriteSegmentsAgain(nsAHttpSegmentWriter* writer,
       return NS_ERROR_UNEXPECTED;
     }
 
-    // There is no bounds checking on the error code.. we provide special
-    // handling for a couple of cases and all others (including unknown) are
-    // equivalent to cancel.
+    // There is no bounds checking on the error code. We provide special
+    // handling for a few cases; all others trigger a retry.
     if (mDownstreamRstReason == REFUSED_STREAM_ERROR) {
       streamCleanupCode = NS_ERROR_NET_RESET;  // can retry this 100% safely
       mInputFrameDataStream->ReuseConnectionOnRestartOK(true);
@@ -3103,10 +3104,21 @@ nsresult Http2Session::WriteSegmentsAgain(nsAHttpSegmentWriter* writer,
       mInputFrameDataStream->DisableSpdy();
       // actually allow restart by unsticking
       mInputFrameDataStream->MakeNonSticky();
-    } else {
+    } else if (mDownstreamRstReason == CANCEL_ERROR ||
+               mDownstreamRstReason == NO_HTTP_ERROR) {
+      // The server cancelled or gracefully closed this stream; do not retry.
       streamCleanupCode = mInputFrameDataStream->RecvdData()
                               ? NS_ERROR_NET_PARTIAL_TRANSFER
                               : NS_ERROR_NET_INTERRUPT;
+    } else {
+      // Unrecognized RST_STREAM error code. Use NS_ERROR_NET_RESET so the
+      // transaction restart path retries the request.
+      if (mInputFrameDataStream->RecvdData()) {
+        streamCleanupCode = NS_ERROR_NET_PARTIAL_TRANSFER;
+      } else {
+        streamCleanupCode = NS_ERROR_NET_RESET;
+        mInputFrameDataStream->ReuseConnectionOnRestartOK(true);
+      }
     }
 
     if (mDownstreamRstReason == COMPRESSION_ERROR) {

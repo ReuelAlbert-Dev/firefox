@@ -52,6 +52,7 @@ features:
             "pocket-sponsored-stories": true,
             "synced-tabs": true,
             "collections": true,
+            "privacy-report": false,
           }
     defaults:
       - channel: nightly
@@ -65,6 +66,7 @@ features:
             "pocket": true,
             "synced-tabs": true,
             "collections": true,
+            "privacy-report": false,
           }
         }
   nimbus-validation:
@@ -83,16 +85,6 @@ features:
         description: The drawable displayed in the app menu for Settings
         type: String
         default: mozac_ic_settings
-  gecko-nimbus-validation:
-    description: "Feature for validating Nimbus Gecko functionality"
-    variables:
-      test-preference:
-        description: "A test gecko preference"
-        type: String
-        default: ""
-        gecko-pref:
-          pref: "gecko.nimbus.test"
-          branch: "default"
   cookie-banners:
     description: Features for cookie banner handling.
     variables:
@@ -142,18 +134,6 @@ features:
             "feature-setting-global-rules-sub-frames": 1,
           }
         }
-
-  re-engagement-notification:
-    description: A feature that shows the re-engagement notification if the user is inactive.
-    variables:
-      enabled:
-        description: If true, the re-engagement notification is shown to the inactive user.
-        type: Boolean
-        default: false
-      type:
-        description: The type of re-engagement notification that is shown to the inactive user.
-        type: Int
-        default: 0
 
   onboarding:
     description: "A feature that configures the new user onboarding page.
@@ -265,6 +245,14 @@ features:
           template-message: sent_from_firefox_template
           download-link: "[Download Link]"
           show-snackbar: true
+
+  shake-to-summarize:
+    description: A feature that can summarize the content of a page when you shake the screen.
+    variables:
+      enabled:
+        type: Boolean
+        description: If true, shake to summarize will be enabled
+        default: false
 
   setup-checklist:
     description: A feature on the home page that allows the user to track onboarding setup progress.
@@ -413,6 +401,15 @@ features:
         type: Boolean
         default: false
 
+  default-bottom-toolbar:
+    description: Default toolbar position for new users.
+    variables:
+      enabled:
+        description: >
+          Whether to default the toolbar position to bottom.
+        type: Boolean
+        default: false
+
   homescreen-edge-to-edge-background:
     description: >
       Feature that sets an edge to edge background on the Home Screen if the user hasn't selected
@@ -429,6 +426,9 @@ features:
       - channel: nightly
         value:
           enabled: true
+      - channel: beta
+        value:
+          enabled: true
 
   remote-tab-management:
     description: >
@@ -441,16 +441,6 @@ features:
           this device will allow other devices to close tabs that are open on this device, and
           show a "close" button for tabs that are currently open on other supported devices
           in the synced tabs tray.
-        type: Boolean
-        default: true
-
-  ship:
-    description: The feature that controls Session History in Parent (SHIP) in Gecko.
-    variables:
-      disabled:
-        description: >
-          Whether or not to disable SHIP. SHIP is enabled when set to false. SHIP is disabled when
-          set to true.
         type: Boolean
         default: true
 
@@ -599,19 +589,6 @@ features:
         description: If true, the menu banner is visible.
         type: Boolean
         default: true
-    defaults:
-      - channel: release
-        value:
-          report-site-issue: false
-
-  override-user-specified-homepage-sections:
-    description: Whether to ignore the user-specified homepage section visibility settings and hide the options in the settings.
-    variables:
-      enabled:
-        description: >
-          When true, ignore the user-specified homepage section visibility settings, and hide the toggle options in the settings.
-        type: Boolean
-        default: false
 
   firefox-jp-guide-default-site:
     description: >
@@ -798,21 +775,12 @@ features:
         description: >
           Overrides the loadType when it is a same document navigation
         type: Boolean
-        default: true
+        default: false
       force-disable-uri:
         description: >
           Disable overriding the loadType during same document navigation on the domain specified by this URI.
         type: String
         default: ""
-    defaults:
-      - channel: nightly
-        value:
-          enabled: false
-          force-disable-uri: ""
-      - channel: developer
-        value:
-          enabled: false
-          force-disable-uri: ""
   doh:
     description: Feature controlling DNS over HTTPS (DoH).
     variables:
@@ -851,17 +819,7 @@ features:
           description: >
             Enables the user to search for settings.
           type: Boolean
-          default: false
-      defaults:
-        - channel: developer
-          value:
-            enabled: true
-        - channel: nightly
-          value:
-            enabled: true
-        - channel: beta
-          value:
-            enabled: true
+          default: true
 
   toolbar-redesign-option:
     description: Control the visibility of toolbar redesign option in settings.
@@ -915,6 +873,25 @@ features:
       - channel: nightly
         value:
           enabled: true
+
+  tab-groups:
+    description: Control the visibility of the tab groups feature.
+    variables:
+      enabled:
+        description: >
+          Whether or not to enable the tab groups feature.
+        type: Boolean
+        default: false
+    defaults:
+      - channel: release
+        value:
+          enabled: false
+      - channel: beta
+        value:
+          enabled: false
+      - channel: nightly
+        value:
+          enabled: false
 
   suppress-sponsored-top-sites:
     description: Suppress sponsored top sites for new users for 14 days.
@@ -1006,20 +983,15 @@ features:
       - channel: developer
         value:
           enabled: true
+      - channel: nightly
+        value:
+          enabled: true
 
   native-share-sheet:
     description: Feature to enable the Native Share Sheet for users on Firefox on Android.
     variables:
       enabled:
         description: If true, Native Share Sheet is enabled.
-        type: Boolean
-        default: false
-
-  browser-mode-toggle:
-    description: Feature to enable the Browser Mode Toggle for users on Firefox on Android.
-    variables:
-      enabled:
-        description: If true, Browser Mode Toggle is enabled.
         type: Boolean
         default: false
 
@@ -1038,6 +1010,13 @@ features:
         description: If true, Mozilla Ads Client is enabled.
         type: Boolean
         default: false
+    defaults:
+      - channel: developer
+        value:
+          enabled: true
+      - channel: nightly
+        value:
+          enabled: true
 
   search-optimization-option:
     description: Feature to enable the Search Optimization cards for users on Firefox on Android.
@@ -1058,6 +1037,28 @@ features:
         description: If true, Search Optimization Sports cards are enabled.
         type: Boolean
         default: false
+    defaults:
+      - channel: developer
+        value:
+          enabled: true
+          show-stocks-card: true
+          show-flights-card: true
+          show-sports-card: true
+
+  downloads-custom-location:
+    description: Feature to enable the custom download location for users on Firefox on Android.
+    variables:
+      enabled:
+        description: If true, custom download location is enabled.
+        type: Boolean
+        default: false
+    defaults:
+      - channel: developer
+        value:
+          enabled: true
+      - channel: nightly
+        value:
+          enabled: true
 
 types:
   objects:
@@ -1099,6 +1100,8 @@ types:
           description: The synced tabs section of the homepage.
         collections:
           description: The collections section of the homepage.
+        privacy-report:
+          description: The privacy report section showing trackers blocked.
 
     CookieBannersSection:
       description: The identifiers for the sections of the MR 2022.

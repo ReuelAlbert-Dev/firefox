@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -596,6 +595,11 @@ inline nsDependentCSubstring nsStandardURL::Host() {
   if (mHost.mLen > 0) {
     pos = mHost.mPos;
     len = mHost.mLen;
+    MOZ_RELEASE_ASSERT(pos < mSpec.Length());
+    // `pos + len - 1 < mSpec.Length()` is `len <= mSpec.Length() - pos`
+    // but also avoids overflow. Underflow can't happen because of previous
+    // assert.
+    MOZ_RELEASE_ASSERT(len <= mSpec.Length() - pos);
     if (mSpec.CharAt(pos) == '[' && mSpec.CharAt(pos + len - 1) == ']') {
       pos++;
       len -= 2;

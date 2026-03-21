@@ -295,6 +295,12 @@ add_task(async function do_test_http2_empty_data() {
   Assert.equal(httpProxyConnectResponseCode, -1);
 });
 
+add_task(async function do_test_http2_continuation_stream_zero() {
+  const { httpProxyConnectResponseCode } =
+    await test_http2_continuation_stream_zero(serverPort);
+  Assert.equal(httpProxyConnectResponseCode, -1);
+});
+
 add_task(async function do_test_http2_status_phrase() {
   const { httpProxyConnectResponseCode } =
     await test_http2_status_phrase(serverPort);
@@ -319,6 +325,12 @@ add_task(async function do_test_http2_h11required_session() {
 add_task(async function do_test_http2_retry_rst() {
   const { httpProxyConnectResponseCode } =
     await test_http2_retry_rst(serverPort);
+  Assert.equal(httpProxyConnectResponseCode, -1);
+});
+
+add_task(async function do_test_http2_unknown_rst() {
+  const { httpProxyConnectResponseCode } =
+    await test_http2_unknown_rst(serverPort);
   Assert.equal(httpProxyConnectResponseCode, -1);
 });
 

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=4 sw=2 sts=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -61,8 +59,7 @@ class GIOChannelChild final : public PGIOChannelChild,
                                              const URIParams& aURI) override;
   mozilla::ipc::IPCResult RecvOnDataAvailable(const nsresult& aChannelStatus,
                                               const nsACString& aData,
-                                              const uint64_t& aOffset,
-                                              const uint32_t& aCount) override;
+                                              const uint64_t& aOffset) override;
   mozilla::ipc::IPCResult RecvOnStopRequest(
       const nsresult& aChannelStatus) override;
   mozilla::ipc::IPCResult RecvFailedAsyncOpen(
@@ -74,8 +71,7 @@ class GIOChannelChild final : public PGIOChannelChild,
                         const nsACString& aContentType,
                         const nsACString& aEntityID, const URIParams& aURI);
   void DoOnDataAvailable(const nsresult& aChannelStatus,
-                         const nsACString& aData, const uint64_t& aOffset,
-                         const uint32_t& aCount);
+                         const nsACString& aData, const uint64_t& aOffset);
   void DoOnStopRequest(const nsresult& aChannelStatus);
   void DoFailedAsyncOpen(const nsresult& aStatusCode);
   void DoDeleteSelf();

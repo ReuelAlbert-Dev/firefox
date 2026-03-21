@@ -48,19 +48,22 @@ Please note that some targeting attributes require stricter controls on the tele
 * [hasSelectableProfiles](#hasselectableprofiles)
 * [homePageSettings](#homepagesettings)
 * [isBackgroundTaskMode](#isbackgroundtaskmode)
-* [isAIWindow] (#isaiwindow)
+* [isAIWindow](#isaiwindow)
 * [isChinaRepack](#ischinarepack)
 * [isDefaultBrowser](#isdefaultbrowser)
 * [isDefaultBrowserUncached](#isdefaultbrowseruncached)
 * [isDefaultHandler](#isdefaulthandler)
 * [isDeviceMigration](#isdevicemigration)
 * [isEncryptedBackup](#isEncryptedBackup)
+* [isFirstRun](#isfirstrun)
+* [isFirstStartup](#isfirststartup)
 * [isFxAEnabled](#isfxaenabled)
 * [isFxASignedIn](#isfxasignedin)
 * [isMajorUpgrade](#ismajorupgrade)
 * [isMSIX](#ismsix)
 * [isPrivateWindow](#isprivatewindow)
 * [isRTAMO](#isrtamo)
+* [isSmartWindowOnboarding](#issmartwindowonboarding)
 * [unhandledCampaignAction](#unhandledCampaignAction)
 * [launchOnLoginEnabled](#launchonloginenabled)
 * [locale](#locale)
@@ -87,14 +90,17 @@ Please note that some targeting attributes require stricter controls on the tele
 * [searchEngines](#searchengines)
 * [sync](#sync)
 * [systemArch](#systemarch)
+* [tabNotesCount](#tabnotescount)
 * [topFrecentSites](#topfrecentsites)
 * [totalBlockedCount](#totalblockedcount)
 * [totalBookmarksCount](#totalbookmarkscount)
+* [userActiveDaysWithHundredPlusSites](#userActiveDaysWithHundredPlusSites)
 * [userId](#userid)
 * [userMonthlyActivity](#usermonthlyactivity)
 * [userPrefersReducedMotion](#userprefersreducedmotion)
 * [useEmbeddedMigrationWizard](#useembeddedmigrationwizard)
 * [userPrefs](#userprefs)
+* [userWeekdaysActiveInLastMonth](#userWeekdaysActiveInLastMonth)
 * [usesFirefoxSync](#usesfirefoxsync)
 * [xpinstallEnabled](#xpinstallenabled)
 * [totalSearches](#totalsearches)
@@ -345,7 +351,9 @@ declare const launchOnLoginEnabled: boolean;
 ```
 
 ### `locale`
-The current locale of the browser including country code, e.g. `en-US`.
+The current UI locale of the browser including country code, e.g. `en-US`. This is
+the locale Firefox chose to render its UI in: the first match between Firefox's
+available locales and the user's ranked OS/browser language preferences.
 
 #### Examples
 * Is the locale of the browser either English (US) or German (Germany)?
@@ -357,6 +365,8 @@ locale in ["en-US", "de-DE"]
 ```ts
 declare const locale: string;
 ```
+
+[Source](https://searchfox.org/mozilla-central/source/browser/components/asrouter/modules/ASRouterTargeting.sys.mjs#651)
 
 ### `localeLanguageCode`
 The current locale of the browser NOT including country code, e.g. `en`.
@@ -498,7 +508,15 @@ declare const providerCohorts: {
 
 ### `region`
 
-Country code retrieved from `location.services.mozilla.com`. Can be `""` if request did not finish or encountered an error.
+The user's home region as a country code. Firefox distinguishes between two region concepts:
+
+- **Home region** (`Region.home`): the region determined when the user first set up their
+  profile, queried from `location.services.mozilla.com` and then persisted. This is
+  what this targeting attribute exposes.
+- **Current region** (`Region.current`): the most recently detected region via IP-based
+  geolocation, which may differ from home if the user is traveling.
+
+Can be `""` if the location service request has not yet completed or encountered an error.
 
 #### Examples
 * Is the user in Canada?
@@ -511,6 +529,8 @@ region == "CA"
 ```ts
 declare const region: string;
 ```
+
+[Source](https://searchfox.org/mozilla-central/source/browser/components/asrouter/modules/ASRouterTargeting.sys.mjs#835)
 
 ### `searchEngines`
 
@@ -592,6 +612,21 @@ Total number of bookmarks.
 
 ```ts
 declare const totalBookmarksCount: number;
+```
+
+### `userActiveDaysWithHundredPlusSites`
+The number of days in the past month where the user visited 100 or more URLs.
+Derived from [`userMonthlyActivity`](#usermonthlyactivity).
+
+#### Example
+* Has the user visited 100+ sites on at least 5 days in the past month?
+```java
+userActiveDaysWithHundredPlusSites >= 5
+```
+
+#### Definition
+```ts
+declare const userActiveDaysWithHundredPlusSites: Promise;
 ```
 
 ### `usesFirefoxSync`
@@ -754,6 +789,22 @@ declare const userPrefs: {
   cfrFeatures: boolean;
   cfrAddons: boolean;
 }
+```
+
+### `userWeekdaysActiveInLastMonth`
+
+The number of days in the past month the user was active on a weekday (Monday–Friday).
+Derived from [`userMonthlyActivity`](#usermonthlyactivity).
+
+#### Examples
+* Has the user used Firefox on 2 or more weekdays in the past month?
+```java
+userWeekdaysActiveInLastMonth >= 2
+```
+
+#### Definition
+```ts
+declare const userWeekdaysActiveInLastMonth: Promise;
 ```
 
 ### `attachedFxAOAuthClients`
@@ -1193,6 +1244,17 @@ The architecture of this Firefox build: x86, x86-64 or aarch64.
 declare const systemArch: string | null;
 ```
 
+### `tabNotesCount`
+
+The total number of tab notes the user has stored in their current profile.
+
+#### Definition
+
+```ts
+declare const tabNotesCount: Promise<number>;
+```
+
+
 ### `totalSearches`
 
 Returns the number of times a user has completed a search in the URL Bar. The number is arbitrarily capped at 100.
@@ -1241,3 +1303,45 @@ Indicates whether the restore function is enabled by BackupService.
 ### `isEncryptedBackup`
 
 Indicates whether a user has selected an encrypted or non-encrypted backup method during the spotlight onboarding flow. (Refers to the `messaging-system-action.backupChooser` pref.)
+
+### `isSmartWindowOnboarding`
+
+A boolean. `true` when a user downloads Firefox from a Smart Window marketing campaign (ie. `attributionData.campaign == "smart_window"`), `false` otherwise.
+
+### `isFirstRun`
+
+`true` on the first time Normandy runs on a new profile. Normandy sets the
+`app.normandy.first_run` pref to `false` after its first run, so this will be
+`true` exactly once per profile regardless of installation mechanism.
+
+> ⚠ **NOTE:** This targeting attribute is only available for the JEXL expressions
+> of experiments' advanced targeting configs, which are defined in the
+> [experimenter repository](https://experimenter.info). Targeting expressions for
+> messages do not have access to this attribute.
+
+#### Definition
+
+```ts
+declare const isFirstRun: boolean;
+```
+
+[Source](https://searchfox.org/mozilla-central/source/toolkit/components/normandy/lib/ClientEnvironment.sys.mjs#121)
+
+### `isFirstStartup`
+
+`true` while Firefox is running through its first-startup sequence (i.e., when
+`FirstStartup` is in the `IN_PROGRESS` state). Unlike `isFirstRun`, which tracks
+the first Normandy run, this tracks the first startup of the browser itself.
+
+> ⚠ **NOTE:** This targeting attribute is only available for the JEXL expressions
+> of experiments' advanced targeting configs, which are defined in the
+> [experimenter repository](https://experimenter.info). Targeting expressions for
+> messages do not have access to this attribute.
+
+#### Definition
+
+```ts
+declare const isFirstStartup: boolean;
+```
+
+[Source](https://searchfox.org/mozilla-central/source/toolkit/components/nimbus/lib/ExperimentManager.sys.mjs#233)

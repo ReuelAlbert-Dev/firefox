@@ -16,13 +16,11 @@ ChromeUtils.defineESModuleGetters(lazy, {
   IPProtectionPanel:
     "moz-src:///browser/components/ipprotection/IPProtectionPanel.sys.mjs",
   IPProtectionService:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   IPProtection:
     "moz-src:///browser/components/ipprotection/IPProtection.sys.mjs",
-  SpecialMessageActions:
-    "resource://messaging-system/lib/SpecialMessageActions.sys.mjs",
   IPProtectionStates:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
 });
 
 /**
@@ -84,21 +82,18 @@ add_task(async function test_unauthenticated_content() {
 });
 
 /**
- * Tests sign-in button functionality
+ * Tests get started button functionality.
  */
 add_task(async function test_signin_button() {
+  setupService({
+    isSignedIn: false,
+    isEnrolledAndEntitled: false,
+  });
   Assert.equal(
     lazy.IPProtectionService.state,
     lazy.IPProtectionStates.UNAUTHENTICATED,
     "Should be in the UNAUTHENTICATED state"
   );
-
-  let sandbox = sinon.createSandbox();
-  sandbox
-    .stub(lazy.SpecialMessageActions, "fxaSignInFlow")
-    .callsFake(async function () {
-      return true;
-    });
 
   let button = document.getElementById(lazy.IPProtectionWidget.WIDGET_ID);
 
@@ -146,6 +141,74 @@ add_task(async function test_signin_button() {
   );
 
   await panelHiddenPromiseEnd;
+  cleanupService();
+});
 
-  sandbox.restore();
+/**
+ * Tests that clicking "get started" in the panel passes vpn_integration_panel
+ * as the entrypoint to fxaSignInFlow.
+ */
+add_task(async function test_panel_get_started_entrypoint() {
+  setupService({
+    isSignedIn: false,
+    isEnrolledAndEntitled: false,
+  });
+  const { fxaSignInFlow } = STUBS;
+  fxaSignInFlow.resetHistory();
+  let content = await openPanel({ unauthenticated: true });
+  let unauthenticatedContent = content.unauthenticatedEl;
+  let getStartedButton = unauthenticatedContent.shadowRoot.querySelector(
+    "#unauthenticated-get-started"
+  );
+
+  let panelHiddenPromise = waitForPanelEvent(document, "popuphidden");
+  let panelShownAgainPromise = waitForPanelEvent(document, "popupshown");
+  getStartedButton.click();
+  await panelHiddenPromise;
+  await panelShownAgainPromise;
+
+  Assert.ok(fxaSignInFlow.calledOnce, "fxaSignInFlow should be called once");
+  Assert.equal(
+    fxaSignInFlow.firstCall.args[0].entrypoint,
+    "vpn_integration_panel",
+    "entrypoint should be vpn_integration_panel when enrolling from the panel"
+  );
+  Assert.equal(
+    fxaSignInFlow.firstCall.args[0].extraParams.utm_source,
+    "panel",
+    "utm_source should be panel when enrolling from the panel"
+  );
+
+  await closePanel();
+  cleanupService();
+});
+
+/**
+ * Tests that clicking "get started" still calls fxaSignInFlow when signed in.
+ */
+add_task(async function test_panel_get_started_signed_in() {
+  setupService({
+    isSignedIn: true,
+    isEnrolledAndEntitled: false,
+  });
+  STUBS.fxaSignInFlow.resetHistory();
+  let content = await openPanel({ unauthenticated: true });
+  let unauthenticatedContent = content.unauthenticatedEl;
+  let getStartedButton = unauthenticatedContent.shadowRoot.querySelector(
+    "#unauthenticated-get-started"
+  );
+
+  let panelHiddenPromise = waitForPanelEvent(document, "popuphidden");
+  let panelShownAgainPromise = waitForPanelEvent(document, "popupshown");
+  getStartedButton.click();
+  await panelHiddenPromise;
+  await panelShownAgainPromise;
+
+  Assert.ok(
+    STUBS.fxaSignInFlow.calledOnce,
+    "fxaSignInFlow should be called once"
+  );
+
+  await closePanel();
+  cleanupService();
 });

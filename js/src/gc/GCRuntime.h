@@ -832,17 +832,16 @@ class GCRuntime {
   friend class AutoCallGCCallbacks;
   void maybeCallGCCallback(JSGCStatus status, JS::GCReason reason);
 
-  void startCollection(JS::GCReason reason);
+  void startCollection();
 
   void purgeRuntime();
-  [[nodiscard]] bool beginPreparePhase(JS::GCReason reason,
-                                       AutoGCSession& session);
-  bool prepareZonesForCollection(JS::GCReason reason, bool* isFullOut);
-  void endPreparePhase(JS::GCReason reason);
+  [[nodiscard]] bool beginPreparePhase(AutoGCSession& session);
+  bool prepareZonesForCollection(bool* isFullOut);
+  void endPreparePhase();
   void beginMarkPhase(AutoGCSession& session);
   bool shouldPreserveJITCode(JS::Realm* realm,
                              const mozilla::TimeStamp& currentTime,
-                             JS::GCReason reason, bool canAllocateMoreCode,
+                             bool canAllocateMoreCode,
                              bool isActiveCompartment);
   void maybeDiscardJitCodeForGC();
   void startBackgroundFreeAfterMinorGC();
@@ -906,7 +905,7 @@ class GCRuntime {
 
   template <class ZoneIterT>
   IncrementalProgress markWeakReferences(JS::SliceBudget& budget);
-  void markIncomingSymbolEdgesFromUncollectedZones();
+  void markIncomingGraySymbolEdgesFromUncollectedZones();
   IncrementalProgress markWeakReferencesInCurrentGroup(JS::SliceBudget& budget);
   IncrementalProgress markGrayRoots(JS::SliceBudget& budget,
                                     gcstats::PhaseKind phase);
@@ -924,9 +923,9 @@ class GCRuntime {
   MarkQueueProgress processTestMarkQueue();
 
   // GC Sweeping. Implemented in Sweeping.cpp.
-  void beginSweepPhase(JS::GCReason reason, AutoGCSession& session);
+  void beginSweepPhase(AutoGCSession& session);
   void dropStringWrappers();
-  void groupZonesForSweeping(JS::GCReason reason);
+  void groupZonesForSweeping();
   [[nodiscard]] bool findSweepGroupEdges();
   [[nodiscard]] bool addEdgesForMarkQueue();
   void moveToNextSweepGroup();
@@ -961,7 +960,7 @@ class GCRuntime {
   void sweepWeakRefs();
   IncrementalProgress endSweepingSweepGroup(JS::GCContext* gcx,
                                             JS::SliceBudget& budget);
-  IncrementalProgress performSweepActions(JS::SliceBudget& sliceBudget);
+  IncrementalProgress sweepPhase(JS::SliceBudget& sliceBudget);
   void startSweepingAtomsTable();
   IncrementalProgress sweepAtomsTable(JS::GCContext* gcx,
                                       JS::SliceBudget& budget);
@@ -977,7 +976,7 @@ class GCRuntime {
   void startBackgroundFree();
   void freeFromBackgroundThread(AutoLockHelperThreadState& lock);
   void sweepBackgroundThings(ZoneList& zones);
-  void prepareForSweepSlice(JS::GCReason reason);
+  void prepareForSweepSlice();
   void disableIncrementalBarriers();
   void enableIncrementalBarriers();
   void assertBackgroundSweepingFinished();
@@ -996,28 +995,23 @@ class GCRuntime {
   // Compacting GC. Implemented in Compacting.cpp.
   bool shouldCompact();
   void beginCompactPhase();
-  IncrementalProgress compactPhase(JS::GCReason reason,
-                                   JS::SliceBudget& sliceBudget,
+  IncrementalProgress compactPhase(JS::SliceBudget& sliceBudget,
                                    AutoGCSession& session);
   void endCompactPhase();
   void sweepZoneAfterCompacting(MovingTracer* trc, Zone* zone);
   bool canRelocateZone(Zone* zone) const;
-  [[nodiscard]] bool relocateArenas(Zone* zone, JS::GCReason reason,
-                                    Arena*& relocatedListOut,
+  [[nodiscard]] bool relocateArenas(Zone* zone, Arena*& relocatedListOut,
                                     JS::SliceBudget& sliceBudget);
   void updateCellPointers(Zone* zone, AllocKinds kinds);
   void updateAllCellPointers(MovingTracer* trc, Zone* zone);
   void updateZonePointersToRelocatedCells(Zone* zone);
   void updateRuntimePointersToRelocatedCells(AutoGCSession& session);
-  void clearRelocatedArenas(Arena* arenaList, JS::GCReason reason);
-  void clearRelocatedArenasWithoutUnlocking(Arena* arenaList,
-                                            JS::GCReason reason,
-                                            const AutoLockGC& lock);
+  void clearRelocatedArenas(Arena* arenaList);
   void releaseRelocatedArenas(Arena* arenaList);
   void releaseRelocatedArenasWithoutUnlocking(Arena* arenaList,
                                               const AutoLockGC& lock);
 #ifdef DEBUG
-  void protectOrReleaseRelocatedArenas(Arena* arenaList, JS::GCReason reason);
+  void protectOrReleaseRelocatedArenas(Arena* arenaList);
   void protectAndHoldArenas(Arena* arenaList);
   void unprotectHeldRelocatedArenas(const AutoLockGC& lock);
   void releaseHeldRelocatedArenas();
@@ -1032,7 +1026,7 @@ class GCRuntime {
                                             bool shouldPauseMutator);
 
   void cancelRequestedGCAfterBackgroundTask();
-  void finishCollection(JS::GCReason reason);
+  void finishCollection();
   void maybeStopPretenuring();
   void checkGCStateNotInUse();
   IncrementalProgress joinBackgroundMarkTask();
@@ -1240,6 +1234,9 @@ class GCRuntime {
   /* The initial GC reason, taken from the first slice. */
   MainThreadData<JS::GCReason> initialReason;
 
+  /* The GC reason for the current slice. */
+  MainThreadData<JS::GCReason> sliceReason;
+
   /*
    * The current incremental GC phase. This is also used internally in
    * non-incremental GC.
@@ -1263,8 +1260,8 @@ class GCRuntime {
   MainThreadData<bool> safeToYield;
 
   // Whether to do any marking caused by barriers on a background thread during
-  // incremental sweeping, while also sweeping zones which have finished
-  // marking.
+  // an incremental sweep slice, in parallel with sweeping zones which have
+  // finished marking.
   MainThreadData<bool> markOnBackgroundThreadDuringSweeping;
 
   // Whether any sweeping and decommitting will run on a separate GC helper
@@ -1278,6 +1275,10 @@ class GCRuntime {
   MainThreadData<bool> preparedForSweepInThisSlice;
 
   MainThreadData<size_t> markSliceCount;
+
+#ifdef JS_GC_CONCURRENT_MARKING
+  MainThreadData<size_t> concurrentMarkingFinishedCount;
+#endif
 
 #ifdef DEBUG
   /* Shutdown has started. Further collections must be shutdown collections. */

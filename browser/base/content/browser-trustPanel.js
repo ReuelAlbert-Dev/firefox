@@ -375,7 +375,6 @@ class TrustPanel {
   }
 
   async #updateMainView() {
-    let secureConnection = this.#isSecurePage();
     let assets = this.#trackingProtectionEnabled
       ? ETP_ENABLED_ASSETS
       : ETP_DISABLED_ASSETS;
@@ -418,9 +417,7 @@ class TrustPanel {
     );
     document.l10n.setAttributes(
       document.getElementById("trustpanel-connection-label"),
-      secureConnection
-        ? "trustpanel-connection-label-secure"
-        : "trustpanel-connection-label-insecure"
+      this.#connectionLabel()
     );
 
     this.#updateAttribute(
@@ -428,6 +425,18 @@ class TrustPanel {
       "hidden",
       !this.anyDetected
     );
+
+    this.#updateAttribute(
+      document.getElementById("trustpanel-toggle-section"),
+      "disabled",
+      !ContentBlockingAllowList.canHandle(window.gBrowser.selectedBrowser)
+    );
+    this.#updateAttribute(
+      document.getElementById("trustpanel-toggle"),
+      "disabled",
+      !ContentBlockingAllowList.canHandle(window.gBrowser.selectedBrowser)
+    );
+
     await this.#updateBlockerView();
   }
 
@@ -631,13 +640,13 @@ class TrustPanel {
     if (this.#isInternalSecurePage) {
       return true;
     }
+    if (this.#isCertErrorPage || this.#isCertUserOverridden) {
+      return false;
+    }
     if (this.#isSecureConnection) {
       return true;
     }
     if (this.#isBrokenConnection) {
-      return false;
-    }
-    if (this.#isCertErrorPage || this.#isCertUserOverridden) {
       return false;
     }
     if (this.#isPotentiallyTrustworthy) {
@@ -1012,6 +1021,16 @@ class TrustPanel {
       connection = "file";
     }
     return connection;
+  }
+
+  #connectionLabel() {
+    if (this.#isAboutNetErrorPage) {
+      return "identity-connection-failure";
+    }
+    if (this.#isSecurePage()) {
+      return "trustpanel-connection-label-secure";
+    }
+    return "trustpanel-connection-label-insecure";
   }
 
   #mixedContentState() {
@@ -1433,7 +1452,12 @@ class TrustPanel {
   #enablePopupToggles() {
     // Enables all toggles in the protections panel
     this.#popup.querySelectorAll("moz-toggle").forEach(toggle => {
-      toggle.removeAttribute("disabled");
+      if (
+        toggle.id != "trustpanel-toggle" ||
+        ContentBlockingAllowList.canHandle(window.gBrowser.selectedBrowser)
+      ) {
+        toggle.removeAttribute("disabled");
+      }
       toggle.removeEventListener("pointerdown", this.#resetToggleReference);
     });
   }

@@ -14,11 +14,15 @@ prefs = [
 
 ["browser_IPPProxyManager.js"]
 
+["browser_IPPUsageHelper.js"]
+
 ["browser_IPProtectionService.js"]
 
 ["browser_guardian_client.js"]
 
 ["browser_ipprotection_alert_manager.js"]
+
+["browser_ipprotection_bandwidth_precision.js"]
 
 ["browser_ipprotection_confirmation_hints_site_exclusion.js"]
 
@@ -54,5 +58,3 @@ prefs = [
 skip-if = [
   "devedition",
 ]
-
-["browser_ipprotection_usage.js"]

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -418,6 +416,11 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
 
 bool GlobalKeyListener::IsReservedKey(WidgetKeyboardEvent* aKeyEvent,
                                       KeyEventHandler* aHandler) {
+  // If the event is a reply event, it means that we've already sent the event
+  // to the remote process because of not reserved.
+  if (aKeyEvent->IsHandledInRemoteProcess()) {
+    return false;
+  }
   ReservedKey reserved = aHandler->GetIsReserved();
   // reserved="true" means that the key is always reserved. reserved="false"
   // means that the key is never reserved. Otherwise, we check site-specific
@@ -539,8 +542,7 @@ XULKeySetGlobalKeyListener::XULKeySetGlobalKeyListener(
 dom::Element* XULKeySetGlobalKeyListener::GetElement(bool* aIsDisabled) const {
   RefPtr<dom::Element> element = do_QueryReferent(mWeakPtrForElement);
   if (element && aIsDisabled) {
-    *aIsDisabled = element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
-                                        nsGkAtoms::_true, eCaseMatters);
+    *aIsDisabled = element->GetBoolAttr(nsGkAtoms::disabled);
   }
   return element.get();
 }

@@ -39,6 +39,10 @@
     /** @type {MozTabbrowserTab[]} */
     #tabs = [];
 
+    #isClosing = false;
+
+    #shouldMoveAllTabsAtOnce = true;
+
     #storedPanelWidths = new WeakMap();
 
     /**
@@ -46,6 +50,10 @@
      */
     get hasActiveTab() {
       return this.hasAttribute("hasactivetab");
+    }
+
+    get shouldMoveAllTabsAtOnce() {
+      return this.#shouldMoveAllTabsAtOnce;
     }
 
     /**
@@ -161,7 +169,7 @@
           }
 
           if (this.tabs.length < 2) {
-            this.unsplitTabs();
+            this.unsplitTabs("tab_close");
           }
         });
       }
@@ -228,10 +236,11 @@
     /**
      * Remove Split View tabs from the content area.
      */
-    #deactivate(skipHidePanels = false) {
-      if (!skipHidePanels) {
-        gBrowser.hideSplitViewPanels(this.#tabs);
-      }
+    #deactivate() {
+      gBrowser.tabpanels.removeTabsFromSplitview(
+        this.#tabs.filter(tab => !tab.splitview || tab.splitview === this)
+      );
+
       updateUrlbarButton.arm();
       this.container.dispatchEvent(
         new CustomEvent("TabSplitViewDeactivate", {
@@ -332,10 +341,16 @@
 
     /**
      * Remove all tabs from the split view wrapper and delete the split view.
+     *
+     * @param {string} [trigger]
+     *   The trigger method for ending the split view. Used for telemetry.
      */
-    unsplitTabs() {
-      gBrowser.unsplitTabs(this);
-      gBrowser.setIsSplitViewActive(false, this.#tabs);
+    unsplitTabs(trigger = null) {
+      gBrowser.unsplitTabs(this, this.#isClosing ? null : trigger);
+      gBrowser.setIsSplitViewActive(
+        false,
+        this.#tabs.filter(tab => !tab.splitview || tab.splitview === this)
+      );
     }
 
     /**
@@ -365,19 +380,45 @@
 
     /**
      * Reverse order of the tabs in the split view wrapper.
+     *
+     * @param {string} [trigger]
+     *   The trigger method for reversing tabs. Used for telemetry.
      */
-    reverseTabs() {
+    reverseTabs(trigger = null) {
       const [firstTab, secondTab] = this.#tabs;
+      this.#shouldMoveAllTabsAtOnce = false;
       gBrowser.moveTabBefore(secondTab, firstTab);
+      this.#shouldMoveAllTabsAtOnce = true;
       this.#tabs = [secondTab, firstTab];
-      gBrowser.showSplitViewPanels(this.#tabs);
-      updateUrlbarButton.arm();
+      if (this.hasActiveTab) {
+        gBrowser.showSplitViewPanels(this.#tabs);
+        updateUrlbarButton.arm();
+      }
+
+      // Record telemetry
+      if (trigger) {
+        Glean.splitview.reverse.record({ trigger });
+      }
     }
 
     /**
      * Close all tabs in the split view wrapper and delete the split view.
+     *
+     * @param {string} [trigger]
+     *   The trigger method for ending the split view. Used for telemetry.
      */
-    close() {
+    close(trigger = null) {
+      // Record telemetry before closing
+      if (trigger) {
+        const tab_layout = gBrowser.tabContainer.verticalMode
+          ? "vertical"
+          : "horizontal";
+        Glean.splitview.end.record({
+          tab_layout,
+          trigger,
+        });
+      }
+      this.#isClosing = true;
       gBrowser.removeTabs(this.#tabs);
     }
 
@@ -390,7 +431,7 @@
       if (this.hasActiveTab) {
         this.#activate();
       } else {
-        this.#deactivate(true);
+        this.#deactivate();
       }
     }
   }

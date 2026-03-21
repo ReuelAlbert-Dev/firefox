@@ -252,6 +252,21 @@ browser.startup:
     expires: never
     lifetime: application
 
+qrcode:
+  opened:
+    type: counter
+    description: >
+      Records how often the QR code dialog is opened from the Share menu.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1996321
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1996321
+    data_sensitivity:
+      - interaction
+    notification_emails:
+      - overholt@mozilla.com
+    expires: never
+
 datasanitization:
   privacy_sanitize_sanitize_on_shutdown:
     type: boolean
@@ -1036,6 +1051,25 @@ browser:
     send_in_pings:
       - metrics
 
+  ai_control_is_blocking:
+    type: labeled_boolean
+    lifetime: application
+    description: |
+      Status of the AI controls per feature setting.
+      When true, the feature enhancement is blocked.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2018218
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2018218
+    notification_emails:
+      - sopsal@mozilla.com
+      - mstriemer@mozilla.com
+    data_sensitivity:
+      - interaction
+    expires: never
+    send_in_pings:
+      - metrics
+
   global_ai_control_toggled:
     type: event
     description: Emitted when the global AI enhancements setting is toggled.
@@ -1053,3 +1087,26 @@ browser:
         type: boolean
         description: >
           The state of the "Block AI Enhancements" toggle.
+
+  ai_control_changed:
+    type: event
+    description: Emitted when an AI enhancement control setting is changed.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2018218
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2018218
+    notification_emails:
+      - sopsal@mozilla.com
+      - mstriemer@mozilla.com
+    data_sensitivity:
+      - interaction
+    expires: never
+    extra_keys:
+      feature:
+        type: string
+        description: >
+          The AI Control feature identifier.
+      selection:
+        type: string
+        description: >
+          The state of the "Block AI Enhancements" dropdown.

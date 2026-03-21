@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -970,7 +969,7 @@ bool TRRService::IsDomainBlocked(const nsACString& aHost,
         *val + int32_t(StaticPrefs::network_trr_temp_blocklist_duration_sec());
     int32_t expire = NowInSeconds();
     if (until > expire) {
-      LOG(("Host [%s] is TRR blocklisted\n", nsCString(aHost).get()));
+      LOG(("Host [%s] is TRR blocklisted\n", PromiseFlatCString(aHost).get()));
       return true;
     }
 
@@ -1076,7 +1075,7 @@ void TRRService::AddToBlocklist(const nsACString& aHost,
     return;
   }
 
-  LOG(("TRR blocklist %s\n", nsCString(aHost).get()));
+  LOG(("TRR blocklist %s\n", PromiseFlatCString(aHost).get()));
   nsAutoCString hashkey(aHost + aOriginSuffix);
 
   // this overwrites any existing entry

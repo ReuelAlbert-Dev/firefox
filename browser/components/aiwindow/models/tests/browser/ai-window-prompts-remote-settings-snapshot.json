@@ -9,15 +9,25 @@
     "additional_components": []
   },
   {
+    "model": "",
+    "feature": "conversation-starters-sidebar-system",
+    "prompts": "Generate the requested number of starters.",
+    "version": "1.0",
+    "is_default": true,
+    "parameters": {},
+    "additional_components": []
+  },
+  {
     "model": "qwen3-235b-a22b-instruct-2507-maas",
     "feature": "conversation-suggestions-sidebar-starter",
     "prompts": "Suggest a conversation starter message. {assistant_limitations}",
-    "version": "1.0",
+    "version": "2.0",
     "is_default": true,
     "parameters": {},
     "additional_components": [
       "conversation-suggestions-assistant-limitations",
-      "conversation-suggestions-memories"
+      "conversation-suggestions-memories",
+      "conversation-starters-sidebar-system"
     ]
   },
   {

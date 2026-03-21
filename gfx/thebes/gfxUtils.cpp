@@ -1,5 +1,4 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -1256,7 +1255,10 @@ const float kIdentityNarrowYCbCrToRGB_RowMajor[16] = {
 
 /* static */ const float* gfxUtils::YuvToRgbMatrix3x3ColumnMajor(
     gfx::YUVColorSpace aYUVColorSpace) {
-#define X(x) {x[0], x[4], x[8], x[1], x[5], x[9], x[2], x[6], x[10]}
+#define X(x)                                              \
+  {                                                       \
+    x[0], x[4], x[8], x[1], x[5], x[9], x[2], x[6], x[10] \
+  }
 
   static const float rec601[9] = X(kBT601NarrowYCbCrToRGB_RowMajor);
   static const float rec709[9] = X(kBT709NarrowYCbCrToRGB_RowMajor);
@@ -1281,9 +1283,11 @@ const float kIdentityNarrowYCbCrToRGB_RowMajor[16] = {
 
 /* static */ const float* gfxUtils::YuvToRgbMatrix4x4ColumnMajor(
     YUVColorSpace aYUVColorSpace) {
-#define X(x)                                           \
-  {x[0], x[4], x[8],  x[12], x[1], x[5], x[9],  x[13], \
-   x[2], x[6], x[10], x[14], x[3], x[7], x[11], x[15]}
+#define X(x)                                                             \
+  {                                                                      \
+    x[0], x[4], x[8], x[12], x[1], x[5], x[9], x[13], x[2], x[6], x[10], \
+        x[14], x[3], x[7], x[11], x[15]                                  \
+  }
 
   static const float rec601[16] = X(kBT601NarrowYCbCrToRGB_RowMajor);
   static const float rec709[16] = X(kBT709NarrowYCbCrToRGB_RowMajor);

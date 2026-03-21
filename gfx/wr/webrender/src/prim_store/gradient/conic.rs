@@ -9,7 +9,7 @@
 //! Conic gradients are rendered via cached render tasks and composited with the image brush.
 
 use euclid::vec2;
-use api::{ColorF, ExtendMode, GradientStop, PremultipliedColorF};
+use api::{ExtendMode, GradientStop, PremultipliedColorF};
 use api::units::*;
 use crate::gpu_types::ImageBrushPrimitiveData;
 use crate::pattern::gradient::{conic_gradient_pattern};
@@ -98,6 +98,7 @@ pub struct ConicGradientTemplate {
     pub stretch_size: LayoutSize,
     pub tile_spacing: LayoutSize,
     pub brush_segments: Vec<BrushSegment>,
+    pub border_nine_patch: Option<Box<NinePatchDescriptor>>,
     pub stops_opacity: PrimitiveOpacity,
     pub stops: Vec<GradientStop>,
     pub src_color: Option<RenderTaskId>,
@@ -107,6 +108,7 @@ impl PatternBuilder for ConicGradientTemplate {
     fn build(
         &self,
         _sub_rect: Option<DeviceRect>,
+        offset: LayoutVector2D,
         _ctx: &PatternBuilderContext,
         state: &mut PatternBuilderState,
     ) -> Pattern {
@@ -117,7 +119,7 @@ impl PatternBuilder for ConicGradientTemplate {
         // ConicGradientTemplate stores the center point relative to the primitive
         // origin, but the shader works with start/end points in "proper" layout
         // coordinates (relative to the primitive's spatial node).
-        let center = self.center + self.common.prim_rect.min.to_vector();
+        let center = self.center + self.common.prim_rect.min.to_vector() + offset;
 
         conic_gradient_pattern(
             center,
@@ -129,19 +131,6 @@ impl PatternBuilder for ConicGradientTemplate {
             &self.stops,
             state.frame_gpu_data,
         )
-    }
-
-    fn get_base_color(
-        &self,
-        _ctx: &PatternBuilderContext,
-    ) -> ColorF {
-        ColorF::WHITE
-    }
-
-    fn use_shared_pattern(
-        &self,
-    ) -> bool {
-        true
     }
 }
 
@@ -164,7 +153,7 @@ impl From<ConicGradientKey> for ConicGradientTemplate {
         let mut brush_segments = Vec::new();
 
         if let Some(ref nine_patch) = item.nine_patch {
-            brush_segments = nine_patch.create_segments(common.prim_rect.size());
+            brush_segments = nine_patch.create_brush_segments(common.prim_rect.size());
         }
 
         let (stops, min_alpha) = stops_and_min_alpha(&item.stops);
@@ -242,6 +231,7 @@ impl From<ConicGradientKey> for ConicGradientTemplate {
             scale,
             tile_spacing: item.tile_spacing.into(),
             brush_segments,
+            border_nine_patch: item.nine_patch,
             stops_opacity,
             stops,
             src_color: None,
@@ -284,6 +274,7 @@ impl ConicGradientTemplate {
 
         let task_id = frame_state.resource_cache.request_render_task(
             Some(RenderTaskCacheKey {
+                origin: DeviceIntPoint::zero(),
                 size: self.task_size,
                 kind: RenderTaskCacheKeyKind::ConicGradient(cache_key),
             }),

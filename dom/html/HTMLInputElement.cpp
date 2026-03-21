@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -144,9 +142,6 @@ namespace mozilla::dom {
               NS_ORIGINAL_INDETERMINATE_VALUE | NS_PRE_HANDLE_BLUR_EVENT | \
               NS_IN_SUBMIT_CLICK))
 
-// whether textfields should be selected once focused:
-//  -1: no, 1: yes, 0: uninitialized
-static int32_t gSelectTextFieldOnFocus;
 UploadLastDir* HTMLInputElement::gUploadLastDir;
 
 static constexpr nsAttrValue::EnumTableEntry kInputTypeTable[] = {
@@ -1167,6 +1162,7 @@ HTMLInputElement::HTMLInputElement(already_AddRefed<dom::NodeInfo>&& aNodeInfo,
       mPickerRunning(false),
       mHasBeenTypePassword(false),
       mHasPatternAttribute(false),
+      mUserChangedSinceFocus(false),
       mRadioGroupContainer(nullptr) {
   // If size is above 512, mozjemalloc allocates 1kB, see
   // memory/build/mozjemalloc.cpp
@@ -1198,16 +1194,15 @@ HTMLInputElement::~HTMLInputElement() {
     StopNumberControlSpinnerSpin(eDisallowDispatchingEvents);
   }
   nsImageLoadingContent::Destroy();
-  FreeData();
+  FreeData(TextControlStateDisposition::Destroy);
 }
 
-void HTMLInputElement::FreeData() {
+void HTMLInputElement::FreeData(TextControlStateDisposition aStateDisposition) {
   if (!IsSingleLineTextControl(false)) {
     free(mInputData.mValue);
     mInputData.mValue = nullptr;
-  } else if (mInputData.mState) {
-    // XXX Passing nullptr to UnbindFromFrame doesn't do anything!
-    UnbindFromFrame(nullptr);
+  } else if (mInputData.mState &&
+             aStateDisposition == TextControlStateDisposition::Destroy) {
     mInputData.mState->Destroy();
     mInputData.mState = nullptr;
   }
@@ -1487,6 +1482,9 @@ void HTMLInputElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       needValidityUpdate = true;
     } else if (aName == nsGkAtoms::maxlength) {
       UpdateTooLongValidityState();
+      if (auto* editor = GetExtantTextEditor()) {
+        editor->SetMaxTextLength(UsedMaxLength());
+      }
       needValidityUpdate = true;
     } else if (aName == nsGkAtoms::minlength) {
       UpdateTooShortValidityState();
@@ -1826,7 +1824,9 @@ Decimal HTMLInputElement::StringToDecimal(const nsAString& aValue) {
 Decimal HTMLInputElement::GetValueAsDecimal() const {
   nsAutoString stringValue;
   GetNonFileValueInternal(stringValue);
-  Decimal result = mInputType->ConvertStringToNumber(stringValue).mResult;
+  Decimal result =
+      mInputType->ConvertStringToNumber(stringValue, InputType::Localized::Yes)
+          .mResult;
   return result.isFinite() ? result : Decimal::nan();
 }
 
@@ -1873,7 +1873,7 @@ void HTMLInputElement::SetValue(const nsAString& aValue, CallerType aCallerType,
         return;
       }
 
-      if (mFocusedValue.Equals(currentValue)) {
+      if (!State().HasState(ElementState::FOCUS)) {
         GetValue(mFocusedValue, aCallerType);
       }
     } else {
@@ -1927,7 +1927,10 @@ void HTMLInputElement::GetValueAsDate(JSContext* aCx,
                                       JS::MutableHandle<JSObject*> aObject,
                                       ErrorResult& aRv) {
   aObject.set(nullptr);
-  if (!IsDateTimeInputType(mType)) {
+  // valueAsDate does not apply to datetime-local:
+  // https://html.spec.whatwg.org/#local-date-and-time-state-(type=datetime-local):dom-input-valueasdate
+  if (!IsDateTimeInputType(mType) ||
+      mType == FormControlType::InputDatetimeLocal) {
     return;
   }
 
@@ -1983,17 +1986,6 @@ void HTMLInputElement::GetValueAsDate(JSContext* aCx,
 
       break;
     }
-    case FormControlType::InputDatetimeLocal: {
-      uint32_t year, month, day, timeInMs;
-      nsAutoString value;
-      GetNonFileValueInternal(value);
-      if (!ParseDateTimeLocal(value, &year, &month, &day, &timeInMs)) {
-        return;
-      }
-
-      time.emplace(JS::TimeClip(JS::MakeDate(year, month - 1, day, timeInMs)));
-      break;
-    }
     default:
       break;
   }
@@ -2013,7 +2005,10 @@ void HTMLInputElement::GetValueAsDate(JSContext* aCx,
 void HTMLInputElement::SetValueAsDate(JSContext* aCx,
                                       JS::Handle<JSObject*> aObj,
                                       ErrorResult& aRv) {
-  if (!IsDateTimeInputType(mType)) {
+  // valueAsDate does not apply to datetime-local:
+  // https://html.spec.whatwg.org/#local-date-and-time-state-(type=datetime-local):dom-input-valueasdate
+  if (!IsDateTimeInputType(mType) ||
+      mType == FormControlType::InputDatetimeLocal) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return;
   }
@@ -2100,7 +2095,9 @@ Decimal HTMLInputElement::GetMinimum() const {
   nsAutoString minStr;
   GetAttr(nsGkAtoms::min, minStr);
 
-  Decimal min = mInputType->ConvertStringToNumber(minStr).mResult;
+  Decimal min =
+      mInputType->ConvertStringToNumber(minStr, InputType::Localized::No)
+          .mResult;
   return min.isFinite() ? min : defaultMinimum;
 }
 
@@ -2120,7 +2117,9 @@ Decimal HTMLInputElement::GetMaximum() const {
   nsAutoString maxStr;
   GetAttr(nsGkAtoms::max, maxStr);
 
-  Decimal max = mInputType->ConvertStringToNumber(maxStr).mResult;
+  Decimal max =
+      mInputType->ConvertStringToNumber(maxStr, InputType::Localized::No)
+          .mResult;
   return max.isFinite() ? max : defaultMaximum;
 }
 
@@ -2133,7 +2132,9 @@ Decimal HTMLInputElement::GetStepBase() const {
   // attribute", not "the minimum".
   nsAutoString minStr;
   if (GetAttr(nsGkAtoms::min, minStr)) {
-    Decimal min = mInputType->ConvertStringToNumber(minStr).mResult;
+    Decimal min =
+        mInputType->ConvertStringToNumber(minStr, InputType::Localized::No)
+            .mResult;
     if (min.isFinite()) {
       return min;
     }
@@ -2142,7 +2143,9 @@ Decimal HTMLInputElement::GetStepBase() const {
   // If @min is not a double, we should use @value.
   nsAutoString valueStr;
   if (GetAttr(nsGkAtoms::value, valueStr)) {
-    Decimal value = mInputType->ConvertStringToNumber(valueStr).mResult;
+    Decimal value =
+        mInputType->ConvertStringToNumber(valueStr, InputType::Localized::Yes)
+            .mResult;
     if (value.isFinite()) {
       return value;
     }
@@ -2631,30 +2634,6 @@ nsFrameSelection* HTMLInputElement::GetIndependentFrameSelection() const {
   return nullptr;
 }
 
-nsresult HTMLInputElement::BindToFrame(nsTextControlFrame* aFrame) {
-  MOZ_ASSERT(!nsContentUtils::IsSafeToRunScript());
-  TextControlState* state = GetEditorState();
-  if (state) {
-    return state->BindToFrame(aFrame);
-  }
-  return NS_ERROR_FAILURE;
-}
-
-void HTMLInputElement::UnbindFromFrame(nsTextControlFrame* aFrame) {
-  TextControlState* state = GetEditorState();
-  if (state && aFrame) {
-    state->UnbindFromFrame(aFrame);
-  }
-}
-
-nsresult HTMLInputElement::CreateEditor() {
-  TextControlState* state = GetEditorState();
-  if (state) {
-    return state->PrepareEditor();
-  }
-  return NS_ERROR_FAILURE;
-}
-
 void HTMLInputElement::GetDisplayFileName(nsAString& aValue) const {
   MOZ_ASSERT(mFileData);
 
@@ -2831,11 +2810,17 @@ void HTMLInputElement::FireChangeEventIfNeeded() {
   if (mValueChanged) {
     SetUserInteracted(true);
   }
+  const bool changedByUser = mUserChangedSinceFocus;
+  mUserChangedSinceFocus = false;
   if (mFocusedValue.Equals(value)) {
     return;
   }
-  // Dispatch the change event.
   mFocusedValue = value;
+  if (!changedByUser) {
+    // value was changed, but only by scripts
+    return;
+  }
+  // Dispatch the change event.
   nsContentUtils::DispatchTrustedEvent(
       OwnerDoc(), static_cast<nsIContent*>(this), u"change"_ns, CanBubble::eYes,
       Cancelable::eNo);
@@ -2905,6 +2890,10 @@ nsresult HTMLInputElement::SetValueInternal(
   // read it only on chrome docs or something? That'd allow front-end code to
   // move away from xul without weird side-effects.
   const bool forcePreserveUndoHistory = mParent && mParent->IsXULElement();
+
+  if (aOptions.contains(ValueSetterOption::BySetUserInputAPI)) {
+    mUserChangedSinceFocus = true;
+  }
 
   switch (GetValueMode()) {
     case VALUE_MODE_VALUE: {
@@ -3121,7 +3110,7 @@ void HTMLInputElement::RadioSetChecked(bool aNotify, bool aUpdateOtherElement) {
     // It’s possible for multiple radio input to have their checkedness set to
     // true, so we need to deselect all of them.
     VisitGroup([](HTMLInputElement* aRadio) {
-      aRadio->SetCheckedInternal(false, true);
+      aRadio->SetCheckedInternal(false, true, false);
       return true;
     });
   }
@@ -3228,7 +3217,8 @@ void HTMLInputElement::UpdateIndeterminateState(bool aNotify) {
   SetStates(ElementState::INDETERMINATE, indeterminate, aNotify);
 }
 
-void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify) {
+void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify,
+                                          bool aUpdateRadioGroup) {
   // Set the value
   mChecked = aChecked;
 
@@ -3244,7 +3234,7 @@ void HTMLInputElement::SetCheckedInternal(bool aChecked, bool aNotify) {
 
   // Notify all radios in the group that value has changed, this is to let
   // radios to have the chance to update its states, e.g., :indeterminate.
-  if (mType == FormControlType::InputRadio) {
+  if (mType == FormControlType::InputRadio && aUpdateRadioGroup) {
     UpdateRadioGroupState();
   }
 }
@@ -3273,10 +3263,9 @@ void HTMLInputElement::Select() {
     return;
   }
 
-  TextControlState* state = GetEditorState();
-  MOZ_ASSERT(state, "Single line text controls are expected to have a state");
-
   if (FocusState() != FocusTristate::eUnfocusable) {
+    TextControlState* state = GetEditorState();
+    MOZ_ASSERT(state, "Single line text controls are expected to have a state");
     RefPtr<nsFrameSelection> fs = state->GetIndependentFrameSelection();
     if (fs && fs->MouseDownRecorded()) {
       // This means that we're being called while the frame selection has a
@@ -3289,28 +3278,10 @@ void HTMLInputElement::Select() {
 
     if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
       fm->SetFocus(this, nsIFocusManager::FLAG_NOSCROLL);
-
-      // A focus event handler may change the type attribute, which will destroy
-      // the previous state object.
-      state = GetEditorState();
-      if (!state) {
-        return;
-      }
     }
   }
 
-  // Directly call TextControlState::SetSelectionRange because
-  // HTMLInputElement::SetSelectionRange only applies to fewer types
-  state->SetSelectionRange(0, UINT32_MAX, Optional<nsAString>(), IgnoreErrors(),
-                           TextControlState::ScrollAfterSelection::No);
-}
-
-void HTMLInputElement::SelectAll() {
-  // FIXME(emilio): Should we try to call Select(), which will avoid flushing?
-  if (nsTextControlFrame* tf =
-          do_QueryFrame(GetPrimaryFrame(FlushType::Frames))) {
-    tf->SelectAll();
-  }
+  SelectAll();
 }
 
 bool HTMLInputElement::NeedToInitializeEditorForEvent(
@@ -3326,19 +3297,7 @@ bool HTMLInputElement::NeedToInitializeEditorForEvent(
     return false;
   }
 
-  switch (aVisitor.mEvent->mMessage) {
-    case eVoidEvent:
-    case eMouseMove:
-    case eMouseEnterIntoWidget:
-    case eMouseExitFromWidget:
-    case eMouseOver:
-    case eMouseOut:
-    case eScrollPortUnderflow:
-    case eScrollPortOverflow:
-      return false;
-    default:
-      return true;
-  }
+  return TextControlElement::NeedToInitializeEditorForEvent(aVisitor);
 }
 
 bool HTMLInputElement::IsDisabledForEvents(WidgetEvent* aEvent) {
@@ -3382,6 +3341,7 @@ static SpinnerDirection SpinnerDirectionForEvent(const WidgetEvent& aEvent,
   return SpinnerDirection::None;
 }
 
+MOZ_CAN_RUN_SCRIPT_BOUNDARY
 void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
   // Do not process any DOM events if the element is disabled
   aVisitor.mCanHandle = false;
@@ -3391,8 +3351,10 @@ void HTMLInputElement::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
 
   // Initialize the editor if needed.
   if (NeedToInitializeEditorForEvent(aVisitor)) {
-    if (nsTextControlFrame* tcf = do_QueryFrame(GetPrimaryFrame())) {
-      tcf->EnsureEditorInitialized();
+    if (auto* state = GetTextControlState()) {
+      // FIXME(bug 2020902): This is rather evil. Remove
+      // CAN_RUN_SCRIPT_BOUNDARY when removing this.
+      state->EnsureEditorInitialized();
     }
   }
 
@@ -3760,22 +3722,6 @@ void HTMLInputElement::StepNumberControlForUserEvent(int32_t aDirection) {
                             ValueSetterOption::SetValueChanged});
 }
 
-static bool SelectTextFieldOnFocus() {
-  if (!gSelectTextFieldOnFocus) {
-    int32_t selectTextfieldsOnKeyFocus = -1;
-    nsresult rv =
-        LookAndFeel::GetInt(LookAndFeel::IntID::SelectTextfieldsOnKeyFocus,
-                            &selectTextfieldsOnKeyFocus);
-    if (NS_FAILED(rv)) {
-      gSelectTextFieldOnFocus = -1;
-    } else {
-      gSelectTextFieldOnFocus = selectTextfieldsOnKeyFocus != 0 ? 1 : -1;
-    }
-  }
-
-  return gSelectTextFieldOnFocus == 1;
-}
-
 bool HTMLInputElement::ShouldPreventDOMActivateDispatch(
     EventTarget* aOriginalTarget) {
   /*
@@ -3966,33 +3912,8 @@ nsresult HTMLInputElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
 
       switch (aVisitor.mEvent->mMessage) {
         case eFocus: {
-          // see if we should select the contents of the textbox. This happens
-          // for text and password fields when the field was focused by the
-          // keyboard or a navigation, the platform allows it, and it wasn't
-          // just because we raised a window.
-          //
-          // While it'd usually make sense, we don't do this for JS callers
-          // because it causes some compat issues, see bug 1712724 for example.
-          nsFocusManager* fm = nsFocusManager::GetFocusManager();
-          if (fm && IsSingleLineTextControl(false) &&
-              !aVisitor.mEvent->AsFocusEvent()->mFromRaise &&
-              SelectTextFieldOnFocus()) {
-            if (Document* document = GetComposedDoc()) {
-              uint32_t lastFocusMethod =
-                  fm->GetLastFocusMethod(document->GetWindow());
-              const bool shouldSelectAllOnFocus = [&] {
-                if (lastFocusMethod & nsIFocusManager::FLAG_BYMOVEFOCUS) {
-                  return true;
-                }
-                if (lastFocusMethod & nsIFocusManager::FLAG_BYJS) {
-                  return false;
-                }
-                return bool(lastFocusMethod & nsIFocusManager::FLAG_BYKEY);
-              }();
-              if (shouldSelectAllOnFocus) {
-                SelectAll();
-              }
-            }
+          if (IsSingleLineTextControl(false)) {
+            TextControlElement::OnFocus(*aVisitor.mEvent);
           }
           break;
         }
@@ -4603,7 +4524,6 @@ void HTMLInputElement::SetupShadowTree(bool aNotify) {
   MOZ_ASSERT(CreatesUAShadowTree());
   MOZ_ASSERT(IsInComposedDoc());
   MOZ_ASSERT(!GetShadowRoot());
-  MOZ_ASSERT(mDoneCreating);
 
   auto uaWidget = NotifiesUAWidget();
   AttachAndSetUAShadowRoot(uaWidget,
@@ -4796,23 +4716,31 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
     GetValue(oldValue, CallerType::NonSystem);
   }
 
-  TextControlState::SelectionProperties sp;
-
-  if (IsSingleLineTextControl(false) && mInputData.mState) {
-    mInputData.mState->SyncUpSelectionPropertiesBeforeDestruction();
-    sp = mInputData.mState->GetSelectionProperties();
+  const bool wasTextControl = IsSingleLineTextControl(false, oldType);
+  const bool isTextControl = IsSingleLineTextControl(false, aNewType);
+  if (wasTextControl && !isTextControl && mInputData.mState) {
+    mInputData.mState->DeinitSelection();
   }
 
   // We already have a copy of the value, lets free it and changes the type.
-  FreeData();
+  FreeData(isTextControl ? TextControlStateDisposition::Reuse
+                         : TextControlStateDisposition::Destroy);
   mType = aNewType;
   void* memory = mInputTypeMem;
   mInputType = InputType::Create(this, mType, memory);
 
-  if (IsSingleLineTextControl()) {
-    mInputData.mState = TextControlState::Construct(this);
-    if (!sp.IsDefault()) {
-      mInputData.mState->SetSelectionProperties(sp);
+  if (isTextControl) {
+    if (!mInputData.mState) {
+      mInputData.mState = TextControlState::Construct(this);
+    } else {
+      if (!SupportsTextSelection(oldType)) {
+        // Collapse our selection if whether we honor
+        // selection{Start,End,select()} has changed.
+        mInputData.mState->SetSelectionRange(
+            0, 0, SelectionDirection::Forward, IgnoreErrors(),
+            TextControlState::ScrollAfterSelection::No);
+      }
+      mInputData.mState->UpdateEditorOnTypeChange();
     }
   }
 
@@ -4974,14 +4902,19 @@ void HTMLInputElement::HandleTypeChange(FormControlType aNewType,
     if (mDoneCreating) {
       const auto oldNotifiesUAWidget = NotifiesUAWidget(oldType);
       if (CreatesUAShadowTree()) {
-        const auto notifiesUAWidget = NotifiesUAWidget();
-        if (oldNotifiesUAWidget == notifiesUAWidget &&
-            notifiesUAWidget == NotifyUAWidget::Yes) {
-          NotifyUAWidgetSetupOrChange();
+        if (wasTextControl && isTextControl) {
+          // Keep existing shadow
+          UpdateTextEditorShadowTree();
         } else {
-          TeardownUAShadowRoot(oldNotifiesUAWidget);
-          if (notifiesUAWidget == NotifyUAWidget::Yes) {
-            SetupShadowTree(aNotify);
+          const auto notifiesUAWidget = NotifiesUAWidget();
+          if (oldNotifiesUAWidget == notifiesUAWidget &&
+              notifiesUAWidget == NotifyUAWidget::Yes) {
+            NotifyUAWidgetSetupOrChange();
+          } else {
+            TeardownUAShadowRoot(oldNotifiesUAWidget);
+            if (notifiesUAWidget == NotifyUAWidget::Yes) {
+              SetupShadowTree(aNotify);
+            }
           }
         }
       } else {
@@ -5059,10 +4992,10 @@ void HTMLInputElement::SanitizeValue(nsAString& aValue,
           aValue);
     } break;
     case FormControlType::InputNumber: {
-      auto result =
-          aKind == SanitizationKind::ForValueSetter
-              ? InputType::StringToNumberResult{StringToDecimal(aValue)}
-              : mInputType->ConvertStringToNumber(aValue);
+      auto result = mInputType->ConvertStringToNumber(
+          aValue, aKind == SanitizationKind::ForValueSetter
+                      ? InputType::Localized::No
+                      : InputType::Localized::Yes);
       if (!result.mResult.isFinite()) {
         aValue.Truncate();
         return;
@@ -5111,7 +5044,9 @@ void HTMLInputElement::SanitizeValue(nsAString& aValue,
       // parse out from aValue needs to be sanitized.
       bool needSanitization = false;
 
-      Decimal value = mInputType->ConvertStringToNumber(aValue).mResult;
+      Decimal value =
+          mInputType->ConvertStringToNumber(aValue, InputType::Localized::Yes)
+              .mResult;
       if (!value.isFinite()) {
         needSanitization = true;
         // Set value to midway between minimum and maximum.
@@ -7242,13 +7177,6 @@ void HTMLInputElement::GetTextEditorValue(nsAString& aValue) const {
   }
 }
 
-void HTMLInputElement::InitializeKeyboardEventListeners() {
-  TextControlState* state = GetEditorState();
-  if (state) {
-    state->InitializeKeyboardEventListeners();
-  }
-}
-
 void HTMLInputElement::UpdatePlaceholderShownState() {
   SetStates(ElementState::PLACEHOLDER_SHOWN,
             IsValueEmpty() && PlaceholderApplies() &&
@@ -7262,6 +7190,9 @@ void HTMLInputElement::OnValueChanged(ValueChangeKind aKind,
   if (aKind != ValueChangeKind::Internal) {
     mLastValueChangeWasInteractive = aKind == ValueChangeKind::UserInteraction;
 
+    if (mLastValueChangeWasInteractive) {
+      mUserChangedSinceFocus = true;
+    }
     if (mLastValueChangeWasInteractive &&
         State().HasState(ElementState::AUTOFILL)) {
       RemoveStates(ElementState::AUTOFILL | ElementState::AUTOFILL_PREVIEW);

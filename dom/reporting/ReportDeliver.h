@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,6 +14,7 @@
 // XXX Avoid including this here by moving function bodies to the cpp file
 #include "nsIPrincipal.h"
 
+class nsICookieJarSettings;
 class nsIPrincipal;
 class nsPIDOMWindowInner;
 class nsIGlobalObject;
@@ -29,6 +28,7 @@ class ReportBody;
 struct GlobalReportingData {
   nsString mUserAgentData;
   EndpointsList mEndpoints;
+  nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
 };
 
 class ReportDeliver final : public nsIObserver, public nsINamed {
@@ -46,13 +46,17 @@ class ReportDeliver final : public nsIObserver, public nsINamed {
     TimeStamp mCreationTime;
     nsCString mReportBodyJSON;
     nsCOMPtr<nsIPrincipal> mPrincipal;
+    nsCOMPtr<nsICookieJarSettings> mCookieJarSettings;
     uint32_t mFailures;
     uintptr_t mGlobalKey;
+    // Used to track in devtools only
+    uint64_t mAssociatedBrowsingContext;
   };
 
   static void AttemptDelivery(nsIGlobalObject* aGlobal, const nsAString& aType,
                               const nsAString& aGroupName,
-                              const nsAString& aURL, ReportBody* aBody);
+                              const nsAString& aURL, ReportBody* aBody,
+                              uint64_t aAssociatedBrowsingContextId);
 
   static void Fetch(const ReportData& aReportData);
 
@@ -69,7 +73,8 @@ class ReportDeliver final : public nsIObserver, public nsINamed {
    */
   static void WorkerInitializeReportingEndpoints(
       uintptr_t aGlobalKey, nsIURI* aResourceURI, nsCString aHeaderContents,
-      bool aShouldResistFingerprinting);
+      bool aShouldResistFingerprinting,
+      nsICookieJarSettings* aCookieJarSettings);
 
   /**
    * https://w3c.github.io/reporting/#document-configuration

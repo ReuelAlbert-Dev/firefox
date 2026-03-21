@@ -1,9 +1,10 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "GMPChild.h"
+
+#include <algorithm>
 
 #include "ChildProfilerController.h"
 #include "ChromiumCDMAdapter.h"
@@ -28,7 +29,6 @@
 #include "GMPVideoHost.h"
 #include "gmp-video-decode.h"
 #include "gmp-video-encode.h"
-#include "mozilla/Algorithm.h"
 #include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/FOGIPC.h"
 #include "mozilla/TextUtils.h"
@@ -183,9 +183,10 @@ mozilla::ipc::IPCResult GMPChild::RecvPreloadLibs(const nsCString& aLibs) {
   };
   constexpr static bool (*IsASCII)(const char16_t*) =
       IsAsciiNullTerminated<char16_t>;
-  static_assert(AllOf(std::begin(whitelist), std::end(whitelist), IsASCII),
-                "Items in the whitelist must not contain non-ASCII "
-                "characters!");
+  static_assert(
+      std::all_of(std::begin(whitelist), std::end(whitelist), IsASCII),
+      "Items in the whitelist must not contain non-ASCII "
+      "characters!");
 
   nsTArray<nsCString> libs;
   SplitAt(", ", aLibs, libs);

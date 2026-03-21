@@ -1,17 +1,15 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/ReportingUtils.h"
 
+#include "mozilla/dom/CSPViolationReportBody.h"
 #include "mozilla/dom/Report.h"
 #include "mozilla/dom/ReportBody.h"
 #include "mozilla/dom/ReportDeliver.h"
-#include "mozilla/ipc/BackgroundChild.h"
-#include "mozilla/ipc/BackgroundUtils.h"
-#include "mozilla/ipc/PBackgroundChild.h"
+#include "mozilla/dom/SecurityPolicyViolationEvent.h"
+#include "mozilla/dom/WorkerPrivate.h"
 #include "nsAtom.h"
 #include "nsIGlobalObject.h"
 #include "nsIURIMutator.h"
@@ -55,7 +53,49 @@ void ReportingUtils::Report(nsIGlobalObject* aGlobal, nsAtom* aType,
       new mozilla::dom::Report(aGlobal, type, aURL, aBody);
   aGlobal->BroadcastReport(report);
 
-  ReportDeliver::AttemptDelivery(aGlobal, type, aGroupName, aURL, aBody);
+  // No endpoint to send them to.
+  if (aGroupName.IsEmpty() || aGroupName.IsVoid()) {
+    return;
+  }
+
+  uint64_t associatedBrowsingContextId = 0;
+
+  // Try to get browsing context from window (for main thread)
+  if (nsPIDOMWindowInner* window = aGlobal->GetAsInnerWindow()) {
+    if (BrowsingContext* bc = window->GetBrowsingContext()) {
+      associatedBrowsingContextId = bc->Id();
+    }
+  } else if (WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate()) {
+    // For workers, get the associated browsing context
+    associatedBrowsingContextId = workerPrivate->AssociatedBrowsingContextID();
+  }
+
+  ReportDeliver::AttemptDelivery(aGlobal, type, aGroupName, aURL, aBody,
+                                 associatedBrowsingContextId);
+}
+
+/* static */
+void ReportingUtils::DeserializeSecurityViolationEventAndReport(
+    mozilla::dom::EventTarget* aTarget, nsIGlobalObject* aGlobal,
+    const nsAString& aSecurityPolicyViolationInitJSON,
+    const nsAString& aReportGroupName) {
+  SecurityPolicyViolationEventInit violationEventInit;
+
+  if (NS_WARN_IF(!violationEventInit.Init(aSecurityPolicyViolationInitJSON))) {
+    return;
+  }
+
+  RefPtr<mozilla::dom::Event> event =
+      mozilla::dom::SecurityPolicyViolationEvent::Constructor(
+          aTarget, u"securitypolicyviolation"_ns, violationEventInit);
+  event->SetTrusted(true);
+
+  aTarget->DispatchEvent(*event, IgnoreErrors());
+
+  RefPtr<CSPViolationReportBody> body =
+      new CSPViolationReportBody(aGlobal, violationEventInit);
+  ReportingUtils::Report(aGlobal, nsGkAtoms::cspViolation, aReportGroupName,
+                         violationEventInit.mDocumentURI, body);
 }
 
 }  // namespace mozilla::dom

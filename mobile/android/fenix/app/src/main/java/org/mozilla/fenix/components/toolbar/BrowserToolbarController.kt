@@ -29,13 +29,10 @@ import org.mozilla.fenix.GleanMetrics.Translations
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.NavGraphDirections
 import org.mozilla.fenix.R
-import org.mozilla.fenix.browser.BrowserAnimator
-import org.mozilla.fenix.browser.BrowserAnimator.Companion.getToolbarNavOptions
 import org.mozilla.fenix.browser.BrowserFragmentDirections
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
 import org.mozilla.fenix.browser.readermode.ReaderModeController
 import org.mozilla.fenix.components.AppStore
-import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.appstate.AppAction.SnackbarAction
 import org.mozilla.fenix.components.menu.MenuAccessPoint
 import org.mozilla.fenix.components.toolbar.interactor.BrowserToolbarInteractor
@@ -45,6 +42,7 @@ import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.ext.navigateSafe
 import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.home.HomeScreenViewModel
+import org.mozilla.fenix.home.toolbar.ToolbarNavOptionsHelper
 import org.mozilla.fenix.telemetry.ACTION_ADD_NEW_TAB
 import org.mozilla.fenix.telemetry.ACTION_ADD_NEW_TAB_LONG_CLICKED
 import org.mozilla.fenix.telemetry.ACTION_HOME_CLICKED
@@ -111,7 +109,6 @@ class DefaultBrowserToolbarController(
     private val engineView: EngineView,
     private val homeViewModel: HomeScreenViewModel,
     private val customTabSessionId: String?,
-    private val browserAnimator: BrowserAnimator,
     private val onTabCounterClicked: () -> Unit,
     private val onCloseTab: (SessionState) -> Unit,
 ) : BrowserToolbarController {
@@ -126,7 +123,7 @@ class DefaultBrowserToolbarController(
                 sessionId = currentSession?.id,
                 pastedText = text,
             ),
-            getToolbarNavOptions(activity),
+            ToolbarNavOptionsHelper.getToolbarNavOptions(activity),
         )
     }
 
@@ -151,23 +148,21 @@ class DefaultBrowserToolbarController(
         // If we don't, there's a visual flickr as we navigate to Home and then display search
         // results on top it.
         if (currentSession?.content?.searchTerms.isNullOrBlank()) {
-            browserAnimator.captureEngineViewAndDrawStatically {
-                navController.navigate(
-                    BrowserFragmentDirections.actionGlobalHome(),
-                )
-                navController.navigate(
-                    BrowserFragmentDirections.actionGlobalSearchDialog(
-                        currentSession?.id,
-                    ),
-                    getToolbarNavOptions(activity),
-                )
-            }
+            navController.navigate(
+                BrowserFragmentDirections.actionGlobalHome(),
+            )
+            navController.navigate(
+                BrowserFragmentDirections.actionGlobalSearchDialog(
+                    currentSession?.id,
+                ),
+                ToolbarNavOptionsHelper.getToolbarNavOptions(activity),
+            )
         } else {
             navController.navigate(
                 BrowserFragmentDirections.actionGlobalSearchDialog(
                     currentSession?.id,
                 ),
-                getToolbarNavOptions(activity),
+                ToolbarNavOptionsHelper.getToolbarNavOptions(activity),
             )
         }
     }
@@ -203,13 +198,13 @@ class DefaultBrowserToolbarController(
                 }
             }
             is TabCounterMenu.Item.NewTab -> {
-                appStore.dispatch(AppAction.BrowsingModeManagerModeChanged(mode = BrowsingMode.Normal))
+                activity.browsingModeManager.mode = BrowsingMode.Normal
                 navController.navigate(
                     BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true),
                 )
             }
             is TabCounterMenu.Item.NewPrivateTab -> {
-                appStore.dispatch(AppAction.BrowsingModeManagerModeChanged(mode = BrowsingMode.Private))
+                activity.browsingModeManager.mode = BrowsingMode.Private
                 navController.navigate(
                     BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true),
                 )
@@ -231,11 +226,9 @@ class DefaultBrowserToolbarController(
         if (settings.enableHomepageAsNewTab) {
             fenixBrowserUseCases.navigateToHomepage()
         } else {
-            browserAnimator.captureEngineViewAndDrawStatically {
-                navController.navigate(
-                    BrowserFragmentDirections.actionGlobalHome(),
-                )
-            }
+            navController.navigate(
+                BrowserFragmentDirections.actionGlobalHome(),
+            )
         }
     }
 
@@ -290,11 +283,9 @@ class DefaultBrowserToolbarController(
             Toolbar.ButtonTappedExtra(source = SOURCE_ADDRESS_BAR, item = ACTION_ADD_NEW_TAB),
         )
 
-        browserAnimator.captureEngineViewAndDrawStatically {
-            navController.navigate(
-                BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true),
-            )
-        }
+        navController.navigate(
+            BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true),
+        )
     }
 
     override fun handleNewTabButtonLongClick() {

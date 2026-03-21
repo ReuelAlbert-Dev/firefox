@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1862,13 +1860,21 @@ void DocAccessible::DoInitialUpdate() {
   }
 #endif
 
-  // Fire reorder event after the document tree is constructed. Note, since
-  // this reorder event is processed by parent document then events targeted to
-  // this document may be fired prior to this reorder event. If this is
-  // a problem then consider to keep event processing per tab document.
-  if (!IsRoot()) {
-    RefPtr<AccReorderEvent> reorderEvent = new AccReorderEvent(LocalParent());
-    ParentDocument()->FireDelayedEvent(reorderEvent);
+  // Fire a reorder event on the OuterDocAccessible after the document tree is
+  // constructed. Note that since this reorder event is processed by the parent
+  // document, events targeted to this child document may be fired prior to this
+  // reorder event. We don't fire a reorder event for remote documents; the
+  // parent process handles that.
+  if (!IPCDoc() && !IsRoot()) {
+    LocalAccessible* parent = LocalParent();
+    // If this is a static clone document for printing in the parent process, it
+    // won't have a parent because it isn't bound to a XUL <browser> element.
+    // That's okay.
+    MOZ_ASSERT(parent || mDocumentNode->IsStaticDocument());
+    if (parent) {
+      RefPtr<AccReorderEvent> reorderEvent = new AccReorderEvent(LocalParent());
+      ParentDocument()->FireDelayedEvent(reorderEvent);
+    }
   }
 
   if (AppShutdown::IsShutdownImpending()) {
@@ -3359,4 +3365,43 @@ void DocAccessible::RefreshAnchorRelationCacheForTarget(
       }
     }
   }
+}
+
+void DocAccessible::BindChildDocument(DocAccessible* aDocument) {
+  if (mDocumentNode->IsStaticDocument()) {
+    // This is a static clone document for printing. It will never have a
+    // refresh tick, so we need to bind directly here. This is fine because we
+    // explicitly control when these DocAccessibles are created and built, and
+    // we explicitly create and build a child document after its parent is
+    // created and built.
+    if (nsIContent* embedder =
+            aDocument->DocumentNode()->GetEmbedderElement()) {
+      LocalAccessible* embedderAcc = GetAccessible(embedder);
+      if (embedderAcc && embedderAcc->AppendChild(aDocument)) {
+        AppendChildDocument(aDocument);
+        if (mIPCDoc) {
+          MOZ_ASSERT(!aDocument->IPCDoc());
+          DocAccessibleChild* ipcDoc =
+              new DocAccessibleChild(aDocument, mIPCDoc->Manager());
+          aDocument->SetIPCDoc(ipcDoc);
+          auto* bc = dom::BrowserChild::GetFrom(mDocumentNode->GetDocShell());
+          MOZ_ASSERT(bc);
+          bc->SendPDocAccessibleConstructor(
+              ipcDoc, mIPCDoc, embedderAcc->ID(),
+              aDocument->DocumentNode()->GetBrowsingContext());
+        }
+      }
+    }
+    return;
+  }
+  // Sometimes, a child document can be created before its parent document; e.g.
+  // when accessibility is started after the parent DOM document is created and
+  // we get notified about an event in the child document first. In this case,
+  // we can't bind to the parent document because its tree hasn't been built yet
+  // and so the OuterDocAccessible doesn't exist yet. We can't simply force
+  // building of the parent document tree here because this might not be a safe
+  // time to do that; e.g. we might be in the middle of an interruptible layout
+  // reflow for the parent document. To deal with that, we schedule the document
+  // to be bound after the parent document's tree is built.
+  mNotificationController->ScheduleChildDocBinding(aDocument);
 }

@@ -27,7 +27,8 @@ use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use num_traits::abs;
 use num_traits::cast::AsPrimitive;
 use std::fmt::{self, Write};
-use style_traits::{CssWriter, ParseError, ToCss};
+use style_traits::{CssWriter, ParseError, ToCss, ToTyped, TypedValue};
+use thin_vec::ThinVec;
 
 pub use crate::values::computed::Length as MozScriptMinSize;
 pub use crate::values::specified::font::MozScriptSizeMultiplier;
@@ -145,7 +146,6 @@ pub type FontWeightFixedPoint = FixedPoint<u16, FONT_WEIGHT_FRACTION_BITS>;
     PartialEq,
     PartialOrd,
     ToResolvedValue,
-    ToTyped,
 )]
 #[cfg_attr(feature = "servo", derive(Deserialize, Serialize))]
 #[repr(C)]
@@ -170,6 +170,12 @@ impl ToCss for FontWeight {
         W: fmt::Write,
     {
         self.value().to_css(dest)
+    }
+}
+
+impl ToTyped for FontWeight {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        self.value().to_typed(dest)
     }
 }
 
@@ -261,6 +267,7 @@ impl FontWeight {
     ToTyped,
 )]
 #[cfg_attr(feature = "servo", derive(Serialize, Deserialize))]
+#[typed_value(derive_fields)]
 /// The computed value of font-size
 pub struct FontSize {
     /// The computed size, that we use to compute ems etc. This accounts for
@@ -1262,15 +1269,7 @@ pub type FontStretchFixedPoint = FixedPoint<u16, FONT_STRETCH_FRACTION_BITS>;
 /// cbindgen:derive-gt
 /// cbindgen:derive-gte
 #[derive(
-    Clone,
-    ComputeSquaredDistance,
-    Copy,
-    Debug,
-    MallocSizeOf,
-    PartialEq,
-    PartialOrd,
-    ToResolvedValue,
-    ToTyped,
+    Clone, ComputeSquaredDistance, Copy, Debug, MallocSizeOf, PartialEq, PartialOrd, ToResolvedValue,
 )]
 #[cfg_attr(feature = "servo", derive(Deserialize, Hash, Serialize))]
 #[repr(C)]
@@ -1393,6 +1392,15 @@ impl ToCss for FontStretch {
         W: fmt::Write,
     {
         self.to_percentage().to_css(dest)
+    }
+}
+
+impl ToTyped for FontStretch {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        match self.as_keyword() {
+            Some(keyword) => keyword.to_typed(dest),
+            None => self.to_percentage().to_typed(dest),
+        }
     }
 }
 

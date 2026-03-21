@@ -876,6 +876,18 @@ async function test_http2_retry_rst(serverPort, origin = "localhost") {
   });
 }
 
+// Server resets the first H2 request with RST_STREAM CANCEL; the retry succeeds.
+async function test_http2_unknown_rst(serverPort, origin = "localhost") {
+  var chan = makeHTTPChannel(
+    `https://${origin}:${serverPort}/unknown_rst_once`
+  );
+  return new Promise(resolve => {
+    var listener = new Http2CheckListener();
+    listener.finish = resolve;
+    chan.asyncOpen(listener);
+  });
+}
+
 async function test_http2_continuations_over_max_response_limit(
   loadGroup,
   serverPort,
@@ -978,6 +990,21 @@ async function test_http2_empty_data(serverPort, origin = "localhost") {
   return new Promise(resolve => {
     var listener = new Http2CheckListener();
     listener.finish = resolve;
+    chan.asyncOpen(listener);
+  });
+}
+
+async function test_http2_continuation_stream_zero(
+  serverPort,
+  origin = "localhost"
+) {
+  var chan = makeHTTPChannel(
+    `https://${origin}:${serverPort}/continuation_stream_zero`
+  );
+  return new Promise(resolve => {
+    var listener = new Http2CheckListener();
+    listener.finish = resolve;
+    listener.shouldSucceed = false;
     chan.asyncOpen(listener);
   });
 }

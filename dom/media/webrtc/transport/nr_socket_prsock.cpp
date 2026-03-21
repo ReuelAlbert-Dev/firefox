@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -149,17 +147,15 @@ nrappkit copyright:
 #  endif
 #endif
 
-extern "C" {
 #include "async_wait.h"
 #include "nr_api.h"
 #include "nr_socket.h"
 #include "nr_socket_local.h"
-#include "stun_hint.h"
-}
 #include "nr_socket_proxy_config.h"
 #include "nr_socket_prsock.h"
 #include "nr_socket_tcp.h"
 #include "simpletokenbucket.h"
+#include "stun_hint.h"
 #include "test_nr_socket.h"
 
 // Implement the nsISupports ref counting
@@ -530,7 +526,7 @@ abort:
 int nr_transport_addr_get_addrstring_and_port(const nr_transport_addr* addr,
                                               nsACString* host, int32_t* port) {
   int r, _status;
-  char addr_string[64];
+  char addr_string[256];
 
   // We cannot directly use |nr_transport_addr.as_string| because it contains
   // more than ip address, therefore, we need to explicity convert it

@@ -11,6 +11,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindowUI.sys.mjs",
   ChatStore:
     "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs",
+  SmartWindowTelemetry:
+    "moz-src:///browser/components/aiwindow/ui/modules/SmartWindowTelemetry.sys.mjs",
 });
 
 /**
@@ -19,6 +21,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
  *   mode: string,
  *   pageUrl: URL,
  *   conversationId: string,
+ *   keepSidebarOpen: boolean,
+ *   conversation: ChatConversation,
  * }} TabState
  */
 
@@ -56,10 +60,36 @@ export class AIWindowTabStatesManager {
   }
 
   /**
-   * Adds event listeners needed to manage tab states
+   * Get the active conversation from the current selected tab.
    *
-   * @todo Bug 2016552
-   * Handle classic/smartwindow switches to toggle event listeners
+   * @returns {ChatConversation|null}
+   */
+
+  getActiveConversation() {
+    const tab = this.#selectedTab ?? this.#window?.gBrowser.selectedTab;
+    return this.#tabStates.get(tab)?.state?.conversation ?? null;
+  }
+
+  /**
+   * Get the tab associated with a particular conversation, if there is one.
+   *
+   * @param {string} conversationId
+   *
+   * @returns {?MozTabbrowserTab}
+   */
+  getConversationTab(conversationId) {
+    const tabs = [...this.#window.gBrowser.tabs];
+    const tab = tabs.find(t => {
+      const tabState = this.#tabStates.get(t);
+
+      return tabState && tabState.state.conversationId === conversationId;
+    });
+
+    return tab;
+  }
+
+  /**
+   * Adds event listeners needed to manage tab states
    *
    * @param {ChromeWindow} win
    *
@@ -82,6 +112,23 @@ export class AIWindowTabStatesManager {
   }
 
   /**
+   * Removes all event listeners and cleans up state.
+   */
+  uninit() {
+    const tabContainer = this.#window.gBrowser.tabContainer;
+    tabContainer.removeEventListener("TabOpen", this);
+    tabContainer.removeEventListener("TabSelect", this);
+    tabContainer.removeEventListener("TabClose", this);
+
+    this.#window.gBrowser.removeTabsProgressListener(this.#tabsListener);
+    this.#removeWindowEventListeners();
+    this.#tabsListener = null;
+    this.#tabStates = null;
+    this.#selectedTab = null;
+    this.#window = null;
+  }
+
+  /**
    * Add event listeners to the window for ai-window:* events
    */
   #addWindowEventListeners() {
@@ -98,6 +145,56 @@ export class AIWindowTabStatesManager {
     this.#window.addEventListener(
       "ai-window:opened-conversation",
       this.#onConversationOpened
+    );
+
+    this.#window.addEventListener(
+      "ai-window:clear-conversation",
+      this.#onConversationCleared
+    );
+
+    this.#window.addEventListener(
+      "ai-window:sidebar-toggle",
+      this.#onSidebarToggle
+    );
+
+    this.#window.addEventListener(
+      "ai-window:sidebar-navigating",
+      this.#onSidebarNavigating
+    );
+  }
+
+  /**
+   * Remove event listeners from the window for ai-window:* events
+   */
+  #removeWindowEventListeners() {
+    this.#window.removeEventListener(
+      "ai-window:smartbar-input",
+      this.#onSmartbarInput
+    );
+
+    this.#window.removeEventListener(
+      "ai-window:connected",
+      this.#onAIWindowConnected
+    );
+
+    this.#window.removeEventListener(
+      "ai-window:opened-conversation",
+      this.#onConversationOpened
+    );
+
+    this.#window.removeEventListener(
+      "ai-window:clear-conversation",
+      this.#onConversationCleared
+    );
+
+    this.#window.removeEventListener(
+      "ai-window:sidebar-toggle",
+      this.#onSidebarToggle
+    );
+
+    this.#window.removeEventListener(
+      "ai-window:sidebar-navigating",
+      this.#onSidebarNavigating
     );
   }
 
@@ -150,6 +247,7 @@ export class AIWindowTabStatesManager {
    */
   #onTabOpen(event) {
     this.#addTabState(event.target);
+    Glean.smartWindow.tabsOpened.add(1);
   }
 
   /**
@@ -161,30 +259,36 @@ export class AIWindowTabStatesManager {
    * @private
    */
   async #onTabSelect(event) {
+    if (!this.#window) {
+      return;
+    }
+
     this.#selectedTab = event.target;
 
     const tabState = this.#getTabState(this.#selectedTab);
     const convId = tabState?.state?.conversationId;
+    const tabUrl = this.#selectedTab.linkedBrowser.currentURI.spec;
+    const isAIWindowTab = tabUrl === lazy.AIWINDOW_URL;
+    const shouldKeepSidebar = tabState?.state?.keepSidebarOpen ?? !!convId;
+    const conversation = tabState?.state?.conversation;
 
-    if (!convId) {
+    // AI Window tab doesn't need sidebar
+    if (isAIWindowTab) {
+      lazy.AIWindowUI.restoreMemoriesState(this.#window, this.#selectedTab);
       lazy.AIWindowUI.closeSidebar(this.#window);
       return;
     }
 
-    // @todo Bug 2016545
-    // Track the Ask button clicks to properly determine if a sidebar
-    // needs to be opened/closed for a tab
-    const tabUrl = this.#selectedTab.linkedBrowser.currentURI.spec;
-    const tabNeedsSidebar = tabUrl !== lazy.AIWINDOW_URL;
-    if (tabNeedsSidebar) {
-      const conversation = await lazy.ChatStore.findConversationById(convId);
+    // Regular tab - open sidebar if we should keep it open
+    if (shouldKeepSidebar) {
       lazy.AIWindowUI.openSidebar(this.#window, conversation);
+      lazy.AIWindowUI.updateSidebarInput(
+        this.#window,
+        tabState.state.input ?? ""
+      );
     } else {
       lazy.AIWindowUI.closeSidebar(this.#window);
     }
-
-    // TODO: Bug 2014936
-    // Update input
   }
 
   /**
@@ -207,7 +311,7 @@ export class AIWindowTabStatesManager {
    * @private
    */
   #addTabState(tab) {
-    this.#tabStates.set(tab, { state: null });
+    this.#tabStates.set(tab, { state: {} });
   }
 
   /**
@@ -229,8 +333,13 @@ export class AIWindowTabStatesManager {
    * @private
    */
   #onAIWindowConnected = async event => {
-    const tabState = this.#getTabState(event.detail.tab, event.detail);
-    const { mode, pageUrl, conversationId, input } = tabState;
+    if (!this.#window) {
+      return;
+    }
+
+    const { mode, pageUrl, conversationId, tab } = event.detail;
+    const tabState = this.#getTabState(tab, { mode, pageUrl, conversationId });
+    const { input } = tabState.state;
 
     const conversation = await lazy.ChatStore.findConversationById(
       conversationId || event.detail.conversationId
@@ -248,8 +357,18 @@ export class AIWindowTabStatesManager {
     // NOTE: Don't need to fire open/close sidebar from here, the location change
     // event handler is taking care of that logic.
     if (needsSidebar) {
-      // TODO: Bug 2014936
-      // Update smartbar input
+      lazy.AIWindowUI.updateSidebarInput(
+        this.#window,
+        tabState.state.input ?? ""
+      );
+    }
+
+    // Update the sidebar input when the sidebar ai-window connects
+    if (mode === "sidebar" && this.#selectedTab === tab) {
+      lazy.AIWindowUI.updateSidebarInput(
+        this.#window,
+        tabState.state.input ?? ""
+      );
     }
   };
 
@@ -265,17 +384,28 @@ export class AIWindowTabStatesManager {
    * @private
    */
   #getTabState(tab, newState = null) {
+    if (!this.#tabStates) {
+      return {};
+    }
+
     const tabState = this.#tabStates.get(tab) ?? {};
 
     if (newState) {
-      const { input, mode, pageUrl, conversationId } = tabState.state ?? {};
+      // Remove tab reference so a strong reference to the
+      // tab is not stored in the value of the WeakMap
       delete newState.tab;
 
+      const oldState = tabState.state ?? { input: "" };
+      // Set input to "" if oldState.mode is fullpage so the input
+      // is empty when the fullpage mode swaps to sidebar mode. We
+      // don't need to track the input state for fullpage mode so
+      // it stays empty until it's in sidebar mode.
+      const oldInput = oldState.mode === "fullpage" ? "" : oldState.input;
+
+      // Overlay the newState to override the oldState values
       tabState.state = {
-        input,
-        mode,
-        pageUrl,
-        conversationId,
+        ...oldState,
+        input: oldInput,
         ...newState,
       };
 
@@ -302,9 +432,69 @@ export class AIWindowTabStatesManager {
    * @param {TabStateEvent} event
    */
   #onConversationOpened = event => {
-    const { mode, conversationId, tab } = event.detail;
+    const { mode, conversationId, tab, conversation } = event.detail;
 
-    this.#getTabState(tab, { mode, conversationId });
+    this.#getTabState(tab, {
+      mode,
+      conversation,
+      conversationId,
+      keepSidebarOpen: true,
+    });
+  };
+
+  /**
+   * Handles ai-window:clear-conversation events from the ai-window.mjs,
+   * clears the conversation ID from the tab state but preserves other state
+   *
+   * @param {TabStateEvent} event
+   */
+  #onConversationCleared = event => {
+    const { tab } = event.detail;
+    const currentTabState = this.#getTabState(tab);
+
+    // Preserve existing state but clear only the conversationId.
+    // keepSidebarOpen is preserved as-is; it is only modified by explicit
+    // user actions (sidebar toggle) or conversation open, not by clear.
+    if (currentTabState?.state) {
+      this.#getTabState(tab, {
+        ...currentTabState.state,
+        conversationId: null,
+      });
+    }
+  };
+
+  /**
+   * Handles ai-window:sidebar-toggle events from the AIWindowUI.sys.mjs,
+   * updates sidebar state flags based on toggle action
+   *
+   * @param {TabStateEvent} event
+   */
+  #onSidebarToggle = event => {
+    const { tab, isOpen } = event.detail;
+    const currentTabState = this.#getTabState(tab);
+
+    if (currentTabState?.state) {
+      this.#getTabState(tab, {
+        ...currentTabState.state,
+        keepSidebarOpen: isOpen,
+      });
+    }
+  };
+
+  /**
+   * Handles ai-window:sidebar-navigating events dispatched when the
+   * sidebar's smartbar commits a navigate or search action.
+   * Clears the stored input for the current tab.
+   *
+   * @param {Event} event
+   */
+  #onSidebarNavigating = event => {
+    const tab = event.detail.tab;
+    if (!tab) {
+      return;
+    }
+
+    this.#getTabState(tab, { input: "" });
   };
 
   /**
@@ -325,35 +515,49 @@ export class AIWindowTabStatesManager {
         locationURI,
         _flags
       ) => {
-        if (!webProgress.isTopLevel) {
+        if (!webProgress.isTopLevel || !this.#tabStates) {
           return;
         }
 
         const browser = webProgress.browsingContext?.embedderElement;
         const tab = this.#window.gBrowser.getTabForBrowser(browser);
-        const tabState = this.#tabStates.get(tab);
+        let tabState = this.#tabStates.get(tab);
+
+        lazy.AIWindowUI.updateStarterPrompts(this.#window);
 
         if (!tabState || !tabState?.state?.conversationId) {
           return;
         }
 
-        const isSidebarOpen = lazy.AIWindowUI.isSidebarOpen(this.#window);
-        const convId = tabState.state.conversationId;
-        const conversation = await lazy.ChatStore.findConversationById(convId);
         const isAiWindowUrl = locationURI.spec === lazy.AIWINDOW_URL;
+        const isSidebarOpen = lazy.AIWindowUI.isSidebarOpen(this.#window);
+        const isFullPageMode = tabState.state.mode === "fullpage";
+        const shouldKeepSidebarOpen = tabState.state.keepSidebarOpen ?? true;
 
-        const needsSidebar =
-          !isAiWindowUrl &&
-          tabState.state.mode === "fullpage" &&
-          !isSidebarOpen;
+        if (!isAiWindowUrl) {
+          lazy.SmartWindowTelemetry.recordUriLoad();
+        }
 
-        const needsCloseSidebar =
-          isAiWindowUrl && tabState.state.mode === "fullpage" && isSidebarOpen;
-
-        if (needsSidebar) {
-          lazy.AIWindowUI.openSidebar(this.#window, conversation);
-        } else if (needsCloseSidebar) {
+        if (isFullPageMode && isAiWindowUrl && isSidebarOpen) {
           lazy.AIWindowUI.closeSidebar(this.#window);
+        } else if (
+          isFullPageMode &&
+          !isAiWindowUrl &&
+          !isSidebarOpen &&
+          shouldKeepSidebarOpen
+        ) {
+          lazy.AIWindowUI.openSidebar(
+            this.#window,
+            tabState.state.conversation
+          );
+          tabState = this.#getTabState(tab, { input: "" });
+        }
+
+        if (!isAiWindowUrl && lazy.AIWindowUI.isSidebarOpen(this.#window)) {
+          lazy.AIWindowUI.updateSidebarInput(
+            this.#window,
+            tabState.state.input ?? ""
+          );
         }
       },
 

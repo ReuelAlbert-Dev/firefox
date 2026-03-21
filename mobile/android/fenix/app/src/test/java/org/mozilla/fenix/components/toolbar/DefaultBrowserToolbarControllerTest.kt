@@ -50,13 +50,12 @@ import org.mozilla.fenix.GleanMetrics.Translations
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.NavGraphDirections
 import org.mozilla.fenix.R
-import org.mozilla.fenix.browser.BrowserAnimator
 import org.mozilla.fenix.browser.BrowserFragmentDirections
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
+import org.mozilla.fenix.browser.browsingmode.SimpleBrowsingModeManager
 import org.mozilla.fenix.browser.readermode.ReaderModeController
 import org.mozilla.fenix.components.AppStore
 import org.mozilla.fenix.components.appstate.AppAction.SnackbarAction
-import org.mozilla.fenix.components.appstate.AppState
 import org.mozilla.fenix.components.menu.MenuAccessPoint
 import org.mozilla.fenix.components.usecases.FenixBrowserUseCases
 import org.mozilla.fenix.ext.components
@@ -97,9 +96,6 @@ class DefaultBrowserToolbarControllerTest {
     private lateinit var fenixBrowserUseCases: FenixBrowserUseCases
 
     @RelaxedMockK
-    private lateinit var browserAnimator: BrowserAnimator
-
-    @RelaxedMockK
     private lateinit var topSitesUseCase: TopSitesUseCases
 
     @RelaxedMockK
@@ -127,12 +123,6 @@ class DefaultBrowserToolbarControllerTest {
         every { activity.components.useCases.topSitesUseCase } returns topSitesUseCase
         every { navController.currentDestination } returns mockk {
             every { id } returns R.id.browserFragment
-        }
-
-        every {
-            browserAnimator.captureEngineViewAndDrawStatically(any(), any())
-        } answers {
-            secondArg<(Boolean) -> Unit>()(true)
         }
 
         tabCounterClicked = false
@@ -330,27 +320,29 @@ class DefaultBrowserToolbarControllerTest {
 
     @Test
     fun handleToolbarNewTabPress() {
-        appStore = AppStore(AppState(mode = BrowsingMode.Private))
+        val browsingModeManager = SimpleBrowsingModeManager(BrowsingMode.Private)
         val item = TabCounterMenu.Item.NewTab
 
+        every { activity.browsingModeManager } returns browsingModeManager
         every { navController.navigate(BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true)) } just Runs
 
         val controller = createController()
         controller.handleTabCounterItemInteraction(item)
-        assertEquals(BrowsingMode.Normal, appStore.state.mode)
+        assertEquals(BrowsingMode.Normal, browsingModeManager.mode)
         verify { navController.navigate(BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true)) }
     }
 
     @Test
     fun handleToolbarNewPrivateTabPress() {
-        appStore = AppStore(AppState(mode = BrowsingMode.Normal))
+        val browsingModeManager = SimpleBrowsingModeManager(BrowsingMode.Normal)
         val item = TabCounterMenu.Item.NewPrivateTab
 
+        every { activity.browsingModeManager } returns browsingModeManager
         every { navController.navigate(BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true)) } just Runs
 
         val controller = createController()
         controller.handleTabCounterItemInteraction(item)
-        assertEquals(BrowsingMode.Private, appStore.state.mode)
+        assertEquals(BrowsingMode.Private, browsingModeManager.mode)
         verify { navController.navigate(BrowserFragmentDirections.actionGlobalHome(focusOnAddressBar = true)) }
     }
 
@@ -560,7 +552,6 @@ class DefaultBrowserToolbarControllerTest {
         homeViewModel = homeViewModel,
         customTabSessionId = customTabSessionId,
         readerModeController = readerModeController,
-        browserAnimator = browserAnimator,
         onTabCounterClicked = {
             tabCounterClicked = true
         },

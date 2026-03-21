@@ -115,9 +115,14 @@ add_task(async function test_link_contextmenu() {
     Services.prefs.getBoolPref("devtools.accessibility.enabled", true) &&
     (Services.prefs.getBoolPref("devtools.everOpened", false) ||
       Services.prefs.getIntPref("devtools.selfxss.count", 0) > 0);
+  const expectSplitView = Services.prefs.getBoolPref(
+    "browser.tabs.splitView.enabled",
+    false
+  );
 
   const expectedArray = [
     "context-openlinkintab",
+    ...(expectSplitView ? ["context-openlinkinsplitview"] : []),
     ...(expectOpenLinkInUserContextMenu
       ? ["context-openlinkinusercontext-menu"]
       : []),

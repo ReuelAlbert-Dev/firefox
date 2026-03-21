@@ -286,30 +286,34 @@ impl ContainerCondition {
             },
         };
         let (container, info) = match result {
-            Some(r) => (Some(r.element), Some((r.info, r.style))),
-            None => (None, None),
+            Some(r) => (r.element, (r.info, r.style)),
+            None => {
+                // If we did not find the named (or any) container,
+                // the query must fail to match.
+                return KleeneValue::False;
+            },
         };
         // Set up the lookup for the container in question, as the condition may be using container
         // query lengths.
-        let size_query_container_lookup = ContainerSizeQuery::for_option_element(
+        let size_query_container_lookup = ContainerSizeQuery::for_element(
             container, /* known_parent_style = */ None, /* is_pseudo = */ false,
         );
         Context::for_container_query_evaluation(
             stylist.device(),
             Some(stylist),
-            info,
+            Some(info),
             size_query_container_lookup,
             |context| {
                 let matches = condition.matches(context, &mut CustomMediaEvaluator::none());
-                if context
-                    .style()
-                    .flags()
-                    .contains(ComputedValueFlags::USES_VIEWPORT_UNITS)
-                {
+                let flags = context.style().flags();
+                if flags.contains(ComputedValueFlags::USES_VIEWPORT_UNITS) {
                     // TODO(emilio): Might need something similar to improve
                     // invalidation of font relative container-query lengths.
                     invalidation_flags
                         .insert(ComputedValueFlags::USES_VIEWPORT_UNITS_ON_CONTAINER_QUERIES);
+                }
+                if flags.contains(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY) {
+                    invalidation_flags.insert(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
                 }
                 matches
             },

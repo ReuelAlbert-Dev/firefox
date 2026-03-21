@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -95,59 +93,58 @@ class DocAccessibleParent : public RemoteAccessible,
    * Called when a message from a document in a child process notifies the main
    * process it is firing an event.
    */
-  virtual mozilla::ipc::IPCResult RecvEvent(const uint64_t& aID,
-                                            const uint32_t& aType) override;
+  mozilla::ipc::IPCResult RecvEvent(const uint64_t& aID, const uint32_t& aType);
 
   mozilla::ipc::IPCResult RecvStateChangeEvent(const uint64_t& aID,
                                                const uint64_t& aState,
-                                               const bool& aEnabled) final;
+                                               const bool& aEnabled);
 
   mozilla::ipc::IPCResult RecvCaretMoveEvent(
       const uint64_t& aID, const LayoutDeviceIntRect& aCaretRect,
       const int32_t& aOffset, const bool& aIsSelectionCollapsed,
       const bool& aIsAtEndOfLine, const int32_t& aGranularity,
-      const bool& aFromUser, const bool& aSuppressEvent) final;
+      const bool& aFromUser, const bool& aSuppressEvent);
 
-  virtual mozilla::ipc::IPCResult RecvMutationEvents(
-      nsTArray<MutationEventData>&& aData) override;
+  mozilla::ipc::IPCResult RecvMutationEvents(
+      nsTArray<MutationEventData>&& aData);
 
-  virtual mozilla::ipc::IPCResult RecvRequestAckMutationEvents() override;
+  mozilla::ipc::IPCResult RecvRequestAckMutationEvents();
 
-  virtual mozilla::ipc::IPCResult RecvFocusEvent(
-      const uint64_t& aID, const LayoutDeviceIntRect& aCaretRect) override;
+  mozilla::ipc::IPCResult RecvFocusEvent(const uint64_t& aID,
+                                         const LayoutDeviceIntRect& aCaretRect);
 
-  virtual mozilla::ipc::IPCResult RecvSelectionEvent(
-      const uint64_t& aID, const uint64_t& aWidgetID,
-      const uint32_t& aType) override;
+  mozilla::ipc::IPCResult RecvSelectionEvent(const uint64_t& aID,
+                                             const uint64_t& aWidgetID,
+                                             const uint32_t& aType);
 
-  virtual mozilla::ipc::IPCResult RecvScrollingEvent(
-      const uint64_t& aID, const uint64_t& aType, const uint32_t& aScrollX,
-      const uint32_t& aScrollY, const uint32_t& aMaxScrollX,
-      const uint32_t& aMaxScrollY) override;
+  mozilla::ipc::IPCResult RecvScrollingEvent(const uint64_t& aID,
+                                             const uint64_t& aType,
+                                             const uint32_t& aScrollX,
+                                             const uint32_t& aScrollY,
+                                             const uint32_t& aMaxScrollX,
+                                             const uint32_t& aMaxScrollY);
 
-  virtual mozilla::ipc::IPCResult RecvCache(
+  mozilla::ipc::IPCResult RecvCache(
       const mozilla::a11y::CacheUpdateType& aUpdateType,
-      nsTArray<CacheData>&& aData) override;
+      nsTArray<CacheData>&& aData);
 
-  virtual mozilla::ipc::IPCResult RecvSelectedAccessiblesChanged(
-      nsTArray<uint64_t>&& aSelectedIDs,
-      nsTArray<uint64_t>&& aUnselectedIDs) override;
+  mozilla::ipc::IPCResult RecvSelectedAccessiblesChanged(
+      nsTArray<uint64_t>&& aSelectedIDs, nsTArray<uint64_t>&& aUnselectedIDs);
 
-  virtual mozilla::ipc::IPCResult RecvAccessiblesWillMove(
-      nsTArray<uint64_t>&& aIDs) override;
+  mozilla::ipc::IPCResult RecvAccessiblesWillMove(nsTArray<uint64_t>&& aIDs);
 
-  virtual mozilla::ipc::IPCResult RecvAnnouncementEvent(
-      const uint64_t& aID, const nsAString& aAnnouncement,
-      const uint16_t& aPriority) override;
+  mozilla::ipc::IPCResult RecvAnnouncementEvent(const uint64_t& aID,
+                                                const nsAString& aAnnouncement,
+                                                const uint16_t& aPriority);
 
-  virtual mozilla::ipc::IPCResult RecvTextSelectionChangeEvent(
-      const uint64_t& aID, nsTArray<TextRangeData>&& aSelection) override;
+  mozilla::ipc::IPCResult RecvTextSelectionChangeEvent(
+      const uint64_t& aID, nsTArray<TextRangeData>&& aSelection);
 
   mozilla::ipc::IPCResult RecvRoleChangedEvent(
-      const a11y::role& aRole, const uint8_t& aRoleMapEntryIndex) final;
+      const a11y::role& aRole, const uint8_t& aRoleMapEntryIndex);
 
-  virtual mozilla::ipc::IPCResult RecvBindChildDoc(
-      NotNull<PDocAccessibleParent*> aChildDoc, const uint64_t& aID) override;
+  mozilla::ipc::IPCResult RecvBindChildDoc(
+      NotNull<PDocAccessibleParent*> aChildDoc, const uint64_t& aID);
 
   void Unbind() {
     if (RemoteAccessible* parent = RemoteParent()) {
@@ -160,7 +157,7 @@ class DocAccessibleParent : public RemoteAccessible,
     SetParent(nullptr);
   }
 
-  virtual mozilla::ipc::IPCResult RecvShutdown() override;
+  mozilla::ipc::IPCResult RecvShutdown();
   void Destroy();
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -297,6 +294,10 @@ class DocAccessibleParent : public RemoteAccessible,
 
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) override;
 
+#ifdef MOZ_ENABLE_SKIA_PDF
+  mozilla::ipc::IPCResult RecvPrinting();
+#endif
+
  private:
   ~DocAccessibleParent();
 
@@ -325,11 +326,14 @@ class DocAccessibleParent : public RemoteAccessible,
   };
 
   RemoteAccessible* CreateAcc(const AccessibleData& aAccData);
-  void AttachChild(RemoteAccessible* aParent, uint32_t aIndex,
+  bool AttachChild(RemoteAccessible* aParent, uint32_t aIndex,
                    RemoteAccessible* aChild);
   [[nodiscard]] bool CheckDocTree() const;
   xpcAccessibleGeneric* GetXPCAccessible(RemoteAccessible* aProxy);
 
+  /**
+   * Fire an event to both OS and XPCOM consumers.
+   */
   void FireEvent(RemoteAccessible* aAcc, const uint32_t& aType);
 
   /**
@@ -365,9 +369,10 @@ class DocAccessibleParent : public RemoteAccessible,
   uint32_t mPendingShowIndex = 0;
   nsTHashSet<uint64_t> mMovingIDs;
   uint64_t mActorID;
-  bool mTopLevel;
-  bool mTopLevelInContentProcess;
-  bool mShutdown;
+  bool mTopLevel : 1;
+  bool mTopLevelInContentProcess : 1;
+  bool mShutdown : 1;
+  bool mIsInitialTreeDone : 1 = false;
   RefPtr<dom::CanonicalBrowsingContext> mBrowsingContext;
 
   nsTHashSet<RefPtr<dom::BrowserBridgeParent>> mPendingOOPChildDocs;

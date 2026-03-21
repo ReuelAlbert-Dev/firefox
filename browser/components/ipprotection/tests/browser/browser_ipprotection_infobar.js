@@ -30,6 +30,9 @@ function dispatchUsageEvent(remainingPercent) {
 
 DEFAULT_EXPERIMENT = null;
 
+const REGEX_DECIMAL = /^\d+\.\d$/;
+const REGEX_WHOLE_NUMBER = /^\d+$/;
+
 add_task(async function test_75_percent_notification() {
   IPProtectionInfobarManager.init();
 
@@ -52,6 +55,10 @@ add_task(async function test_75_percent_notification() {
     notification.priority,
     window.gNotificationBox.PRIORITY_WARNING_HIGH,
     "Notification has high warning priority"
+  );
+  Assert.ok(
+    REGEX_DECIMAL.test(notification.messageL10nArgs.usageLeft),
+    "75% notification shows GB with one decimal place"
   );
 
   window.gNotificationBox.removeNotification(notification);
@@ -80,6 +87,42 @@ add_task(async function test_90_percent_notification() {
     notification.priority,
     window.gNotificationBox.PRIORITY_WARNING_HIGH,
     "Notification has high warning priority"
+  );
+  Assert.ok(
+    REGEX_WHOLE_NUMBER.test(notification.messageL10nArgs.usageLeft),
+    "90% notification shows GB rounded to whole number"
+  );
+
+  window.gNotificationBox.removeNotification(notification);
+  IPProtectionInfobarManager.uninit();
+});
+
+add_task(async function test_90_percent_notification_mb() {
+  IPProtectionInfobarManager.init();
+
+  dispatchUsageEvent(0.01);
+
+  await TestUtils.waitForCondition(
+    () =>
+      window.gNotificationBox.getNotificationWithValue(
+        "ip-protection-bandwidth-warning-90"
+      ),
+    "Wait for 90% MB notification to appear"
+  );
+
+  const notification = window.gNotificationBox.getNotificationWithValue(
+    "ip-protection-bandwidth-warning-90"
+  );
+
+  Assert.ok(notification, "90% MB notification exists");
+  Assert.equal(
+    notification.priority,
+    window.gNotificationBox.PRIORITY_WARNING_HIGH,
+    "Notification has high warning priority"
+  );
+  Assert.ok(
+    REGEX_WHOLE_NUMBER.test(notification.messageL10nArgs.usageLeft),
+    "90% MB notification shows a raw number in MB"
   );
 
   window.gNotificationBox.removeNotification(notification);
@@ -123,6 +166,10 @@ add_task(async function test_no_duplicate_notifications() {
     "ip-protection-bandwidth-warning-75"
   );
   Assert.ok(firstNotification, "First 75% notification exists");
+  Assert.ok(
+    REGEX_DECIMAL.test(firstNotification.messageL10nArgs.usageLeft),
+    "First 75% notification shows GB with one decimal place"
+  );
 
   dispatchUsageEvent(0.15);
   await TestUtils.waitForTick();
@@ -163,9 +210,106 @@ add_task(async function test_90_percent_overrides_75_percent() {
   );
 
   Assert.ok(notification90, "90% notification exists");
+  Assert.ok(
+    REGEX_WHOLE_NUMBER.test(notification90.messageL10nArgs.usageLeft),
+    "90% notification shows GB rounded to whole number"
+  );
   Assert.equal(notification75, null, "75% notification does not exist");
 
   window.gNotificationBox.removeNotification(notification90);
+  IPProtectionInfobarManager.uninit();
+});
+
+add_task(async function test_remove_infobar_after_sign_out() {
+  setupService({ isSignedIn: true, isEnrolledAndEntitled: true });
+  IPProtectionService.updateState();
+
+  IPProtectionInfobarManager.init();
+
+  dispatchUsageEvent(0.2);
+
+  await TestUtils.waitForCondition(
+    () =>
+      window.gNotificationBox.getNotificationWithValue(
+        "ip-protection-bandwidth-warning-75"
+      ),
+    "Wait for 75% notification to appear"
+  );
+
+  Assert.ok(
+    window.gNotificationBox.getNotificationWithValue(
+      "ip-protection-bandwidth-warning-75"
+    ),
+    "75% notification should be present before sign out"
+  );
+
+  setupService({ isSignedIn: false });
+  IPProtectionService.updateState();
+
+  await TestUtils.waitForCondition(
+    () =>
+      !window.gNotificationBox.getNotificationWithValue(
+        "ip-protection-bandwidth-warning-75"
+      ),
+    "Wait for 75% notification to be removed after sign out"
+  );
+
+  Assert.ok(
+    !window.gNotificationBox.getNotificationWithValue(
+      "ip-protection-bandwidth-warning-75"
+    ),
+    "75% notification should be removed after sign out"
+  );
+
+  IPProtectionInfobarManager.uninit();
+  cleanupService();
+});
+
+add_task(async function test_hide_infobars_at_zero_remaining() {
+  IPProtectionInfobarManager.init();
+
+  dispatchUsageEvent(0.08);
+
+  await TestUtils.waitForCondition(
+    () =>
+      window.gNotificationBox.getNotificationWithValue(
+        "ip-protection-bandwidth-warning-90"
+      ),
+    "Wait for 90% notification to appear"
+  );
+
+  Assert.ok(
+    window.gNotificationBox.getNotificationWithValue(
+      "ip-protection-bandwidth-warning-90"
+    ),
+    "90% notification should be present before bandwidth is exhausted"
+  );
+
+  dispatchUsageEvent(0);
+
+  await TestUtils.waitForCondition(
+    () =>
+      !window.gNotificationBox.getNotificationWithValue(
+        "ip-protection-bandwidth-warning-90"
+      ),
+    "Wait for 90% notification to be removed when bandwidth is exhausted"
+  );
+
+  Assert.equal(
+    window.gNotificationBox.getNotificationWithValue(
+      "ip-protection-bandwidth-warning-90"
+    ),
+    null,
+    "90% notification should be removed when bandwidth is exhausted"
+  );
+  Assert.equal(
+    window.gNotificationBox.getNotificationWithValue(
+      "ip-protection-bandwidth-warning-75"
+    ),
+    null,
+    "75% notification should not be present when bandwidth is exhausted"
+  );
+
   IPProtectionInfobarManager.uninit();
 });
 

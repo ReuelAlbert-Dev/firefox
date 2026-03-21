@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -25,7 +23,8 @@ CSSUnitValue::CSSUnitValue(nsCOMPtr<nsISupports> aParent, double aValue,
 // static
 RefPtr<CSSUnitValue> CSSUnitValue::Create(nsCOMPtr<nsISupports> aParent,
                                           const StyleUnitValue& aUnitValue) {
-  return MakeRefPtr<CSSUnitValue>(aParent, aUnitValue.value, aUnitValue.unit);
+  return MakeRefPtr<CSSUnitValue>(std::move(aParent), aUnitValue.value,
+                                  aUnitValue.unit);
 }
 
 JSObject* CSSUnitValue::WrapObject(JSContext* aCx,
@@ -80,8 +79,30 @@ void CSSUnitValue::ToCssTextWithProperty(const CSSPropertyId& aPropertyId,
   // and fully spec-compliant manner. See bug 2005142
   const bool isValueOutOfRange = [](NonCustomCSSPropertyId aId, double aValue) {
     switch (aId) {
+      case eCSSProperty_font_size_adjust:
+      case eCSSProperty_font_stretch:
+      case eCSSProperty_flex_grow:
+      case eCSSProperty_flex_shrink:
+      case eCSSProperty_stroke_miterlimit:
+      case eCSSProperty_animation_iteration_count:
       case eCSSProperty_column_width:
+      case eCSSProperty_flex_basis:
+      case eCSSProperty_font_size:
       case eCSSProperty_perspective:
+      case eCSSProperty_column_gap:
+      case eCSSProperty_row_gap:
+      case eCSSProperty_max_block_size:
+      case eCSSProperty_max_height:
+      case eCSSProperty_max_inline_size:
+      case eCSSProperty_max_width:
+      case eCSSProperty_block_size:
+      case eCSSProperty_height:
+      case eCSSProperty_inline_size:
+      case eCSSProperty_min_block_size:
+      case eCSSProperty_min_height:
+      case eCSSProperty_min_inline_size:
+      case eCSSProperty_min_width:
+      case eCSSProperty_width:
       case eCSSProperty_border_block_end_width:
       case eCSSProperty_border_block_start_width:
       case eCSSProperty_border_bottom_width:
@@ -91,7 +112,30 @@ void CSSUnitValue::ToCssTextWithProperty(const CSSPropertyId& aPropertyId,
       case eCSSProperty_border_right_width:
       case eCSSProperty_border_top_width:
       case eCSSProperty_outline_width:
+      case eCSSProperty_padding_block_end:
+      case eCSSProperty_padding_block_start:
+      case eCSSProperty_padding_bottom:
+      case eCSSProperty_padding_inline_end:
+      case eCSSProperty_padding_inline_start:
+      case eCSSProperty_padding_left:
+      case eCSSProperty_padding_right:
+      case eCSSProperty_padding_top:
+      case eCSSProperty_r:
+      case eCSSProperty_shape_margin:
+      case eCSSProperty_rx:
+      case eCSSProperty_ry:
+      case eCSSProperty_scroll_padding_block_end:
+      case eCSSProperty_scroll_padding_block_start:
+      case eCSSProperty_scroll_padding_bottom:
+      case eCSSProperty_scroll_padding_inline_end:
+      case eCSSProperty_scroll_padding_inline_start:
+      case eCSSProperty_scroll_padding_left:
+      case eCSSProperty_scroll_padding_right:
+      case eCSSProperty_scroll_padding_top:
         return aValue < 0;
+
+      case eCSSProperty_font_weight:
+        return aValue < 1 || aValue > 1000;
 
       default:
         return false;

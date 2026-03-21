@@ -32,9 +32,13 @@ support-files = [
 
 ["test_MemoriesManager.js"]
 
+["test_PromptOptimizer.js"]
+
 ["test_SearchBrowsingHistory.js"]
 
 ["test_SearchBrowsingHistoryDomainBoost.js"]
+
+["test_SecurityProperties.js"]
 
 ["test_SensitiveInfoDetector.js"]
 
@@ -45,6 +49,8 @@ support-files = [
 ["test_Tools_GetOpenTabs.js"]
 
 ["test_Tools_GetPageContent.js"]
+
+["test_Tools_GetUserMemories.js"]
 
 ["test_Tools_RunSearch.js"]
 

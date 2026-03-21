@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=4 sw=2 sts=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -122,7 +120,7 @@ bool GIOChannelParent::DoAsyncOpen(const URIParams& aURI,
     return SendFailedAsyncOpen(rv);
   }
 
-  mChannel = chan;
+  mChannel = std::move(chan);
 
   nsIChannel* gioChan = static_cast<nsIChannel*>(mChannel.get());
 
@@ -237,8 +235,7 @@ GIOChannelParent::OnDataAvailable(nsIRequest* aRequest,
   nsresult channelStatus = NS_OK;
   mChannel->GetStatus(&channelStatus);
 
-  if (mIPCClosed ||
-      !SendOnDataAvailable(channelStatus, data, aOffset, aCount)) {
+  if (mIPCClosed || !SendOnDataAvailable(channelStatus, data, aOffset)) {
     return NS_ERROR_UNEXPECTED;
   }
   return NS_OK;

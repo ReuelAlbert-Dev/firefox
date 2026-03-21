@@ -7,8 +7,11 @@ import { html, ifDefined } from "chrome://global/content/vendor/lit.all.mjs";
 import {
   BANDWIDTH,
   LINKS,
-  ERRORS,
 } from "chrome://browser/content/ipprotection/ipprotection-constants.mjs";
+
+const { ERRORS } = ChromeUtils.importESModule(
+  "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs"
+);
 
 // eslint-disable-next-line import/no-unassigned-import
 import "chrome://browser/content/ipprotection/ipprotection-message-bar.mjs";
@@ -242,9 +245,23 @@ export default class IPProtectionContentElement extends MozLitElement {
     if (this.state.bandwidthWarning) {
       messageId = "ipprotection-message-bandwidth-warning";
       messageType = "warning";
+      const bandwidthRemaining =
+        this.state.bandwidthUsage.remaining / BANDWIDTH.BYTES_IN_GB;
+      const maxUsage = this.state.bandwidthUsage.max / BANDWIDTH.BYTES_IN_GB;
+      const pctUsed = (100 * (maxUsage - bandwidthRemaining)) / maxUsage;
+      let usageLeft = Math.round(bandwidthRemaining);
+
+      if (pctUsed >= 75 && pctUsed < 90) {
+        usageLeft = bandwidthRemaining.toFixed(1);
+      } else if (bandwidthRemaining < 1) {
+        messageId = "ipprotection-message-bandwidth-warning-mb";
+        usageLeft = Math.floor(
+          this.state.bandwidthUsage.remaining / BANDWIDTH.BYTES_IN_MB
+        );
+      }
       messageLinkL10nArgs = JSON.stringify({
-        usageLeft: this.state.bandwidthUsage.remaining / BANDWIDTH.BYTES_IN_GB,
-        maxUsage: this.state.bandwidthUsage.max / BANDWIDTH.BYTES_IN_GB,
+        usageLeft,
+        maxUsage,
       });
     } else if (this.state.onboardingMessage) {
       messageId = this.state.onboardingMessage;
@@ -383,24 +400,15 @@ export default class IPProtectionContentElement extends MozLitElement {
 
     const hasExclusion = this.hasSiteExclusion;
     const siteExclusionToggleStateL10nId = hasExclusion
-      ? "site-exclusion-toggle-disabled"
-      : "site-exclusion-toggle-enabled";
+      ? "site-exclusion-toggle-disabled-1"
+      : "site-exclusion-toggle-enabled-1";
     return html` <div id="site-exclusion-control">
-      <span id="site-exclusion-label-container">
-        <img
-          id="site-exclusion-icon"
-          src="chrome://browser/content/ipprotection/assets/shield-vpn-exceptions.svg"
-        />
-        <label
-          data-l10n-id="site-exclusion-toggle-label"
-          id="site-exclusion-label"
-          for="site-exclusion-toggle"
-        ></label>
-      </span>
       <moz-toggle
         data-l10n-id=${siteExclusionToggleStateL10nId}
         data-l10n-attrs="label"
         id="site-exclusion-toggle"
+        iconsrc="chrome://browser/content/ipprotection/assets/shield-vpn-exceptions.svg"
+        inputlayout="inline-end"
         ?pressed=${!hasExclusion}
         @toggle=${this.handleToggleUseVPN}
       >
@@ -451,6 +459,9 @@ export default class IPProtectionContentElement extends MozLitElement {
       !this._messageDismissed
     ) {
       this._showMessageBar = true;
+    } else if (!this.state.onboardingMessage && !this.state.bandwidthWarning) {
+      // Remove the message bar if we can no longer render messages before they were dismissed
+      this._showMessageBar = false;
     }
 
     const messageBar = this._showMessageBar ? this.messageBarTemplate() : null;

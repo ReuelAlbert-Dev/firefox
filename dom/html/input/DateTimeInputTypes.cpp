@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -167,7 +165,8 @@ nsresult DateInputType::GetBadInputMessage(nsAString& aMessage) {
       mInputElement->OwnerDoc(), aMessage);
 }
 
-auto DateInputType::ConvertStringToNumber(const nsAString& aValue) const
+auto DateInputType::ConvertStringToNumber(const nsAString& aValue,
+                                          Localized) const
     -> StringToNumberResult {
   uint32_t year, month, day;
   if (!ParseDate(aValue, &year, &month, &day)) {
@@ -209,7 +208,8 @@ nsresult TimeInputType::GetBadInputMessage(nsAString& aMessage) {
       mInputElement->OwnerDoc(), aMessage);
 }
 
-auto TimeInputType::ConvertStringToNumber(const nsAString& aValue) const
+auto TimeInputType::ConvertStringToNumber(const nsAString& aValue,
+                                          Localized) const
     -> StringToNumberResult {
   uint32_t milliseconds;
   if (!ParseTime(aValue, &milliseconds)) {
@@ -326,7 +326,8 @@ nsresult WeekInputType::GetBadInputMessage(nsAString& aMessage) {
       mInputElement->OwnerDoc(), aMessage);
 }
 
-auto WeekInputType::ConvertStringToNumber(const nsAString& aValue) const
+auto WeekInputType::ConvertStringToNumber(const nsAString& aValue,
+                                          Localized) const
     -> StringToNumberResult {
   uint32_t year, week;
   if (!ParseWeek(aValue, &year, &week)) {
@@ -402,7 +403,8 @@ nsresult MonthInputType::GetBadInputMessage(nsAString& aMessage) {
       mInputElement->OwnerDoc(), aMessage);
 }
 
-auto MonthInputType::ConvertStringToNumber(const nsAString& aValue) const
+auto MonthInputType::ConvertStringToNumber(const nsAString& aValue,
+                                           Localized) const
     -> StringToNumberResult {
   uint32_t year, month;
   if (!ParseMonth(aValue, &year, &month)) {
@@ -456,8 +458,9 @@ nsresult DateTimeLocalInputType::GetBadInputMessage(nsAString& aMessage) {
       mInputElement->OwnerDoc(), aMessage);
 }
 
-auto DateTimeLocalInputType::ConvertStringToNumber(
-    const nsAString& aValue) const -> StringToNumberResult {
+auto DateTimeLocalInputType::ConvertStringToNumber(const nsAString& aValue,
+                                                   Localized) const
+    -> StringToNumberResult {
   uint32_t year, month, day, timeInMs;
   if (!ParseDateTimeLocal(aValue, &year, &month, &day, &timeInMs)) {
     return {};

@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:expandtab:shiftwidth=2:tabstop=2:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -363,7 +360,7 @@ static uint32_t gLastTouchID = 0;
 // event is a correct one when we get it.
 // Store it and issue it later from enter notify event if it's correct,
 // throw it away otherwise.
-MOZ_RUNINIT static GUniquePtr<GdkEventCrossing> sStoredLeaveNotifyEvent;
+constinit static GUniquePtr<GdkEventCrossing> sStoredLeaveNotifyEvent;
 
 // GDK's MAX_WL_BUFFER_SIZE is 4083 (4096 minus header, string
 // argument length and NUL byte). Here truncates the string length
@@ -735,6 +732,9 @@ void nsWindow::Destroy() {
   // Owned by WaylandSurface or it's X11 ID,
   // just drop the reference here.
   mEGLWindow = nullptr;
+
+  // Emoji picker will be deleted with mContainer
+  mEmojiHidenSignal = 0;
 
   gtk_widget_destroy(mShell);
   mShell = nullptr;
@@ -1728,10 +1728,6 @@ void nsWindow::LogPopupHierarchy() {
 }
 #endif
 
-nsWindow* nsWindow::GetTopmostWindow() {
-  return static_cast<nsWindow*>(GetTopLevelWidget());
-}
-
 // Configure Wayland popup. If true is returned we need to track popup
 // in popup hierarchy. Otherwise we just show it as is.
 bool nsWindow::WaylandPopupConfigure() {
@@ -1826,8 +1822,10 @@ void nsWindow::AddWindowToPopupHierarchy() {
 
   // Check if we're already in the hierarchy
   if (!IsInPopupHierarchy()) {
-    mWaylandToplevel = GetTopmostWindow();
-    AppendPopupToHierarchyList(mWaylandToplevel);
+    mWaylandToplevel = nsWindow::FromWidget(GetTopLevelWidget());
+    if (mWaylandToplevel) {
+      AppendPopupToHierarchyList(mWaylandToplevel);
+    }
   }
 }
 
@@ -1939,27 +1937,6 @@ void nsWindow::UpdateWaylandPopupHierarchy() {
         // popups are adjacent.
         return false;
       }
-      if (popup->WaylandPopupIsFirst() &&
-          popup->WaylandPopupFitsToplevelWindow() &&
-          !StaticPrefs::widget_wayland_force_move_to_rect_AtStartup()) {
-        // Avoid move-to-rect if our requested rect fits the toplevel.
-        // This serves as an optimization, but also as a workaround for
-        // https://gitlab.gnome.org/GNOME/gtk/-/issues/1986
-        //
-        // PopupType::Panel types are used for extension popups which may be
-        // resized. If such popup uses move-to-rect, we need to hide it before
-        // resize and show it again. That leads to massive flickering
-        // so use plain move if possible to avoid it.
-        //
-        // Bug 1760276 - don't use move-to-rect when popup is inside main
-        // Firefox window.
-        //
-        // Use it for first popups only due to another mutter bug
-        // https://gitlab.gnome.org/GNOME/gtk/-/issues/5089
-        // https://bugzilla.mozilla.org/show_bug.cgi?id=1784873
-        // And so that we can move-to-rect nested popups, see below.
-        return false;
-      }
       if (!popup->WaylandPopupIsFirst() &&
           !popup->mWaylandPopupPrev->WaylandPopupIsFirst() &&
           !popup->mWaylandPopupPrev->mPopupUseMoveToRect) {
@@ -1982,11 +1959,7 @@ void nsWindow::UpdateWaylandPopupHierarchy() {
       return true;
     }();
 
-    // We can't move popup type from xdg_popup to wl_subsurface one
-    // as it causes issues on Ubuntu 22.04 (Bug 2003045).
-    if (!popup->mPopupUseMoveToRect) {
-      popup->mPopupUseMoveToRect = useMoveToRect;
-    }
+    popup->mPopupUseMoveToRect = useMoveToRect;
 
     LOG("  popup [%p] matches layout [%d] anchored [%d] first popup [%d] use "
         "move-to-rect %d\n",
@@ -3666,7 +3639,7 @@ void* nsWindow::GetNativeData(uint32_t aDataType) {
     }
 
     case NS_NATIVE_SHELLWIDGET:
-      return GetToplevelWidget();
+      return GetGtkWidget();
 
     case NS_NATIVE_WINDOW_WEBRTC_DEVICE_ID:
       if (!mGdkWindow) {
@@ -3896,9 +3869,9 @@ void nsWindow::CaptureRollupEvents(bool aDoCapture) {
 nsresult nsWindow::GetAttention(int32_t aCycleCount) {
   LOG("nsWindow::GetAttention");
 
-  GtkWidget* top_window = GetToplevelWidget();
+  GtkWidget* top_window = GetGtkWidget();
   GtkWidget* top_focused_window =
-      gFocusWindow ? gFocusWindow->GetToplevelWidget() : nullptr;
+      gFocusWindow ? gFocusWindow->GetGtkWidget() : nullptr;
 
   // Don't get attention if the window is focused anyway.
   if (top_window && (gtk_widget_get_visible(top_window)) &&
@@ -5021,7 +4994,7 @@ void nsWindow::OnContainerFocusInEvent(GdkEventFocus* aEvent) {
   LOG("OnContainerFocusInEvent");
 
   // Unset the urgency hint, if possible
-  GtkWidget* top_window = GetToplevelWidget();
+  GtkWidget* top_window = GetGtkWidget();
   if (top_window && (gtk_widget_get_visible(top_window))) {
     SetUrgencyHint(top_window, false);
   }
@@ -6748,10 +6721,6 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
   if (IsWaylandPopup()) {
     NativeMoveResizeWaylandPopup(aMoved, aResized);
   } else {
-    // x and y give the position of the window manager frame top-left.
-    if (aMoved) {
-      gtk_window_move(GTK_WINDOW(mShell), moveResizeRect.x, moveResizeRect.y);
-    }
     if (aResized) {
       gtk_window_resize(GTK_WINDOW(mShell), moveResizeRect.width,
                         moveResizeRect.height);
@@ -6761,6 +6730,10 @@ void nsWindow::NativeMoveResize(bool aMoved, bool aResized) {
         gtk_widget_set_size_request(GTK_WIDGET(mShell), moveResizeRect.width,
                                     moveResizeRect.height);
       }
+    }
+    // x and y give the position of the window manager frame top-left.
+    if (aMoved) {
+      gtk_window_move(GTK_WINDOW(mShell), moveResizeRect.x, moveResizeRect.y);
     }
   }
 
@@ -7140,8 +7113,6 @@ bool nsWindow::DoDrawTilebarCorners() {
   return IsChromeWindowTitlebar() && mSizeMode == nsSizeMode_Normal &&
          !mIsTiled;
 }
-
-GtkWidget* nsWindow::GetToplevelWidget() const { return mShell; }
 
 GdkWindow* nsWindow::GetToplevelGdkWindow() const {
   return gtk_widget_get_window(mShell);
@@ -9077,7 +9048,7 @@ gint nsWindow::GdkCeiledScaleFactor() {
   }
 
   // We're missing scale for window (is hidden?), read parent scale
-  if (nsWindow* topmost = GetTopmostWindow()) {
+  if (nsWindow* topmost = nsWindow::FromWidget(GetTopLevelWidget())) {
     LOGVERBOSE("nsWindow::GdkCeiledScaleFactor(): toplevel [%p] scale %d",
                topmost, (int)topmost->mCeiledScaleFactor);
     return topmost->mCeiledScaleFactor;
@@ -9634,6 +9605,11 @@ static void relative_pointer_handle_relative_motion(
   event.mRefPoint.x += int(wl_fixed_to_double(dx_w) * scale);
   event.mRefPoint.y += int(wl_fixed_to_double(dy_w) * scale);
 
+  LOGW(
+      "[%p] relative_pointer_handle_relative_motion center dx = %f, "
+      "dy = %f scale %f",
+      data, wl_fixed_to_double(dx_w), wl_fixed_to_double(dy_w), scale);
+
   event.AssignEventTime(window->GetWidgetEventTime(time_lo));
   window->DispatchInputEvent(&event);
 }
@@ -9662,6 +9638,7 @@ void nsWindow::LockNativePointer() {
 
   auto* relativePointerMgr = waylandDisplay->GetRelativePointerManager();
   if (!relativePointerMgr) {
+    LOG("nsWindow::LockNativePointer() - quit, missing pointer manager.");
     return;
   }
 
@@ -9672,7 +9649,8 @@ void nsWindow::LockNativePointer() {
 
   GdkDevice* device = gdk_device_manager_get_client_pointer(manager);
   if (!device) {
-    NS_WARNING("Could not find Wayland pointer to lock");
+    LOG("nsWindow::LockNativePointer() - quit, could not find Wayland pointer "
+        "to lock.");
     return;
   }
   wl_pointer* pointer = gdk_wayland_device_get_wl_pointer(device);
@@ -9681,6 +9659,7 @@ void nsWindow::LockNativePointer() {
   wl_surface* surface =
       gdk_wayland_window_get_wl_surface(GetToplevelGdkWindow());
   if (!surface) {
+    LOG("nsWindow::LockNativePointer() - quit, toplevel surface is hidden.");
     /* Can be null when the window is hidden.
      * Though it's unlikely that a lock request comes in that case, be
      * defensive. */
@@ -9689,18 +9668,20 @@ void nsWindow::LockNativePointer() {
 
   UnlockNativePointer();
 
+  LOG("nsWindow::LockNativePointer()");
+
   mLockedPointer = zwp_pointer_constraints_v1_lock_pointer(
       pointerConstraints, surface, pointer, nullptr,
       ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
   if (!mLockedPointer) {
-    NS_WARNING("Could not lock Wayland pointer");
+    LOG("  can't lock Wayland pointer");
     return;
   }
 
   mRelativePointer = zwp_relative_pointer_manager_v1_get_relative_pointer(
       relativePointerMgr, pointer);
   if (!mRelativePointer) {
-    NS_WARNING("Could not create relative Wayland pointer");
+    LOG("  can't create relative Wayland pointer");
     zwp_locked_pointer_v1_destroy(mLockedPointer);
     mLockedPointer = nullptr;
     return;
@@ -10013,4 +9994,111 @@ void nsWindow::UnexportHandle() {
       sGdkWaylandWindowUnexportHandle(toplevel);
     }
   }
+}
+
+void nsWindow::SetTextInputArea(LayoutDeviceIntRect aCursorArea) {
+  mIMContextInputArea = ToDesktopPixels(aCursorArea);
+  LOG("nsWindow::SetTextInputArea() pos [%d, %d]", mIMContextInputArea.x,
+      mIMContextInputArea.y);
+}
+
+void nsWindow::InsertEmoji(RefPtr<nsWindow> aToplevelWindow) {
+  if (!StaticPrefs::widget_gtk_native_emoji_dialog()) {
+    return;
+  }
+
+  if (IsTopLevelWidget()) {
+    if (nsIWidget* popup =
+            nsXULPopupManager::GetInstance()->GetRollupWidget()) {
+      if (nsWindow* window = nsWindow::FromWidget(popup)) {
+        LOG("nsWindow::InsertEmoji() - redirect to child popup [%p]", window);
+        window->InsertEmoji(this);
+      }
+      return;
+    }
+  }
+
+  if (!aToplevelWindow) {
+    aToplevelWindow = this;
+  }
+  mozilla::widget::IMContextWrapper* IMContext =
+      aToplevelWindow->GetIMContext();
+
+  if (mIsDestroyed || !IMContext || !IMContext->IsEditable()) {
+    LOG("nsWindow::InsertEmoji() failed, mIMContext [%p] editable [%d]",
+        (void*)IMContext, IMContext ? IMContext->IsEditable() : 0);
+    return;
+  }
+
+  GtkWidget* entry = moz_container_get_entry(MOZ_CONTAINER(mContainer));
+  if (!entry) {
+    entry = moz_container_entry_set(MOZ_CONTAINER(mContainer), gtk_entry_new());
+    gtk_widget_show(entry);
+    g_signal_connect(entry, "insert_text",
+                     G_CALLBACK(+[](GtkWidget* entry, gchar* text, gint length,
+                                    gint* position, gpointer data) {
+                       nsWindow* window = static_cast<nsWindow*>(data);
+                       if (!window || window->IsDestroyed()) {
+                         return;
+                       }
+                       LOGW("[%p] nsWindow::Emoji() insert_text", window);
+                       WidgetContentCommandEvent insertTextEvent(
+                           true, eContentCommandInsertText, window);
+                       NS_ConvertUTF8toUTF16 str(text);
+                       insertTextEvent.mString.emplace(str);
+                       window->DispatchEvent(&insertTextEvent);
+                     }),
+                     aToplevelWindow);
+  }
+
+  DesktopIntRect input = aToplevelWindow->GetTextInputArea();
+  auto offset = IsTopLevelWidget()
+                    ? DesktopIntPoint()
+                    : WidgetToScreenOffsetUnscaled() -
+                          DesktopIntPoint(aToplevelWindow->mClientMargin.left,
+                                          aToplevelWindow->mClientMargin.top);
+
+  LOG("nsWindow::InsertEmoji() carret [%d, %d] offset [%d, %d] height %d",
+      int(input.x), int(input.y), int(offset.x), int(offset.y), input.height);
+  moz_container_entry_position(MOZ_CONTAINER(mContainer), input.x - offset.x,
+                               input.y - offset.y, input.height);
+  // We may hide cursor when text input is active but we don't want to do it
+  // for emoji picker.
+  mWidgetCursorLocked = true;
+
+  // Calls gtk_entry_insert_emoji() directly, creates emoji chooser widget
+  // as child of GtkEntry.
+  g_signal_emit_by_name(entry, "insert-emoji");
+
+  if (!mEmojiHidenSignal) {
+    GtkWidget* chooser =
+        GTK_WIDGET(g_object_get_data(G_OBJECT(entry), "gtk-emoji-chooser"));
+    if (!chooser) {
+      return;
+    }
+    mEmojiHidenSignal = g_signal_connect(
+        chooser, "hide", G_CALLBACK(+[](GtkWidget* emojiPicker, gpointer data) {
+          nsWindow* window = static_cast<nsWindow*>(data);
+          if (!window || window->IsDestroyed()) {
+            return;
+          }
+          LOGW("[%p] nsWindow::Emoji() emoji picker hide", window);
+          window->UnlockCursor();
+        }),
+        this);
+  }
+}
+
+uint32_t nsWindow::GetMaxTouchPoints() const {
+#ifdef MOZ_WAYLAND
+  // We may want to read max touch points from GdkDevice:num-touches.
+  // But that means we need to enumerate touch GdkDevice(s) first
+  // and then query it. Not sure it's worth the effort, just return
+  // fixed value if touch device is present for now.
+  if (GdkIsWaylandDisplay()) {
+    static constexpr bool sMaxTouchPoints = 5;
+    return WaylandDisplayGet()->GetTouch() ? sMaxTouchPoints : 0;
+  }
+#endif
+  return 0;
 }

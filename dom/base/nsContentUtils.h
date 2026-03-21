@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -203,6 +201,7 @@ struct SynthesizeTouchEventData;
 struct SynthesizeTouchEventOptions;
 class TrustedHTMLOrString;
 class VoidFunction;
+class WindowContext;
 class WorkerPrivate;
 enum class ElementCallbackType;
 enum class ReferrerPolicy : uint8_t;
@@ -961,6 +960,13 @@ class nsContentUtils {
       nsIContent* aContent, const nsAString& aAttrValue,
       nsIPrincipal* aSubjectPrincipal);
 
+  /* Returns true if browser allowed to navigate aTarget BrowsingContext using
+   * aSource BrowsingContext and aDocumentPrincipal */
+  static bool CanNavigate(mozilla::dom::BrowsingContext* aSource,
+                          mozilla::dom::BrowsingContext* aTarget,
+                          nsIPrincipal* aDocumentPrincipal,
+                          bool aConsiderOpener);
+
   /**
    * Returns true if the given string is guaranteed to be treated as an absolute
    * URL, rather than a relative URL. In practice, this means any complete URL
@@ -1068,8 +1074,8 @@ class nsContentUtils {
    * If aColon is non-null, it's set to the position of the first colon
    * (or null if no colon).
    * If aLocalNameEnd is non-null, it's set to the end of the local name
-   * (the second colon if present, otherwise the end of the string).
-   * Per "strictly split", "f:o:o" gives prefix="f", localName="o".
+   * (always the end of the string).
+   * Splits on the first colon only: "f:o:o" gives prefix="f", localName="o:o".
    * aNodeType indicates whether this is for an element or attribute (to
    * determine the correct local-name validation).
    */
@@ -3215,6 +3221,8 @@ class nsContentUtils {
   static void TryToUpgradeElement(Element* aElement);
 
   /**
+   * https://dom.spec.whatwg.org/#concept-create-element
+   *
    * Creates a new XUL or XHTML element applying any appropriate custom element
    * definition.
    *
@@ -3227,6 +3235,9 @@ class nsContentUtils {
       mozilla::dom::FromParser aFromParser, nsAtom* aIsAtom,
       mozilla::dom::CustomElementDefinition* aDefinition);
 
+  /*
+   * https://html.spec.whatwg.org/#look-up-a-custom-element-registry
+   */
   static mozilla::dom::CustomElementRegistry* GetCustomElementRegistry(
       Document*);
 
@@ -3623,7 +3634,8 @@ class nsContentUtils {
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   static nsIContent* AttachDeclarativeShadowRoot(
       nsIContent* aHost, mozilla::dom::ShadowRootMode aMode, bool aIsClonable,
-      bool aIsSerializable, bool aDelegatesFocus, const nsAString&);
+      bool aIsSerializable, bool aDelegatesFocus, bool aCustomElementRegistry,
+      const nsAString&);
 
   static bool NavigationMustBeAReplace(nsIURI& aURI, const Document& aDocument);
 

@@ -29,6 +29,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.mozilla.fenix.R
 import org.mozilla.fenix.browser.browsingmode.BrowsingMode
+import org.mozilla.fenix.browser.browsingmode.BrowsingModeManager
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.appstate.AppAction.ContentRecommendationsAction
 import org.mozilla.fenix.components.appstate.AppAction.MessagingAction.UpdateMessageToShow
@@ -51,12 +52,14 @@ import org.mozilla.fenix.home.recentvisits.RecentlyVisitedItem.RecentHistoryGrou
 import org.mozilla.fenix.home.recentvisits.RecentlyVisitedItem.RecentHistoryHighlight
 import org.mozilla.fenix.messaging.FenixMessageSurfaceId
 import org.mozilla.fenix.onboarding.FenixOnboarding
+import mozilla.components.ui.icons.R as iconsR
 
 @RunWith(AndroidJUnit4::class)
 class AppStoreTest {
     private lateinit var context: Context
     private lateinit var accountManager: FxaAccountManager
     private lateinit var onboarding: FenixOnboarding
+    private lateinit var browsingModeManager: BrowsingModeManager
     private lateinit var appState: AppState
     private lateinit var appStore: AppStore
     private lateinit var recentSyncedTabsList: List<RecentSyncedTab>
@@ -66,6 +69,7 @@ class AppStoreTest {
         context = mockk(relaxed = true)
         accountManager = mockk(relaxed = true)
         onboarding = mockk(relaxed = true)
+        browsingModeManager = mockk(relaxed = true)
         recentSyncedTabsList = listOf(
             RecentSyncedTab(
                 deviceDisplayName = "",
@@ -78,11 +82,12 @@ class AppStoreTest {
 
         every { context.components.backgroundServices.accountManager } returns accountManager
         every { onboarding.userHasBeenOnboarded() } returns true
+        every { browsingModeManager.mode } returns BrowsingMode.Normal
 
         appState = AppState(
             collections = emptyList(),
             expandedCollections = emptySet(),
-            mode = BrowsingMode.Normal,
+            mode = browsingModeManager.mode,
             topSites = emptyList(),
             showCollectionPlaceholder = true,
             recentTabs = emptyList(),
@@ -795,7 +800,7 @@ class AppStoreTest {
                 ChecklistItem.Task(
                     type = ChecklistItem.Task.Type.SET_AS_DEFAULT,
                     title = R.string.setup_checklist_task_default_browser,
-                    icon = R.drawable.ic_addons_extensions,
+                    icon = iconsR.drawable.mozac_ic_extension_24,
                     isCompleted = false,
                 ),
             ),
@@ -807,7 +812,7 @@ class AppStoreTest {
                 ChecklistItem.Task(
                     type = ChecklistItem.Task.Type.INSTALL_SEARCH_WIDGET,
                     title = R.string.setup_checklist_task_search_widget_2,
-                    icon = R.drawable.ic_addons_extensions,
+                    icon = iconsR.drawable.mozac_ic_extension_24,
                     isCompleted = false,
                 ),
             ),
@@ -840,7 +845,7 @@ class AppStoreTest {
         val task = ChecklistItem.Task(
             type = ChecklistItem.Task.Type.EXPLORE_EXTENSION,
             title = R.string.setup_checklist_task_default_browser,
-            icon = R.drawable.ic_addons_extensions,
+            icon = iconsR.drawable.mozac_ic_extension_24,
             isCompleted = false,
         )
 
@@ -857,7 +862,7 @@ class AppStoreTest {
         val task = ChecklistItem.Task(
             type = ChecklistItem.Task.Type.EXPLORE_EXTENSION,
             title = R.string.setup_checklist_task_default_browser,
-            icon = R.drawable.ic_addons_extensions,
+            icon = iconsR.drawable.mozac_ic_extension_24,
             isCompleted = false,
         )
 
@@ -878,13 +883,13 @@ class AppStoreTest {
         val updatedTask = ChecklistItem.Task(
             type = ChecklistItem.Task.Type.SET_AS_DEFAULT,
             title = R.string.setup_checklist_task_default_browser,
-            icon = R.drawable.ic_addons_extensions,
+            icon = iconsR.drawable.mozac_ic_extension_24,
             isCompleted = false,
         )
         val nonUpdatedTask = ChecklistItem.Task(
             type = ChecklistItem.Task.Type.INSTALL_SEARCH_WIDGET,
             title = R.string.setup_checklist_task_search_widget_2,
-            icon = R.drawable.ic_addons_extensions,
+            icon = iconsR.drawable.mozac_ic_extension_24,
             isCompleted = false,
         )
         val group = ChecklistItem.Group(

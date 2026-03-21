@@ -11,13 +11,11 @@ ChromeUtils.defineESModuleGetters(lazy, {
   IPProtectionPanel:
     "moz-src:///browser/components/ipprotection/IPProtectionPanel.sys.mjs",
   IPProtectionService:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
-  IPProtectionStates:
-    "moz-src:///browser/components/ipprotection/IPProtectionService.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   IPProtectionToolbarButton:
     "moz-src:///browser/components/ipprotection/IPProtectionToolbarButton.sys.mjs",
   IPPProxyManager:
-    "moz-src:///browser/components/ipprotection/IPPProxyManager.sys.mjs",
+    "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs",
   requestIdleCallback: "resource://gre/modules/Timer.sys.mjs",
   cancelIdleCallback: "resource://gre/modules/Timer.sys.mjs",
 });
@@ -48,7 +46,6 @@ class IPProtectionWidget {
 
   constructor() {
     this.sendReadyTrigger = this.#sendReadyTrigger.bind(this);
-    this.handleEvent = this.#handleEvent.bind(this);
   }
 
   /**
@@ -177,6 +174,20 @@ class IPProtectionWidget {
     }
 
     return this.#panels.get(window);
+  }
+
+  /**
+   * Get the IPProtectionToolbarButton for a given window.
+   *
+   * @param {Window} window - which window to get the toolbar button for.
+   * @returns {IPProtectionToolbarButton}
+   */
+  getToolbarButton(window) {
+    if (!this.created) {
+      return null;
+    }
+
+    return this.#toolbarButtons.get(window);
   }
 
   /**
@@ -316,19 +327,6 @@ class IPProtectionWidget {
       browser,
       id: "ipProtectionReady",
     });
-  }
-
-  #handleEvent(event) {
-    if (
-      event.type == "IPProtectionService:StateChanged" ||
-      event.type == "IPPProxyManager:StateChanged"
-    ) {
-      if (
-        lazy.IPProtectionService.state === lazy.IPProtectionStates.OPTED_OUT
-      ) {
-        lazy.CustomizableUI.removeWidgetFromArea(IPProtectionWidget.WIDGET_ID);
-      }
-    }
   }
 }
 

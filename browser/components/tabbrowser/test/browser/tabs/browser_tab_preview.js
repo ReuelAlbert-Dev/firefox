@@ -574,24 +574,53 @@ add_task(async function tabNotesTests() {
 
   info("validate the presentation of an eligible tab with no note");
   await openTabPreview(tab);
-  Assert.equal(
-    previewPanel.querySelector(".tab-preview-note-text").innerText,
-    "",
-    "Preview panel contains no tab note"
-  );
   let addNoteButton = previewPanel.querySelector(".tab-preview-add-note");
-  Assert.ok(
-    !addNoteButton.hasAttribute("hidden"),
-    "add note button should be visible on an eligible tab without a tab note"
+  Assert.ok(addNoteButton, "add note button exists in the DOM");
+
+  info(
+    "validate that hovering over the add note button does not hide the preview panel"
   );
+  EventUtils.synthesizeMouseAtCenter(
+    addNoteButton,
+    { type: "mouseover" },
+    window
+  );
+
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  Assert.ok(
+    previewPanel.hasAttribute("panelopen"),
+    "Preview panel is still open"
+  );
+
+  info(
+    "validate that hovering over the panel outside of the add note button hides the panel"
+  );
+  let previewHidden = BrowserTestUtils.waitForPopupEvent(
+    previewPanel,
+    "hidden"
+  );
+  let nonhoverableArea = document.querySelector(".tab-preview-content-main");
+  EventUtils.synthesizeMouseAtCenter(
+    nonhoverableArea,
+    {
+      type: "mouseover",
+    },
+    window
+  );
+  await previewHidden;
+  Assert.ok(
+    !previewPanel.hasAttribute("panelopen"),
+    "Preview panel was hidden"
+  );
+
+  await openTabPreview(tab);
 
   info("choose to add a note from the tab hover preview panel");
   let tabNotePanel = document.getElementById("tabNotePanel");
   let panelShown = BrowserTestUtils.waitForPopupEvent(tabNotePanel, "shown");
-  const previewHidden = BrowserTestUtils.waitForPopupEvent(
-    previewPanel,
-    "hidden"
-  );
+  previewHidden = BrowserTestUtils.waitForPopupEvent(previewPanel, "hidden");
   addNoteButton.click();
   await Promise.all([panelShown, previewHidden]);
 
@@ -626,67 +655,8 @@ add_task(async function tabNotesTests() {
   info("validate the presentation of an eligible tab with a tab note");
   await openTabPreview(tab);
 
-  Assert.equal(
-    previewPanel.querySelector(".tab-preview-note-text").innerText,
-    noteText,
-    "New tab note is visible in preview panel"
-  );
   addNoteButton = previewPanel.querySelector(".tab-preview-add-note");
-  Assert.ok(
-    addNoteButton.hasAttribute("hidden"),
-    "add note button should be hidden on an eligible tab with a tab note"
-  );
-  await closeTabPreviews();
-
-  info(
-    "test that notes beyond a specified length trigger truncation and a 'read more' button"
-  );
-  Assert.ok(
-    !previewPanel.hasAttribute("note-overflow"),
-    "Sanity check: panel does not have note-overflow attribute"
-  );
-  Assert.ok(
-    !previewPanel.hasAttribute("note-expanded"),
-    "Sanity check: panel does not have note-expanded attribute"
-  );
-
-  const tabNoteEdited = BrowserTestUtils.waitForEvent(tab, "TabNote:Edited");
-  TabNotes.set(tab, "x".repeat(999));
-  await tabNoteEdited;
-
-  await openTabPreview(tab);
-
-  Assert.ok(
-    previewPanel.hasAttribute("note-overflow"),
-    "Panel has note-overflow attribute when note is too long to display in non-expanded mode"
-  );
-  Assert.ok(
-    !previewPanel.hasAttribute("note-expanded"),
-    "Sanity check: panel does not have note-expanded attribute"
-  );
-
-  previewPanel.querySelector(".tab-preview-note-expand").click();
-
-  await BrowserTestUtils.waitForCondition(() => {
-    return previewPanel.hasAttribute("note-expanded");
-  }, "Waiting for note-expanded attribute to be set");
-  Assert.ok(
-    previewPanel.hasAttribute("note-expanded"),
-    "Panel has been expanded"
-  );
-
-  await BrowserTestUtils.waitForCondition(
-    () => Glean.tabNotes.expanded.testGetValue()?.length,
-    "wait for event to be recorded"
-  );
-
-  const [expandedEvent] = Glean.tabNotes.expanded.testGetValue();
-  Assert.deepEqual(
-    expandedEvent.extra,
-    { note_length: "999" },
-    "expanded event extra data should say the tab note text is 999 characters long"
-  );
-
+  Assert.ok(!addNoteButton, "add note button does not exist in the DOM");
   await closeTabPreviews();
 
   info(
@@ -700,11 +670,6 @@ add_task(async function tabNotesTests() {
     "validate the presentation of an eligible tab after its note has been deleted"
   );
   await openTabPreview(tab);
-  Assert.equal(
-    previewPanel.querySelector(".tab-preview-note-text").innerText,
-    "",
-    "Preview panel contains no tab note after delete"
-  );
   addNoteButton = previewPanel.querySelector(".tab-preview-add-note");
   Assert.ok(
     !addNoteButton.hasAttribute("hidden"),
@@ -715,6 +680,101 @@ add_task(async function tabNotesTests() {
   BrowserTestUtils.removeTab(tab);
   await resetState();
   await TabNotes.reset();
+});
+
+/**
+ * Test that the "New" badge in the hover preview panel is displayed when
+ * browser.tabs.notes.newBadge.enabled is true.
+ */
+add_task(async function tabNotesNewBadgeVisibilityTests() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.tabs.notes.enabled", true]],
+  });
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.tabs.notes.newBadge.enabled", true]],
+  });
+
+  const previewPanel = document.getElementById(TAB_PREVIEW_PANEL_ID);
+  const tab = await addTabTo(gBrowser, "https://example.com/");
+
+  await openTabPreview(tab);
+  const badge = previewPanel.querySelector(".tab-preview-add-note moz-badge");
+  Assert.ok(
+    !badge.hasAttribute("hidden"),
+    "badge is visible when newBadge pref is true"
+  );
+  await closeTabPreviews();
+  await SpecialPowers.popPrefEnv();
+
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.tabs.notes.newBadge.enabled", false]],
+  });
+  await openTabPreview(tab);
+  Assert.ok(
+    badge.hasAttribute("hidden"),
+    "badge is hidden when newBadge pref is false"
+  );
+  await closeTabPreviews();
+
+  await SpecialPowers.popPrefEnv();
+  await SpecialPowers.popPrefEnv();
+  BrowserTestUtils.removeTab(tab);
+  await resetState();
+});
+
+/**
+ * Test that clicking "Add Note" in the hover preview panel sets the
+ * browser.tabs.notes.newBadge.enabled pref to false, and that the badge
+ * is hidden on the next hover
+ */
+add_task(async function tabNotesNewBadgeDismissedByPreviewPanelTests() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.tabs.notes.enabled", true],
+      ["browser.tabs.notes.newBadge.enabled", true],
+    ],
+  });
+
+  const previewPanel = document.getElementById(TAB_PREVIEW_PANEL_ID);
+
+  const tab = await addTabTo(gBrowser, "https://example.com/");
+
+  await openTabPreview(tab);
+
+  const addNoteButton = previewPanel.querySelector(".tab-preview-add-note");
+  const tabNotePanel = document.getElementById("tabNotePanel");
+  const panelShown = BrowserTestUtils.waitForPopupEvent(tabNotePanel, "shown");
+  const previewHidden = BrowserTestUtils.waitForPopupEvent(
+    previewPanel,
+    "hidden"
+  );
+  addNoteButton.click();
+  await Promise.all([panelShown, previewHidden]);
+
+  Assert.ok(
+    !Services.prefs.getBoolPref("browser.tabs.notes.newBadge.enabled"),
+    "pref is set to false after clicking Add Note in the preview panel"
+  );
+
+  const panelHidden = BrowserTestUtils.waitForPopupEvent(
+    tabNotePanel,
+    "hidden"
+  );
+  tabNotePanel.hidePopup();
+  await panelHidden;
+  await closeTabPreviews();
+
+  await openTabPreview(tab);
+  const badge = previewPanel.querySelector(".tab-preview-add-note moz-badge");
+  Assert.ok(
+    badge.hasAttribute("hidden"),
+    "badge is hidden on subsequent hover after dismissal"
+  );
+  await closeTabPreviews();
+
+  BrowserTestUtils.removeTab(tab);
+  await resetState();
+  await SpecialPowers.popPrefEnv();
 });
 
 /*

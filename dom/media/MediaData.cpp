@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,9 +12,11 @@
 #include "MediaInfo.h"
 #include "MediaResult.h"
 #include "PerformanceRecorder.h"
+#include "PlatformDecoderModule.h"
 #include "VideoUtils.h"
 #include "YCbCrUtils.h"
 #include "libyuv.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/KnowsCompositor.h"
@@ -32,6 +32,8 @@
 #endif
 
 namespace mozilla {
+
+extern LazyLogModule sPDMLog;
 
 using namespace mozilla::gfx;
 using layers::BufferRecycleBin;
@@ -190,24 +192,39 @@ static bool ValidatePlane(const VideoData::YCbCrBuffer::Plane& aPlane) {
 
 static MediaResult ValidateBufferAndPicture(
     const VideoData::YCbCrBuffer& aBuffer, const IntRect& aPicture) {
-  // The following situation should never happen unless there is a bug
-  // in the decoder
-  if (aBuffer.mPlanes[1].mWidth != aBuffer.mPlanes[2].mWidth ||
-      aBuffer.mPlanes[1].mHeight != aBuffer.mPlanes[2].mHeight) {
-    return MediaResult(NS_ERROR_INVALID_ARG,
-                       "Chroma planes with different sizes");
+  // mChromaSubsampling describes the relationship between plane sizes.
+  if (aBuffer.mChromaSubsampling == ChromaSubsampling::FULL) {
+    MOZ_ASSERT(aBuffer.mPlanes[1].mWidth == aBuffer.mPlanes[0].mWidth);
+  } else {
+    MOZ_ASSERT(aBuffer.mPlanes[1].mWidth ==
+               (aBuffer.mPlanes[0].mWidth + 1) / 2);
   }
-
+  if (aBuffer.mChromaSubsampling == ChromaSubsampling::HALF_WIDTH_AND_HEIGHT) {
+    MOZ_ASSERT(aBuffer.mPlanes[1].mHeight ==
+               (aBuffer.mPlanes[0].mHeight + 1) / 2);
+  } else {
+    MOZ_ASSERT(aBuffer.mPlanes[1].mHeight == aBuffer.mPlanes[0].mHeight);
+  }
+  MOZ_ASSERT(aBuffer.mPlanes[1].mWidth == aBuffer.mPlanes[2].mWidth);
+  MOZ_ASSERT(aBuffer.mPlanes[1].mHeight == aBuffer.mPlanes[2].mHeight);
   // The following situations could be triggered by invalid input
   if (aPicture.width <= 0 || aPicture.height <= 0) {
-    return MediaResult(NS_ERROR_INVALID_ARG, "Empty picture rect");
+    return MediaResult::Logged(NS_ERROR_INVALID_ARG,
+                               RESULT_DETAIL("Empty picture rect"), sPDMLog);
   }
   if (!ValidatePlane(aBuffer.mPlanes[0]) ||
       !ValidatePlane(aBuffer.mPlanes[1]) ||
       !ValidatePlane(aBuffer.mPlanes[2])) {
-    return MediaResult(NS_ERROR_INVALID_ARG, "Invalid plane size");
+    return MediaResult::Logged(NS_ERROR_INVALID_ARG,
+                               RESULT_DETAIL("Invalid plane size"), sPDMLog);
   }
-
+  // ConstructPlanarYCbCrData() and ConvertI420AlphaToARGB() assume Chroma
+  // planes have equal strides.
+  if (aBuffer.mPlanes[1].mStride != aBuffer.mPlanes[2].mStride) {
+    return MediaResult::Logged(
+        NS_ERROR_INVALID_ARG,
+        RESULT_DETAIL("Chroma planes with different strides"), sPDMLog);
+  }
   // Ensure the picture size specified in the headers can be extracted out of
   // the frame we've been supplied without indexing out of bounds.
   CheckedUint32 xLimit = aPicture.x + CheckedUint32(aPicture.width);
@@ -216,7 +233,9 @@ static MediaResult ValidateBufferAndPicture(
       !yLimit.isValid() || yLimit.value() > aBuffer.mPlanes[0].mHeight) {
     // The specified picture dimensions can't be contained inside the video
     // frame, we'll stomp memory if we try to copy it. Fail.
-    return MediaResult(NS_ERROR_INVALID_ARG, "Overflowing picture rect");
+    return MediaResult::Logged(NS_ERROR_INVALID_ARG,
+                               RESULT_DETAIL("Overflowing picture rect"),
+                               sPDMLog);
   }
   return MediaResult(NS_OK);
 }
@@ -295,6 +314,7 @@ PlanarYCbCrData ConstructPlanarYCbCrData(const VideoInfo& aInfo,
   data.mYSkip = AssertedCast<int32_t>(Y.mSkip);
   data.mCbChannel = Cb.mData;
   data.mCrChannel = Cr.mData;
+  MOZ_ASSERT(Cb.mStride == Cr.mStride);
   data.mCbCrStride = AssertedCast<int32_t>(Cb.mStride);
   data.mCbSkip = AssertedCast<int32_t>(Cb.mSkip);
   data.mCrSkip = AssertedCast<int32_t>(Cr.mSkip);
@@ -322,11 +342,13 @@ MediaResult VideoData::SetVideoDataToImage(PlanarYCbCrImage* aVideoImage,
   PlanarYCbCrData data = ConstructPlanarYCbCrData(aInfo, aBuffer, aPicture);
 
   if (aCopyData) {
-    return MediaResult(aVideoImage->CopyData(data),
-                       RESULT_DETAIL("Failed to copy image data"));
+    return MediaResult::Logged(aVideoImage->CopyData(data),
+                               RESULT_DETAIL("Failed to copy image data"),
+                               sPDMLog);
   }
-  return MediaResult(aVideoImage->AdoptData(data),
-                     RESULT_DETAIL("Failed to adopt image data"));
+  return MediaResult::Logged(aVideoImage->AdoptData(data),
+                             RESULT_DETAIL("Failed to adopt image data"),
+                             sPDMLog);
 }
 
 /* static */
@@ -375,8 +397,9 @@ Result<already_AddRefed<VideoData>, MediaResult> VideoData::CreateAndCopyData(
   if (!v->mImage) {
     // TODO: Should other error like NS_ERROR_UNEXPECTED be used here to
     // distinguish this error from the NS_ERROR_OUT_OF_MEMORY below?
-    return Err(MediaResult(NS_ERROR_OUT_OF_MEMORY,
-                           "Failed to create a PlanarYCbCrImage"));
+    return Err(MediaResult::Logged(
+        NS_ERROR_OUT_OF_MEMORY,
+        RESULT_DETAIL("Failed to create a PlanarYCbCrImage"), sPDMLog));
   }
   NS_ASSERTION(v->mImage->GetFormat() == ImageFormat::PLANAR_YCBCR,
                "Wrong format?");
@@ -395,7 +418,7 @@ Result<already_AddRefed<VideoData>, MediaResult> VideoData::CreateAndCopyData(
 }
 
 /* static */
-already_AddRefed<VideoData> VideoData::CreateAndCopyData(
+Result<already_AddRefed<VideoData>, MediaResult> VideoData::CreateAndCopyData(
     const VideoInfo& aInfo, ImageContainer* aContainer, int64_t aOffset,
     const TimeUnit& aTime, const TimeUnit& aDuration,
     const YCbCrBuffer& aBuffer, const YCbCrBuffer::Plane& aAlphaPlane,
@@ -410,8 +433,26 @@ already_AddRefed<VideoData> VideoData::CreateAndCopyData(
 
   if (MediaResult r = ValidateBufferAndPicture(aBuffer, aPicture);
       NS_FAILED(r)) {
-    NS_ERROR(r.Message().get());
-    return nullptr;
+    return Err(std::move(r));
+  }
+  if (!ValidatePlane(aAlphaPlane)) {
+    return Err(MediaResult::Logged(NS_ERROR_DOM_MEDIA_RANGE_ERR,
+                                   RESULT_DETAIL("Invalid alpha plane"),
+                                   sPDMLog));
+  }
+  // The alpha plane is expected to be the same size as the luma plane.
+  // See Method 1 at https://wiki.webmproject.org/alpha-channel
+  if (aBuffer.mPlanes[0].mWidth != aAlphaPlane.mWidth ||
+      aBuffer.mPlanes[0].mHeight != aAlphaPlane.mHeight) {
+    return Err(MediaResult::Logged(NS_ERROR_DOM_MEDIA_RANGE_ERR,
+                                   RESULT_DETAIL("luma and alpha sizes differ"),
+                                   sPDMLog));
+  }
+  // ConvertI420AlphaToARGB() expects equal strides for luma and alpha
+  if (aBuffer.mPlanes[0].mStride != aAlphaPlane.mStride) {
+    return Err(MediaResult::Logged(
+        NS_ERROR_DOM_MEDIA_RANGE_ERR,
+        RESULT_DETAIL("luma and alpha strides differ"), sPDMLog));
   }
 
   RefPtr<VideoData> v(new VideoData(aOffset, aTime, aDuration, aKeyframe,
@@ -421,34 +462,40 @@ already_AddRefed<VideoData> VideoData::CreateAndCopyData(
   RefPtr<layers::SharedRGBImage> videoImage =
       aContainer->CreateSharedRGBImage();
   v->mImage = videoImage;
-
   if (!v->mImage) {
-    return nullptr;
+    return Err(MediaResult::Logged(NS_ERROR_OUT_OF_MEMORY,
+                                   RESULT_DETAIL("CreateSharedRGBImage failed"),
+                                   sPDMLog));
   }
   if (!videoImage->Allocate(
           IntSize(aBuffer.mPlanes[0].mWidth, aBuffer.mPlanes[0].mHeight),
           SurfaceFormat::B8G8R8A8)) {
-    return nullptr;
+    return Err(MediaResult::Logged(
+        NS_ERROR_OUT_OF_MEMORY,
+        RESULT_DETAIL("failed to Allocate SharedRGBImage"), sPDMLog));
   }
 
   RefPtr<layers::TextureClient> texture =
       videoImage->GetTextureClient(/* aKnowsCompositor */ nullptr);
   if (!texture) {
-    NS_WARNING("Failed to allocate TextureClient");
-    return nullptr;
+    return Err(MediaResult::Logged(
+        NS_ERROR_OUT_OF_MEMORY,
+        RESULT_DETAIL("Failed to allocate TextureClient"), sPDMLog));
   }
 
   layers::TextureClientAutoLock autoLock(texture,
                                          layers::OpenMode::OPEN_WRITE_ONLY);
   if (!autoLock.Succeeded()) {
-    NS_WARNING("Failed to lock TextureClient");
-    return nullptr;
+    return Err(MediaResult::Logged(
+        NS_ERROR_OUT_OF_MEMORY, RESULT_DETAIL("Failed to lock TextureClient"),
+        sPDMLog));
   }
 
   layers::MappedTextureData buffer;
   if (!texture->BorrowMappedData(buffer)) {
-    NS_WARNING("Failed to borrow mapped data");
-    return nullptr;
+    return Err(MediaResult::Logged(
+        NS_ERROR_OUT_OF_MEMORY, RESULT_DETAIL("Failed to borrow mapped data"),
+        sPDMLog));
   }
 
   // The naming convention for libyuv and associated utils is word-order.
@@ -460,8 +507,9 @@ already_AddRefed<VideoData> VideoData::CreateAndCopyData(
       AssertedCast<int>(aBuffer.mPlanes[1].mStride), buffer.data, buffer.stride,
       buffer.size.width, buffer.size.height);
   if (NS_FAILED(result)) {
-    MOZ_ASSERT_UNREACHABLE("Failed to convert I420 YUVA into RGBA data");
-    return nullptr;
+#define MSG "Failed to convert I420 YUVA into RGBA data"
+    return Err(MediaResult::Logged(result, RESULT_DETAIL(MSG), sPDMLog));
+#undef MSG
   }
 
   return v.forget();
@@ -523,10 +571,11 @@ MediaResult VideoData::QuantizableBuffer::To8BitPerChannel(
       reinterpret_cast<const uint16_t*>(mPlanes[2].mData)};
   AllocateRecyclableData(yLength + (uvLength * 2));
   if (!m8bpcPlanes) {
-    return MediaResult(
+    return MediaResult::Logged(
         NS_ERROR_OUT_OF_MEMORY,
         RESULT_DETAIL("Cannot allocate %zu bytes for 8-bit conversion",
-                      yLength + (uvLength * 2)));
+                      yLength + (uvLength * 2)),
+        sPDMLog);
   }
   uint8_t* destPlanes[3]{m8bpcPlanes.get(), m8bpcPlanes.get() + yLength,
                          m8bpcPlanes.get() + yLength + uvLength};
@@ -551,21 +600,23 @@ MediaResult VideoData::QuantizableBuffer::To8BitPerChannel(
     }
   }(mColorDepth, mChromaSubsampling);
   if (!convertFunc) {
-    return MediaResult(
+    return MediaResult::Logged(
         NS_ERROR_DOM_MEDIA_DECODE_ERR,
         RESULT_DETAIL("Source format (color depth=%d, subsampling=%" PRIu8
                       ") not supported",
                       BitDepthForColorDepth(mColorDepth),
-                      static_cast<uint8_t>(mChromaSubsampling)));
+                      static_cast<uint8_t>(mChromaSubsampling)),
+        sPDMLog);
   }
   int r = convertFunc(srcPlanes[0], yStride, srcPlanes[1], uvStride,
                       srcPlanes[2], uvStride, destPlanes[0], yStride,
                       destPlanes[1], uvStride, destPlanes[2], uvStride,
                       mPlanes[0].mWidth, mPlanes[0].mHeight);
   if (r != 0) {
-    return MediaResult(
+    return MediaResult::Logged(
         NS_ERROR_DOM_MEDIA_DECODE_ERR,
-        RESULT_DETAIL("Conversion to 8-bit failed. libyuv error=%d", r));
+        RESULT_DETAIL("Conversion to 8-bit failed. libyuv error=%d", r),
+        sPDMLog);
   }
   // Update buffer info.
   mColorDepth = ColorDepth::COLOR_8;
@@ -582,8 +633,16 @@ void VideoData::QuantizableBuffer::AllocateRecyclableData(size_t aLength) {
   MOZ_ASSERT(!m8bpcPlanes, "Should not allocate more than once.");
   MOZ_ASSERT(aLength > 0, "Zero-length allocation!");
 
-  m8bpcPlanes = mRecycleBin->GetBuffer(aLength);
-  mAllocatedLength = aLength;
+  CheckedInt<uint32_t> checkedLength(aLength);
+  if (!checkedLength.isValid()) {
+    NS_WARNING("Fail to allocate 8-bit conversion buffer: size too large!");
+    return;
+  }
+
+  m8bpcPlanes = mRecycleBin->GetBuffer(checkedLength.value());
+  if (m8bpcPlanes) {
+    mAllocatedLength = aLength;
+  }
 }
 
 VideoData::QuantizableBuffer::~QuantizableBuffer() {

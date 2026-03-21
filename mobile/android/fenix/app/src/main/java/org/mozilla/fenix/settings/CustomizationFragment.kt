@@ -13,7 +13,7 @@ import androidx.navigation.fragment.navArgs
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
-import androidx.preference.SwitchPreference
+import androidx.preference.SwitchPreferenceCompat
 import org.mozilla.fenix.FeatureFlags
 import org.mozilla.fenix.GleanMetrics.AppTheme
 import org.mozilla.fenix.GleanMetrics.CustomizationSettings
@@ -21,6 +21,7 @@ import org.mozilla.fenix.GleanMetrics.PullToRefreshInBrowser
 import org.mozilla.fenix.GleanMetrics.ToolbarSettings
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.toolbar.ToolbarPosition
+import org.mozilla.fenix.e2e.SystemInsetsPaddedFragment
 import org.mozilla.fenix.ext.isTallWindow
 import org.mozilla.fenix.ext.isWideWindow
 import org.mozilla.fenix.ext.requireComponents
@@ -34,7 +35,7 @@ import org.mozilla.fenix.utils.view.addToRadioGroup
  */
 
 @Suppress("TooManyFunctions")
-class CustomizationFragment : PreferenceFragmentCompat() {
+class CustomizationFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragment {
     private lateinit var radioLightTheme: RadioButtonPreference
     private lateinit var radioDarkTheme: RadioButtonPreference
     private lateinit var radioAutoBatteryTheme: RadioButtonPreference
@@ -51,7 +52,7 @@ class CustomizationFragment : PreferenceFragmentCompat() {
         super.onResume()
         showToolbar(getString(R.string.preferences_customize))
         args.preferenceToScrollTo?.let {
-            scrollToPreference(it)
+            scrollToPreferenceWithHighlight(it)
         }
     }
 
@@ -212,7 +213,7 @@ class CustomizationFragment : PreferenceFragmentCompat() {
     }
 
     private fun setupTabStripCategory() {
-        val tabStripSwitch = requirePreference<SwitchPreference>(R.string.pref_key_tab_strip_show)
+        val tabStripSwitch = requirePreference<SwitchPreferenceCompat>(R.string.pref_key_tab_strip_show)
         val context = requireContext()
 
         tabStripSwitch.isChecked = Settings(requireContext()).isTabStripEnabled
@@ -251,18 +252,24 @@ class CustomizationFragment : PreferenceFragmentCompat() {
     }
 
     private fun setupGesturesCategory(isSwipeToolbarToSwitchTabsVisible: Boolean) {
-        requirePreference<SwitchPreference>(R.string.pref_key_website_pull_to_refresh).apply {
+        requirePreference<SwitchPreferenceCompat>(R.string.pref_key_website_pull_to_refresh).apply {
             isVisible = FeatureFlags.PULL_TO_REFRESH_ENABLED
             isChecked = context.settings().isPullToRefreshEnabledInBrowser
             onPreferenceChangeListener = SharedPreferenceUpdater()
         }
-        requirePreference<SwitchPreference>(R.string.pref_key_dynamic_toolbar).apply {
+        requirePreference<SwitchPreferenceCompat>(R.string.pref_key_dynamic_toolbar).apply {
             isChecked = context.settings().isDynamicToolbarEnabled
             onPreferenceChangeListener = SharedPreferenceUpdater()
         }
-        requirePreference<SwitchPreference>(R.string.pref_key_swipe_toolbar_switch_tabs).apply {
+        requirePreference<SwitchPreferenceCompat>(R.string.pref_key_swipe_toolbar_switch_tabs).apply {
             isChecked = context.settings().isSwipeToolbarToSwitchTabsEnabled
             isVisible = isSwipeToolbarToSwitchTabsVisible
+            onPreferenceChangeListener = SharedPreferenceUpdater()
+        }
+        requirePreference<SwitchPreferenceCompat>(R.string.pref_key_shake_gesture_enabled).apply {
+            isVisible = context.settings().shakeToSummarizeFeatureFlagEnabled &&
+                    context.settings().shakeToSummarizeFeatureUserPreference
+            isChecked = context.settings().shakeGestureEnabled
             onPreferenceChangeListener = SharedPreferenceUpdater()
         }
     }

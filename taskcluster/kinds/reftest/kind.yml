@@ -101,11 +101,19 @@ tasks:
         description: "Crashtest run"
         schedules-component: crashtest
         treeherder-symbol: R(C)
+        worker-type:
+            by-test-platform:
+                .*windows.*: win11-64-25h2
+                default: default
         test-manifest-loader:
             by-test-platform:
                 linux.*64-tsan(-qr)?/opt: default
                 default: null  # don't load tests in the taskgraph
         chunks:
+            by-test-platform:
+                linux.*64-tsan(-qr)?/opt: dynamic
+                default: 1
+        default-chunks:
             by-test-platform:
                 linux.*64-tsan(-qr)?/opt: 4
                 default: 1
@@ -173,6 +181,10 @@ tasks:
         description: "Crashtest Webrender run"
         schedules-component: crashtest
         treeherder-symbol: R(C)
+        worker-type:
+            by-test-platform:
+                .*windows.*: win11-64-25h2
+                default: default
         test-manifest-loader: null  # don't load tests in the taskgraph
         chunks: 1
         variants:
@@ -189,6 +201,10 @@ tasks:
         description: "JS Reftest run"
         schedules-component: jsreftest
         treeherder-symbol: R(J)
+        worker-type:
+            by-test-platform:
+                .*windows.*: win11-64-25h2
+                default: default
         instance-size:
             by-test-platform:
                 windows.*-asan.*: large
@@ -242,7 +258,12 @@ tasks:
         description: "Reftest run"
         treeherder-symbol: R(R)
         virtualization: virtual-with-gpu
-        chunks:
+        worker-type:
+            by-test-platform:
+                .*windows.*: win11-64-25h2-gpu
+                default: default
+        chunks: dynamic
+        default-chunks:
             by-test-platform:
                 android-em.*: 6
                 linux2404-64(-shippable)?/opt: 5
@@ -259,7 +280,6 @@ tasks:
                 default: 8
         variants:
             - draw-snapshot
-            - geckoview-no-fission-no-ship
             - no-fission
             - no-gpu-process
             - webrender-dcomp-disabled
@@ -296,11 +316,6 @@ tasks:
                         linux2404-64(-shippable)?/opt: ['mozilla-central']
                         linux2404-64-asan/opt: ['mozilla-central']
                         android.*: built-projects
-                        default: []
-                geckoview-no-fission-no-ship:
-                    by-test-platform:
-                        android-em.*/debug-isolated-process: ['trunk']
-                        android-em.*: built-projects
                         default: []
                 no-gpu-process:
                     by-test-platform:
@@ -348,6 +363,10 @@ tasks:
     reftest-qr:
         description: "Reftest webrender run"
         treeherder-symbol: R(R)
+        worker-type:
+            by-test-platform:
+                .*windows.*: win11-64-25h2
+                default: default
         chunks: 2
         test-manifest-loader: null  # don't load tests in the taskgraph
         variants:

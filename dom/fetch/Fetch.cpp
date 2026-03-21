@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -444,9 +442,15 @@ class MainThreadFetchRunnable : public Runnable {
       MOZ_ASSERT(loadGroup);
       // We don't track if a worker is spawned from a tracking script for now,
       // so pass false as the last argument to FetchDriver().
+      nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
+      if (mRequest->GetCookieJarSettings()) {
+        cookieJarSettings = mRequest->GetCookieJarSettings();
+      } else {
+        cookieJarSettings = workerPrivate->CookieJarSettings();
+      }
       fetch = new FetchDriver(mRequest.clonePtr(), principal, loadGroup,
                               workerPrivate->MainThreadEventTarget(),
-                              workerPrivate->CookieJarSettings(),
+                              cookieJarSettings,
                               workerPrivate->GetPerformanceStorage(),
                               net::ClassificationFlags({0, 0}));
       nsAutoCString spec;
@@ -552,11 +556,15 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
     aInit.mObserve.Value().HandleEvent(*observer);
   }
 
+  nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
+  if (internalRequest->GetCookieJarSettings()) {
+    cookieJarSettings = internalRequest->GetCookieJarSettings();
+  }
+
   if (NS_IsMainThread() && !internalRequest->GetKeepalive()) {
     nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal);
     nsCOMPtr<Document> doc;
     nsCOMPtr<nsILoadGroup> loadGroup;
-    nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
     nsIPrincipal* principal;
     net::ClassificationFlags trackingFlags = {0, 0};
     if (window) {
@@ -577,7 +585,9 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
         return nullptr;
       }
 
-      cookieJarSettings = mozilla::net::CookieJarSettings::Create(principal);
+      if (!cookieJarSettings) {
+        cookieJarSettings = mozilla::net::CookieJarSettings::Create(principal);
+      }
     }
 
     if (!loadGroup) {
@@ -590,11 +600,18 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
 
     RefPtr<MainThreadFetchResolver> resolver = new MainThreadFetchResolver(
         p, observer, signalImpl, request->MozErrors());
+    uint64_t associatedBc = 0;
+    if (internalRequest) {
+      associatedBc = internalRequest->AssociatedBrowsingContextID();
+    }
     RefPtr<FetchDriver> fetch =
         new FetchDriver(std::move(internalRequest), principal, loadGroup,
                         aGlobal->SerialEventTarget(), cookieJarSettings,
                         nullptr,  // PerformanceStorage
                         trackingFlags);
+    if (associatedBc > 0) {
+      fetch->SetAssociatedBrowsingContextID(associatedBc);
+    }
     fetch->SetDocument(doc);
     resolver->SetLoadGroup(loadGroup);
     aRv = fetch->Fetch(signalImpl, resolver);
@@ -654,7 +671,6 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
     ipcArgs.clientInfo() = clientInfo.ref().ToIPC();
     nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(aGlobal);
     nsCOMPtr<Document> doc;
-    nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
     nsIPrincipal* principal;
     // we don't check if we this request is invoked from a tracking script
     // we might add this capability in future.
@@ -685,7 +701,10 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
         aRv.Throw(NS_ERROR_FAILURE);
         return nullptr;
       }
-      cookieJarSettings = mozilla::net::CookieJarSettings::Create(principal);
+
+      if (!cookieJarSettings) {
+        cookieJarSettings = mozilla::net::CookieJarSettings::Create(principal);
+      }
     }
 
     if (cookieJarSettings) {

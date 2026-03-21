@@ -338,6 +338,26 @@ JS_PUBLIC_API bool JS::IsCyclicModule(JSObject* module) {
   return module->as<ModuleObject>().hasCyclicModuleFields();
 }
 
+#ifdef DEBUG
+JS_PUBLIC_API void JS::SetModulePreload(JSObject* module, bool isPreload) {
+  MOZ_ASSERT(module->is<ModuleObject>());
+  module->as<ModuleObject>().setPreload(isPreload);
+}
+#endif
+
+JS_PUBLIC_API void JS::ResetPreloadedModule(JSObject* module) {
+  MOZ_RELEASE_ASSERT(!ModuleIsLinked(module));
+  MOZ_ASSERT(module->is<ModuleObject>());
+
+  auto& moduleObj = module->as<ModuleObject>();
+  if (!moduleObj.hasCyclicModuleFields()) {
+    return;
+  }
+  MOZ_ASSERT(moduleObj.isPreload());
+  moduleObj.setStatus(ModuleStatus::New);
+  moduleObj.loadedModules().clear();
+}
+
 JS_PUBLIC_API bool JS::ModuleLink(JSContext* cx, Handle<JSObject*> moduleArg) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
@@ -779,47 +799,35 @@ bool js::HostLoadImportedModule(JSContext* cx, Handle<JSScript*> referrer,
   return true;
 }
 
-static bool ModuleResolveExportImpl(JSContext* cx, Handle<ModuleObject*> module,
-                                    Handle<JSAtom*> exportName,
-                                    MutableHandle<ResolveSet> resolveSet,
-                                    MutableHandle<Value> result,
-                                    ModuleErrorInfo* errorInfoOut = nullptr) {
+// https://tc39.es/ecma262/#table-abstract-methods-of-module-records
+// Abstract Method 'ResolveExport(exportName, resolveSet)'
+static bool ModuleResolveExportWithResolveSet(
+    JSContext* cx, Handle<ModuleObject*> module, Handle<JSAtom*> exportName,
+    MutableHandle<ResolveSet> resolveSet, MutableHandle<Value> result,
+    ModuleErrorInfo* errorInfoOut = nullptr) {
   if (module->hasSyntheticModuleFields()) {
     return SyntheticModuleResolveExport(cx, module, exportName, result,
                                         errorInfoOut);
   }
 
+  // https://tc39.es/ecma262/#sec-resolveexport
+  // Step 1. Assert: module.[[Status]] is not new.
+  MOZ_ASSERT(module->status() != ModuleStatus::New);
   return CyclicModuleResolveExport(cx, module, exportName, resolveSet, result,
                                    errorInfoOut);
 }
 
-// https://tc39.es/ecma262/#sec-resolveexport
-// ES2023 16.2.1.6.3 ResolveExport
-//
-// Returns an value describing the location of the resolved export or indicating
-// a failure.
-//
-// On success this returns a resolved binding record: { module, bindingName }
-//
-// There are two failure cases:
-//
-//  - If no definition was found or the request is found to be circular, *null*
-//    is returned.
-//
-//  - If the request is found to be ambiguous, the string `"ambiguous"` is
-//    returned.
-//
+// https://tc39.es/ecma262/#table-abstract-methods-of-module-records
+// Abstract Method 'ResolveExport(exportName)'
 static bool ModuleResolveExport(JSContext* cx, Handle<ModuleObject*> module,
                                 Handle<JSAtom*> exportName,
                                 MutableHandle<Value> result,
                                 ModuleErrorInfo* errorInfoOut = nullptr) {
-  // Step 1. Assert: module.[[Status]] is not new.
-  MOZ_ASSERT(module->status() != ModuleStatus::New);
-
+  // https://tc39.es/ecma262/#sec-resolveexport
   // Step 2. If resolveSet is not present, set resolveSet to a new empty List.
   Rooted<ResolveSet> resolveSet(cx);
-  return ModuleResolveExportImpl(cx, module, exportName, &resolveSet, result,
-                                 errorInfoOut);
+  return ModuleResolveExportWithResolveSet(cx, module, exportName, &resolveSet,
+                                           result, errorInfoOut);
 }
 
 static bool CreateResolvedBindingObject(JSContext* cx,
@@ -836,6 +844,21 @@ static bool CreateResolvedBindingObject(JSContext* cx,
   return true;
 }
 
+// https://tc39.es/ecma262/#sec-resolveexport
+// Source Text Module Record: ResolveExport
+//
+// Returns an value describing the location of the resolved export or indicating
+// a failure.
+//
+// On success this returns a resolved binding record: { module, bindingName }
+//
+// There are two failure cases:
+//
+//  - If no definition was found or the request is found to be circular, *null*
+//    is returned.
+//
+//  - If the request is found to be ambiguous, the string `"ambiguous"` is
+//    returned.
 static bool CyclicModuleResolveExport(JSContext* cx,
                                       Handle<ModuleObject*> module,
                                       Handle<JSAtom*> exportName,
@@ -911,8 +934,8 @@ static bool CyclicModuleResolveExport(JSContext* cx,
         //                , resolveSet).
         name = e.importName();
 
-        return ModuleResolveExportImpl(cx, importedModule, name, resolveSet,
-                                       result, errorInfoOut);
+        return ModuleResolveExportWithResolveSet(
+            cx, importedModule, name, resolveSet, result, errorInfoOut);
       }
     }
   }
@@ -952,8 +975,9 @@ static bool CyclicModuleResolveExport(JSContext* cx,
 
     // Step 9.c. Let resolution be ? importedModule.ResolveExport(exportName,
     //           resolveSet).
-    if (!CyclicModuleResolveExport(cx, importedModule, exportName, resolveSet,
-                                   &resolution, errorInfoOut)) {
+    if (!ModuleResolveExportWithResolveSet(cx, importedModule, exportName,
+                                           resolveSet, &resolution,
+                                           errorInfoOut)) {
       return false;
     }
 
@@ -1037,7 +1061,7 @@ ModuleNamespaceObject* js::GetOrCreateModuleNamespace(
     JSContext* cx, Handle<ModuleObject*> module) {
   // Step 1. Assert: If module is a Cyclic Module Record, then module.[[Status]]
   //         is not new or unlinked.
-  MOZ_ASSERT(module->status() != ModuleStatus::New ||
+  MOZ_ASSERT(module->status() != ModuleStatus::New &&
              module->status() != ModuleStatus::Unlinked);
 
   // Step 2. Let namespace be module.[[Namespace]].
@@ -1888,34 +1912,21 @@ static bool ModuleEvaluate(JSContext* cx, Handle<ModuleObject*> moduleArg,
     return false;
   }
 
-  // Note: we return early in the error case, as the spec assumes we can get the
-  // cycle root of |module| which may not be available.
-  if (module->hadEvaluationError()) {
-    Rooted<PromiseObject*> capability(cx);
-    if (!module->hasTopLevelCapability()) {
-      capability = ModuleObject::createTopLevelCapability(cx, module);
-      if (!capability) {
-        return false;
-      }
-
-      Rooted<Value> error(cx, module->evaluationError());
-      if (!ModuleObject::topLevelCapabilityReject(cx, module, error)) {
-        return false;
-      }
-    }
-
-    capability = module->topLevelCapability();
-    MOZ_ASSERT(JS::GetPromiseState(capability) == JS::PromiseState::Rejected);
-    MOZ_ASSERT(JS::GetPromiseResult(capability) == module->evaluationError());
-    result.set(ObjectValue(*capability));
-    return true;
-  }
-
   // Step 3. If module.[[Status]] is evaluating-async or evaluated, set module
   //         to module.[[CycleRoot]].
   if (module->status() == ModuleStatus::EvaluatingAsync ||
       module->status() == ModuleStatus::Evaluated) {
-    module = module->getCycleRoot();
+    // a. If module.[[CycleRoot]] is not empty, then
+    if (module->hasCycleRoot()) {
+      // i. Set module to module.[[CycleRoot]].
+      module = module->getCycleRoot();
+    } else {
+      // b. Else
+      //   i. Assert: module.[[Status]] is evaluated and
+      //      module.[[EvaluationError]] is a throw completion.
+      MOZ_ASSERT((module->status() == ModuleStatus::Evaluated) &&
+                 module->hadEvaluationError());
+    }
   }
 
   // Step 4. If module.[[TopLevelCapability]] is not empty, then:

@@ -1,5 +1,3 @@
-/* -*- Mode: Java; c-basic-offset: 2; tab-width: 2; indent-tabs-mode: nil -*- */
-/* vim: set ts=2 et sw=2 tw=100: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -22,9 +20,11 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.OutcomeReceiver;
 import android.util.Log;
+import androidx.annotation.UiThread;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.WebAuthnUtils;
 import org.mozilla.geckoview.GeckoResult;
 
@@ -116,9 +116,11 @@ public class WebAuthnCredentialManager {
     return bundle;
   }
 
+  @UiThread
   @SuppressLint("MissingPermission")
   public static GeckoResult<WebAuthnUtils.MakeCredentialResponse> makeCredential(
       final String origin, final byte[] clientDataHash, final String requestJSON) {
+    ThreadUtils.assertOnUiThread();
 
     // We use Credential Manager first. If it doesn't work, we use GMS FIDO2.
     // Credential manager may support non-discoverable keys,
@@ -212,10 +214,13 @@ public class WebAuthnCredentialManager {
     return result;
   }
 
+  @UiThread
   @SuppressLint("MissingPermission")
   public static GeckoResult<PrepareGetCredentialResponse.PendingGetCredentialHandle>
       prepareGetAssertion(
           final String origin, final byte[] clientDataHash, final String requestJSON) {
+    ThreadUtils.assertOnUiThread();
+
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       // No credential manager. Relay to GMS FIDO2
       return GeckoResult.fromValue(null);
@@ -295,8 +300,11 @@ public class WebAuthnCredentialManager {
     return result;
   }
 
+  @UiThread
   public static GeckoResult<WebAuthnUtils.GetAssertionResponse> getAssertion(
       final PrepareGetCredentialResponse.PendingGetCredentialHandle pendingHandle) {
+    ThreadUtils.assertOnUiThread();
+
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       return GeckoResult.fromException(new WebAuthnUtils.Exception("NOT_SUPPORTED_ERR"));
     }

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -1343,11 +1341,21 @@ nsGlobalWindowOuter::nsGlobalWindowOuter(uint64_t aWindowID)
 #ifdef DEBUG
   mSerial = nsContentUtils::InnerOrOuterWindowCreated();
 
-  MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
-          ("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
-           nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
-           static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
-           nullptr));
+  if (MOZ_LOG_TEST(gDocShellAndDOMWindowLeakLogging, LogLevel::Info)) {
+    MOZ_LOG(gDocShellAndDOMWindowLeakLogging, LogLevel::Info,
+            ("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
+             nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
+             static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
+             nullptr));
+
+    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+    if (obs) {
+      nsString data;
+      data.AppendPrintf("serial=%d address=0x%" PRIxPTR " type=outer", mSerial,
+                        reinterpret_cast<uintptr_t>(ToCanonicalSupports(this)));
+      obs->NotifyObservers(nullptr, "debug-domwindow-created", data.get());
+    }
+  }
 #endif
 
   MOZ_LOG(gDOMLeakPRLogOuter, LogLevel::Debug,
@@ -1414,6 +1422,23 @@ nsGlobalWindowOuter::~nsGlobalWindowOuter() {
          nsContentUtils::GetCurrentInnerOrOuterWindowCount(),
          static_cast<void*>(ToCanonicalSupports(this)), getpid(), mSerial,
          nullptr, url.get()));
+
+    uint32_t serial = mSerial;
+    NS_DispatchToMainThread(
+        NS_NewRunnableFunction(
+            "TestDOMWindowDestroyed",
+            [serial, url = std::move(url)] {
+              nsCOMPtr<nsIObserverService> obs =
+                  mozilla::services::GetObserverService();
+              if (obs) {
+                nsString data;
+                data.AppendPrintf("serial=%d type=outer url=%s", serial,
+                                  url.get());
+                obs->NotifyObservers(nullptr, "debug-domwindow-destroyed",
+                                     data.get());
+              }
+            }),
+        NS_DISPATCH_FALLIBLE);
   }
 #endif
 
@@ -2053,7 +2078,8 @@ static nsresult CreateNativeGlobalForInner(
   if (!Window_Binding::Wrap(aCx, aNewInner, aNewInner, options,
                             nsJSPrincipals::get(principal), aGlobal) ||
       !xpc::InitGlobalObject(aCx, aGlobal, flags)) {
-    return NS_ERROR_FAILURE;
+    return JS_IsThrowingOutOfMemory(aCx) ? NS_ERROR_OUT_OF_MEMORY
+                                         : NS_ERROR_FAILURE;
   }
 
   MOZ_ASSERT(aNewInner->GetWrapperPreserveColor() == aGlobal);
@@ -2063,7 +2089,8 @@ static nsresult CreateNativeGlobalForInner(
   xpc::SetLocationForGlobal(aGlobal, uri);
 
   if (!InitializeLegacyNetscapeObject(aCx, aGlobal)) {
-    return NS_ERROR_FAILURE;
+    return JS_IsThrowingOutOfMemory(aCx) ? NS_ERROR_OUT_OF_MEMORY
+                                         : NS_ERROR_FAILURE;
   }
 
   return NS_OK;
@@ -2359,13 +2386,15 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       JS::Rooted<JS::Value> unused(cx);
       if (!JS_GetProperty(cx, newInnerGlobal, "window", &unused)) {
         NS_ERROR("can't create the 'window' property");
-        return NS_ERROR_FAILURE;
+        return JS_IsThrowingOutOfMemory(cx) ? NS_ERROR_OUT_OF_MEMORY
+                                            : NS_ERROR_FAILURE;
       }
 
       // And same thing for the "self" property.
       if (!JS_GetProperty(cx, newInnerGlobal, "self", &unused)) {
         NS_ERROR("can't create the 'self' property");
-        return NS_ERROR_FAILURE;
+        return JS_IsThrowingOutOfMemory(cx) ? NS_ERROR_OUT_OF_MEMORY
+                                            : NS_ERROR_FAILURE;
       }
     }
   }
@@ -3155,7 +3184,7 @@ static nsresult GetTopImpl(nsGlobalWindowOuter* aWin, nsIURI* aURIBeingLoaded,
           // result after computing it the first time.
           if (BasePrincipal::Cast(p->GetPrincipal())
                   ->AddonAllowsLoad(uri, true)) {
-            parent = prevParent;
+            parent = std::move(prevParent);
             break;
           }
         }
@@ -3491,7 +3520,7 @@ CSSIntSize nsGlobalWindowOuter::GetOuterSize(CallerType aCallerType,
   if (nsIGlobalObject::ShouldResistFingerprinting(aCallerType,
                                                   RFPTarget::WindowOuterSize)) {
     if (BrowsingContext* bc = GetBrowsingContext()) {
-      return bc->Top()->GetTopInnerSizeForRFP();
+      return bc->TopInnerSizeSpoofedForRFP();
     }
     return {};
   }
@@ -5841,9 +5870,9 @@ bool nsGlobalWindowOuter::GetPrincipalForPostMessage(
     OriginAttributes sourceAttrs = aSubjectPrincipal.OriginAttributesRef();
     // We have to exempt the check of OA if the subject prioncipal is a system
     // principal since there are many tests try to post messages to content from
-    // chrome with a mismatch OA. For example, using the ContentTask.spawn() to
-    // post a message into a private browsing window. The injected code in
-    // ContentTask.spawn() will be executed under the system principal and the
+    // chrome with a mismatch OA. For example, using the SpecialPowers.spawn()
+    // to post a message into a private browsing window. The injected code in
+    // SpecialPowers.spawn() will be executed under the system principal and the
     // OA of the system principal mismatches with the OA of a private browsing
     // window.
     MOZ_DIAGNOSTIC_ASSERT(aSubjectPrincipal.IsSystemPrincipal() ||
@@ -7118,76 +7147,6 @@ void nsGlobalWindowOuter::EnsureSizeAndPositionUpToDate() {
     RefPtr<Document> parent = mDoc->GetInProcessParentDocument();
     parent->FlushPendingNotifications(FlushType::Layout);
   }
-}
-
-already_AddRefed<nsISupports> nsGlobalWindowOuter::SaveWindowState() {
-  MOZ_ASSERT(!mozilla::SessionHistoryInParent());
-
-  if (!mContext || !GetWrapperPreserveColor()) {
-    // The window may be getting torn down; don't bother saving state.
-    return nullptr;
-  }
-
-  nsGlobalWindowInner* inner = GetCurrentInnerWindowInternal(this);
-  NS_ASSERTION(inner, "No inner window to save");
-
-  if (WindowContext* wc = inner->GetWindowContext()) {
-    MOZ_ASSERT(!wc->GetWindowStateSaved());
-    (void)wc->SetWindowStateSaved(true);
-  }
-
-  // Don't do anything else to this inner window! After this point, all
-  // calls to SetTimeoutOrInterval will create entries in the timeout
-  // list that will only run after this window has come out of the bfcache.
-  // Also, while we're frozen, we won't dispatch online/offline events
-  // to the page.
-  inner->Freeze();
-
-  nsCOMPtr<nsISupports> state = new WindowStateHolder(inner);
-
-  MOZ_LOG(gPageCacheLog, LogLevel::Debug,
-          ("saving window state, state = %p", (void*)state));
-
-  return state.forget();
-}
-
-nsresult nsGlobalWindowOuter::RestoreWindowState(nsISupports* aState) {
-  MOZ_ASSERT(!mozilla::SessionHistoryInParent());
-
-  if (!mContext || !GetWrapperPreserveColor()) {
-    // The window may be getting torn down; don't bother restoring state.
-    return NS_OK;
-  }
-
-  nsCOMPtr<WindowStateHolder> holder = do_QueryInterface(aState);
-  NS_ENSURE_TRUE(holder, NS_ERROR_FAILURE);
-
-  MOZ_LOG(gPageCacheLog, LogLevel::Debug,
-          ("restoring window state, state = %p", (void*)holder));
-
-  // And we're ready to go!
-  nsGlobalWindowInner* inner = GetCurrentInnerWindowInternal(this);
-
-  // if a link is focused, refocus with the FLAG_SHOWRING flag set. This makes
-  // it easy to tell which link was last clicked when going back a page.
-  RefPtr<Element> focusedElement = inner->GetFocusedElement();
-  if (nsContentUtils::ContentIsLink(focusedElement)) {
-    if (RefPtr<nsFocusManager> fm = nsFocusManager::GetFocusManager()) {
-      fm->SetFocus(focusedElement, nsIFocusManager::FLAG_NOSCROLL |
-                                       nsIFocusManager::FLAG_SHOWRING);
-    }
-  }
-
-  if (WindowContext* wc = inner->GetWindowContext()) {
-    MOZ_ASSERT(wc->GetWindowStateSaved());
-    (void)wc->SetWindowStateSaved(false);
-  }
-
-  inner->Thaw();
-
-  holder->DidRestoreWindow();
-
-  return NS_OK;
 }
 
 void nsGlobalWindowOuter::AddSizeOfIncludingThis(

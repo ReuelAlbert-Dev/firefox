@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -18,6 +16,7 @@
 #include "mozilla/Maybe.h"  // For Maybe
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/AnimationBinding.h"
+#include "mozilla/dom/CSSTransition.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/DocumentTimeline.h"
@@ -345,6 +344,29 @@ void Animation::SetTimelineNoUpdate(AnimationTimeline* aTimeline) {
 
   // FIXME: Bug 1799071: Check if we need to add
   // MutationObservers::NotifyAnimationChanged(this) here.
+}
+
+void Animation::SetTimelineRange(AnimationRange&& aRange) {
+  SetTimelineRangeNoUpdate(std::move(aRange));
+  PostUpdate();
+}
+
+void Animation::SetTimelineRangeNoUpdate(AnimationRange&& aRange) {
+  if (mTimelineRange == aRange) {
+    return;
+  }
+
+  // TODO: Bug 2006262. We may have to rewrite this when adding the attribute:
+  // https://drafts.csswg.org/web-animations-2/#dom-animation-rangestart
+  // https://drafts.csswg.org/web-animations-2/#dom-animation-rangeend
+  //
+  // For now, this is not exposed and is set during initialization of the CSS
+  // Animations.
+  mTimelineRange = std::move(aRange);
+
+  if (mEffect) {
+    mEffect->UpdateNormalizedTiming();
+  }
 }
 
 // https://drafts.csswg.org/web-animations/#set-the-animation-start-time
@@ -789,7 +811,7 @@ void Animation::Reverse(ErrorResult& aRv) {
   // If Play() threw, restore state and don't report anything to mutation
   // observers.
   if (aRv.Failed()) {
-    mPendingPlaybackRate = originalPendingPlaybackRate;
+    mPendingPlaybackRate = std::move(originalPendingPlaybackRate);
   }
 
   // Play(), above, unconditionally calls PostUpdate so we don't need to do
@@ -1761,6 +1783,17 @@ void Animation::PostUpdate() {
 
 void Animation::CancelPendingTasks() {
   mPendingState = PendingState::NotPending;
+
+  // If we cancel the pending animation, we need to remove it from the pending
+  // scroll-driven animation tracker. Also, the caller should put this animation
+  // back into the pending animation tracker if needed, for scroll-timeline or
+  // view-timeline.
+  if (Document* doc = GetRenderedDocument()) {
+    if (auto* tracker = doc->GetScrollTimelineAnimationTracker()) {
+      // no-op if |this| is not in the tracker.
+      tracker->RemovePending(*this);
+    }
+  }
 }
 
 // https://drafts.csswg.org/web-animations/#reset-an-animations-pending-tasks
@@ -1824,6 +1857,14 @@ Animation::AtProgressTimelineBoundary(
                      effectiveTimelineTime, aTimelineDuration.Value()))
              ? ProgressTimelinePosition::Boundary
              : ProgressTimelinePosition::NotBoundary;
+}
+
+void Animation::UpdateNormalizedTimingForTimelineDataChange() {
+  if (!mEffect) {
+    return;
+  }
+
+  mEffect->UpdateNormalizedTiming();
 }
 
 StickyTimeDuration Animation::EffectEnd() const {

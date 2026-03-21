@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=8 et tw=80 : */
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -551,6 +548,10 @@ mozilla::ipc::IPCResult NeckoParent::RecvPDNSRequestConstructor(
     const nsACString& aTrrServer, const int32_t& aPort, const uint16_t& aType,
     const OriginAttributes& aOriginAttributes,
     const nsIDNSService::DNSFlags& aFlags) {
+  if (!aTrrServer.IsEmpty()) {
+    return IPC_FAIL(this, "Content process should not specify TRR server");
+  }
+
   RefPtr<DNSRequestParent> actor = static_cast<DNSRequestParent*>(aActor);
   RefPtr<DNSRequestHandler> handler =
       actor->GetDNSRequest()->AsDNSRequestHandler();
@@ -592,6 +593,15 @@ mozilla::ipc::IPCResult NeckoParent::RecvHTMLDNSPrefetch(
     const OriginAttributes& aOriginAttributes,
     const nsIDNSService::DNSFlags& flags) {
   dom::HTMLDNSPrefetch::Prefetch(hostname, isHttps, aOriginAttributes, flags);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult NeckoParent::RecvHTMLDNSPrefetchBatch(
+    nsTArray<HTMLDNSPrefetchArgs>&& aPrefetches) {
+  for (const auto& entry : aPrefetches) {
+    dom::HTMLDNSPrefetch::Prefetch(entry.hostname(), entry.isHttps(),
+                                   entry.originAttributes(), entry.flags());
+  }
   return IPC_OK();
 }
 

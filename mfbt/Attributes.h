@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +6,10 @@
 
 #ifndef mozilla_Attributes_h
 #define mozilla_Attributes_h
+
+#ifdef __cplusplus
+#  include <version>  // IWYU pragma: keep(__GLIBCXX__ lookup)
+#endif
 
 /*
  * MOZ_ALWAYS_INLINE is a macro which expands to tell the compiler that the
@@ -908,6 +910,25 @@
 #    endif
 
 /*
+ * Should be constinit per C++20 standard, but we sometimes link with an older
+ * libstdc++
+ */
+#    if defined(__GLIBCXX__) && (__GLIBCXX__ <= 20230707)
+#      define MOZ_GLIBCXX_CONSTINIT MOZ_RUNINIT
+#    else
+#      define MOZ_GLIBCXX_CONSTINIT constinit
+#    endif
+
+/*
+ * Release-only constinit, runtime initializer in Debug.
+ */
+#    if defined(DEBUG)
+#      define MOZ_RELEASE_CONSTINIT MOZ_RUNINIT
+#    else
+#      define MOZ_RELEASE_CONSTINIT constinit
+#    endif
+
+/*
  * It turns out that clang doesn't like void func() __attribute__ {} without a
  * warning, so use pragmas to disable the warning.
  */
@@ -928,6 +949,8 @@
 #    define MOZ_STATIC_CLASS                                /* nothing */
 #    define MOZ_RUNINIT                                     /* nothing */
 #    define MOZ_GLOBINIT                                    /* nothing */
+#    define MOZ_GLIBCXX_CONSTINIT                           /* nothing */
+#    define MOZ_RELEASE_CONSTINIT                           /* nothing */
 #    define MOZ_STATIC_LOCAL_CLASS                          /* nothing */
 #    define MOZ_STACK_CLASS                                 /* nothing */
 #    define MOZ_NONHEAP_CLASS                               /* nothing */

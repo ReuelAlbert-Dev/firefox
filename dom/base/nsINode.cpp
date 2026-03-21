@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -62,6 +60,7 @@
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/L10nOverlays.h"
+#include "mozilla/dom/LifecycleCallbackArgs.h"
 #include "mozilla/dom/Link.h"
 #include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/NodeBinding.h"
@@ -607,7 +606,8 @@ nsIContent* nsINode::GetFirstChildOfTemplateOrNode() {
   return GetFirstChild();
 }
 
-nsINode* nsINode::SubtreeRoot() const {
+#ifdef DEBUG
+void nsINode::AssertSubtreeRootIsInSync() const {
   auto RootOfNode = [](const nsINode* aStart) -> nsINode* {
     const nsINode* node = aStart;
     const nsINode* iter = node;
@@ -616,37 +616,15 @@ nsINode* nsINode::SubtreeRoot() const {
     }
     return const_cast<nsINode*>(node);
   };
-
-  // There are four cases of interest here.  nsINodes that are really:
-  // 1. Document nodes - Are always in the document.
-  // 2.a nsIContent nodes not in a shadow tree - Are either in the document,
-  //     or mSubtreeRoot is updated in BindToTree/UnbindFromTree.
-  // 2.b nsIContent nodes in a shadow tree - Are never in the document,
-  //     ignore mSubtreeRoot and return the containing shadow root.
-  // 4. Attr nodes - Are never in the document, and mSubtreeRoot
-  //    is always 'this' (as set in nsINode's ctor).
-  nsINode* node;
-  if (IsInUncomposedDoc()) {
-    node = OwnerDocAsNode();
-  } else if (IsContent()) {
-    ShadowRoot* containingShadow = AsContent()->GetContainingShadow();
-    node = containingShadow ? containingShadow : mSubtreeRoot;
-    if (!node) {
-      NS_WARNING("Using SubtreeRoot() on unlinked element?");
-      node = RootOfNode(this);
-    }
-  } else {
-    node = mSubtreeRoot;
-  }
-  MOZ_ASSERT(node, "Should always have a node here!");
-#ifdef DEBUG
-  {
-    const nsINode* slowNode = RootOfNode(this);
-    MOZ_ASSERT(slowNode == node, "These should always be in sync!");
-  }
-#endif
-  return node;
+  MOZ_ASSERT(mSubtreeRoot, "Should always have a node here!");
+  MOZ_ASSERT(RootOfNode(this) == mSubtreeRoot,
+             "These should always be in sync!");
+  MOZ_ASSERT(!IsInShadowTree() || mSubtreeRoot->IsShadowRoot(),
+             "Subtree root should be a shadow root if in shadow tree");
+  MOZ_ASSERT(!IsInUncomposedDoc() || mSubtreeRoot == OwnerDoc(),
+             "Subtree root should be doc if in uncomposed doc");
 }
+#endif
 
 static nsIContent* GetRootForContentSubtree(nsIContent* aContent) {
   NS_ENSURE_TRUE(aContent, nullptr);
@@ -1005,13 +983,6 @@ std::ostream& operator<<(std::ostream& aStream, const nsINode& aNode) {
 nsIContent* nsINode::DoGetShadowHost() const {
   MOZ_ASSERT(IsShadowRoot());
   return static_cast<const ShadowRoot*>(this)->GetHost();
-}
-
-ShadowRoot* nsINode::GetContainingShadow() const {
-  if (!IsInShadowTree()) {
-    return nullptr;
-  }
-  return AsContent()->GetContainingShadow();
 }
 
 Element* nsINode::GetContainingShadowHost() const {

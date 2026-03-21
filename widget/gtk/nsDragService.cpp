@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=4 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -196,8 +194,9 @@ static void UTF16ToNewUTF8(const char16_t* aUTF16, uint32_t aUTF16Len,
   *aUTF8 = ToNewUTF8String(utf16, aUTF8Len);
 }
 
-static nsString UTF8ToNewString(const char* aUTF8, uint32_t aUTF8Len = 0) {
-  nsDependentCSubstring utf8(aUTF8, aUTF8Len ? aUTF8Len : strlen(aUTF8));
+static nsString UTF8ToNewString(const char* aUTF8, uint32_t aUTF8DataLen = 0) {
+  nsDependentCSubstring utf8(aUTF8,
+                             aUTF8DataLen ? aUTF8DataLen : strlen(aUTF8));
   nsString ret;
   uint32_t convertedTextLen = 0;
   char16_t* convertedText = UTF8ToNewUnicode(utf8, &convertedTextLen);
@@ -731,7 +730,8 @@ static GtkWindow* GetGtkWindow(dom::Document* aDocument) {
     return nullptr;
   }
 
-  GtkWidget* gtkWidget = static_cast<nsWindow*>(widget.get())->GetGtkWidget();
+  GtkWidget* gtkWidget =
+      GTK_WIDGET(widget->GetNativeData(NS_NATIVE_SHELLWIDGET));
   if (!gtkWidget) return nullptr;
 
   GtkWidget* toplevel = nullptr;
@@ -784,14 +784,15 @@ nsresult nsDragSession::InvokeDragSessionImpl(
           "nsDragSession::InvokeDragSessionImpl(): Missing origin GdkWindow!");
       return NS_ERROR_FAILURE;
     }
-#ifdef MOZ_WAYLAND
-    if (!gdk_wayland_window_get_wl_surface(originGdkWindow)) {
-      NS_WARNING(
-          "nsDragSession::InvokeDragSessionImpl(): Missing origin wl_surface!");
-      return NS_ERROR_FAILURE;
-    }
-#endif
   }
+#ifdef MOZ_WAYLAND
+  if (widget::GdkIsWaylandDisplay() &&
+      !gdk_wayland_window_get_wl_surface(originGdkWindow)) {
+    NS_WARNING(
+        "nsDragSession::InvokeDragSessionImpl(): Missing origin wl_surface!");
+    return NS_ERROR_FAILURE;
+  }
+#endif
 
   // get the list of items we offer for drags
   GtkTargetList* sourceList = GetSourceList();
@@ -1582,7 +1583,7 @@ void nsDragSession::TargetDataReceived(GtkWidget* aWidget,
     gint len = -1;
     if (IsTextFlavor(target)) {
       data = gtk_selection_data_get_text(aSelectionData);
-      len = data ? g_utf8_strlen(reinterpret_cast<const gchar*>(data), -1) : -1;
+      len = data ? gtk_selection_data_get_length(aSelectionData) : -1;
     } else {
       data = gtk_selection_data_get_data(aSelectionData);
       len = gtk_selection_data_get_length(aSelectionData);
