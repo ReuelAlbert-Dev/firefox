@@ -1,6 +1,7 @@
 import contextlib
 import ssl
 import threading
+import ast
 
 from websockets.sync.server import *
 
@@ -31,7 +32,11 @@ def do_nothing(ws):
 
 def eval_shell(ws):
     for expr in ws:
-        value = eval(expr)
+        try:
+            value = ast.literal_eval(expr)
+        except (ValueError, SyntaxError):
+            # Fall back to echoing the original expression on invalid input
+            value = expr
         ws.send(str(value))
 
 
