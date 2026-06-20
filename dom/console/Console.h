@@ -32,7 +32,7 @@ class MainThreadConsoleData;
 
 class Console final : public nsIObserver, public nsSupportsWeakReference {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(Console, nsIObserver)
   NS_DECL_NSIOBSERVER
 
@@ -449,6 +449,9 @@ class Console final : public nsIObserver, public nsSupportsWeakReference {
   // This is used when Console is created and it's used only for JSM custom
   // console instance.
   mozilla::TimeStamp mCreationTimeStamp;
+
+  // Touch on the owning thread only.
+  bool mIsRetrievingConsoleEvent = false;
 
   friend class ConsoleCallData;
   friend class ConsoleCallDataWorkletRunnable;

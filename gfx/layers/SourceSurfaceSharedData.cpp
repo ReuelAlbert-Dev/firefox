@@ -80,9 +80,11 @@ bool SourceSurfaceSharedDataWrapper::EnsureMapped() {
 
   auto computedStride =
       CheckedInt<int32_t>(mSize.width) * BytesPerPixel(mFormat);
+  auto computedLength = CheckedInt<int32_t>(mSize.height) * mStride;
   if (mSize.width < 0 || mSize.height < 0 || mStride < 0 ||
-      !computedStride.isValid() || mStride < computedStride.value() ||
-      !image::SurfaceCache::IsLegalSize(mSize) ||
+      !computedStride.isValid() || computedStride.value() <= 0 ||
+      mStride < computedStride.value() || !computedLength.isValid() ||
+      computedLength.value() <= 0 || !image::SurfaceCache::IsLegalSize(mSize) ||
       mBufHandle.Size() < GetAlignedDataLength()) {
     return false;
   }

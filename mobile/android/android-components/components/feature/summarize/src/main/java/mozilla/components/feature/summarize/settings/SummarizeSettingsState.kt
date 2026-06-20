@@ -4,15 +4,18 @@
 
 package mozilla.components.feature.summarize.settings
 
+import mozilla.components.lib.shake.ShakeSensitivity
 import mozilla.components.lib.state.State
 
 /**
  * State for the summarize settings screen.
  *
- * @property summarizePagesEnabled Whether page summarization is enabled.
- * @property shakeToSummarizeEnabled Whether the shake-to-summarize gesture is enabled.
+ * @property isFeatureEnabled Whether page summarization is enabled.
+ * @property isGestureEnabled Whether the shake-to-summarize gesture is enabled.
+ * @property shakeSensitivity The shake sensitivity of shake-to-summarize
  */
 data class SummarizeSettingsState(
-    val summarizePagesEnabled: Boolean,
-    val shakeToSummarizeEnabled: Boolean,
+    val isFeatureEnabled: Boolean = false,
+    val isGestureEnabled: Boolean = false,
+    val shakeSensitivity: ShakeSensitivity = ShakeSensitivity.Medium,
 ) : State

@@ -350,6 +350,27 @@ main-context-menu-send-to-device-2 =
     .label = Send to Device
     .accesskey = n
 
+main-context-menu-send-to-mobile-2 =
+    .label = Send to Mobile
+    .accesskey = n
+
+## Displayed within the send tab submenu to prompt users to sign in, enable sync, pair a device, or troubleshoot device issues.
+
+main-context-menu-send-to-mobile-sign-in = Sign in to Send Tabs
+main-context-menu-send-to-mobile-enable-sync2 = Enable sync to send a tab
+main-context-menu-send-to-mobile-connect-phone2 = Connect your phone
+main-context-menu-send-to-mobile-device-missing2 = Don’t See Your Device?
+main-context-menu-send-to-mobile-sign-in-from-link = Sign in to Send a Link
+main-context-menu-send-to-mobile-sign-in-from-page = Sign in to Send a Page
+main-context-menu-send-to-mobile-enable-sync3 = Turn on Sync to Send Tabs
+main-context-menu-send-to-mobile-enable-sync-from-link = Turn on Sync to Send a Link
+main-context-menu-send-to-mobile-enable-sync-from-page = Turn on Sync to Send a Page
+main-context-menu-send-to-mobile-connect-phone3 = Connect a Device to Send Tabs
+main-context-menu-send-to-mobile-connect-phone-from-link = Connect a Device to Send a Link
+main-context-menu-send-to-mobile-connect-phone-from-page = Connect a Device to Send a Page
+
+##
+
 # Displayed when there are saved passwords and the user clicks inside a username or password field
 main-context-menu-use-saved-password =
     .label = Use Saved Password
@@ -373,6 +394,10 @@ main-context-menu-add-engine =
 
 main-context-menu-link-send-to-device =
     .label = Send Link to Device
+    .accesskey = n
+
+main-context-menu-link-send-to-mobile =
+    .label = Send Link to Mobile
     .accesskey = n
 
 main-context-menu-frame =

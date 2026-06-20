@@ -22,7 +22,7 @@ class HTMLFieldSetElement final : public nsGenericHTMLFormControlElement,
   using ConstraintValidation::SetCustomValidity;
 
   explicit HTMLFieldSetElement(
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+      already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
   NS_IMPL_FROMNODE_HTML_WITH_TAG(HTMLFieldSetElement, fieldset)
 
@@ -82,7 +82,7 @@ class HTMLFieldSetElement final : public nsGenericHTMLFormControlElement,
 
   void GetType(nsAString& aType) const;
 
-  nsIHTMLCollection* Elements();
+  HTMLCollection* Elements();
 
   // XPCOM WillValidate is OK for us
 
@@ -119,17 +119,17 @@ class HTMLFieldSetElement final : public nsGenericHTMLFormControlElement,
    */
   void NotifyElementsForFirstLegendChange(bool aNotify);
 
-  // This function is used to generate the nsContentList (listed form elements).
+  // This function is used to generate the ContentList (listed form elements).
   static bool MatchListedElements(Element* aElement, int32_t aNamespaceID,
                                   nsAtom* aAtom, void* aData);
 
   // listed form controls elements.
-  RefPtr<nsContentList> mElements;
+  RefPtr<ContentList> mElements;
 
   // List of elements which have this fieldset as first fieldset ancestor.
   nsTArray<nsGenericHTMLFormElement*> mDependentElements;
 
-  nsIContent* mFirstLegend;
+  RefPtr<nsIContent> mFirstLegend;
 
   /**
    * Number of invalid and candidate for constraint validation

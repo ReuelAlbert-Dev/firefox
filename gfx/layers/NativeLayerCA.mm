@@ -14,10 +14,9 @@
 
 #include <algorithm>
 #include <fstream>
-#include <iostream>
-#include <sstream>
 #include <utility>
 
+#include "gfxPlatform.h"
 #include "gfxUtils.h"
 #include "GLBlitHelper.h"
 #ifdef XP_MACOSX
@@ -772,8 +771,7 @@ NativeLayerRootSnapshotterCA::CreateDownscaleTarget(const IntSize& aSize) {
   if (!fb) {
     return nullptr;
   }
-  RefPtr<profiler_screenshots::DownscaleTarget> dt =
-      new DownscaleTargetNLRS(mGL, std::move(fb));
+  RefPtr dt = MakeRefPtr<DownscaleTargetNLRS>(mGL, std::move(fb));
   return dt.forget();
 }
 
@@ -785,7 +783,6 @@ NativeLayerRootSnapshotterCA::CreateAsyncReadbackBuffer(const IntSize& aSize) {
 
   gl::ScopedPackState scopedPackState(mGL);
   mGL->fBindBuffer(LOCAL_GL_PIXEL_PACK_BUFFER, bufferHandle);
-  mGL->fPixelStorei(LOCAL_GL_PACK_ALIGNMENT, 1);
   mGL->fBufferData(LOCAL_GL_PIXEL_PACK_BUFFER, bufferByteCount, nullptr,
                    LOCAL_GL_STREAM_READ);
   return MakeAndAddRef<AsyncReadbackBufferNLRS>(mGL, aSize, bufferHandle,
@@ -878,19 +875,8 @@ void NativeLayerCA::AttachExternalImage(wr::RenderTextureHost* aExternalImage) {
   bool changedIsDRM = (mIsDRM != isDRM);
   mIsDRM = isDRM;
 
-  bool isHDR = false;
   MacIOSurface* macIOSurface = texture->GetSurface();
-  if (macIOSurface->GetYUVColorSpace() == gfx::YUVColorSpace::BT2020 &&
-      StaticPrefs::gfx_color_management_hdr_video_assume_rec2020_uses_pq()) {
-    // BT2020 colorSpace is a signifier of HDR.
-    isHDR = true;
-  }
-
-  if (macIOSurface->GetColorDepth() == gfx::ColorDepth::COLOR_10) {
-    // 10-bit color is a signifier of HDR.
-    isHDR = true;
-  }
-  mIsHDR = isHDR && StaticPrefs::gfx_color_management_hdr_video();
+  mIsHDR = macIOSurface->IsHDRSurface() && gfxPlatform::UseHDR();
 
   bool specializeVideo = ShouldSpecializeVideo(lock);
   bool changedSpecializeVideo = (mSpecializeVideo != specializeVideo);
@@ -1223,7 +1209,9 @@ void NativeLayerCA::DumpLayer(std::ostream& aOutputStream) {
   if (surface) {
     // Attempt to render the surface as a PNG. Skia can do this for RGB
     // surfaces.
-    RefPtr<MacIOSurface> surf = new MacIOSurface(surface);
+    RefPtr<MacIOSurface> surf = new MacIOSurface(
+        surface, gfx::YUVColorSpace::Identity, gfx::TransferFunction::SRGB,
+        MacIOSurface::AllowAlpha::Yes);
     if (surf->Lock(true)) {
       SurfaceFormat format = surf->GetFormat();
       if (format == SurfaceFormat::B8G8R8A8 ||
@@ -1291,9 +1279,11 @@ void NativeLayerCA::SetSurfaceToPresent(CFTypeRefPtr<IOSurfaceRef> aSurfaceRef,
   // Figure out if the surface is a video.
   if (mSurfaceToPresent) {
     auto pixelFormat = IOSurfaceGetPixelFormat(mSurfaceToPresent.get());
-    bool hasAlpha = !mIsOpaque;
+    MacIOSurface::AllowAlpha allowAlpha = mIsOpaque
+                                              ? MacIOSurface::AllowAlpha::No
+                                              : MacIOSurface::AllowAlpha::Yes;
     auto surfaceFormat =
-        MacIOSurface::SurfaceFormatForPixelFormat(pixelFormat, hasAlpha);
+        MacIOSurface::SurfaceFormatForPixelFormat(pixelFormat, allowAlpha);
     mTextureHostIsVideo = gfx::Info(surfaceFormat)->isYuv;
   } else {
     mTextureHostIsVideo = false;

@@ -6,14 +6,30 @@ package org.mozilla.fenix.ui.efficiency.helpers
 
 import android.util.Log
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.test.espresso.IdlingResourceTimeoutException
+import androidx.test.espresso.NoMatchingViewException
+import androidx.test.uiautomator.UiObjectNotFoundException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import leakcanary.NoLeakAssertionFailedError
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
+import org.junit.rules.TestRule
+import org.junit.runners.model.Statement
+import org.mozilla.fenix.ext.components
+import org.mozilla.fenix.helpers.AppAndSystemHelper.deleteBookmarksStorage
 import org.mozilla.fenix.helpers.FenixTestRule
 import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
-import org.mozilla.fenix.helpers.RetryTestRule
+import org.mozilla.fenix.helpers.IdlingResourceHelper.unregisterAllIdlingResources
+import org.mozilla.fenix.helpers.TestHelper.appContext
+import org.mozilla.fenix.helpers.TestHelper.exitMenu
 import org.mozilla.fenix.ui.efficiency.logging.LoggingBridge
 import org.mozilla.fenix.ui.efficiency.logging.TestLogging
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.planning.PageCatalog
+import androidx.compose.ui.test.junit4.v2.AndroidComposeTestRule as AndroidComposeTestRuleV2
 
 /**
  * BaseTest
@@ -38,25 +54,69 @@ abstract class BaseTest(
     private val skipOnboarding: Boolean = true,
     private val isMenuRedesignCFREnabled: Boolean = false,
     private val isPageLoadTranslationsPromptEnabled: Boolean = false,
+    private val isPocketEnabled: Boolean = true,
+    private val isRecentlyVisitedFeatureEnabled: Boolean = true,
+    private val isUnifiedTrustPanelEnabled: Boolean = true,
 ) {
 
     @get:Rule(order = 0)
     val fenixTestRule: FenixTestRule = FenixTestRule()
 
-    @get:Rule
-    val composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *> =
-        AndroidComposeTestRule(
-            HomeActivityIntentTestRule(
-                skipOnboarding = skipOnboarding,
-                isMenuRedesignCFREnabled = isMenuRedesignCFREnabled,
-                isPageLoadTranslationsPromptEnabled = isPageLoadTranslationsPromptEnabled,
-            ),
-        ) { it.activity }
+    // Backing property so composeRule can be re-created fresh on each retry attempt.
+    // AndroidComposeTestRule holds a TestScope that can only be entered once — re-creating
+    // the rule per attempt ensures a clean TestScope every time.
+    private var _composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>? = null
+    val composeRule get() = _composeRule!!
 
-    protected val on: PageContext = PageContext(composeRule)
+    // Combines retry and compose rule creation into a single rule. We cannot reuse
+    // RetryTestRule here because the retry logic must own the creation of composeRule —
+    // a separate RetryTestRule has no way to replace an already-constructed @get:Rule.
+    // Re-creates composeRule on each attempt so its internal TestScope is never re-entered,
+    // which would otherwise throw:
+    // "Only a single call to `runTest` can be performed during one test."
+    @get:Rule(order = 1)
+    val retryWithCompose: TestRule = TestRule { base, description ->
+        object : Statement() {
+            override fun evaluate() {
+                repeat(1 + MAX_RETRIES) { attempt ->
+                    _composeRule = AndroidComposeTestRuleV2(
+                        HomeActivityIntentTestRule(
+                            skipOnboarding = skipOnboarding,
+                            isMenuRedesignCFREnabled = isMenuRedesignCFREnabled,
+                            isPageLoadTranslationsPromptEnabled = isPageLoadTranslationsPromptEnabled,
+                            isPocketEnabled = isPocketEnabled,
+                            isRecentlyVisitedFeatureEnabled = isRecentlyVisitedFeatureEnabled,
+                            isUnifiedTrustPanelEnabled = isUnifiedTrustPanelEnabled,
+                        ),
+                    ) { it.activity }
+                    try {
+                        Log.i("BaseTest", "RetryTestRule: Started try #${attempt + 1}.")
+                        runBlocking {
+                            deleteBookmarksStorage()
+                            withContext(Dispatchers.IO) {
+                                appContext.components.core.sessionStorage.clear()
+                            }
+                        }
+                        appContext.components.useCases.tabsUseCases.removeAllTabs()
+                        _composeRule!!.apply(base, description).evaluate()
+                        return // success, exit early
+                    } catch (t: NoLeakAssertionFailedError) {
+                        Log.i("BaseTest", "RetryTestRule: NoLeakAssertionFailedError caught, not retrying.")
+                        cleanup(removeTabs = true)
+                        throw t
+                    } catch (t: Throwable) {
+                        if (!t.isRetryable() || attempt >= MAX_RETRIES) throw t
+                        Log.i("BaseTest", "RetryTestRule: ${t::class.simpleName} caught, retrying.")
+                        cleanup(removeTabs = true)
+                    }
+                }
+            }
+        }
+    }
 
-    @get:Rule
-    val retryTestRule = RetryTestRule(3)
+    // get() ensures this always delegates to the current composeRule instance,
+    // not a stale one captured at class construction time.
+    protected val on: PageContext get() = PageContext(composeRule)
 
     /**
      * Reporter lifecycle:
@@ -73,11 +133,27 @@ abstract class BaseTest(
             TestLogging.reporter = LoggingBridge.createReporter()
         }
         TestLogging.reporter?.reset()
+        if (java.lang.Boolean.getBoolean("logNavigationSummary")) {
+            NavigationRegistry.logPathSummary()
+        }
+        if (java.lang.Boolean.getBoolean("logPageCatalog")) {
+            val pages = PageCatalog.discoverPages()
+
+            Log.i("PageCatalog", "Discovered ${pages.size} pages from PageContext")
+
+            pages.forEachIndexed { index, pageRef ->
+                val page = pageRef.getter(on)
+
+                Log.i(
+                    "PageCatalog",
+                    "   ${index + 1}. ${page.pageName} (property=${pageRef.propertyName})",
+                )
+            }
+        }
 
         // State tracker is a lightweight breadcrumb used by navigation helpers.
         // Source-of-truth remains selector-based verification (mozIsOnPageNow / mozWaitForPageToLoad).
         PageStateTracker.currentPageName = "AppEntry"
-        Log.i("BaseTest", "🚀 Starting test with page: AppEntry")
     }
 
     /**
@@ -92,6 +168,11 @@ abstract class BaseTest(
      * - STEP/CMD/LOC totals sum only the instrumented scopes.
      */
     @After
+    fun tearDown() {
+        appContext.components.useCases.tabsUseCases.removeAllTabs()
+    }
+
+    @After
     fun tearDownLogging() {
         try {
             TestLogging.reporter?.printSummary()
@@ -99,4 +180,31 @@ abstract class BaseTest(
             // Logging must never fail a test.
         }
     }
+
+    private companion object {
+        /**
+         * Number of retry attempts to do, if the test fails.
+         */
+        const val MAX_RETRIES = 1
+    }
+}
+
+private fun cleanup(removeTabs: Boolean = false) {
+    unregisterAllIdlingResources()
+    if (removeTabs) {
+        appContext.components.useCases.tabsUseCases.removeAllTabs()
+    }
+    exitMenu()
+}
+
+private fun Throwable.isRetryable(): Boolean = when (this) {
+    is AssertionError,
+    is junit.framework.AssertionFailedError,
+    is UiObjectNotFoundException,
+    is NoMatchingViewException,
+    is IdlingResourceTimeoutException,
+    is RuntimeException,
+    is NullPointerException,
+    -> true
+    else -> false
 }

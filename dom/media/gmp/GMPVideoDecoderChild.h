@@ -18,7 +18,7 @@ class GMPContentChild;
 
 class GMPVideoDecoderChild final : public PGMPVideoDecoderChild,
                                    public GMPVideoDecoderCallback,
-                                   public GMPSharedMemManager {
+                                   public GMPVideoHostImpl {
   friend class PGMPVideoDecoderChild;
 
  public:
@@ -29,7 +29,6 @@ class GMPVideoDecoderChild final : public PGMPVideoDecoderChild,
   explicit GMPVideoDecoderChild(GMPContentChild* aPlugin);
 
   void Init(GMPVideoDecoder* aDecoder);
-  GMPVideoHostImpl& Host();
 
   // GMPVideoDecoderCallback
   void Decoded(GMPVideoi420Frame* decodedFrame) override;
@@ -41,8 +40,13 @@ class GMPVideoDecoderChild final : public PGMPVideoDecoderChild,
   void Error(GMPErr aError) override;
 
   // GMPSharedMemManager
+  bool MgrCanSend() const override { return CanSend(); }
   bool MgrIsOnOwningThread() const override;
-  void MgrDeallocShmem(Shmem& aMem) override { DeallocShmem(aMem); }
+  void MgrDeallocShmem(Shmem& aMem) override {
+    if (CanSend()) {
+      DeallocShmem(aMem);
+    }
+  }
 
  private:
   virtual ~GMPVideoDecoderChild();
@@ -62,9 +66,8 @@ class GMPVideoDecoderChild final : public PGMPVideoDecoderChild,
 
   GMPContentChild* mPlugin;
   GMPVideoDecoder* mVideoDecoder;
-  GMPVideoHostImpl mVideoHost;
-  bool mOutstandingDrain = false;
-  bool mOutstandingReset = false;
+  RefPtr<GMPVideoDecoderChild> mDrainSelfRef;
+  RefPtr<GMPVideoDecoderChild> mResetSelfRef;
 };
 
 }  // namespace mozilla::gmp

@@ -27,7 +27,7 @@ using mozilla::dom::ContentChild;
 static mozilla::LazyLogModule sSpellChecker("SpellChecker");
 
 NS_IMPL_CYCLE_COLLECTION(mozSpellChecker, mTextServicesDocument,
-                         mPersonalDictionary)
+                         mPersonalDictionary, mConverter)
 
 mozSpellChecker::mozSpellChecker() : mEngine(nullptr) {}
 
@@ -41,7 +41,7 @@ mozSpellChecker::~mozSpellChecker() {
 
   if (mEngine) {
     MOZ_ASSERT(XRE_IsContentProcess());
-    RemoteSpellcheckEngineChild::Send__delete__(mEngine);
+    mEngine->Destroy();
     MOZ_ASSERT(!mEngine);
   }
 }

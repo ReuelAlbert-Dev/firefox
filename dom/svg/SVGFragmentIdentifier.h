@@ -8,10 +8,8 @@
 #include "nsString.h"
 
 namespace mozilla {
-
 namespace dom {
 class Document;
-class SVGSVGElement;
 }  // namespace dom
 
 /**
@@ -19,10 +17,10 @@ class SVGSVGElement;
  * http://www.w3.org/TR/SVG/linking.html#SVGFragmentIdentifiers
  */
 class SVGFragmentIdentifier {
-  // To prevent the class being instantiated
+ public:
+  // Prevent the class being instantiated.
   SVGFragmentIdentifier() = delete;
 
- public:
   /**
    * Process the SVG fragment identifier, if there is one.
    * @return true if we found a valid svgView()-style fragment identifier,
@@ -31,21 +29,6 @@ class SVGFragmentIdentifier {
    */
   static bool ProcessFragmentIdentifier(dom::Document* aDocument,
                                         const nsAString& aAnchorName);
-
- private:
-  /**
-   * Parse an SVG ViewSpec and set applicable attributes on the root element.
-   * @return true if there is a valid ViewSpec
-   */
-  static bool ProcessSVGViewSpec(const nsAString& aViewSpec,
-                                 dom::SVGSVGElement* root);
-
-  /**
-   * Parse a media fragment
-   * @return true if there is a valid media fragment.
-   */
-  static bool ProcessMediaFragment(const nsAString& aMediaFragment,
-                                   dom::SVGSVGElement* root);
 };
 
 }  // namespace mozilla

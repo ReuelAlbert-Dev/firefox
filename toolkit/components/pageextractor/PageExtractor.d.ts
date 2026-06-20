@@ -24,9 +24,9 @@ export type GetTextOptions = Partial<{
   removeBoilerplate: boolean;
   // A test-only option for forcing this behavior.
   _forceRemoveBoilerplate: boolean;
+  // The URL of the page being extracted. Used to apply custom extraction strategies for specific sites.
+  sourceUrl: string;
 }>;
-
-export type GetDOMOptions = GetTextOptions;
 
 export type CanvasSnapshot = {
   blob: Blob;
@@ -46,6 +46,15 @@ export type ExtractionResult = {
   canvasSnapshots: CanvasSnapshot[];
 };
 
+export type ExtractionStrategy = Partial<{
+  // A CSS selector for elements to exclude from extraction.
+  filterSelector: string;
+  // Whether to format blocks that are inside anchors as markdown links.
+  formatBlockAnchorsAsMarkdown: boolean;
+  // A CSS selector for the blocks to format as markdown links. If not set, all blocks inside anchors will be formatted.
+  formatBlockAnchorSelector: string;
+}>;
+
 export type PageMetadata = {
   // JSON-LD types as defined by https://schema.org/Thing
   // this is used to understand context about the content, where expected values could be things like:
@@ -55,6 +64,8 @@ export type PageMetadata = {
   wordCount: number;
   // lang-tag of the page
   language: string;
+  // whether the page is likely readable by reader mode
+  isReaderable: boolean;
 };
 
 /**

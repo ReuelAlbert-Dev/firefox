@@ -53,7 +53,7 @@ nsApplicationChooser::Open(const nsACString& aContentType,
       (GtkDialogFlags)(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
       PromiseFlatCString(aContentType).get());
   gtk_app_chooser_dialog_set_heading(GTK_APP_CHOOSER_DIALOG(chooser),
-                                     mWindowTitle.BeginReading());
+                                     mWindowTitle.get());
   NS_ADDREF_THIS();
   g_signal_connect(chooser, "response", G_CALLBACK(OnResponse), this);
   g_signal_connect(chooser, "destroy", G_CALLBACK(OnDestroy), this);

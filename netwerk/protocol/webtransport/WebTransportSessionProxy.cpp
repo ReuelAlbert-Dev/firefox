@@ -237,17 +237,29 @@ WebTransportSessionProxy::CloseSession(uint32_t status,
     case WebTransportSessionProxyState::INIT:
     case WebTransportSessionProxyState::DONE:
       return NS_ERROR_NOT_INITIALIZED;
-    case WebTransportSessionProxyState::NEGOTIATING:
-      mChannel->Cancel(NS_ERROR_ABORT);
+    case WebTransportSessionProxyState::NEGOTIATING: {
+      nsCOMPtr<nsIChannel> channel = mChannel;
       mChannel = nullptr;
       ChangeState(WebTransportSessionProxyState::DONE);
+      NS_DispatchToMainThread(
+          NS_NewRunnableFunction("WebTransportSessionProxy::CancelChannel",
+                                 [channel = std::move(channel)]() {
+                                   channel->Cancel(NS_ERROR_ABORT);
+                                 }));
       break;
-    case WebTransportSessionProxyState::NEGOTIATING_SUCCEEDED:
-      mChannel->Cancel(NS_ERROR_ABORT);
+    }
+    case WebTransportSessionProxyState::NEGOTIATING_SUCCEEDED: {
+      nsCOMPtr<nsIChannel> channel = mChannel;
       mChannel = nullptr;
       ChangeState(WebTransportSessionProxyState::SESSION_CLOSE_PENDING);
+      NS_DispatchToMainThread(
+          NS_NewRunnableFunction("WebTransportSessionProxy::CancelChannel",
+                                 [channel = std::move(channel)]() {
+                                   channel->Cancel(NS_ERROR_ABORT);
+                                 }));
       CloseSessionInternal();
       break;
+    }
     case WebTransportSessionProxyState::ACTIVE:
       ChangeState(WebTransportSessionProxyState::SESSION_CLOSE_PENDING);
       CloseSessionInternal();
@@ -1237,39 +1249,71 @@ WebTransportSessionProxy::OnOutgoingDatagramOutCome(
   return NS_OK;
 }
 
-NS_IMETHODIMP WebTransportSessionProxy::OnStopSending(uint64_t aStreamId,
-                                                      nsresult aError) {
-  MOZ_ASSERT(OnSocketThread());
+void WebTransportSessionProxy::OnStopSendingInternal(uint64_t aStreamId,
+                                                     nsresult aError) {
   nsCOMPtr<WebTransportSessionEventListener> listener;
   {
     MutexAutoLock lock(mMutex);
     MOZ_ASSERT(mTarget->IsOnCurrentThread());
-
     if (mState != WebTransportSessionProxyState::ACTIVE || !mListener) {
-      return NS_OK;
+      return;
     }
     listener = mListener;
   }
 
   listener->OnStopSending(aStreamId, aError);
+}
+
+NS_IMETHODIMP WebTransportSessionProxy::OnStopSending(uint64_t aStreamId,
+                                                      nsresult aError) {
+  MOZ_ASSERT(OnSocketThread());
+
+  {
+    MutexAutoLock lock(mMutex);
+    if (!mTarget->IsOnCurrentThread()) {
+      return mTarget->Dispatch(NS_NewRunnableFunction(
+          "WebTransportSessionProxy::OnStopSending",
+          [self = RefPtr{this}, aStreamId, aError] {
+            self->OnStopSendingInternal(aStreamId, aError);
+          }));
+    }
+  }
+
+  OnStopSendingInternal(aStreamId, aError);
   return NS_OK;
 }
 
-NS_IMETHODIMP WebTransportSessionProxy::OnResetReceived(uint64_t aStreamId,
-                                                        nsresult aError) {
-  MOZ_ASSERT(OnSocketThread());
+void WebTransportSessionProxy::OnResetReceivedInternal(uint64_t aStreamId,
+                                                       nsresult aError) {
   nsCOMPtr<WebTransportSessionEventListener> listener;
   {
     MutexAutoLock lock(mMutex);
     MOZ_ASSERT(mTarget->IsOnCurrentThread());
-
     if (mState != WebTransportSessionProxyState::ACTIVE || !mListener) {
-      return NS_OK;
+      return;
     }
     listener = mListener;
   }
 
   listener->OnResetReceived(aStreamId, aError);
+}
+
+NS_IMETHODIMP WebTransportSessionProxy::OnResetReceived(uint64_t aStreamId,
+                                                        nsresult aError) {
+  MOZ_ASSERT(OnSocketThread());
+
+  {
+    MutexAutoLock lock(mMutex);
+    if (!mTarget->IsOnCurrentThread()) {
+      return mTarget->Dispatch(NS_NewRunnableFunction(
+          "WebTransportSessionProxy::OnResetReceived",
+          [self = RefPtr{this}, aStreamId, aError] {
+            self->OnResetReceivedInternal(aStreamId, aError);
+          }));
+    }
+  }
+
+  OnResetReceivedInternal(aStreamId, aError);
   return NS_OK;
 }
 

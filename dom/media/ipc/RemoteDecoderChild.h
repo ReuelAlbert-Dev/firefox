@@ -20,7 +20,7 @@ class RemoteDecoderChild : public ShmemRecycleAllocator<RemoteDecoderChild>,
   friend class PRemoteDecoderChild;
 
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(RemoteDecoderChild);
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(RemoteDecoderChild, final);
 
   explicit RemoteDecoderChild(RemoteMediaIn aLocation);
 
@@ -51,19 +51,17 @@ class RemoteDecoderChild : public ShmemRecycleAllocator<RemoteDecoderChild>,
 
   void DestroyIPDL();
 
-  // Called from IPDL when our actor has been destroyed
-  void IPDLActorDestroyed();
-
   RemoteMediaManagerChild* GetManager();
 
  protected:
   virtual ~RemoteDecoderChild();
   void AssertOnManagerThread() const;
 
+  nsresult GetCrashedErrorCode() const;
+
   virtual MediaResult ProcessOutput(DecodedOutputIPDL&& aDecodedData) = 0;
   virtual void RecordShutdownTelemetry(bool aForAbnormalShutdown) {}
 
-  RefPtr<RemoteDecoderChild> mIPDLSelfRef;
   MediaDataDecoder::DecodedData mDecodedData;
   const RemoteMediaIn mLocation;
 

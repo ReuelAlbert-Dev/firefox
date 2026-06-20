@@ -930,9 +930,17 @@ RefPtr<ServiceWorkerRegistrationPromise> ServiceWorkerManager::Register(
 
   auto lifetime = DetermineLifetimeForClient(aClientInfo);
 
+  uint16_t ipAddressSpace = 0;
+  auto policyContainerArgs = aClientInfo.GetPolicyContainerArgs();
+  if (policyContainerArgs.isSome()) {
+    ipAddressSpace =
+        static_cast<uint16_t>(policyContainerArgs->ipAddressSpace());
+  }
+
   RefPtr<ServiceWorkerRegisterJob> job = new ServiceWorkerRegisterJob(
       principal, aScopeURL, aType, aScriptURL,
-      static_cast<ServiceWorkerUpdateViaCache>(aUpdateViaCache), lifetime);
+      static_cast<ServiceWorkerUpdateViaCache>(aUpdateViaCache), lifetime,
+      ipAddressSpace);
 
   job->AppendResultCallback(cb);
   queue->ScheduleJob(job);
@@ -1598,7 +1606,7 @@ void ServiceWorkerManager::LocalizeAndReportToAllClients(
 
   nsresult rv;
   nsAutoString message;
-  rv = nsContentUtils::FormatLocalizedString(nsContentUtils::eDOM_PROPERTIES,
+  rv = nsContentUtils::FormatLocalizedString(PropertiesFile::DOM_PROPERTIES,
                                              aStringKey, aParamArray, message);
   if (NS_SUCCEEDED(rv)) {
     swm->ReportToAllClients(aScope, message, aFilename, aLine, aLineNumber,

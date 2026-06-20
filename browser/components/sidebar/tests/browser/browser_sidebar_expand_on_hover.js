@@ -98,6 +98,13 @@ add_task(async function test_enable_expand_on_hover() {
 
   info("Sidebar panel is visible and input is displayed");
 
+  // The click below toggles expand-on-hover, so it must start disabled; assert
+  // that to fail fast instead of timing out if a previous test leaked it on.
+  ok(
+    !panel.expandOnHoverInput.checked,
+    "Expand-on-hover should be disabled before this test enables it"
+  );
+
   // Enable expand on hover
   panel.expandOnHoverInput.click();
   EventUtils.synthesizeMouseAtCenter(SidebarController.contentArea, {
@@ -247,3 +254,29 @@ add_task(async function test_expand_on_hover_pinned_tabs() {
   await SidebarController.toggleExpandOnHover(false);
   await SidebarController.waitUntilStable();
 });
+
+add_task(
+  async function test_expand_on_hover_persists_through_vertical_tabs_toggle() {
+    await SpecialPowers.pushPrefEnv({
+      set: [
+        [VERTICAL_TABS_PREF, true],
+        ["sidebar.visibility", "expand-on-hover"],
+      ],
+    });
+    is(
+      SidebarController.sidebarRevampVisibility,
+      "expand-on-hover",
+      "Expand on hover is enabled before toggling vertical tabs"
+    );
+    await SpecialPowers.pushPrefEnv({ set: [[VERTICAL_TABS_PREF, false]] });
+    await SpecialPowers.pushPrefEnv({ set: [[VERTICAL_TABS_PREF, true]] });
+    is(
+      SidebarController.sidebarRevampVisibility,
+      "expand-on-hover",
+      "Expand on hover is restored after re-enabling vertical tabs"
+    );
+    await SpecialPowers.popPrefEnv();
+    await SpecialPowers.popPrefEnv();
+    await SpecialPowers.popPrefEnv();
+  }
+);

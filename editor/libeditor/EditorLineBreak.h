@@ -5,8 +5,6 @@
 #ifndef EditorLineBreak_h
 #define EditorLineBreak_h
 
-#include <fmt/format.h>
-
 #include "EditorDOMPoint.h"
 #include "EditorForwards.h"
 #include "EditorUtils.h"
@@ -36,15 +34,15 @@ enum class PaddingForEmptyBlock {
   Significant,
 };
 
-inline std::ostream& operator<<(std::ostream& aStream,
-                                const PaddingForEmptyBlock& aValue) {
-  return aStream << (aValue == PaddingForEmptyBlock::Significant
-                         ? "PaddingForEmptyBlock::Significant"
-                         : "PaddingForEmptyBlock::Unnecessary");
+inline std::string format_as(const PaddingForEmptyBlock& aValue) {
+  return aValue == PaddingForEmptyBlock::Significant
+             ? "PaddingForEmptyBlock::Significant"
+             : "PaddingForEmptyBlock::Unnecessary";
 }
 
-inline auto format_as(const PaddingForEmptyBlock& aValue) {
-  return ToString(aValue);
+inline std::ostream& operator<<(std::ostream& aStream,
+                                const PaddingForEmptyBlock& aValue) {
+  return aStream << format_as(aValue);
 }
 
 /******************************************************************************
@@ -291,13 +289,11 @@ class EditorLineBreakBase {
 
   friend inline std::ostream& operator<<(
       std::ostream& aStream, const EditorLineBreakBase& aLineBreak) {
-    return aStream << "{ mContent="
-                   << ToString(nsCOMPtr<nsIContent>(aLineBreak.mContent))
-                   << ", mOffsetInText=" << aLineBreak.mOffsetInText << " }";
-  }
-
-  auto format_as(const EditorLineBreakBase& aLineBreak) {
-    return ToString(aLineBreak);
+    return aStream << fmt::format("{{ mContent={}, mOffsetInText={} }}",
+                                  nsCOMPtr<nsIContent>(aLineBreak.mContent),
+                                  // XXX Oddly, cannot make Maybe<uint32>
+                                  // formattable. Maybe a bug of {fmt}.
+                                  ToString(aLineBreak.mOffsetInText));
   }
 
  private:
@@ -479,5 +475,9 @@ class CreateLineBreakResult final : public CaretPoint {
 };
 
 }  // namespace mozilla
+
+template <typename CT>
+struct fmt::formatter<mozilla::EditorLineBreakBase<CT>>
+    : fmt::ostream_formatter {};
 
 #endif  // #ifndef EditorLineBreak_h

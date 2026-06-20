@@ -53,11 +53,16 @@ class ZeroCopyUsageInfo final {
 // Expected to be used in GPU process.
 class D3D11ZeroCopyTextureImage : public Image {
  public:
-  D3D11ZeroCopyTextureImage(
-      ID3D11Texture2D* aTexture, const uint32_t aArrayIndex,
-      const gfx::IntSize& aSize, const gfx::IntRect& aRect,
-      const gfx::SurfaceFormat aFormat, const gfx::ColorSpace2 aColorSpace,
-      const gfx::ColorRange aColorRange, const gfx::ColorDepth aColorDepth);
+  D3D11ZeroCopyTextureImage(ID3D11Texture2D* aTexture,
+                            const uint32_t aArrayIndex,
+                            const gfx::IntSize& aSize,
+                            const gfx::IntRect& aRect,
+                            const gfx::SurfaceFormat aFormat,
+                            const gfx::ColorSpace2 aColorSpace,
+                            const gfx::ColorRange aColorRange,
+                            const gfx::TransferFunction aTransferFunction,
+                            const Maybe<gfx::HDRMetadata>& aHDRMetadata,
+                            const gfx::ColorDepth aColorDepth);
   virtual ~D3D11ZeroCopyTextureImage();
 
   void AllocateTextureClient(KnowsCompositor* aKnowsCompositor,
@@ -97,6 +102,8 @@ class D3D11ZeroCopyTextureImage : public Image {
   const gfx::SurfaceFormat mFormat;
   const gfx::ColorSpace2 mColorSpace;
   const gfx::ColorRange mColorRange;
+  const gfx::TransferFunction mTransferFunction;
+  const Maybe<gfx::HDRMetadata> mHDRMetadata;
   const gfx::ColorDepth mColorDepth;
 };
 
@@ -125,6 +132,8 @@ class D3D11TextureIMFSampleImage final : public D3D11ZeroCopyTextureImage {
                              const gfx::SurfaceFormat aFormat,
                              const gfx::ColorSpace2 aColorSpace,
                              const gfx::ColorRange aColorRange,
+                             const gfx::TransferFunction aTransferFunction,
+                             const Maybe<gfx::HDRMetadata>& aHDRMetadata,
                              const gfx::ColorDepth aColorDepth);
   virtual ~D3D11TextureIMFSampleImage() = default;
 
@@ -142,6 +151,8 @@ class D3D11TextureAVFrameImage final : public D3D11ZeroCopyTextureImage {
                            const gfx::IntSize& aSize, const gfx::IntRect& aRect,
                            const gfx::ColorSpace2 aColorSpace,
                            const gfx::ColorRange aColorRange,
+                           const gfx::TransferFunction aTransferFunction,
+                           const Maybe<gfx::HDRMetadata>& aHDRMetadata,
                            const gfx::ColorDepth aColorDepth);
   virtual ~D3D11TextureAVFrameImage() = default;
 

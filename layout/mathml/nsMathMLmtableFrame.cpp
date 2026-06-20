@@ -9,6 +9,7 @@
 #include "celldata.h"
 #include "gfxContext.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/dom/MathMLElement.h"
 #include "nsCRT.h"
@@ -129,7 +130,7 @@ static nsresult ReportParseError(nsIFrame* aFrame, const char16_t* aAttribute,
 
   return nsContentUtils::ReportToConsole(
       nsIScriptError::errorFlag, "Layout: MathML"_ns, content->OwnerDoc(),
-      nsContentUtils::eMATHML_PROPERTIES, "AttributeParsingError", params);
+      PropertiesFile::MATHML_PROPERTIES, "AttributeParsingError", params);
 }
 
 // Each rowalign='top bottom' or columnalign='left right center' (from

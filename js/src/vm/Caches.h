@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -424,7 +422,7 @@ class StringToAtomCache {
   struct AtomTableKey {
     explicit AtomTableKey(const JS::Latin1Char* str, size_t len)
         : string_(str), length_(len) {
-      hash_ = mozilla::HashString(string_, length_);
+      hash_ = mozilla::HashLatin1AsUTF16(string_, length_);
     }
 
     const JS::Latin1Char* string_;

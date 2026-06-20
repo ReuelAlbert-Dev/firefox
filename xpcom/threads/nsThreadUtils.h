@@ -105,7 +105,7 @@ extern nsresult NS_GetCurrentThread(nsIThread** aResult);
  */
 extern nsresult NS_DispatchToCurrentThread(nsIRunnable* aEvent);
 extern nsresult NS_DispatchToCurrentThread(
-    already_AddRefed<nsIRunnable>&& aEvent);
+    already_AddRefed<nsIRunnable> aEvent);
 
 /**
  * Dispatch the given event to the main thread.
@@ -122,11 +122,11 @@ extern nsresult NS_DispatchToMainThread(
     nsIRunnable* aEvent,
     nsIEventTarget::DispatchFlags aDispatchFlags = NS_DISPATCH_NORMAL);
 extern nsresult NS_DispatchToMainThread(
-    already_AddRefed<nsIRunnable>&& aEvent,
+    already_AddRefed<nsIRunnable> aEvent,
     nsIEventTarget::DispatchFlags aDispatchFlags = NS_DISPATCH_NORMAL);
 
 extern nsresult NS_DelayedDispatchToCurrentThread(
-    already_AddRefed<nsIRunnable>&& aEvent, uint32_t aDelayMs);
+    already_AddRefed<nsIRunnable> aEvent, uint32_t aDelayMs);
 
 /**
  * Dispatch the given event to the specified queue of the current thread.
@@ -140,7 +140,7 @@ extern nsresult NS_DelayedDispatchToCurrentThread(
  *   If the thread is shutting down.
  */
 extern nsresult NS_DispatchToCurrentThreadQueue(
-    already_AddRefed<nsIRunnable>&& aEvent, mozilla::EventQueuePriority aQueue);
+    already_AddRefed<nsIRunnable> aEvent, mozilla::EventQueuePriority aQueue);
 
 /**
  * Dispatch the given event to the specified queue of the main thread.
@@ -154,7 +154,7 @@ extern nsresult NS_DispatchToCurrentThreadQueue(
  *   If the thread is shutting down.
  */
 extern nsresult NS_DispatchToMainThreadQueue(
-    already_AddRefed<nsIRunnable>&& aEvent, mozilla::EventQueuePriority aQueue);
+    already_AddRefed<nsIRunnable> aEvent, mozilla::EventQueuePriority aQueue);
 
 /**
  * Dispatch the given event to an idle queue of the current thread.
@@ -180,7 +180,7 @@ extern nsresult NS_DispatchToMainThreadQueue(
  *   If the thread is shutting down.
  */
 extern nsresult NS_DispatchToCurrentThreadQueue(
-    already_AddRefed<nsIRunnable>&& aEvent, uint32_t aTimeout,
+    already_AddRefed<nsIRunnable> aEvent, uint32_t aTimeout,
     mozilla::EventQueuePriority aQueue);
 
 /**
@@ -195,7 +195,7 @@ extern nsresult NS_DispatchToCurrentThreadQueue(
  * @returns NS_ERROR_UNEXPECTED
  *   If the thread is shutting down.
  */
-extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable>&& aEvent,
+extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable> aEvent,
                                          nsIThread* aThread,
                                          mozilla::EventQueuePriority aQueue);
 
@@ -224,7 +224,7 @@ extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable>&& aEvent,
  * @returns NS_ERROR_UNEXPECTED
  *   If the thread is shutting down.
  */
-extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable>&& aEvent,
+extern nsresult NS_DispatchToThreadQueue(already_AddRefed<nsIRunnable> aEvent,
                                          uint32_t aTimeout, nsIThread* aThread,
                                          mozilla::EventQueuePriority aQueue);
 
@@ -351,13 +351,12 @@ class IdlePeriod : public nsIIdlePeriod {
 
   IdlePeriod() = default;
 
- protected:
-  virtual ~IdlePeriod() = default;
-
- private:
   IdlePeriod(const IdlePeriod&) = delete;
   IdlePeriod& operator=(const IdlePeriod&) = delete;
   IdlePeriod& operator=(const IdlePeriod&&) = delete;
+
+ protected:
+  virtual ~IdlePeriod() = default;
 };
 
 // Cancelable runnable methods implement nsICancelableRunnable, and
@@ -386,6 +385,9 @@ class Runnable : public nsIRunnable
 #  endif
 
   Runnable() = delete;
+  Runnable(const Runnable&) = delete;
+  Runnable& operator=(const Runnable&) = delete;
+  Runnable& operator=(const Runnable&&) = delete;
 
 #  ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
   explicit Runnable(const char* aName) : mName(aName) {}
@@ -399,11 +401,6 @@ class Runnable : public nsIRunnable
 #  ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
   const char* mName = nullptr;
 #  endif
-
- private:
-  Runnable(const Runnable&) = delete;
-  Runnable& operator=(const Runnable&) = delete;
-  Runnable& operator=(const Runnable&&) = delete;
 };
 
 // This is a base class for tasks that might not be run, such as those that may
@@ -418,16 +415,14 @@ class DiscardableRunnable : public Runnable, public nsIDiscardableRunnable {
   // nsIDiscardableRunnable
   void OnDiscard() override {}
 
-  DiscardableRunnable() = delete;
   explicit DiscardableRunnable(const char* aName) : Runnable(aName) {}
-
- protected:
-  virtual ~DiscardableRunnable() = default;
-
- private:
+  DiscardableRunnable() = delete;
   DiscardableRunnable(const DiscardableRunnable&) = delete;
   DiscardableRunnable& operator=(const DiscardableRunnable&) = delete;
   DiscardableRunnable& operator=(const DiscardableRunnable&&) = delete;
+
+ protected:
+  virtual ~DiscardableRunnable() = default;
 };
 
 // This class is designed to be subclassed.
@@ -442,16 +437,14 @@ class CancelableRunnable : public DiscardableRunnable,
   // nsICancelableRunnable
   virtual nsresult Cancel() override = 0;
 
-  CancelableRunnable() = delete;
   explicit CancelableRunnable(const char* aName) : DiscardableRunnable(aName) {}
-
- protected:
-  virtual ~CancelableRunnable() = default;
-
- private:
+  CancelableRunnable() = delete;
   CancelableRunnable(const CancelableRunnable&) = delete;
   CancelableRunnable& operator=(const CancelableRunnable&) = delete;
   CancelableRunnable& operator=(const CancelableRunnable&&) = delete;
+
+ protected:
+  virtual ~CancelableRunnable() = default;
 };
 
 // This class is designed to be subclassed.
@@ -460,14 +453,12 @@ class IdleRunnable : public DiscardableRunnable, public nsIIdleRunnable {
   NS_DECL_ISUPPORTS_INHERITED
 
   explicit IdleRunnable(const char* aName) : DiscardableRunnable(aName) {}
-
- protected:
-  virtual ~IdleRunnable() = default;
-
- private:
   IdleRunnable(const IdleRunnable&) = delete;
   IdleRunnable& operator=(const IdleRunnable&) = delete;
   IdleRunnable& operator=(const IdleRunnable&&) = delete;
+
+ protected:
+  virtual ~IdleRunnable() = default;
 };
 
 // This class is designed to be subclassed.
@@ -479,21 +470,19 @@ class CancelableIdleRunnable : public CancelableRunnable,
   CancelableIdleRunnable() : CancelableRunnable("CancelableIdleRunnable") {}
   explicit CancelableIdleRunnable(const char* aName)
       : CancelableRunnable(aName) {}
-
- protected:
-  virtual ~CancelableIdleRunnable() = default;
-
- private:
   CancelableIdleRunnable(const CancelableIdleRunnable&) = delete;
   CancelableIdleRunnable& operator=(const CancelableIdleRunnable&) = delete;
   CancelableIdleRunnable& operator=(const CancelableIdleRunnable&&) = delete;
+
+ protected:
+  virtual ~CancelableIdleRunnable() = default;
 };
 
 // This class is designed to be a wrapper of a real runnable to support event
 // prioritizable.
 class PrioritizableRunnable : public Runnable, public nsIRunnablePriority {
  public:
-  PrioritizableRunnable(already_AddRefed<nsIRunnable>&& aRunnable,
+  PrioritizableRunnable(already_AddRefed<nsIRunnable> aRunnable,
                         uint32_t aPriority);
 
 #  ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
@@ -527,7 +516,7 @@ class PrioritizableCancelableRunnable : public CancelableRunnable,
 };
 
 extern already_AddRefed<nsIRunnable> CreateRenderBlockingRunnable(
-    already_AddRefed<nsIRunnable>&& aRunnable);
+    already_AddRefed<nsIRunnable> aRunnable);
 
 namespace detail {
 
@@ -766,7 +755,7 @@ template <typename PtrType, class C, typename R, bool Owning,
           mozilla::RunnableKind Kind, typename... As>
 struct nsRunnableMethodTraits<PtrType, R (C::*)(As...), Owning, Kind> {
   using class_type = mozilla::RemoveRawOrSmartPointer<PtrType>;
-  static_assert(std::is_base_of<C, class_type>::value,
+  static_assert(std::is_base_of_v<C, class_type>,
                 "Stored class must inherit from method's class");
   using return_type = R;
   using base_type = nsRunnableMethod<C, R, Owning, Kind>;
@@ -777,7 +766,7 @@ template <typename PtrType, class C, typename R, bool Owning,
           mozilla::RunnableKind Kind, typename... As>
 struct nsRunnableMethodTraits<PtrType, R (C::*)(As...) const, Owning, Kind> {
   using class_type = const mozilla::RemoveRawOrSmartPointer<PtrType>;
-  static_assert(std::is_base_of<C, class_type>::value,
+  static_assert(std::is_base_of_v<C, class_type>,
                 "Stored class must inherit from method's class");
   using return_type = R;
   using base_type = nsRunnableMethod<C, R, Owning, Kind>;
@@ -850,7 +839,9 @@ struct StoreCopyPassByConstLRef {
   using stored_type = std::decay_t<T>;
   typedef const stored_type& passed_type;
   stored_type m;
+
   template <typename A>
+    requires(!std::is_same_v<std::decay_t<A>, StoreCopyPassByConstLRef>)
   MOZ_IMPLICIT StoreCopyPassByConstLRef(A&& a) : m(std::forward<A>(a)) {}
   passed_type PassAsParameter() { return m; }
 };
@@ -863,7 +854,9 @@ struct StoreCopyPassByRRef {
   using stored_type = std::decay_t<T>;
   typedef stored_type&& passed_type;
   stored_type m;
+
   template <typename A>
+    requires(!std::is_same_v<std::decay_t<A>, StoreCopyPassByRRef>)
   MOZ_IMPLICIT StoreCopyPassByRRef(A&& a) : m(std::forward<A>(a)) {}
   passed_type PassAsParameter() { return std::move(m); }
 };
@@ -902,7 +895,9 @@ struct StoreRefPtrPassByPtr {
   typedef RefPtr<T> stored_type;
   typedef T* passed_type;
   stored_type m;
+
   template <typename A>
+    requires(!std::is_same_v<std::decay_t<A>, StoreRefPtrPassByPtr>)
   MOZ_IMPLICIT StoreRefPtrPassByPtr(A&& a) : m(std::forward<A>(a)) {}
   passed_type PassAsParameter() { return m.get(); }
 };
@@ -1557,11 +1552,10 @@ class nsRevocableEventPtr {
   bool IsPending() { return mEvent != nullptr; }
   T* get() { return mEvent; }
 
- private:
-  // Not implemented
-  nsRevocableEventPtr(const nsRevocableEventPtr&);
-  nsRevocableEventPtr& operator=(const nsRevocableEventPtr&);
+  nsRevocableEventPtr(const nsRevocableEventPtr&) = delete;
+  nsRevocableEventPtr& operator=(const nsRevocableEventPtr&) = delete;
 
+ private:
   RefPtr<T> mEvent;
 };
 
@@ -1587,12 +1581,11 @@ class nsThreadPoolNaming {
   nsCString GetNextThreadName(const char (&aPoolName)[LEN]) {
     return GetNextThreadName(nsDependentCString(aPoolName, LEN - 1));
   }
+  nsThreadPoolNaming(const nsThreadPoolNaming&) = delete;
+  void operator=(const nsThreadPoolNaming&) = delete;
 
  private:
   mozilla::Atomic<uint32_t> mCounter{0};
-
-  nsThreadPoolNaming(const nsThreadPoolNaming&) = delete;
-  void operator=(const nsThreadPoolNaming&) = delete;
 };
 
 /**
@@ -1608,7 +1601,7 @@ class MOZ_STACK_CLASS nsAutoLowPriorityIO {
 
  private:
   bool lowIOPrioritySet;
-#if defined(XP_MACOSX)
+#if defined(XP_MACOSX) || (defined(XP_LINUX) && !defined(ANDROID))
   int oldPriority;
 #endif
 };

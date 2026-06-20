@@ -446,11 +446,18 @@ pub struct ImmediateItem {
     ///
     pub access_path: String,
     /// Type of the uniform. This will only ever be a scalar, vector, or matrix.
-    pub ty: Handle<crate::Type>,
-    /// The offset in the immediate data memory block this uniform maps to.
     ///
-    /// The size of the uniform can be derived from the type.
+    /// Stored as a [`TypeInner`] rather than a [`Handle<Type>`] because
+    /// `process_overrides` may compact the module, renumbering type handles.
+    /// Leaf types don't reference other types, so a `TypeInner` is self-contained.
+    ///
+    /// [`TypeInner`]: crate::TypeInner
+    /// [`Handle<Type>`]: Handle
+    pub ty: TypeInner,
+    /// The offset in the immediate data memory block this uniform maps to.
     pub offset: u32,
+    /// Size of this uniform in bytes.
+    pub size_bytes: u32,
 }
 
 /// Helper structure that generates a number
@@ -626,7 +633,7 @@ pub fn supported_capabilities() -> valid::Capabilities {
     Caps::IMMEDIATES
         | Caps::FLOAT64
         | Caps::PRIMITIVE_INDEX
-        | Caps::CLIP_DISTANCE
+        | Caps::CLIP_DISTANCES
         | Caps::MULTIVIEW
         | Caps::EARLY_DEPTH_TEST
         | Caps::MULTISAMPLED_SHADING
@@ -639,7 +646,10 @@ pub fn supported_capabilities() -> valid::Capabilities {
         | Caps::SUBGROUP
         | Caps::SUBGROUP_BARRIER
         | Caps::SHADER_FLOAT16
+        | Caps::SHADER_INT16
         | Caps::SHADER_FLOAT16_IN_FLOAT32
         | Caps::SHADER_BARYCENTRICS
         | Caps::DRAW_INDEX
+        | Caps::MEMORY_DECORATION_COHERENT
+        | Caps::MEMORY_DECORATION_VOLATILE
 }

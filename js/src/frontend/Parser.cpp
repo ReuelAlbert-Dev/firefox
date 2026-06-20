@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -45,6 +43,7 @@
 #include "frontend/ScriptIndex.h"  // ScriptIndex
 #include "frontend/TokenStream.h"  // IsKeyword, ReservedWordTokenKind, ReservedWordToCharZ, DeprecatedContent, *TokenStream*, CharBuffer, TokenKindToDesc
 #include "irregexp/RegExpAPI.h"
+#include "jit/JitOptions.h"  // fuzzingSafe
 #include "js/ColumnNumber.h"  // JS::LimitedColumnNumberOneOrigin, JS::ColumnNumberOneOrigin
 #include "js/ErrorReport.h"           // JSErrorBase
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
@@ -3651,12 +3650,6 @@ bool GeneralParser<ParseHandler, Unit>::functionFormalParametersAndBody(
     }
 
     setFunctionEndFromCurrentToken(funbox);
-
-    if (kind == FunctionSyntaxKind::Statement) {
-      if (!matchOrInsertSemicolon()) {
-        return false;
-      }
-    }
   }
 
   if (IsMethodDefinitionKind(kind) && pc_->superScopeNeedsHomeObject()) {
@@ -3728,6 +3721,10 @@ GeneralParser<ParseHandler, Unit>::functionStmt(uint32_t toStringStart,
     /* Unnamed function expressions are forbidden in statement context. */
     error(JSMSG_UNNAMED_FUNCTION_STMT);
     return errorResult();
+  }
+
+  if (name == TaggedParserAtomIndex::WellKnown::arguments()) {
+    pc_->numberOfArgumentsNames++;
   }
 
   // Note the declared name and check for early errors.
@@ -4981,24 +4978,37 @@ bool GeneralParser<ParseHandler, Unit>::withClause(ListNodeType attributesSet) {
     return false;
   }
 
+  // https://tc39.es/ecma262/#prod-WithClause
+  // WithClause:
+  //     with { }
+  //     with { WithEntries ,opt }
   if (!mustMatchToken(TokenKind::LeftCurly, JSMSG_CURLY_AFTER_WITH)) {
     return false;
   }
 
-  // Handle the form |... with {}|
-  TokenKind token;
-  if (!tokenStream.getToken(&token)) {
+  js::HashSet<TaggedParserAtomIndex, TaggedParserAtomIndexHasher,
+              js::SystemAllocPolicy>
+      usedAttributeKeys;
+
+  bool empty;
+  if (!tokenStream.matchToken(&empty, TokenKind::RightCurly)) {
     return false;
   }
-  if (token == TokenKind::RightCurly) {
+  if (empty) {
+    // WithClause: with { }
     return true;
   }
 
-  js::HashSet<TaggedParserAtomIndex, TaggedParserAtomIndexHasher,
-              js::SystemAllocPolicy>
-      usedAssertionKeys;
-
+  // WithClause: with { WithEntries ,opt }
+  // WithEntries:
+  //    AttributeKey : StringLiteral
+  //    AttributeKey : StringLiteral , WithEntries
   for (;;) {
+    TokenKind token;
+    if (!tokenStream.getToken(&token)) {
+      return false;
+    }
+
     TaggedParserAtomIndex keyName;
     if (TokenKindIsPossibleIdentifierName(token)) {
       keyName = anyChars.currentName();
@@ -5009,7 +5019,7 @@ bool GeneralParser<ParseHandler, Unit>::withClause(ListNodeType attributesSet) {
       return false;
     }
 
-    auto p = usedAssertionKeys.lookupForAdd(keyName);
+    auto p = usedAttributeKeys.lookupForAdd(keyName);
     if (p) {
       UniqueChars str = this->parserAtoms().toPrintableString(keyName);
       if (!str) {
@@ -5019,7 +5029,7 @@ bool GeneralParser<ParseHandler, Unit>::withClause(ListNodeType attributesSet) {
       error(JSMSG_DUPLICATE_ATTRIBUTE_KEY, str.get());
       return false;
     }
-    if (!usedAssertionKeys.add(p, keyName)) {
+    if (!usedAttributeKeys.add(p, keyName)) {
       ReportOutOfMemory(this->fc_);
       return false;
     }
@@ -5041,23 +5051,32 @@ bool GeneralParser<ParseHandler, Unit>::withClause(ListNodeType attributesSet) {
     MOZ_TRY_VAR_OR_RETURN(importAttributeNode,
                           handler_.newImportAttribute(keyNode, valueNode),
                           false);
-
     handler_.addList(attributesSet, importAttributeNode);
 
-    if (!tokenStream.getToken(&token)) {
+    bool hasComma;
+    if (!tokenStream.matchToken(&hasComma, TokenKind::Comma)) {
       return false;
     }
-    if (token == TokenKind::Comma) {
-      if (!tokenStream.getToken(&token)) {
-        return false;
-      }
-    }
-    if (token == TokenKind::RightCurly) {
+    if (!hasComma) {
+      // No comma: end of WithEntries, expect closing '}'.
       break;
     }
+    // The comma is either the optional trailing ',' in WithClause
+    // (with { WithEntries ,opt }), or the ',' separator in WithEntries
+    // (AttributeKey : StringLiteral , WithEntries).
+    TokenKind next;
+    if (!tokenStream.peekToken(&next)) {
+      return false;
+    }
+    if (next == TokenKind::RightCurly) {
+      // Optional trailing comma in WithClause — '}' consumed below.
+      break;
+    }
+    // Comma was the WithEntries separator — another WithEntries must follow.
   }
 
-  return true;
+  return mustMatchToken(TokenKind::RightCurly,
+                        JSMSG_RC_AFTER_IMPORT_ATTRIBUTE_LIST);
 }
 
 template <class ParseHandler, typename Unit>
@@ -5228,10 +5247,8 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
   ListNodeType importSpecSet =
       MOZ_TRY(handler_.newList(ParseNodeKind::ImportSpecList, pos()));
 
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
   bool isSourcePhaseImport = false;
   NameNodeType importSourceBinding;
-#endif
   if (tt == TokenKind::String) {
     // Handle the form |import 'a'| by leaving the list empty. This is
     // equivalent to |import {} from 'a'|.
@@ -5250,7 +5267,6 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
       // specifier to the list, with 'default' as the import name and
       // 'a' as the binding name. This is equivalent to
       // |import { default as a } from 'b'|.
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
       if (options().sourcePhaseImports() && tt == TokenKind::Source) {
         isSourcePhaseImport = true;
         // Handle the form |import source a from 'b'|
@@ -5289,14 +5305,22 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
 
           importSourceBinding = MOZ_TRY(newName(bindingAtom));
 
-          if (!noteDeclaredName(bindingAtom, DeclarationKind::Import, pos())) {
+          // We handle import source like namespace imports.
+          // It's not an indirect binding, but instead a lexical definition,
+          // that's treated like a const variable.
+          if (!noteDeclaredName(bindingAtom, DeclarationKind::Const, pos())) {
             return errorResult();
           }
+
+          // The source phase import name is currently required to live on the
+          // environment.
+          pc_->varScope()
+              .lookupDeclaredName(bindingAtom)
+              ->value()
+              ->setClosedOver();
         }
       }
-      if (!isSourcePhaseImport)
-#endif
-      {
+      if (!isSourcePhaseImport) {
         NameNodeType importName =
             MOZ_TRY(newName(TaggedParserAtomIndex::WellKnown::default_()));
 
@@ -5361,13 +5385,10 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
   }
 
   Node importAttributeList;
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
   if (isSourcePhaseImport) {
     // Source phase imports do not support import attributes
     importAttributeList = MOZ_TRY(handler_.newPosHolder(pos()));
-  } else
-#endif
-  {
+  } else {
     ListNodeType attributeList =
         MOZ_TRY(handler_.newList(ParseNodeKind::ImportAttributeList, pos()));
 
@@ -5389,17 +5410,15 @@ GeneralParser<ParseHandler, Unit>::importDeclaration() {
   BinaryNodeType moduleRequest = MOZ_TRY(handler_.newModuleRequest(
       moduleSpec, importAttributeList, TokenPos(begin, pos().end)));
 
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
   if (isSourcePhaseImport) {
     BinaryNodeType node = MOZ_TRY(handler_.newImportSourceDeclaration(
         importSourceBinding, moduleRequest, TokenPos(begin, pos().end)));
-    if (!processImportSource(node)) {
+    if (!processImport(node)) {
       return errorResult();
     }
 
     return node;
   }
-#endif
 
   BinaryNodeType node = MOZ_TRY(handler_.newImportDeclaration(
       importSpecSet, moduleRequest, TokenPos(begin, pos().end)));
@@ -5713,21 +5732,6 @@ inline bool PerHandlerParser<SyntaxParseHandler>::processImport(
   MOZ_ALWAYS_FALSE(abortIfSyntaxParser());
   return false;
 }
-
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
-template <>
-inline bool PerHandlerParser<FullParseHandler>::processImportSource(
-    BinaryNodeType node) {
-  return pc_->sc()->asModuleContext()->builder.processImportSource(node);
-}
-
-template <>
-inline bool PerHandlerParser<SyntaxParseHandler>::processImportSource(
-    BinaryNodeType node) {
-  MOZ_ALWAYS_FALSE(abortIfSyntaxParser());
-  return false;
-}
-#endif
 
 template <class ParseHandler, typename Unit>
 typename ParseHandler::BinaryNodeResult
@@ -7656,6 +7660,11 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
 #ifdef ENABLE_DECORATORS
   ListNodeType decorators = null();
   if (tt == TokenKind::At) {
+    if (fuzzingSafe) {
+      error(JSMSG_DECORATOR_FUZZING_UNSAFE);
+      return false;
+    }
+
     MOZ_TRY_VAR_OR_RETURN(decorators, decoratorList(yieldHandling), false);
 
     if (!tokenStream.getToken(&tt, TokenStream::SlashIsInvalid)) {
@@ -7707,6 +7716,14 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
                            /* maybeDecl = */ Nothing(), classMembers, &propType,
                            &propAtom),
       false);
+
+#ifdef ENABLE_DECORATORS
+  if (!propAtom &&
+      (decorators || propType == PropertyType::FieldWithAccessor)) {
+    error(JSMSG_DECORATOR_COMPUTED_NYI);
+    return false;
+  }
+#endif
 
   if (propType == PropertyType::Field ||
       propType == PropertyType::FieldWithAccessor) {
@@ -8129,6 +8146,11 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
   ListNodeType decorators = null();
   FunctionNodeType addInitializerFunction = null();
   if (anyChars.isCurrentTokenType(TokenKind::At)) {
+    if (fuzzingSafe) {
+      error(JSMSG_DECORATOR_FUZZING_UNSAFE);
+      return errorResult();
+    }
+
     decorators = MOZ_TRY(decoratorList(yieldHandling));
     TokenKind next;
     if (!tokenStream.getToken(&next)) {
@@ -9765,6 +9787,10 @@ GeneralParser<ParseHandler, Unit>::statementListItem(
       //   DecoratorList[?Yield, ?Await] opt ClassDeclaration[?Yield, ~Default]
 #ifdef ENABLE_DECORATORS
     case TokenKind::At:
+      if (fuzzingSafe) {
+        error(JSMSG_DECORATOR_FUZZING_UNSAFE);
+        return errorResult();
+      }
       return classDefinition(yieldHandling, ClassStatement, NameRequired);
 #endif
 
@@ -11614,6 +11640,14 @@ template <class ParseHandler, typename Unit>
 bool GeneralParser<ParseHandler, Unit>::checkDestructuringAssignmentTarget(
     Node expr, TokenPos exprPos, PossibleError* exprPossibleError,
     PossibleError* possibleError, TargetBehavior behavior) {
+  // |arguments.length| is reported as a property access by the check below, so
+  // the property-access early-return would otherwise swallow it before the
+  // ArgumentsLength optimization is disabled. Mirror the
+  // isArgumentsLength-first pattern used by assignExpr.
+  if (handler_.isArgumentsLength(expr)) {
+    pc_->sc()->setIneligibleForArgumentsLength();
+  }
+
   // Report any pending expression error if we're definitely not in a
   // destructuring context or the possible destructuring target is a
   // property accessor.
@@ -12020,6 +12054,10 @@ GeneralParser<ParseHandler, Unit>::propertyOrMethodName(
     // ClassElementName[?Yield, ?Await] Initializer[+In, ?Yield, ?Await]opt`
     if (TokenKindCanStartPropertyName(tt)) {
       tokenStream.consumeKnownToken(tt);
+      if (fuzzingSafe) {
+        error(JSMSG_DECORATOR_FUZZING_UNSAFE);
+        return errorResult();
+      }
       hasAccessor = true;
     }
   }
@@ -12492,9 +12530,7 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
     return errorResult();
   }
 
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
   bool isSourcePhaseImport = false;
-#endif
 
   if (next == TokenKind::Dot) {
     if (!tokenStream.getToken(&next)) {
@@ -12511,7 +12547,6 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
       return handler_.newImportMeta(importHolder, metaHolder);
     }
 
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
     if (options().sourcePhaseImports()) {
       if (next != TokenKind::Source) {
         error(JSMSG_UNEXPECTED_TOKEN, "meta or source", TokenKindToDesc(next));
@@ -12525,10 +12560,6 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
       error(JSMSG_UNEXPECTED_TOKEN, "meta", TokenKindToDesc(next));
       return errorResult();
     }
-#else
-    error(JSMSG_UNEXPECTED_TOKEN, "meta", TokenKindToDesc(next));
-    return errorResult();
-#endif
   }
 
   if (next == TokenKind::LeftParen && allowCallSyntax) {
@@ -12541,11 +12572,8 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
 
     Node optionalArg;
     if (next == TokenKind::Comma
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
         // Unlike `import`, `import.source` does not have an optional parameter.
-        && !isSourcePhaseImport
-#endif
-    ) {
+        && !isSourcePhaseImport) {
       tokenStream.consumeKnownToken(TokenKind::Comma,
                                     TokenStream::SlashIsRegExp);
 
@@ -12580,12 +12608,11 @@ GeneralParser<ParseHandler, Unit>::importExpr(YieldHandling yieldHandling,
 
     Node spec = MOZ_TRY(handler_.newCallImportSpec(arg, optionalArg));
 
-#ifdef ENABLE_SOURCE_PHASE_IMPORTS
+    ParseNodeKind kind = ParseNodeKind::CallImportExpr;
     if (isSourcePhaseImport) {
-      return handler_.newCallImportSource(importHolder, spec);
+      kind = ParseNodeKind::CallImportSourceExpr;
     }
-#endif
-    return handler_.newCallImport(importHolder, spec);
+    return handler_.newCallImport(importHolder, spec, kind);
   }
 
   error(JSMSG_UNEXPECTED_TOKEN_NO_EXPECT, TokenKindToDesc(next));
@@ -12619,6 +12646,11 @@ GeneralParser<ParseHandler, Unit>::primaryExpr(
 
 #ifdef ENABLE_DECORATORS
     case TokenKind::At:
+      if (fuzzingSafe) {
+        error(JSMSG_DECORATOR_FUZZING_UNSAFE);
+        return errorResult();
+      }
+
       return classDefinition(yieldHandling, ClassExpression, NameRequired);
 #endif
 

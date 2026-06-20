@@ -224,7 +224,7 @@ void AppendFriendlyMessageSpecificData(nsCString& str, UINT event,
       str.AppendASCII(" ");
       WideStringParamInfo(
           str,
-          reinterpret_cast<uint64_t>((const wchar_t*)(params.second.Data())),
+          reinterpret_cast<uint64_t>((const wchar_t*)(params.second.get())),
           "paramChanged", isPreEvent);
       break;
     }

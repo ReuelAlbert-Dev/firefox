@@ -20,7 +20,7 @@ class ImageMemoryReporter::WebRenderReporter final : public nsIMemoryReporter {
  public:
   NS_DECL_ISUPPORTS
 
-  WebRenderReporter() {}
+  WebRenderReporter() = default;
 
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
                             nsISupports* aData, bool aAnonymize) override {
@@ -32,7 +32,7 @@ class ImageMemoryReporter::WebRenderReporter final : public nsIMemoryReporter {
   }
 
  private:
-  virtual ~WebRenderReporter() {}
+  virtual ~WebRenderReporter() = default;
 };
 
 NS_IMPL_ISUPPORTS(ImageMemoryReporter::WebRenderReporter, nsIMemoryReporter)
@@ -42,7 +42,7 @@ void ImageMemoryReporter::InitForWebRender() {
   MOZ_ASSERT(XRE_IsParentProcess() || XRE_IsGPUProcess());
   if (!sWrReporter) {
     sWrReporter = new WebRenderReporter();
-    RegisterStrongMemoryReporter(sWrReporter);
+    RegisterStrongMemoryReporter(do_AddRef(sWrReporter));
   }
 }
 

@@ -48,13 +48,6 @@ ScriptHashKey::ScriptHashKey(
   MOZ_COUNT_CTOR(ScriptHashKey);
 }
 
-ScriptHashKey::ScriptHashKey(ScriptLoader* aLoader,
-                             const JS::loader::ScriptLoadRequest* aRequest,
-                             const JS::loader::LoadedScript* aLoadedScript)
-    : ScriptHashKey(aLoader, aRequest, aLoadedScript->ReferrerPolicy(),
-                    aLoadedScript->GetFetchOptions(), aLoadedScript->GetURI()) {
-}
-
 ScriptHashKey::ScriptHashKey(const ScriptLoadData& aLoadData)
     : ScriptHashKey(aLoadData.CacheKey()) {}
 
@@ -111,6 +104,9 @@ void ScriptHashKey::ToStringForLookup(nsACString& aResult) {
       break;
     case JS::loader::ScriptKind::eImportMap:
       aResult.Append('i');
+      break;
+    case JS::loader::ScriptKind::eSpeculationRules:
+      aResult.Append('s');
       break;
   }
 
@@ -183,6 +179,8 @@ Maybe<ScriptHashKey> ScriptHashKey::FromStringsForLookup(
     kind = JS::loader::ScriptKind::eEvent;
   } else if (kindChar == 'i') {
     kind = JS::loader::ScriptKind::eImportMap;
+  } else if (kindChar == 's') {
+    kind = JS::loader::ScriptKind::eSpeculationRules;
   } else {
     return Nothing();
   }
@@ -244,10 +242,12 @@ NS_IMPL_ISUPPORTS(ScriptLoadData, nsISupports)
 
 ScriptLoadData::ScriptLoadData(ScriptLoader* aLoader,
                                JS::loader::ScriptLoadRequest* aRequest,
+                               CacheExpirationTime aExpirationTime,
                                JS::loader::LoadedScript* aLoadedScript)
-    : mExpirationTime(aRequest->ExpirationTime()),
+    : mExpirationTime(aExpirationTime),
       mLoader(aLoader),
-      mKey(aLoader, aRequest, aLoadedScript),
+      mKey(aLoader, aRequest, aRequest->ReferrerPolicy(),
+           aRequest->FetchOptions(), aLoadedScript->GetURI()),
       mLoadedScript(aLoadedScript),
       mNetworkMetadata(aRequest->mNetworkMetadata) {}
 
@@ -271,13 +271,24 @@ void SharedScriptCache::Init() {
                                 "privacy.trackingprotection.enabled");
 }
 
-SharedScriptCache::~SharedScriptCache() { UnregisterWeakMemoryReporter(this); }
+SharedScriptCache::~SharedScriptCache() {
+  UnregisterWeakMemoryReporter(this);
+  ClearDiskCacheTimer();
+}
 
 bool SharedScriptCache::ShouldIgnoreMemoryPressure() {
   // During the automated testing, we need to ignore the memory pressure,
   // in order to get the deterministic result.
   return !StaticPrefs::
       dom_script_loader_experimental_navigation_cache_check_memory_pressure();
+}
+
+void SharedScriptCache::ClearInProcessForMemoryPressure() {
+  for (auto iter = mComplete.Iter(); !iter.Done(); iter.Next()) {
+    iter.Data().mResource->InvalidateCachedStencil();
+  }
+
+  SharedSubResourceCache::ClearInProcessForMemoryPressure();
 }
 
 void SharedScriptCache::LoadCompleted(SharedScriptCache* aCache,
@@ -350,9 +361,14 @@ bool SharedScriptCache::GetCachedScriptSource(
   JS::Stencil* stencil = nullptr;
   if (auto lookup = sSingleton->mComplete.Lookup(*maybeKey)) {
     JS::loader::LoadedScript* loadedScript = lookup.Data().mResource;
+    if (loadedScript->IsInvalidatedCachedStencil()) {
+      aRetval.setUndefined();
+      return true;
+    }
+
     // NOTE: We don't check the SRIMetadata here, because this is not a
     //       request from <script> element.
-    stencil = loadedScript->GetStencil();
+    stencil = loadedScript->GetCachedStencil();
   } else {
     aRetval.setUndefined();
     return true;
@@ -385,6 +401,7 @@ void SharedScriptCache::PrepareForLastCC() {
 }
 
 static bool ShouldSave(JS::loader::LoadedScript* aLoadedScript,
+                       JS::Stencil* aStencil,
                        ScriptLoader::DiskCacheStrategy aStrategy) {
   if (!aLoadedScript->HasDiskCacheReference()) {
     return false;
@@ -395,7 +412,7 @@ static bool ShouldSave(JS::loader::LoadedScript* aLoadedScript,
   }
 
   if (aStrategy.mHasSourceLengthMin) {
-    size_t len = JS::GetScriptSourceLength(aLoadedScript->GetStencil());
+    size_t len = JS::GetScriptSourceLength(aStencil);
     if (len < aStrategy.mSourceLengthMin) {
       return false;
     }
@@ -419,7 +436,12 @@ bool SharedScriptCache::MaybeScheduleUpdateDiskCache() {
   bool hasSaveable = false;
   for (auto iter = mComplete.Iter(); !iter.Done(); iter.Next()) {
     JS::loader::LoadedScript* loadedScript = iter.Data().mResource;
-    if (ShouldSave(loadedScript, strategy)) {
+    if (loadedScript->IsInvalidatedCachedStencil()) {
+      continue;
+    }
+
+    JS::Stencil* stencil = loadedScript->GetCachedStencil();
+    if (ShouldSave(loadedScript, stencil, strategy)) {
       hasSaveable = true;
       break;
     }
@@ -429,14 +451,50 @@ bool SharedScriptCache::MaybeScheduleUpdateDiskCache() {
     return false;
   }
 
-  // TODO: Apply more flexible scheduling (bug 1902951)
-
-  nsCOMPtr<nsIRunnable> updater =
-      NewRunnableMethod("SharedScriptCache::UpdateDiskCache", this,
-                        &SharedScriptCache::UpdateDiskCache);
-  (void)NS_DispatchToCurrentThreadQueue(updater.forget(),
-                                        EventQueuePriority::Idle);
+  SetDiskCacheTimer();
   return true;
+}
+
+void SharedScriptCache::SetDiskCacheTimer() {
+  if (mDiskCacheTimer) {
+    mRetryDiskCacheTimer = true;
+    return;
+  }
+
+  auto result = NS_NewTimerWithFuncCallback(
+      [](nsITimer*, void* aClosure) {
+        auto* self = static_cast<SharedScriptCache*>(aClosure);
+        self->OnDiskCacheTimer();
+      },
+      this, StaticPrefs::dom_script_loader_disk_cache_delay_ms(),
+      nsITimer::TYPE_ONE_SHOT_LOW_PRIORITY,
+      "SharedScriptCache::DiskCacheTimer"_ns);
+
+  if (result.isErr()) {
+    return;
+  }
+
+  mDiskCacheTimer = result.unwrap();
+}
+
+void SharedScriptCache::ClearDiskCacheTimer() {
+  if (!mDiskCacheTimer) {
+    return;
+  }
+
+  mDiskCacheTimer->Cancel();
+  mDiskCacheTimer = nullptr;
+}
+
+void SharedScriptCache::OnDiskCacheTimer() {
+  mDiskCacheTimer = nullptr;
+  if (mRetryDiskCacheTimer) {
+    mRetryDiskCacheTimer = false;
+    SetDiskCacheTimer();
+    return;
+  }
+
+  UpdateDiskCache();
 }
 
 class ScriptEncodeAndCompressionTask : public mozilla::Task {
@@ -490,12 +548,16 @@ void SharedScriptCache::UpdateDiskCache() {
 
   for (auto iter = mComplete.Iter(); !iter.Done(); iter.Next()) {
     JS::loader::LoadedScript* loadedScript = iter.Data().mResource;
-    if (!ShouldSave(loadedScript, strategy)) {
+    if (loadedScript->IsInvalidatedCachedStencil()) {
       continue;
     }
 
-    if (!mEncodeItems.emplaceBack(loadedScript->GetStencil(),
-                                  std::move(loadedScript->SRI()),
+    RefPtr<JS::Stencil> stencil = loadedScript->GetCachedStencil();
+    if (!ShouldSave(loadedScript, stencil, strategy)) {
+      continue;
+    }
+
+    if (!mEncodeItems.emplaceBack(stencil, std::move(loadedScript->SRI()),
                                   loadedScript)) {
       continue;
     }

@@ -611,6 +611,8 @@
   overflow:clip;
   opacity:1;
   line-height:1;
+  letter-spacing:normal;
+  word-spacing:normal;
   text-size-adjust:none;
   forced-color-adjust:none;
   transform-origin:0 0;
@@ -627,6 +629,7 @@
     white-space:pre;
     cursor:text;
     transform-origin:0% 0%;
+    user-select:text;
   }
   --min-font-size:1;
   --text-scale-factor:calc(var(--total-scale-factor) * var(--min-font-size));
@@ -693,11 +696,20 @@
     &.selected{
       background-color:var(--highlight-selected-bg-color);
       backdrop-filter:var(--highlight-selected-backdrop-filter);
+      scroll-margin-top:50px;
     }
   }
 
   ::selection{
-    background:color-mix(in srgb, AccentColor, transparent 75%);
+    background:color-mix(in srgb, AccentColor, transparent 50%);
+    color:transparent;
+  }
+
+  &.selectionRendering{
+    ::selection{
+      background:transparent;
+      color:transparent;
+    }
   }
 
   .endOfContent{
@@ -729,6 +741,7 @@
   color-scheme:only light;
 
   --annotation-unfocused-field-background:url("data:image/svg+xml;charset=UTF-8,<svg width='1px' height='1px' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' style='fill:rgba(0, 54, 255, 0.13);'/></svg>");
+  --annotation-unfocused-field-filter:url("data:image/svg+xml;charset=UTF-8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='pdfjsFillableField' x='0%' y='0%' width='100%' height='100%' color-interpolation-filters='sRGB'><feFlood flood-color='rgb(0,54,255)' flood-opacity='0.13' result='f'/><feComposite in='f' in2='SourceGraphic' operator='over'/></filter></svg>#pdfjsFillableField");
   --input-focus-border-color:Highlight;
   --input-focus-outline:1px solid Canvas;
   --input-unfocused-border-color:transparent;
@@ -849,6 +862,13 @@
       overflow:hidden;
     }
   }
+  .hasOwnCanvas:not(.sandboxModified) :is(input, textarea){
+    display:none;
+  }
+
+  .hasOwnCanvas.sandboxModified canvas.annotationContent{
+    display:none;
+  }
 
   .textLayer.selecting ~ & section{
     pointer-events:none;
@@ -909,10 +929,6 @@
     padding:0;
   }
 
-  .buttonWidgetAnnotation.radioButton input{
-    border-radius:50%;
-  }
-
   .textWidgetAnnotation textarea{
     resize:none;
   }
@@ -960,50 +976,71 @@
     outline:var(--input-focus-outline);
   }
 
-  .buttonWidgetAnnotation.checkBox input:checked::before,
-  .buttonWidgetAnnotation.checkBox input:checked::after,
-  .buttonWidgetAnnotation.radioButton input:checked::before{
-    background-color:CanvasText;
-    content:"";
-    display:block;
-    position:absolute;
-  }
+  .buttonWidgetAnnotation:is(.checkBox, .radioButton){
+    [data-canvas-name]{
+      filter:var(--annotation-unfocused-field-filter);
+    }
 
-  .buttonWidgetAnnotation.checkBox input:checked::before,
-  .buttonWidgetAnnotation.checkBox input:checked::after{
-    height:80%;
-    left:45%;
-    width:1px;
-  }
+    &:focus-within [data-canvas-name]{
+      filter:none;
+    }
 
-  .buttonWidgetAnnotation.checkBox input:checked::before{
-    transform:rotate(45deg);
-  }
+    [data-canvas-name="checked"]{
+      &:has(~ input:checked){
+        display:block;
+      }
 
-  .buttonWidgetAnnotation.checkBox input:checked::after{
-    transform:rotate(-45deg);
-  }
+      &:has(~ input:not(:checked)){
+        display:none;
+      }
+    }
 
-  .buttonWidgetAnnotation.radioButton input:checked::before{
-    border-radius:50%;
-    height:50%;
-    left:25%;
-    top:25%;
-    width:50%;
+    [data-canvas-name="unchecked"]{
+      &:has(~ input:checked){
+        display:none;
+      }
+
+      &:has(~ input:not(:checked)){
+        display:block;
+      }
+    }
   }
 
   .textWidgetAnnotation input.comb{
+    --comb-width:0px;
+    --comb-letter-spacing:calc(var(--comb-width) - 1ch);
+
     font-family:monospace;
-    padding-left:2px;
-    padding-right:0;
+    letter-spacing:var(--comb-letter-spacing);
+    overflow-x:hidden;
+    padding:0;
+    text-indent:calc(
+      var(--comb-offset, 0) * var(--comb-width) + var(--comb-letter-spacing) / 2
+    );
   }
 
   .textWidgetAnnotation input.comb:focus{
-    width:103%;
+    background-image:repeating-linear-gradient(
+      to right,
+      transparent 0 calc(var(--comb-width) - 1px),
+      var(--input-focus-border-color) calc(var(--comb-width) - 1px)
+        var(--comb-width)
+    );
   }
 
   .buttonWidgetAnnotation:is(.checkBox, .radioButton) input{
     appearance:none;
+  }
+
+  .buttonWidgetAnnotation:is(.checkBox, .radioButton):has(
+      [data-canvas-name="checked"]
+    )
+    input:checked,
+  .buttonWidgetAnnotation:is(.checkBox, .radioButton):has(
+      [data-canvas-name="unchecked"]
+    )
+    input:not(:checked){
+    background-image:none;
   }
 
   .fileAttachmentAnnotation .popupTriggerArea{
@@ -1428,6 +1465,16 @@
 }
 
 .canvasWrapper{
+  .selection{
+    position:absolute;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    pointer-events:none;
+    background:rgb(0 90 255 / 0.22);
+  }
+
   svg{
     transform:none;
 
@@ -3431,6 +3478,7 @@
     pointer-events:auto;
     box-sizing:content-box;
     padding:var(--editor-toolbar-padding);
+    user-select:none;
 
     position:absolute;
     inset-inline-end:0;
@@ -4226,6 +4274,7 @@
 
   &::-moz-color-swatch{
     border-radius:100%;
+    margin:0;
   }
 
 }
@@ -4640,10 +4689,10 @@ button.hasPopupMenu{
     --menu-mark-icon-size:16px;
   }
 
-  > li{
+  > button{
     display:flex;
     align-items:center;
-    list-style:none;
+    position:relative;
     width:100%;
     height:26px;
     padding-inline:calc(var(--menu-mark-icon-size) + var(--menuitem-gap)) var(--menuitem-gap);
@@ -4653,7 +4702,7 @@ button.hasPopupMenu{
     border:1px solid var(--menuitem-border-color);
     background:transparent;
 
-    &:has(button.selected)::before{
+    &.selected::after{
       content:"";
       display:inline-block;
       width:11px;
@@ -4663,101 +4712,88 @@ button.hasPopupMenu{
       mask-image:var(--menuitem-checkmark-icon);
       background-color:var(--menu-text-color);
       position:absolute;
-      margin-inline-start:-16px;
+      inset-inline-start:var(--menuitem-gap);
+      top:50%;
+      transform:translateY(-50%);
     }
 
-    &:has(button:disabled){
+    &:disabled{
       opacity:var(--disabled-opacity);
-      pointer-events:none;
 
-      &:has(button.selected)::before{
+      &.selected::after{
         background-color:var(--menu-text-disabled-color);
       }
-    }
-
-    &:hover{
-      background:var(--menuitem-hover-bg);
-      background-blend-mode:var(--menuitem-hover-background-blend-mode);
-      > button{
-        &:not(.noIcon)::before{
-          background-color:var(--menuitem-text-hover-fg);
-        }
-        > span{
-          color:var(--menuitem-text-hover-fg);
-        }
-      }
-      &:has(button.selected)::before{
-        background-color:var(--menuitem-text-hover-fg);
-      }
-    }
-
-    &:active{
-      background-color:var(--menuitem-active-bg);
-      border-color:var(--menuitem-active-border-color);
-      > button > span{
-        color:var(--menuitem-text-active-fg);
-      }
-    }
-
-    &:has(> button:focus-visible){
-      border-color:var(--menuitem-focus-border-color);
-      background-color:var(--menuitem-focus-bg);
-      outline:2px solid var(--menuitem-focus-outline-color);
-      outline-offset:2px;
-    }
-
-    > button{
-      display:flex;
-      flex-direction:row;
-      align-items:center;
-      width:100%;
-      height:auto;
-      padding:var(--menuitem-gap);
-      gap:var(--menuitem-gap);
-      background:transparent;
-      border:none;
 
       &:not(.noIcon)::before{
-        display:inline-block;
-        width:var(--menu-icon-size);
-        height:var(--menu-icon-size);
-        content:"";
-        mask-size:cover;
-        mask-position:center;
-        background-color:var(--menu-text-color);
-      }
-
-      &:focus-visible{
-        outline:none;
+        background-color:var(--menu-text-disabled-color);
       }
 
       > span{
-        display:inline-block;
-        width:max-content;
-        height:auto;
-        text-align:start;
-        color:var(--menu-text-color);
-        user-select:none;
-        padding-inline-start:6px;
-
-        font:menu;
-        font-size:13px;
-        font-style:normal;
-        font-weight:510;
-        line-height:normal;
+        color:var(--menu-text-disabled-color);
       }
+    }
 
-      &:disabled{
-        pointer-events:none;
+    &:not(:disabled){
+      &:hover{
+        background:var(--menuitem-hover-bg);
+        background-blend-mode:var(--menuitem-hover-background-blend-mode);
 
         &:not(.noIcon)::before{
-          background-color:var(--menu-text-disabled-color);
+          background-color:var(--menuitem-text-hover-fg);
         }
 
         > span{
-          color:var(--menu-text-disabled-color);
+          color:var(--menuitem-text-hover-fg);
+        }
+
+        &.selected::after{
+          background-color:var(--menuitem-text-hover-fg);
         }
       }
+
+      &:active{
+        background-color:var(--menuitem-active-bg);
+        border-color:var(--menuitem-active-border-color);
+
+        > span{
+          color:var(--menuitem-text-active-fg);
+        }
+      }
+
+      &:focus-visible{
+        border-color:var(--menuitem-focus-border-color);
+        background-color:var(--menuitem-focus-bg);
+        outline:2px solid var(--menuitem-focus-outline-color);
+        outline-offset:2px;
+      }
+    }
+
+    &:not(.noIcon)::before{
+      display:inline-block;
+      width:var(--menu-icon-size);
+      height:var(--menu-icon-size);
+      content:"";
+      mask-size:cover;
+      mask-position:center;
+      background-color:var(--menu-text-color);
+    }
+
+    > span{
+      display:flex;
+      align-items:center;
+      align-self:stretch;
+      width:100%;
+      min-width:max-content;
+      text-align:start;
+      color:var(--menu-text-color);
+      user-select:none;
+      padding-inline-start:6px;
+
+      font:menu;
+      font-size:13px;
+      font-style:normal;
+      font-weight:510;
+      line-height:normal;
     }
   }
 }
@@ -5174,7 +5210,7 @@ button.hasPopupMenu{
           min-width:182px;
           z-index:1;
 
-          > li > button{
+          > button{
             &#thumbnailsViewMenu::before{
               mask-image:var(--menuitem-thumbnailsView-icon);
             }
@@ -5192,8 +5228,6 @@ button.hasPopupMenu{
       }
 
       #viewsManagerAddFileButton{
-        visibility:hidden;
-
         background:var(--button-no-bg);
         width:32px;
         height:32px;
@@ -5205,6 +5239,11 @@ button.hasPopupMenu{
         &::before{
           mask-repeat:no-repeat;
           mask-image:var(--views-manager-add-file-button-icon);
+          background-color:var(--button-fg);
+        }
+
+        > input{
+          display:none;
         }
       }
 
@@ -5220,22 +5259,27 @@ button.hasPopupMenu{
         &::before{
           mask-repeat:no-repeat;
           mask-image:var(--current-outline-button-icon);
+          background-color:var(--button-fg);
         }
       }
     }
 
     #viewsManagerStatus{
-      display:flex;
-      align-items:center;
-      align-self:stretch;
-      justify-content:space-between;
-      width:auto;
+      display:grid;
+      width:100%;
       border:1px solid var(--status-border-color);
 
       > div{
         min-height:64px;
         width:100%;
         padding-inline:16px;
+        grid-area:1 / 1;
+        box-sizing:border-box;
+
+        &.hidden{
+          visibility:hidden;
+          display:unset !important;
+        }
       }
 
       .viewsManagerStatusLabel{
@@ -5270,6 +5314,29 @@ button.hasPopupMenu{
             mask-position:center;
             background-color:var(--indicator-color);
             mask-image:var(--pages-selected-icon);
+          }
+
+          @media screen and (forced-colors: active){
+            border-radius:2px;
+            background-color:var(--button-bg);
+
+            &::before{
+              background-color:var(--button-fg);
+            }
+            &:hover{
+              background-color:var(--button-hover-bg);
+
+              &::before{
+                background-color:var(--button-hover-fg);
+              }
+            }
+            &:active{
+              background-color:var(--button-active-bg);
+
+              &::before{
+                background-color:var(--button-active-fg);
+              }
+            }
           }
 
           &#viewsManagerStatusActionDeselectButton:focus-visible{
@@ -5438,14 +5505,15 @@ button.hasPopupMenu{
             pointer-events:none;
           }
         }
+      }
 
-        > .dragMarker{
-          position:absolute;
-          top:0;
-          left:0;
-          border:2px solid var(--indicator-color);
-          contain:strict;
-        }
+      &.isDragging > .dragMarker,
+      &.isDraggingFile > .dragMarker{
+        position:absolute;
+        top:0;
+        left:0;
+        border:2px solid var(--indicator-color);
+        contain:strict;
       }
 
       &.pasteMode{
@@ -5876,16 +5944,6 @@ button.hasPopupMenu{
 }
 [data-main-rotation="270"]{
   transform:rotate(270deg) translateX(-100%);
-}
-
-#hiddenCopyElement,
-.hiddenCanvasElement{
-  position:absolute;
-  top:0;
-  left:0;
-  width:0;
-  height:0;
-  display:none;
 }
 
 .pdfViewer{

@@ -5,6 +5,7 @@
 //! Generic values for properties related to animations and transitions.
 
 use crate::derives::*;
+use crate::typed_om::{KeywordValue, ToTyped, TypedValue};
 use crate::values::generics::length::GenericLengthPercentageOrAuto;
 use crate::values::specified::animation::{
     ScrollAxis, ScrollFunction, TimelineName, TimelineRangeName,
@@ -12,7 +13,8 @@ use crate::values::specified::animation::{
 use crate::values::specified::length::EqualsPercentage;
 use crate::Zero;
 use std::fmt::{self, Write};
-use style_traits::{CssWriter, ToCss, ToTyped};
+use style_traits::{CssString, CssWriter, ToCss};
+use thin_vec::ThinVec;
 
 /// The `animation-duration` property.
 ///
@@ -73,7 +75,22 @@ impl<T: ToCss + Zero> ToCss for AnimationDuration<T> {
     }
 }
 
-impl<T: ToTyped + Zero> ToTyped for AnimationDuration<T> {}
+// TODO: Switch to ToTyped derive once the pref goes away.
+impl<T: ToTyped + Zero> ToTyped for AnimationDuration<T> {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        match *self {
+            Self::Auto => {
+                if static_prefs::pref!("layout.css.scroll-driven-animations.enabled") {
+                    dest.push(TypedValue::Keyword(KeywordValue(CssString::from("auto"))));
+                    Ok(())
+                } else {
+                    Self::Time(T::zero()).to_typed(dest)
+                }
+            },
+            Self::Time(ref t) => t.to_typed(dest),
+        }
+    }
+}
 
 /// The view() notation.
 /// https://drafts.csswg.org/scroll-animations-1/#view-notation
@@ -118,6 +135,7 @@ pub use self::GenericViewFunction as ViewFunction;
     ToTyped,
 )]
 #[repr(C, u8)]
+#[typed(todo_derive_fields)]
 pub enum GenericAnimationTimeline<LengthPercent> {
     /// Use default timeline. The animation’s timeline is a DocumentTimeline.
     Auto,
@@ -277,6 +295,7 @@ impl<LengthPercent> AnimationRangeValue<LengthPercent> {
     ToTyped,
 )]
 #[repr(transparent)]
+#[typed(todo_derive_fields)]
 pub struct GenericAnimationRangeStart<LengthPercent>(pub GenericAnimationRangeValue<LengthPercent>);
 
 pub use self::GenericAnimationRangeStart as AnimationRangeStart;
@@ -329,6 +348,7 @@ impl<LengthPercent: ToCss + EqualsPercentage> ToCss for AnimationRangeStart<Leng
     ToTyped,
 )]
 #[repr(transparent)]
+#[typed(todo_derive_fields)]
 pub struct GenericAnimationRangeEnd<LengthPercent>(pub GenericAnimationRangeValue<LengthPercent>);
 
 pub use self::GenericAnimationRangeEnd as AnimationRangeEnd;

@@ -33,6 +33,8 @@ class ConnectionAttemptPool final {
   // connection complete
   uint32_t UnconnectedConnectionAttempts() const;
 
+  void OnConnectionAttemptConnected();
+
   bool FindConnToClaim(PendingTransactionInfo* pendingTransInfo);
 
   void TimeoutTick();
@@ -50,6 +52,7 @@ class ConnectionAttemptPool final {
 
   WeakPtr<ConnectionEntry> mEntry;
   nsTArray<RefPtr<ConnectionAttempt>> mAttempts;
+  uint32_t mUnconnectedCount{0};
 };
 
 }  // namespace net

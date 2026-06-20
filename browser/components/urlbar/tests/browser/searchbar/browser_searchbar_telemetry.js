@@ -64,6 +64,7 @@ add_task(async function test_plainQuery() {
     source: "searchbar",
     count: 1,
   });
+  searchbar.handleRevert();
 });
 
 add_task(async function test_pasteAndGo() {
@@ -82,16 +83,17 @@ add_task(async function test_pasteAndGo() {
     source: "searchbar",
     count: 1,
   });
+  searchbar.handleRevert();
 });
 
 add_task(async function test_searchMode() {
   resetTelemetry();
 
-  let popup = await SearchbarTestUtils.openSearchModeSwitcher(window);
-  info("Entering search mode for engine2");
-  let popupHidden = SearchbarTestUtils.searchModeSwitcherPopupClosed(window);
-  popup.querySelector("menuitem[label=engine2]").click();
-  await popupHidden;
+  info("Enter search mode for engine2.");
+  await SearchbarTestUtils.activateSearchModeSwitcherItem(
+    window,
+    "panel-item[data-engine-id=engine2]"
+  );
 
   await SearchbarTestUtils.promiseAutocompleteResultPopup({
     window,

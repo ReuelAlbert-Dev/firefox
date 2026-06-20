@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -38,6 +36,10 @@ struct WeakMapKeyHasher;
 extern void DumpWeakMapLog(JSRuntime* rt);
 
 namespace gc {
+
+// Ensure a Symbol read out of a weak map is marked black in |zone|'s atom
+// marking bitmap before it can escape to script.
+void MarkSymbolForWeakMapReadBarrier(JS::Zone* zone, JS::Symbol* sym);
 
 #if defined(JS_GC_ZEAL) || defined(DEBUG)
 // Check whether a weak map entry is marked correctly.
@@ -120,6 +122,9 @@ struct MightBeInNursery<JS::Value> {
 using WeakMapColors = HashMap<WeakMapBase*, js::gc::CellColor,
                               DefaultHasher<WeakMapBase*>, SystemAllocPolicy>;
 
+class WeakMapBase;
+using WeakMapList = SlimLinkedList<WeakMapBase>;
+
 // Common base class for all WeakMap specializations, used for calling
 // subclasses' GC-related methods.
 class WeakMapBase : public SlimLinkedListElement<WeakMapBase> {
@@ -129,7 +134,7 @@ class WeakMapBase : public SlimLinkedListElement<WeakMapBase> {
   using CellColor = js::gc::CellColor;
 
   WeakMapBase(JSObject* memOf, JS::Zone* zone);
-  virtual ~WeakMapBase() {}
+  virtual ~WeakMapBase() = default;
 
   JS::Zone* zone() const { return zone_; }
 
@@ -327,7 +332,7 @@ struct WeakMapKeyHasher<PreBarriered<JS::Value>> {
   static bool match(const Key& k, const Lookup& l) {
     return WeakMapKeyHasher<JS::Value>::match(k, l);
   }
-  static void rekey(Key& k, const Key& newKey) { k.unbarrieredSet(newKey); }
+  static void rekey(Key& k, const Lookup& newKey) { k.unbarrieredSet(newKey); }
 };
 
 template <class Key, class Value, class AllocPolicy>
@@ -522,11 +527,20 @@ class WeakMap : public WeakMapBase {
     return map().lookup(l);
   }
 
-  static void valueReadBarrier(const JS::Value& v) {
+  void valueReadBarrier(const JS::Value& v) const {
+    // js::jit::WeakMapValueReadBarrier is a specialized version of this
+    // function designed to be called from jitcode. If this code is changed, it
+    // should be kept in sync.
     JS::ExposeValueToActiveJS(v);
+    if (MOZ_UNLIKELY(v.isSymbol())) {
+      gc::MarkSymbolForWeakMapReadBarrier(zone(), v.toSymbol());
+    }
   }
   static void valueReadBarrier(JSObject* obj) {
     JS::ExposeObjectToActiveJS(obj);
+  }
+  static void valueReadBarrier(jit::JitCode* code) {
+    gc::ExposeGCThingToActiveJS(JS::GCCellPtr(code));
   }
 
   void writeBarrier(const Key& key, const Value& value) {
@@ -543,6 +557,14 @@ class WeakMap : public WeakMapBase {
     }
   }
   void keyKindBarrier(JSObject* key) {
+    // Fast path for non-proxy objects.
+    if (!IsProxy(key)) {
+      MOZ_ASSERT(!ObjectMayBeSwapped(key));
+      return;
+    }
+    keyKindBarrierSlow(key);
+  }
+  void keyKindBarrierSlow(JSObject* key) {
     if (!mayHaveKeyDelegates) {
       JSObject* delegate = UncheckedUnwrapWithoutExpose(key);
       if (delegate != key || ObjectMayBeSwapped(key)) {

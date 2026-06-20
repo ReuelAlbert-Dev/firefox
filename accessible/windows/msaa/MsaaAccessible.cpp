@@ -917,7 +917,13 @@ MsaaAccessible::get_accFocus(
 class AccessibleEnumerator final : public IEnumVARIANT {
  public:
   explicit AccessibleEnumerator(const nsTArray<Accessible*>& aArray)
-      : mArray(aArray.Clone()), mCurIndex(0) {}
+      : mCurIndex(0) {
+    mArray.SetCapacity(aArray.Length());
+    for (Accessible* acc : aArray) {
+      mArray.AppendElement(MsaaAccessible::GetFrom(acc));
+    }
+  }
+
   AccessibleEnumerator(const AccessibleEnumerator& toCopy)
       : mArray(toCopy.mArray.Clone()), mCurIndex(toCopy.mCurIndex) {}
   ~AccessibleEnumerator() {}
@@ -936,7 +942,7 @@ class AccessibleEnumerator final : public IEnumVARIANT {
   STDMETHODIMP Clone(IEnumVARIANT FAR* FAR* ppenum);
 
  private:
-  nsTArray<Accessible*> mArray;
+  nsTArray<RefPtr<MsaaAccessible>> mArray;
   uint32_t mCurIndex;
 };
 
@@ -971,8 +977,9 @@ AccessibleEnumerator::Next(unsigned long celt, VARIANT FAR* rgvar,
 
   // Copy the elements of the array into rgvar.
   for (uint32_t i = 0; i < celt; ++i, ++mCurIndex) {
+    RefPtr<IDispatch> disp = mArray[mCurIndex];
     rgvar[i].vt = VT_DISPATCH;
-    rgvar[i].pdispVal = MsaaAccessible::NativeAccessible(mArray[mCurIndex]);
+    disp.forget(&rgvar[i].pdispVal);
   }
 
   if (pceltFetched) *pceltFetched = celt;
@@ -982,8 +989,8 @@ AccessibleEnumerator::Next(unsigned long celt, VARIANT FAR* rgvar,
 
 STDMETHODIMP
 AccessibleEnumerator::Clone(IEnumVARIANT FAR* FAR* ppenum) {
-  *ppenum = new AccessibleEnumerator(*this);
-  NS_ADDREF(*ppenum);
+  auto newEnum = MakeRefPtr<AccessibleEnumerator>(*this);
+  newEnum.forget(ppenum);
   return S_OK;
 }
 
@@ -1039,8 +1046,7 @@ MsaaAccessible::get_accSelection(VARIANT __RPC_FAR* pvarChildren) {
     pvarChildren->vt = VT_DISPATCH;
     pvarChildren->pdispVal = NativeAccessible(selectedItems[0]);
   } else if (count > 1) {
-    RefPtr<AccessibleEnumerator> pEnum =
-        new AccessibleEnumerator(selectedItems);
+    auto pEnum = MakeRefPtr<AccessibleEnumerator>(selectedItems);
     pvarChildren->vt =
         VT_UNKNOWN;  // this must be VT_UNKNOWN for an IEnumVARIANT
     NS_ADDREF(pvarChildren->punkVal = pEnum);

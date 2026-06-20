@@ -42,7 +42,6 @@
               './src/util/libekr/r_errors.h',
               './src/util/libekr/r_includes.h',
               './src/util/libekr/r_macros.h',
-              './src/util/libekr/r_memory.cpp',
               './src/util/libekr/r_memory.h',
               './src/util/libekr/r_time.cpp',
               './src/util/libekr/r_time.h',

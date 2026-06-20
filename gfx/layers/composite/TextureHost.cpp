@@ -22,6 +22,7 @@
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/layers/GPUVideoTextureHost.h"
+#include "mozilla/layers/VideoBridgeParent.h"
 #include "mozilla/layers/WebRenderTextureHost.h"
 #include "mozilla/StaticPrefs_layers.h"
 #include "mozilla/StaticPrefs_gfx.h"
@@ -37,7 +38,6 @@
 #include "../opengl/CompositorOGL.h"
 
 #include "gfxUtils.h"
-#include "IPDLActor.h"
 
 #ifdef XP_MACOSX
 #  include "../opengl/MacIOSurfaceTextureHostOGL.h"
@@ -67,13 +67,13 @@ namespace layers {
  * TextureHost. It is an IPDL actor just like LayerParent, CompositableParent,
  * etc.
  */
-class TextureParent : public ParentActor<PTextureParent> {
+class TextureParent final : public PTextureParent {
  public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TextureParent, final)
+
   TextureParent(HostIPCAllocator* aAllocator,
                 const dom::ContentParentId& aContentId, uint64_t aSerial,
                 const wr::MaybeExternalImageId& aExternalImageId);
-
-  virtual ~TextureParent();
 
   bool Init(const SurfaceDescriptor& aSharedData,
             ReadLockDescriptor&& aReadLock, const LayersBackend& aLayersBackend,
@@ -84,9 +84,16 @@ class TextureParent : public ParentActor<PTextureParent> {
   mozilla::ipc::IPCResult RecvRecycleTexture(
       const TextureFlags& aTextureFlags) final;
 
+  mozilla::ipc::IPCResult RecvDestroy() final {
+    (void)Send__delete__(this);
+    return IPC_OK();
+  }
+
+  void ActorDestroy(ActorDestroyReason aWhy) override;
+
   TextureHost* GetTextureHost() { return mTextureHost; }
 
-  void Destroy() override;
+  void Destroy();
 
   const dom::ContentParentId& GetContentId() const { return mContentId; }
 
@@ -98,6 +105,9 @@ class TextureParent : public ParentActor<PTextureParent> {
   // mSerial is unique in TextureClient's process.
   const uint64_t mSerial;
   wr::MaybeExternalImageId mExternalImageId;
+
+ private:
+  virtual ~TextureParent();
 };
 
 static bool WrapWithWebRenderTextureHost(ISurfaceAllocator* aDeallocator,
@@ -115,30 +125,20 @@ static bool WrapWithWebRenderTextureHost(ISurfaceAllocator* aDeallocator,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-PTextureParent* TextureHost::CreateIPDLActor(
+already_AddRefed<PTextureParent> TextureHost::CreateIPDLActor(
     HostIPCAllocator* aAllocator, const SurfaceDescriptor& aSharedData,
     ReadLockDescriptor&& aReadLock, LayersBackend aLayersBackend,
     TextureFlags aFlags, const dom::ContentParentId& aContentId,
     uint64_t aSerial, const wr::MaybeExternalImageId& aExternalImageId) {
-  TextureParent* actor =
-      new TextureParent(aAllocator, aContentId, aSerial, aExternalImageId);
-  if (!actor->Init(aSharedData, std::move(aReadLock), aLayersBackend, aFlags)) {
-    actor->ActorDestroy(ipc::IProtocol::ActorDestroyReason::FailedConstructor);
-    delete actor;
+  MOZ_ASSERT(!(aFlags & TextureFlags::DEALLOCATE_CLIENT));
+
+  TextureFlags flags = aFlags & ~TextureFlags::DEALLOCATE_CLIENT;
+  auto actor = MakeRefPtr<TextureParent>(aAllocator, aContentId, aSerial,
+                                         aExternalImageId);
+  if (!actor->Init(aSharedData, std::move(aReadLock), aLayersBackend, flags)) {
     return nullptr;
   }
-  return actor;
-}
-
-// static
-bool TextureHost::DestroyIPDLActor(PTextureParent* actor) {
-  delete actor;
-  return true;
-}
-
-// static
-bool TextureHost::SendDeleteIPDLActor(PTextureParent* actor) {
-  return PTextureParent::Send__delete__(actor);
+  return actor.forget();
 }
 
 // static
@@ -179,16 +179,17 @@ already_AddRefed<TextureHost> CreateDummyBufferTextureHost(
   aFlags &= ~TextureFlags::DEALLOCATE_CLIENT;
   aFlags |= TextureFlags::DUMMY_TEXTURE;
   UniquePtr<TextureData> textureData(BufferTextureData::Create(
-      gfx::IntSize(1, 1), gfx::SurfaceFormat::B8G8R8A8, gfx::BackendType::SKIA,
-      aBackend, aFlags, TextureAllocationFlags::ALLOC_DEFAULT, nullptr));
+      gfx::IntSize(1, 1), gfx::SurfaceFormat::B8G8R8A8, gfx::ColorSpace2::SRGB,
+      gfx::TransferFunction::SRGB, gfx::BackendType::SKIA, aBackend, aFlags,
+      TextureAllocationFlags::ALLOC_DEFAULT, nullptr));
   SurfaceDescriptor surfDesc;
   textureData->Serialize(surfDesc);
   const SurfaceDescriptorBuffer& bufferDesc =
       surfDesc.get_SurfaceDescriptorBuffer();
   const MemoryOrShmem& data = bufferDesc.data();
-  RefPtr<TextureHost> host =
-      new MemoryTextureHost(reinterpret_cast<uint8_t*>(data.get_uintptr_t()),
-                            bufferDesc.desc(), aFlags);
+  RefPtr host = MakeRefPtr<MemoryTextureHost>(
+      reinterpret_cast<uint8_t*>(data.get_uintptr_t()), bufferDesc.desc(),
+      aFlags);
   return host.forget();
 }
 
@@ -208,6 +209,7 @@ already_AddRefed<TextureHost> TextureHost::Create(
     case SurfaceDescriptor::TEGLImageDescriptor:
     case SurfaceDescriptor::TSurfaceTextureDescriptor:
     case SurfaceDescriptor::TSurfaceDescriptorAndroidHardwareBuffer:
+    case SurfaceDescriptor::TAndroidImageReaderImageDescriptor:
     case SurfaceDescriptor::TSurfaceDescriptorSharedGLTexture:
     case SurfaceDescriptor::TSurfaceDescriptorDMABuf:
       result = CreateTextureHostOGL(aDesc, aDeallocator, aBackend, aFlags);
@@ -239,7 +241,8 @@ already_AddRefed<TextureHost> TextureHost::Create(
 
   if (result && WrapWithWebRenderTextureHost(aDeallocator, aBackend, aFlags)) {
     MOZ_ASSERT(aExternalImageId.isSome());
-    result = new WebRenderTextureHost(aFlags, result, aExternalImageId.ref());
+    result = MakeRefPtr<WebRenderTextureHost>(aFlags, result,
+                                              aExternalImageId.ref());
   }
 
   if (result) {
@@ -261,17 +264,19 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
       switch (data.type()) {
         case MemoryOrShmem::TShmem: {
           const ipc::Shmem& shmem = data.get_Shmem();
-          const BufferDescriptor& desc = bufferDesc.desc();
           if (!shmem.IsReadable()) {
-            // We failed to map the shmem so we can't verify its size. This
-            // should not be a fatal error, so just create the texture with
-            // nothing backing it.
-            result = new ShmemTextureHost(shmem, desc, aDeallocator, aFlags);
-            break;
+            // We failed to map the shmem so we can't verify its size.
+            // Attempting to construct a ShmemTextureHost with it will succeed,
+            // but the resulting object will have a null shmem and can't ever be
+            // locked or mapped -- it's not useful at all. We just return
+            // nullptr instead.
+            gfxCriticalError() << "Failed texture host with unmappable shmem.";
+            return nullptr;
           }
 
           size_t bufSize = shmem.Size<char>();
           Maybe<size_t> reqSize;
+          const BufferDescriptor& desc = bufferDesc.desc();
           switch (desc.type()) {
             case BufferDescriptor::TYCbCrDescriptor: {
               const YCbCrDescriptor& ycbcr = desc.get_YCbCrDescriptor();
@@ -301,7 +306,8 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
             return nullptr;
           }
 
-          result = new ShmemTextureHost(shmem, desc, aDeallocator, aFlags);
+          result =
+              MakeRefPtr<ShmemTextureHost>(shmem, desc, aDeallocator, aFlags);
           break;
         }
         case MemoryOrShmem::Tuintptr_t: {
@@ -312,7 +318,7 @@ already_AddRefed<TextureHost> CreateBackendIndependentTextureHost(
             return nullptr;
           }
 
-          result = new MemoryTextureHost(
+          result = MakeRefPtr<MemoryTextureHost>(
               reinterpret_cast<uint8_t*>(data.get_uintptr_t()),
               bufferDesc.desc(), aFlags);
           break;
@@ -402,14 +408,14 @@ void TextureHost::NotifyNotUsed() {
     return;
   }
 
-  static_cast<TextureParent*>(mActor)->NotifyNotUsed(mFwdTransactionId);
+  mActor->NotifyNotUsed(mFwdTransactionId);
 }
 
 void TextureHost::CallNotifyNotUsed() {
   if (!mActor) {
     return;
   }
-  static_cast<TextureParent*>(mActor)->NotifyNotUsed(mFwdTransactionId);
+  mActor->NotifyNotUsed(mFwdTransactionId);
 }
 
 void TextureHost::MaybeDestroyRenderTexture() {
@@ -462,7 +468,15 @@ BufferTextureHost::BufferTextureHost(const BufferDescriptor& aDesc,
       MOZ_ASSERT(gfx::IntRect(gfx::IntPoint(), ycbcr.ySize())
                      .Contains(ycbcr.display()));
       mSize = ycbcr.display().Size();
-      mFormat = gfx::SurfaceFormat::YUV420;
+      if (ycbcr.colorDepth() == gfx::ColorDepth::COLOR_8) {
+        mFormat = gfx::SurfaceFormat::YUV420;
+      } else if (ycbcr.colorDepth() == gfx::ColorDepth::COLOR_10) {
+        mFormat = gfx::SurfaceFormat::YUV420P10;
+      } else {
+        // we should probably do better for the other depths
+        // but UNKNOWN seems good enough.
+        mFormat = gfx::SurfaceFormat::UNKNOWN;
+      }
       break;
     }
     case BufferDescriptor::TRGBDescriptor: {
@@ -493,6 +507,10 @@ BufferTextureHost::~BufferTextureHost() = default;
 
 void BufferTextureHost::DeallocateDeviceData() {}
 
+bool BufferTextureHost::IsYCbCr() const {
+  return mDescriptor.type() == BufferDescriptor::TYCbCrDescriptor;
+}
+
 void BufferTextureHost::CreateRenderTexture(
     const wr::ExternalImageId& aExternalImageId) {
   MOZ_ASSERT(mExternalImageId.isSome());
@@ -500,11 +518,15 @@ void BufferTextureHost::CreateRenderTexture(
   RefPtr<wr::RenderTextureHost> texture;
 
   if (UseExternalTextures()) {
-    texture =
-        new wr::RenderExternalTextureHost(GetBuffer(), GetBufferDescriptor());
+    texture = MakeRefPtr<wr::RenderExternalTextureHost>(GetBuffer(),
+                                                        GetBufferDescriptor());
   } else {
-    texture =
-        new wr::RenderBufferTextureHost(GetBuffer(), GetBufferDescriptor());
+    texture = MakeRefPtr<wr::RenderBufferTextureHost>(GetBuffer(),
+                                                      GetBufferDescriptor());
+
+    if (auto* shmemTextureHost = AsShmemTextureHost()) {
+      shmemTextureHost->OnRenderTextureCreated(texture);
+    }
   }
 
   wr::RenderThread::Get()->RegisterExternalImage(aExternalImageId,
@@ -512,7 +534,7 @@ void BufferTextureHost::CreateRenderTexture(
 }
 
 uint32_t BufferTextureHost::NumSubTextures() {
-  if (GetFormat() == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     return 3;
   }
 
@@ -536,8 +558,11 @@ void BufferTextureHost::PushResourceUpdates(
                                           wr::ImageBufferKind::TextureRect)
                                     : wr::ExternalImageType::Buffer();
 
-  if (GetFormat() != gfx::SurfaceFormat::YUV420) {
-    MOZ_ASSERT(aImageKeys.length() == 1);
+  if (!IsYCbCr()) {
+    if (aImageKeys.length() != 1) {
+      MOZ_ASSERT_UNREACHABLE("unexpected keys lenght");
+      return;
+    }
 
     auto stride =
         ImageDataSerializer::ComputeRGBStride(GetFormat(), GetSize().width);
@@ -549,7 +574,10 @@ void BufferTextureHost::PushResourceUpdates(
     (aResources.*method)(aImageKeys[0], descriptor, aExtID, imageType, 0,
                          /* aNormalizedUvs */ false);
   } else {
-    MOZ_ASSERT(aImageKeys.length() == 3);
+    if (aImageKeys.length() != 3) {
+      MOZ_ASSERT_UNREACHABLE("unexpected keys lenght");
+      return;
+    }
 
     const layers::YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     gfx::IntSize ySize = desc.display().Size();
@@ -579,14 +607,20 @@ void BufferTextureHost::PushDisplayItems(wr::DisplayListBuilder& aBuilder,
       aFlags.contains(PushDisplayItemFlag::PREFER_COMPOSITOR_SURFACE);
   bool useExternalSurface =
       aFlags.contains(PushDisplayItemFlag::SUPPORTS_EXTERNAL_BUFFER_TEXTURES);
-  if (GetFormat() != gfx::SurfaceFormat::YUV420) {
-    MOZ_ASSERT(aImageKeys.length() == 1);
+  if (!IsYCbCr()) {
+    if (aImageKeys.length() != 1) {
+      MOZ_ASSERT_UNREACHABLE("unexpected key length");
+      return;
+    }
     aBuilder.PushImage(aBounds, aClip, true, false, aFilter, aImageKeys[0],
                        !(mFlags & TextureFlags::NON_PREMULTIPLIED),
                        wr::ColorF{1.0f, 1.0f, 1.0f, 1.0f},
                        preferCompositorSurface, useExternalSurface);
   } else {
-    MOZ_ASSERT(aImageKeys.length() == 3);
+    if (aImageKeys.length() != 3) {
+      MOZ_ASSERT_UNREACHABLE("unexpected key length");
+      return;
+    }
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     aBuilder.PushYCbCrPlanarImage(
         aBounds, aClip, true, aImageKeys[0], aImageKeys[1], aImageKeys[2],
@@ -638,15 +672,23 @@ void BufferTextureHost::UnbindTextureSource() {
 gfx::SurfaceFormat BufferTextureHost::GetFormat() const { return mFormat; }
 
 gfx::YUVColorSpace BufferTextureHost::GetYUVColorSpace() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.yUVColorSpace();
   }
   return gfx::YUVColorSpace::Identity;
 }
 
+gfx::TransferFunction BufferTextureHost::GetTransferFunction() const {
+  if (IsYCbCr()) {
+    const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
+    return desc.transferFunction();
+  }
+  return gfx::TransferFunction::BT709;
+}
+
 gfx::ColorDepth BufferTextureHost::GetColorDepth() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.colorDepth();
   }
@@ -654,7 +696,7 @@ gfx::ColorDepth BufferTextureHost::GetColorDepth() const {
 }
 
 gfx::ColorRange BufferTextureHost::GetColorRange() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.colorRange();
   }
@@ -662,7 +704,7 @@ gfx::ColorRange BufferTextureHost::GetColorRange() const {
 }
 
 gfx::ChromaSubsampling BufferTextureHost::GetChromaSubsampling() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.chromaSubsampling();
   }
@@ -693,8 +735,35 @@ uint8_t* BufferTextureHost::GetCrChannel() {
   return nullptr;
 }
 
+uint16_t* BufferTextureHost::GetYChannel16() {
+  if (mFormat == gfx::SurfaceFormat::YUV420P10) {
+    const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
+    return ImageDataSerializer::GetYChannel(GetBuffer16(), desc);
+  }
+  MOZ_ASSERT_UNREACHABLE("Unexpected to be called!");
+  return nullptr;
+}
+
+uint16_t* BufferTextureHost::GetCbChannel16() {
+  if (mFormat == gfx::SurfaceFormat::YUV420P10) {
+    const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
+    return ImageDataSerializer::GetCbChannel(GetBuffer16(), desc);
+  }
+  MOZ_ASSERT_UNREACHABLE("Unexpected to be called!");
+  return nullptr;
+}
+
+uint16_t* BufferTextureHost::GetCrChannel16() {
+  if (mFormat == gfx::SurfaceFormat::YUV420P10) {
+    const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
+    return ImageDataSerializer::GetCrChannel(GetBuffer16(), desc);
+  }
+  MOZ_ASSERT_UNREACHABLE("Unexpected to be called!");
+  return nullptr;
+}
+
 int32_t BufferTextureHost::GetYStride() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.yStride();
   }
@@ -702,7 +771,7 @@ int32_t BufferTextureHost::GetYStride() const {
 }
 
 int32_t BufferTextureHost::GetCbCrStride() const {
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (IsYCbCr()) {
     const YCbCrDescriptor& desc = mDescriptor.get_YCbCrDescriptor();
     return desc.cbCrStride();
   }
@@ -716,7 +785,10 @@ already_AddRefed<gfx::DataSourceSurface> BufferTextureHost::GetAsSurface(
     NS_WARNING("BufferTextureHost: unsupported format!");
     return nullptr;
   }
-  if (mFormat == gfx::SurfaceFormat::YUV420) {
+  if (!GetBuffer()) {
+    return nullptr;
+  }
+  if (IsYCbCr()) {
     result = ImageDataSerializer::DataSourceSurfaceFromYCbCrDescriptor(
         GetBuffer(), mDescriptor.get_YCbCrDescriptor(), aSurface);
     if (NS_WARN_IF(!result)) {
@@ -728,8 +800,28 @@ already_AddRefed<gfx::DataSourceSurface> BufferTextureHost::GetAsSurface(
     if (stride.isNothing()) {
       return nullptr;
     }
+
+    struct Closure {
+      RefPtr<nsISerialEventTarget> mEventTarget;
+      RefPtr<Runnable> mRunnable;
+    };
+
+    RefPtr<nsISerialEventTarget> eventTarget = CompositorThread();
+    RefPtr<Runnable> runnable =
+        NS_NewRunnableFunction("BufferTextureHost::GetAsSurface::Runnable",
+                               [self = RefPtr{this}]() {});
+
+    Closure* closure = new Closure{eventTarget.forget(), runnable.forget()};
+
+    auto destroyedCallback = [](void* aClosure) mutable {
+      auto* closure = static_cast<Closure*>(aClosure);
+      closure->mEventTarget->Dispatch(closure->mRunnable.forget());
+      delete closure;
+    };
+
     result = gfx::Factory::CreateWrappingDataSourceSurface(
-        GetBuffer(), stride.value(), mSize, mFormat);
+        GetBuffer(), stride.value(), mSize, mFormat, destroyedCallback,
+        closure);
   }
   return result.forget();
 }
@@ -739,8 +831,12 @@ ShmemTextureHost::ShmemTextureHost(const ipc::Shmem& aShmem,
                                    ISurfaceAllocator* aDeallocator,
                                    TextureFlags aFlags)
     : BufferTextureHost(aDesc, aFlags), mDeallocator(aDeallocator) {
+  MOZ_ASSERT(!(mFlags & TextureFlags::DEALLOCATE_CLIENT));
+
   if (aShmem.IsReadable()) {
-    mShmem = MakeUnique<ipc::Shmem>(aShmem);
+    UniquePtr<mozilla::ipc::Shmem> shmem = MakeUnique<ipc::Shmem>(aShmem);
+    mShmemDeallocRunnable =
+        MakeRefPtr<ShmemDeallocRunnable>(mDeallocator, std::move(shmem));
   } else {
     // This can happen if we failed to map the shmem on this process, perhaps
     // because it was big and we didn't have enough contiguous address space
@@ -755,35 +851,76 @@ ShmemTextureHost::ShmemTextureHost(const ipc::Shmem& aShmem,
 }
 
 ShmemTextureHost::~ShmemTextureHost() {
-  MOZ_ASSERT(!mShmem || (mFlags & TextureFlags::DEALLOCATE_CLIENT),
-             "Leaking our buffer");
   DeallocateDeviceData();
   MOZ_COUNT_DTOR(ShmemTextureHost);
 }
 
-void ShmemTextureHost::DeallocateSharedData() {
-  if (mShmem) {
-    MOZ_ASSERT(mDeallocator,
-               "Shared memory would leak without a ISurfaceAllocator");
-    mDeallocator->AsShmemAllocator()->DeallocShmem(*mShmem);
-    mShmem = nullptr;
+void ShmemTextureHost::DeallocateSharedData() {}
+
+void ShmemTextureHost::ForgetSharedData() {}
+
+void ShmemTextureHost::OnShutdown() { mShmemDeallocRunnable = nullptr; }
+
+ShmemTextureHost::ShmemDeallocRunnable::ShmemDeallocRunnable(
+    ISurfaceAllocator* aDeallocator, UniquePtr<mozilla::ipc::Shmem>&& aShmem)
+    : Runnable("ShmemDeallocRunnable"),
+      mDeallocator(aDeallocator),
+      mShmem(std::move(aShmem)) {}
+
+nsresult ShmemTextureHost::ShmemDeallocRunnable::Run() {
+  if (!mDeallocator || !mShmem) {
+    return NS_OK;
   }
+  mDeallocator->AsShmemAllocator()->DeallocShmem(*mShmem);
+  mShmem = nullptr;
+  return NS_OK;
 }
 
-void ShmemTextureHost::ForgetSharedData() {
-  if (mShmem) {
-    mShmem = nullptr;
+ShmemTextureHost::ShmemDeallocRunnable::~ShmemDeallocRunnable() {
+  if (!mDeallocator || !mShmem) {
+    return;
   }
+  mDeallocator->AsShmemAllocator()->DeallocShmem(*mShmem);
 }
 
-void ShmemTextureHost::OnShutdown() { mShmem = nullptr; }
+void ShmemTextureHost::OnRenderTextureCreated(
+    wr::RenderTextureHost* aRenderTexture) {
+  MOZ_ASSERT(aRenderTexture);
+
+  if (!mShmemDeallocRunnable || !mShmemDeallocRunnable->GetShmem()) {
+    return;
+  }
+
+  RefPtr<nsISerialEventTarget> eventTarget = GetCurrentSerialEventTarget();
+  RefPtr<ShmemDeallocRunnable> runnable = mShmemDeallocRunnable;
+
+  auto destroyedCallback = [eventTarget = std::move(eventTarget),
+                            runnable = std::move(runnable)]() mutable {
+    eventTarget->Dispatch(runnable.forget());
+  };
+
+  aRenderTexture->SetDestroyedCallback(destroyedCallback);
+}
 
 uint8_t* ShmemTextureHost::GetBuffer() const {
-  return mShmem ? mShmem->get<uint8_t>() : nullptr;
+  if (mShmemDeallocRunnable && mShmemDeallocRunnable->GetShmem()) {
+    return mShmemDeallocRunnable->GetShmem()->get<uint8_t>();
+  }
+  return nullptr;
+}
+
+uint16_t* ShmemTextureHost::GetBuffer16() const {
+  if (mShmemDeallocRunnable && mShmemDeallocRunnable->GetShmem()) {
+    return mShmemDeallocRunnable->GetShmem()->get<uint16_t>();
+  }
+  return nullptr;
 }
 
 size_t ShmemTextureHost::GetBufferSize() const {
-  return mShmem ? mShmem->Size<uint8_t>() : 0;
+  if (mShmemDeallocRunnable && mShmemDeallocRunnable->GetShmem()) {
+    return mShmemDeallocRunnable->GetShmem()->Size<uint8_t>();
+  }
+  return 0;
 }
 
 MemoryTextureHost::MemoryTextureHost(uint8_t* aBuffer,
@@ -811,6 +948,9 @@ void MemoryTextureHost::DeallocateSharedData() {
 void MemoryTextureHost::ForgetSharedData() { mBuffer = nullptr; }
 
 uint8_t* MemoryTextureHost::GetBuffer() const { return mBuffer; }
+uint16_t* MemoryTextureHost::GetBuffer16() const {
+  return reinterpret_cast<uint16_t*>(mBuffer);
+}
 
 size_t MemoryTextureHost::GetBufferSize() const {
   // MemoryTextureHost just trusts that the buffer size is large enough to read
@@ -884,6 +1024,14 @@ mozilla::ipc::IPCResult TextureParent::RecvRecycleTexture(
   }
   mTextureHost->RecycleTexture(aTextureFlags);
   return IPC_OK();
+}
+
+void TextureParent::ActorDestroy(ActorDestroyReason aWhy) {
+  auto* manager = Manager();
+  if (manager->GetProtocolId() == ipc::ProtocolId::PVideoBridgeMsgStart) {
+    static_cast<VideoBridgeParent*>(manager)->RemoveTexture(mSerial);
+  }
+  Destroy();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

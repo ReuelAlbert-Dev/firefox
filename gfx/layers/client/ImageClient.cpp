@@ -31,6 +31,10 @@
 #include "nsISupportsImpl.h"                  // for Image::Release, etc
 #include "nsRect.h"                           // for mozilla::gfx::IntRect
 
+#ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/layers/AndroidImageReader.h"
+#endif
+
 namespace mozilla {
 namespace layers {
 
@@ -92,7 +96,8 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
         aKnowsCompositor, data->mPictureRect, data->YDataSize(), data->mYStride,
         data->CbCrDataSize(), data->mCbCrStride, data->mStereoMode,
         data->mColorDepth, data->mYUVColorSpace, data->mColorRange,
-        data->mChromaSubsampling, TextureFlags::DEFAULT);
+        data->mTransferFunction, data->mChromaSubsampling,
+        TextureFlags::DEFAULT, data->mHDRMetadata);
     if (!texture) {
       return nullptr;
     }
@@ -116,7 +121,13 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
         typedImage->GetOriginPos(), typedImage->GetHasAlpha(),
         typedImage->GetForceBT709ColorSpace(),
         typedImage->GetTransformOverride(),
-        aKnowsCompositor->GetTextureForwarder(), TextureFlags::DEFAULT);
+        aKnowsCompositor->GetTextureForwarder().get(), TextureFlags::DEFAULT);
+  } else if (aImage->GetFormat() == ImageFormat::ANDROID_IMAGE_READER) {
+    AndroidImageReaderImage* typedImage = aImage->AsAndroidImageReaderImage();
+    texture = AndroidImageReaderImageTextureData::CreateTextureClient(
+        typedImage->mImageReaderId, typedImage->mFrameId, typedImage->mSize,
+        typedImage->GetOriginPos(), typedImage->mHasAlpha,
+        aKnowsCompositor->GetTextureForwarder().get(), TextureFlags::DEFAULT);
 #endif
   } else {
     RefPtr<gfx::SourceSurface> surface = aImage->GetAsSourceSurface();

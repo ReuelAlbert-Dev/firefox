@@ -3,35 +3,13 @@
 
 "use strict";
 
-const VISIBLE_UI = {
-  pageHeader: true,
-  mainUserInterface: true,
-  sourceLanguageSelector: true,
-  targetLanguageSelector: true,
-  copyButton: true,
-  swapLanguagesButton: true,
-  sourceSectionTextArea: true,
-  targetSectionTextArea: true,
-  unsupportedInfoMessage: false,
-  policyDisabledInfoMessage: false,
-  featureBlockedInfoMessage: false,
-  languageLoadErrorMessage: false,
-};
+const FEATURE_ENABLED_VISIBILITY_EXPECTATIONS =
+  aboutTranslationsVisibilityExpectations();
 
-const FEATURE_BLOCKED_UI = {
-  pageHeader: true,
-  mainUserInterface: true,
-  sourceLanguageSelector: true,
-  targetLanguageSelector: true,
-  copyButton: true,
-  swapLanguagesButton: true,
-  sourceSectionTextArea: true,
-  targetSectionTextArea: true,
-  unsupportedInfoMessage: false,
-  featureBlockedInfoMessage: true,
-  policyDisabledInfoMessage: false,
-  languageLoadErrorMessage: false,
-};
+const FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS =
+  aboutTranslationsVisibilityExpectations({
+    featureBlockedInfoMessage: true,
+  });
 
 /**
  * Asserts that the main controls are enabled or disabled.
@@ -115,7 +93,9 @@ add_task(
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS
+    );
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -127,10 +107,12 @@ add_task(
         ],
       },
       async () => {
-        await TranslationsParent.AIFeature.enable();
+        await TranslationsFeature.enable();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -142,10 +124,12 @@ add_task(
         ],
       },
       async () => {
-        await TranslationsParent.AIFeature.disable();
+        await TranslationsFeature.block();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS
+    );
 
     await cleanup();
   }
@@ -168,7 +152,9 @@ add_task(
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -180,10 +166,12 @@ add_task(
         ],
       },
       async () => {
-        await TranslationsParent.AIFeature.disable();
+        await TranslationsFeature.block();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS
+    );
 
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -195,10 +183,12 @@ add_task(
         ],
       },
       async () => {
-        await TranslationsParent.AIFeature.enable();
+        await TranslationsFeature.enable();
       }
     );
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
 
     await cleanup();
   }
@@ -213,20 +203,11 @@ add_task(async function test_about_translations_engine_unsupported() {
     prefs: [["browser.translations.simulateUnsupportedEngine", true]],
   });
 
-  await aboutTranslationsTestUtils.assertIsVisible({
-    pageHeader: true,
-    unsupportedInfoMessage: true,
-    policyDisabledInfoMessage: false,
-    featureBlockedInfoMessage: false,
-    mainUserInterface: false,
-    sourceLanguageSelector: false,
-    targetLanguageSelector: false,
-    copyButton: false,
-    swapLanguagesButton: false,
-    sourceSectionTextArea: false,
-    targetSectionTextArea: false,
-    languageLoadErrorMessage: false,
-  });
+  await aboutTranslationsTestUtils.assertIsVisible(
+    aboutTranslationsStandaloneMessageVisibilityExpectations({
+      unsupportedInfoMessage: true,
+    })
+  );
 
   await cleanup();
 });
@@ -241,20 +222,11 @@ add_task(async function test_about_translations_feature_blocked_by_policy() {
     autoDownloadFromRemoteSettings: true,
   });
 
-  await aboutTranslationsTestUtils.assertIsVisible({
-    pageHeader: true,
-    unsupportedInfoMessage: false,
-    policyDisabledInfoMessage: true,
-    featureBlockedInfoMessage: false,
-    mainUserInterface: false,
-    sourceLanguageSelector: false,
-    targetLanguageSelector: false,
-    copyButton: false,
-    swapLanguagesButton: false,
-    sourceSectionTextArea: false,
-    targetSectionTextArea: false,
-    languageLoadErrorMessage: false,
-  });
+  await aboutTranslationsTestUtils.assertIsVisible(
+    aboutTranslationsStandaloneMessageVisibilityExpectations({
+      policyDisabledInfoMessage: true,
+    })
+  );
 
   await cleanup();
 });
@@ -271,7 +243,9 @@ add_task(
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS
+    );
     await assertMainUserInterfaceEnabledState(false);
 
     await aboutTranslationsTestUtils.assertEvents(
@@ -284,11 +258,13 @@ add_task(
         ],
       },
       async () => {
-        await aboutTranslationsTestUtils.clickUnblockFeatureButton();
+        await aboutTranslationsTestUtils.invokeUnblockFeatureButton();
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
     await assertMainUserInterfaceEnabledState(true);
     await aboutTranslationsTestUtils.assertEvents(
       {
@@ -333,7 +309,9 @@ add_task(
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
     await assertMainUserInterfaceEnabledState(true);
 
     await aboutTranslationsTestUtils.assertEvents(
@@ -346,11 +324,13 @@ add_task(
         ],
       },
       async () => {
-        await TranslationsParent.AIFeature.disable();
+        await TranslationsFeature.block();
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(FEATURE_BLOCKED_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_BLOCKED_UI_VISIBILITY_EXPECTATIONS
+    );
     await assertMainUserInterfaceEnabledState(false);
 
     await aboutTranslationsTestUtils.assertEvents(
@@ -363,11 +343,13 @@ add_task(
         ],
       },
       async () => {
-        await aboutTranslationsTestUtils.clickUnblockFeatureButton();
+        await aboutTranslationsTestUtils.invokeUnblockFeatureButton();
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible(VISIBLE_UI);
+    await aboutTranslationsTestUtils.assertIsVisible(
+      FEATURE_ENABLED_VISIBILITY_EXPECTATIONS
+    );
     await assertMainUserInterfaceEnabledState(true);
     await aboutTranslationsTestUtils.assertEvents(
       {

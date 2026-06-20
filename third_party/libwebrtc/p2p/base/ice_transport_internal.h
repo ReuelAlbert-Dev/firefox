@@ -14,15 +14,16 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
-#include "api/array_view.h"
 #include "api/candidate.h"
 #include "api/peer_connection_interface.h"
 #include "api/rtc_error.h"
+#include "api/task_queue/task_queue_base.h"
 #include "api/transport/enums.h"
 #include "api/units/time_delta.h"
 #include "p2p/base/candidate_pair_interface.h"
@@ -251,7 +252,7 @@ struct RTC_EXPORT IceConfig {
 // TODO(bugs.webrtc.org/15609): Define a public API for this.
 class RTC_EXPORT IceTransportInternal : public PacketTransportInternal {
  public:
-  IceTransportInternal();
+  explicit IceTransportInternal(TaskQueueBase* attached_queue = nullptr);
   ~IceTransportInternal() override;
 
   // This class is uncopyable and immovable.
@@ -324,7 +325,13 @@ class RTC_EXPORT IceTransportInternal : public PacketTransportInternal {
                                const Candidate& candidate) {
     candidate_gathered_callbacks_.Send(transport, candidate);
   }
+  [[deprecated("Use SubscribeCandidateGathered(void* tag, ...)")]]
   void SubscribeCandidateGathered(
+      absl::AnyInvocable<void(IceTransportInternal*, const Candidate&)>
+          callback);
+
+  void SubscribeCandidateGathered(
+      void* tag,
       absl::AnyInvocable<void(IceTransportInternal*, const Candidate&)>
           callback);
 
@@ -353,14 +360,23 @@ class RTC_EXPORT IceTransportInternal : public PacketTransportInternal {
   void NotifyRoleConflict(IceTransportInternal* transport) {
     role_conflict_callbacks_.Send(transport);
   }
+  [[deprecated("Use SubscribeRoleConflict(void* tag, ...)")]]
   void SubscribeRoleConflict(
+      absl::AnyInvocable<void(IceTransportInternal*)> callback);
+  void SubscribeRoleConflict(
+      void* tag,
       absl::AnyInvocable<void(IceTransportInternal*)> callback);
 
   // Emitted whenever the new standards-compliant transport state changed.
   void NotifyIceTransportStateChanged(IceTransportInternal* transport) {
     ice_transport_state_changed_callbacks_.Send(transport);
   }
+  [[deprecated("Use SubscribeIceTransportStateChanged(void* tag, ...)")]]
   void SubscribeIceTransportStateChanged(
+      absl::AnyInvocable<void(IceTransportInternal*)> callback);
+
+  void SubscribeIceTransportStateChanged(
+      void* tag,
       absl::AnyInvocable<void(IceTransportInternal*)> callback);
 
   // Invoked when remote dictionary has been updated,
@@ -395,7 +411,7 @@ class RTC_EXPORT IceTransportInternal : public PacketTransportInternal {
 
   CallbackList<IceTransportInternal*,
                const StunDictionaryView&,
-               ArrayView<uint16_t>>
+               std::span<uint16_t>>
       dictionary_view_updated_callback_list_;
   CallbackList<IceTransportInternal*, const StunDictionaryWriter&>
       dictionary_writer_synced_callback_list_;

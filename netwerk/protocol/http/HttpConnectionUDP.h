@@ -96,7 +96,8 @@ class HttpConnectionUDP final : public HttpConnectionBase,
   void ResetTransaction(nsHttpTransaction* aHttpTransaction);
 
   void HandleTunnelResponse(nsHttpTransaction* aHttpTransaction,
-                            uint16_t responseStatus, bool* reset);
+                            const nsHttpResponseHead& responseHead,
+                            bool* reset);
 
   nsresult CreateTunnelStream(nsAHttpTransaction* httpTransaction,
                               HttpConnectionBase** aHttpConnection,
@@ -153,6 +154,11 @@ class HttpConnectionUDP final : public HttpConnectionBase,
   bool mProxyConnectSucceeded = false;
   nsTArray<RefPtr<nsHttpTransaction>> mQueuedHttpConnectTransaction;
   nsTArray<RefPtr<nsHttpTransaction>> mQueuedConnectUdpTransaction;
+  bool mAlreadyWildcard = false;
+
+  // Transactions whose LNA check has been deferred until after the QUIC
+  // handshake completes; drained in OnConnected().
+  nsTArray<RefPtr<nsHttpTransaction>> mDeferredLnaTransactions;
 };
 
 }  // namespace net

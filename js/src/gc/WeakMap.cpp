@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,11 +7,17 @@
 #include "gc/PublicIterators.h"
 #include "vm/JSObject.h"
 
+#include "gc/AtomMarking-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/StoreBuffer-inl.h"
 
 using namespace js;
 using namespace js::gc;
+
+void js::gc::MarkSymbolForWeakMapReadBarrier(JS::Zone* zone, JS::Symbol* sym) {
+  MOZ_ASSERT(zone && !zone->isAtomsZone());
+  zone->runtimeFromMainThread()->gc.atomMarking.inlinedMarkAtom(zone, sym);
+}
 
 WeakMapBase::WeakMapBase(JSObject* memOf, Zone* zone)
     : memberOf(memOf), zone_(zone) {
@@ -64,10 +68,7 @@ void WeakMapBase::checkZoneUnmarked(JS::Zone* zone) {
 
 void Zone::traceWeakMaps(JSTracer* trc) {
   MOZ_ASSERT(trc->weakMapAction() != JS::WeakMapTraceAction::Skip);
-  ForAllWeakMapsInZone(this, [trc](WeakMapBase* map) {
-    map->trace(trc);
-    TraceNullableEdge(trc, &map->memberOf, "memberOf");
-  });
+  ForAllWeakMapsInZone(this, [trc](WeakMapBase* map) { map->trace(trc); });
 }
 
 mozilla::Maybe<CellColor> WeakMapBase::markMap(MarkColor markColor) {

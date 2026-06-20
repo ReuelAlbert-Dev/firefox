@@ -57,7 +57,7 @@ add_task(async function test_banner_visible_when_other_profiles_have_backup() {
 
   await SpecialPowers.pushPrefEnv({
     set: [
-      [ENABLED_ON_PROFILES_PREF, JSON.stringify({ other: true })],
+      [ENABLED_ON_PROFILES_PREF, JSON.stringify(["other"])],
       [UPLOAD_ENABLED_PREF, true],
     ],
   });
@@ -97,7 +97,7 @@ add_task(
     mockCurrentProfile("my-profile");
 
     await SpecialPowers.pushPrefEnv({
-      set: [[ENABLED_ON_PROFILES_PREF, JSON.stringify({ "my-profile": true })]],
+      set: [[ENABLED_ON_PROFILES_PREF, JSON.stringify(["my-profile"])]],
     });
 
     await openPreferencesViaOpenPreferencesAPI("panePrivacy", {
@@ -105,10 +105,7 @@ add_task(
     });
 
     let doc = gBrowser.contentDocument;
-    let win = gBrowser.contentWindow;
     let banner = doc.getElementById("backup-multi-profile-warning-message-bar");
-
-    win.gPrivacyPane.updateBackupBannerVisibility();
 
     ok(
       banner.hidden,
@@ -125,7 +122,7 @@ add_task(async function test_banner_hidden_when_no_profiles_enabled() {
   mockCurrentProfile("my-profile");
 
   await SpecialPowers.pushPrefEnv({
-    set: [[ENABLED_ON_PROFILES_PREF, "{}"]],
+    set: [[ENABLED_ON_PROFILES_PREF, "[]"]],
   });
 
   await openPreferencesViaOpenPreferencesAPI("panePrivacy", {
@@ -133,10 +130,7 @@ add_task(async function test_banner_hidden_when_no_profiles_enabled() {
   });
 
   let doc = gBrowser.contentDocument;
-  let win = gBrowser.contentWindow;
   let banner = doc.getElementById("backup-multi-profile-warning-message-bar");
-
-  win.gPrivacyPane.updateBackupBannerVisibility();
 
   ok(banner.hidden, "Banner should be hidden when no profiles have backup");
 
@@ -155,10 +149,7 @@ add_task(async function test_banner_shows_on_data_collection_pref_change() {
 
   await SpecialPowers.pushPrefEnv({
     set: [
-      [
-        ENABLED_ON_PROFILES_PREF,
-        JSON.stringify({ "my-profile": true, other: true }),
-      ],
+      [ENABLED_ON_PROFILES_PREF, JSON.stringify(["my-profile", "other"])],
       [UPLOAD_ENABLED_PREF, true],
     ],
   });
@@ -206,10 +197,7 @@ add_task(
 
     await SpecialPowers.pushPrefEnv({
       set: [
-        [
-          ENABLED_ON_PROFILES_PREF,
-          JSON.stringify({ "my-profile": true, other: true }),
-        ],
+        [ENABLED_ON_PROFILES_PREF, JSON.stringify(["my-profile", "other"])],
         [UPLOAD_ENABLED_PREF, true],
       ],
     });

@@ -24,8 +24,8 @@ add_task(async function test_get_page_content_basic() {
     </html>
   `;
 
-  const { SecurityProperties } = ChromeUtils.importESModule(
-    "moz-src:///browser/components/aiwindow/models/SecurityProperties.sys.mjs"
+  const { ChatConversation } = ChromeUtils.importESModule(
+    "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
   );
 
   const { url_list, GetPageContent, cleanup } =
@@ -45,14 +45,17 @@ add_task(async function test_get_page_content_basic() {
       window.document.documentElement.hasAttribute("ai-window")
   );
 
-  // Create an allowed URLs set containing the test page
-  const allowedUrls = new Set(url_list);
+  const conversation = new ChatConversation({
+    title: "",
+    description: "",
+    pageUrl: new URL("https://example.com"),
+    pageMeta: {},
+  });
 
   // Call the tool with the URL
   const result_array = await GetPageContent.getPageContent(
     { url_list },
-    allowedUrls,
-    new SecurityProperties()
+    conversation
   );
   const result = result_array[0];
 

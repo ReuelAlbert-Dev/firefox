@@ -1077,10 +1077,6 @@ var SessionStoreInternal = {
   // they get restored).
   _crashedBrowsers: new WeakSet(),
 
-  // A map (xul:browser -> FrameLoader) that maps a browser to the last
-  // associated frameLoader we heard about.
-  _lastKnownFrameLoader: new WeakMap(),
-
   // A map (xul:browser -> object) that maps a browser associated with a
   // recently closed tab to all its necessary state information we need to
   // properly handle final update message.
@@ -1728,7 +1724,7 @@ var SessionStoreInternal = {
 
         if (writeToCache) {
           let win =
-            browsingContext.embedderElement?.ownerGlobal ||
+            browsingContext.embedderElement?.documentGlobal ||
             browsingContext.currentWindowGlobal?.browsingContext?.window;
 
           SessionStoreInternal.onTabStateUpdate(permanentKey, win, {
@@ -1900,10 +1896,9 @@ var SessionStoreInternal = {
     if (listener) {
       let historychange =
         // If it is not the scheduled update (tab closed, window closed etc),
-        // try to store the loading non-web-controlled page opened in _blank
-        // first.
+        // try to store the loading non-web-controlled page first.
         (forStorage &&
-          lazy.SessionHistory.collectNonWebControlledBlankLoadingSession(
+          lazy.SessionHistory.collectNonWebControlledLoadingSession(
             browsingContext
           )) ||
         listener.collect(permanentKey, browsingContext, {
@@ -1917,7 +1912,7 @@ var SessionStoreInternal = {
     }
 
     let win =
-      browser?.ownerGlobal ??
+      browser?.documentGlobal ??
       browsingContext.currentWindowGlobal?.browsingContext?.window;
 
     this.onTabStateUpdate(permanentKey, win, update);
@@ -1929,7 +1924,7 @@ var SessionStoreInternal = {
    * Implement EventListener for handling various window and tab events
    */
   handleEvent: function ssi_handleEvent(aEvent) {
-    let win = aEvent.currentTarget.ownerGlobal;
+    let win = aEvent.currentTarget.documentGlobal;
     let target = aEvent.originalTarget;
     switch (aEvent.type) {
       case "TabOpen":
@@ -2007,10 +2002,6 @@ var SessionStoreInternal = {
           target.frameLoader &&
           target.permanentKey
         ) {
-          this._lastKnownFrameLoader.set(
-            target.permanentKey,
-            target.frameLoader
-          );
           this.resetEpoch(target.permanentKey, target.frameLoader);
         }
         break;
@@ -3290,10 +3281,6 @@ var SessionStoreInternal = {
     browser.addEventListener("oop-browser-crashed", this);
     browser.addEventListener("oop-browser-buildid-mismatch", this);
 
-    if (browser.frameLoader) {
-      this._lastKnownFrameLoader.set(browser.permanentKey, browser.frameLoader);
-    }
-
     // Only restore if browser has been lazy.
     if (
       TAB_LAZY_STATES.has(aTab) &&
@@ -3540,7 +3527,6 @@ var SessionStoreInternal = {
 
     aTab.setAttribute("pending", "true");
 
-    this._lastKnownFrameLoader.delete(browser.permanentKey);
     this._crashedBrowsers.delete(browser.permanentKey);
     aTab.removeAttribute("crashed");
 
@@ -3840,7 +3826,7 @@ var SessionStoreInternal = {
   enterCrashedState(browser) {
     this._crashedBrowsers.add(browser.permanentKey);
 
-    let win = browser.ownerGlobal;
+    let win = browser.documentGlobal;
 
     // If we hadn't yet restored, or were still in the midst of
     // restoring this browser at the time of the crash, we need
@@ -4036,10 +4022,10 @@ var SessionStoreInternal = {
   },
 
   getTabState: function ssi_getTabState(aTab) {
-    if (!aTab || !aTab.ownerGlobal) {
+    if (!aTab || !aTab.documentGlobal) {
       throw Components.Exception("Need a valid tab", Cr.NS_ERROR_INVALID_ARG);
     }
-    if (!aTab.ownerGlobal.__SSi) {
+    if (!aTab.documentGlobal.__SSi) {
       throw Components.Exception(
         "Default view is not tracked",
         Cr.NS_ERROR_INVALID_ARG
@@ -4076,7 +4062,7 @@ var SessionStoreInternal = {
       );
     }
 
-    let window = aTab.ownerGlobal;
+    let window = aTab.documentGlobal;
     if (!window || !("__SSi" in window)) {
       throw Components.Exception(
         "Window is not tracked",
@@ -4146,10 +4132,10 @@ var SessionStoreInternal = {
     aRestoreImmediately = true,
     { inBackground, tabIndex } = {}
   ) {
-    if (!aTab || !aTab.ownerGlobal) {
+    if (!aTab || !aTab.documentGlobal) {
       throw Components.Exception("Need a valid tab", Cr.NS_ERROR_INVALID_ARG);
     }
-    if (!aTab.ownerGlobal.__SSi) {
+    if (!aTab.documentGlobal.__SSi) {
       throw Components.Exception(
         "Default view is not tracked",
         Cr.NS_ERROR_INVALID_ARG
@@ -4201,10 +4187,10 @@ var SessionStoreInternal = {
         return;
       }
 
-      let window = newTab.ownerGlobal;
+      let window = newTab.documentGlobal;
 
       // The tab or its window might be gone.
-      if (!window || !window.__SSi) {
+      if (!window || !window.__SSi || window.closed) {
         return;
       }
 
@@ -4240,13 +4226,13 @@ var SessionStoreInternal = {
       aWindowOrOptions = this._getTopWindow();
     }
     if (aWindowOrOptions instanceof Ci.nsIDOMWindow) {
-      isPrivate = PrivateBrowsingUtils.isBrowserPrivate(aWindowOrOptions);
+      isPrivate = PrivateBrowsingUtils.isWindowPrivate(aWindowOrOptions);
     } else {
       isPrivate = Boolean(aWindowOrOptions.private);
     }
 
     const browserWindows = Array.from(this._browserWindows).filter(win => {
-      return PrivateBrowsingUtils.isBrowserPrivate(win) === isPrivate;
+      return PrivateBrowsingUtils.isWindowPrivate(win) === isPrivate;
     });
     return browserWindows;
   },
@@ -4634,7 +4620,6 @@ var SessionStoreInternal = {
 
     // Predict the remote type to use for the load to avoid unnecessary process
     // switches.
-    let preferredRemoteType = lazy.E10SUtils.DEFAULT_REMOTE_TYPE;
     let url;
     if (state.entries?.length) {
       let activeIndex = (state.index || state.entries.length) - 1;
@@ -4642,13 +4627,11 @@ var SessionStoreInternal = {
       activeIndex = Math.max(activeIndex, 0);
       url = state.entries[activeIndex].url;
     }
-    if (url) {
-      preferredRemoteType = this.getPreferredRemoteType(
-        url,
-        aTargetWindow,
-        state.userContextId
-      );
-    }
+    let preferredRemoteType = this.getPreferredRemoteType(
+      url,
+      aTargetWindow,
+      state.userContextId
+    );
 
     // create a new tab
     let tabbrowser = aTargetWindow.gBrowser;
@@ -4692,17 +4675,10 @@ var SessionStoreInternal = {
   },
 
   getPreferredRemoteType(url, aWindow, userContextId) {
-    return lazy.E10SUtils.getRemoteTypeForURI(
-      url,
-      aWindow.gMultiProcessBrowser,
-      aWindow.gFissionBrowser,
-      lazy.E10SUtils.DEFAULT_REMOTE_TYPE,
-      null,
-      lazy.E10SUtils.predictOriginAttributes({
-        window: aWindow,
-        userContextId,
-      })
-    );
+    return ChromeUtils.predictRemoteTypeForURI(url, {
+      window: aWindow,
+      userContextId,
+    });
   },
 
   /**
@@ -4833,7 +4809,7 @@ var SessionStoreInternal = {
       for (let win of browserWindows) {
         if (
           !searchPrivateWindows &&
-          PrivateBrowsingUtils.isBrowserPrivate(win)
+          PrivateBrowsingUtils.isWindowPrivate(win)
         ) {
           continue;
         }
@@ -5028,14 +5004,14 @@ var SessionStoreInternal = {
     }
 
     TAB_CUSTOM_VALUES.get(aTab)[aKey] = aStringValue;
-    this.saveStateDelayed(aTab.ownerGlobal);
+    this.saveStateDelayed(aTab.documentGlobal);
   },
 
   deleteCustomTabValue(aTab, aKey) {
     let state = TAB_CUSTOM_VALUES.get(aTab);
     if (state && aKey in state) {
       delete state[aKey];
-      this.saveStateDelayed(aTab.ownerGlobal);
+      this.saveStateDelayed(aTab.documentGlobal);
     }
   },
 
@@ -5144,7 +5120,7 @@ var SessionStoreInternal = {
     }
 
     let browser = tab.linkedBrowser;
-    let win = browser.ownerGlobal;
+    let win = browser.documentGlobal;
 
     if (!tabData) {
       tabData = lazy.TabState.collect(tab, TAB_CUSTOM_VALUES.get(tab));
@@ -6481,7 +6457,7 @@ var SessionStoreInternal = {
     }
 
     let loadArguments = options.loadArguments;
-    let window = tab.ownerGlobal;
+    let window = tab.documentGlobal;
     let tabbrowser = window.gBrowser;
     let forceOnDemand = options.forceOnDemand;
     let isRemotenessUpdate = options.isRemotenessUpdate;
@@ -6688,7 +6664,7 @@ var SessionStoreInternal = {
     }
 
     let browser = aTab.linkedBrowser;
-    let window = aTab.ownerGlobal;
+    let window = aTab.documentGlobal;
     let tabData = lazy.TabState.clone(aTab, TAB_CUSTOM_VALUES.get(aTab));
     let activeIndex = tabData.index - 1;
     let activePageData = tabData.entries[activeIndex] || null;
@@ -6819,7 +6795,6 @@ var SessionStoreInternal = {
         aWinData.sizemode || "",
         aWinData.sizemodeBeforeMinimized || ""
       );
-      this.restoreSidebar(aWindow, aWinData.sidebar, aWinData.isPopup);
       promiseParts.resolve(aWindow);
     }, 0);
     return promiseParts.promise;
@@ -6835,7 +6810,8 @@ var SessionStoreInternal = {
     if (!aSidebar || isPopup) {
       return;
     }
-    aWindow.SidebarController.initializeUIState(aSidebar);
+    aWindow.SidebarController.markSessionRestoreStateReceived();
+    aWindow.SidebarController.updateUIState(aSidebar);
   },
 
   /**
@@ -8330,7 +8306,7 @@ var SessionStoreInternal = {
   },
 
   _restoreHistoryComplete(browser) {
-    let win = browser.ownerGlobal;
+    let win = browser.documentGlobal;
     let tab = win?.gBrowser.getTabForBrowser(browser);
     if (!tab) {
       return;
@@ -8348,7 +8324,7 @@ var SessionStoreInternal = {
   },
 
   _restoreTabContentStarted(browser, data) {
-    let win = browser.ownerGlobal;
+    let win = browser.documentGlobal;
     let tab = win?.gBrowser.getTabForBrowser(browser);
     if (!tab) {
       return;
@@ -8417,8 +8393,8 @@ var SessionStoreInternal = {
   },
 
   _restoreTabContentComplete(browser, data) {
-    let win = browser.ownerGlobal;
-    let tab = browser.ownerGlobal?.gBrowser.getTabForBrowser(browser);
+    let win = browser.documentGlobal;
+    let tab = win?.gBrowser.getTabForBrowser(browser);
     if (!tab) {
       return;
     }
@@ -8481,17 +8457,17 @@ var SessionStoreInternal = {
    * @param {MozTabbrowserTabGroup} tabGroup
    */
   addSavedTabGroup(tabGroup) {
-    if (PrivateBrowsingUtils.isWindowPrivate(tabGroup.ownerGlobal)) {
+    if (PrivateBrowsingUtils.isWindowPrivate(tabGroup.documentGlobal)) {
       throw new Error("Refusing to save tab group from private window");
     }
 
     let tabGroupState = lazy.TabGroupState.savedInOpenWindow(
       tabGroup,
-      tabGroup.ownerGlobal.__SSi
+      tabGroup.documentGlobal.__SSi
     );
     tabGroupState.tabs = this._collectClosedTabsForTabGroup(
       tabGroup.tabs,
-      tabGroup.ownerGlobal
+      tabGroup.documentGlobal
     );
     tabGroupState.splitViews = this._collectSplitViewDataForTabGroup(
       tabGroup.tabs
@@ -8511,8 +8487,8 @@ var SessionStoreInternal = {
       throw new Error(`No tab group found with id ${tabGroupId}`);
     }
 
-    const win = tabs[0].ownerGlobal;
-    if (!tabs.every(tab => tab.ownerGlobal === win)) {
+    const win = tabs[0].documentGlobal;
+    if (!tabs.every(tab => tab.documentGlobal === win)) {
       throw new Error(`All tabs must be part of the same window`);
     }
 
@@ -8527,6 +8503,8 @@ var SessionStoreInternal = {
     });
     tabGroupState.tabs.push(...newTabState);
     let newSplitViewData = this._collectSplitViewDataForTabGroup(tabs);
+
+    tabGroupState.splitViews ??= [];
     tabGroupState.splitViews.push(...newSplitViewData);
 
     let isVerticalMode = win.gBrowser.tabContainer.verticalMode;

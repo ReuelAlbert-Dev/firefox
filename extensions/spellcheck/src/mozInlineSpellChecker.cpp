@@ -48,6 +48,7 @@
 #include "mozilla/dom/KeyboardEvent.h"
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/MouseEvent.h"
+#include "mozilla/dom/NodeList.h"
 #include "mozilla/dom/Selection.h"
 #include "mozInlineSpellWordUtil.h"
 #include "nsCOMPtr.h"
@@ -522,7 +523,7 @@ class mozInlineSpellResume : public Runnable {
 
 // Used as the nsIEditorSpellCheck::InitSpellChecker callback.
 class InitEditorSpellCheckCallback final : public nsIEditorSpellCheckCallback {
-  ~InitEditorSpellCheckCallback() {}
+  ~InitEditorSpellCheckCallback() = default;
 
  public:
   NS_DECL_ISUPPORTS
@@ -553,7 +554,7 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(mozInlineSpellChecker)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(mozInlineSpellChecker)
 
 NS_IMPL_CYCLE_COLLECTION_WEAK(mozInlineSpellChecker, mEditorBase, mSpellCheck,
-                              mCurrentSelectionAnchorNode)
+                              mCurrentSelectionAnchorNode, mPendingSpellCheck)
 
 mozInlineSpellChecker::SpellCheckingState
     mozInlineSpellChecker::gCanEnableSpellChecking =
@@ -570,7 +571,7 @@ mozInlineSpellChecker::mozInlineSpellChecker()
       mFullSpellCheckScheduled(false),
       mIsListeningToEditSubActions(false) {}
 
-mozInlineSpellChecker::~mozInlineSpellChecker() {}
+mozInlineSpellChecker::~mozInlineSpellChecker() = default;
 
 EditorSpellCheck* mozInlineSpellChecker::GetEditorSpellCheck() {
   return mSpellCheck ? mSpellCheck : mPendingSpellCheck;
@@ -1407,9 +1408,8 @@ nsresult mozInlineSpellChecker::SpellCheckerSlice::Execute() {
   const int32_t originalRangeCount = mSpellCheckSelection.RangeCount();
 
   // set the starting DOM position to be the beginning of our range
-  if (nsresult rv = mWordUtil.SetPositionAndEnd(
-          mStatus->mRange->GetStartContainer(), mStatus->mRange->StartOffset(),
-          mStatus->mRange->GetEndContainer(), mStatus->mRange->EndOffset());
+  if (nsresult rv = mWordUtil.SetPositionAndEnd(mStatus->mRange->StartRef(),
+                                                mStatus->mRange->EndRef());
       NS_FAILED(rv)) {
     // Just bail out and don't try to spell-check this
     return NS_OK;
@@ -2054,7 +2054,7 @@ class UpdateCurrentDictionaryCallback final
   }
 
  private:
-  ~UpdateCurrentDictionaryCallback() {}
+  ~UpdateCurrentDictionaryCallback() = default;
 
   RefPtr<mozInlineSpellChecker> mSpellChecker;
   uint32_t mDisabledAsyncToken;

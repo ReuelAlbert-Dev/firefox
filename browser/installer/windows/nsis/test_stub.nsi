@@ -1,3 +1,6 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 Unicode true
 
 ; Tests use the silent install feature to bypass message box prompts.
@@ -119,8 +122,19 @@ Var MockLocalAppDataFolder
 !macroend
 !define GetLocalAppDataFolder "!insertmacro MockGetLocalAppDataFolder"
 
+!define GenerateUUID "Push 'THIS_IS_A_UNIQUE_ID_FOR_TESTING'"
+
 !include stub.nsh
-!include get_installation_type.nsh
+!include desktop_launcher_helpers.nsh
+!include install_dir_helpers.nsh
+
+Var MockCommandLine
+!macro MockGetRawCommandLine Result
+  StrCpy $${Result} $MockCommandLine
+!macroend
+!define /redef GetRawCommandLine "!insertmacro MockGetRawCommandLine"
+
+!include test_telemetry.nsh
 
 ; .onInit is responsible for running the tests
 Function .onInit
@@ -168,6 +182,27 @@ Function .onInit
     ${UnitTest} TestSetDlsourceFieldInPostSigningData
     ${UnitTest} TestUpdateInstalledPostSigningDataFileFailure
     ${UnitTest} TestUpdateInstalledPostSigningDataFileSuccess
+
+    ${UnitTest} TestUseExistingInstallPathIfNoInstallDirArg
+    ${UnitTest} TestUseExistingInstallPathIfNoInstallDirArgWithExistingInRegister
+    ${UnitTest} TestUseExistingInstallPathIfNoInstallDirArgWithPathArg
+    ${UnitTest} TestUseExistingInstallPathIfNoInstallDirArgWithNameArg
+    ${UnitTest} TestUseExistingInstallPathIfNoInstallDirArgWithDArg
+
+    ${UnitTest} TestGetInstallationTelemetryFromMsiFileDoesNotExist
+    ${UnitTest} TestGetInstallationTelemetryFromMsiFileIsEmpty
+    ${UnitTest} TestGetInstallationTelemetryFromMsiTypeIsIncorrect
+    ${UnitTest} TestGetInstallationTelemetryFromMsiValueIsUnknown
+    ${UnitTest} TestGetInstallationTelemetryFromMsiValueIsTrue
+    ${UnitTest} TestGetInstallationTelemetryFromMsiValueIsFalse
+
+    ${UnitTest} TestIsUpdateChannelEsrFailure
+    ${UnitTest} TestIsUpdateChannelEsrSuccess
+
+    ${UnitTest} TestShouldInstallDesktopLauncherFailure
+    ${UnitTest} TestShouldInstallDesktopLauncherSuccess
+
+    Call TelemetryTests
 
     ${If} $TestFailureCount = 0
         ; On success, write the success metric and jump to the end
@@ -688,6 +723,156 @@ Function TestUpdateInstalledPostSigningDataFileSuccess
   Delete "$INSTDIR\postSigningData"
   RMDir $INSTDIR
   Pop $INSTDIR
+FunctionEnd
+
+Function TestUseExistingInstallPathIfNoInstallDirArg
+  StrCpy $MockParameters ""
+  StrCpy $INSTDIR "C:\Default"
+  ${UseExistingInstallPathIfNoInstallDirArg} "C:\Existing"
+  ${AssertEqual} INSTDIR "C:\Existing"
+FunctionEnd
+
+Function TestUseExistingInstallPathIfNoInstallDirArgWithExistingInRegister
+  StrCpy $MockParameters ""
+  StrCpy $INSTDIR "C:\Default"
+  Push $0
+  StrCpy $0 "C:\Existing"
+  ${UseExistingInstallPathIfNoInstallDirArg} $0
+  ${AssertEqual} INSTDIR "C:\Existing"
+  Pop $0
+FunctionEnd
+
+Function TestUseExistingInstallPathIfNoInstallDirArgWithPathArg
+  StrCpy $MockParameters "/InstallDirectoryPath=C:\Test"
+  StrCpy $INSTDIR "C:\Default"
+  ${UseExistingInstallPathIfNoInstallDirArg} "C:\Existing"
+  ${AssertEqual} INSTDIR "C:\Default"
+FunctionEnd
+
+Function TestUseExistingInstallPathIfNoInstallDirArgWithNameArg
+  StrCpy $MockParameters "/InstallDirectoryName=Test"
+  StrCpy $INSTDIR "C:\Default"
+  ${UseExistingInstallPathIfNoInstallDirArg} "C:\Existing"
+  ${AssertEqual} INSTDIR "C:\Default"
+FunctionEnd
+
+Function TestUseExistingInstallPathIfNoInstallDirArgWithDArg
+  Push $MockCommandLine
+  StrCpy $MockCommandLine "setup.exe /D=C:\Test"
+  StrCpy $INSTDIR "C:\Default"
+  ${UseExistingInstallPathIfNoInstallDirArg} "C:\Existing"
+  ${AssertEqual} INSTDIR "C:\Default"
+  Pop $MockCommandLine
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiFileDoesNotExist
+  GetTempFileName $0
+  Delete $0
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  ${IfNot} ${Errors}
+    ${Fail} "Expected GetInstallationTelemetryFromMsi to set errors if file does not exist"
+  ${EndIf}
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiFileIsEmpty
+  GetTempFileName $0
+  FileOpen $1 "$0" w
+  FileClose $1
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  Delete $0
+  ${IfNot} ${Errors}
+    ${Fail} "Expected GetInstallationTelemetryFromMsi to set errors if file is empty"
+  ${EndIf}
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiTypeIsIncorrect
+  GetTempFileName $0
+  FileOpen $1 "$0" w
+  FileWriteUTF16LE $1 "{$\"from_msi$\":$\"text$\"}"
+  FileClose $1
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  Delete $0
+  ${IfNot} ${Errors}
+    ${Fail} "Expected GetInstallationTelemetryFromMsi to set errors if type is incorrect"
+  ${EndIf}
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiValueIsUnknown
+  GetTempFileName $0
+  FileOpen $1 "$0" w
+  FileWriteUTF16LE $1 "{$\"from_msi$\":unknown}"
+  FileClose $1
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  Delete $0
+  ${IfNot} ${Errors}
+    ${Fail} "Expected GetInstallationTelemetryFromMsi to set errors if value is unknown"
+  ${EndIf}
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiValueIsTrue
+  GetTempFileName $0
+  FileOpen $1 "$0" w
+  FileWriteUTF16LE $1 "{$\"from_msi$\":true}"
+  FileClose $1
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  Delete $0
+  ${AssertEqual} 1 "1"
+FunctionEnd
+
+Function TestGetInstallationTelemetryFromMsiValueIsFalse
+  GetTempFileName $0
+  FileOpen $1 "$0" w
+  FileWriteUTF16LE $1 "{$\"from_msi$\":false}"
+  FileClose $1
+
+  Push $0
+  Call GetInstallationTelemetryFromMsi
+  Pop $1
+  Delete $0
+  ${AssertEqual} 1 "0"
+FunctionEnd
+
+Function TestIsUpdateChannelEsrFailure
+  Push "release"
+  Call IsUpdateChannelEsr
+  Pop $0
+  ${AssertEqual} 0 "0"
+FunctionEnd
+
+Function TestIsUpdateChannelEsrSuccess
+  Push "esr"
+  Call IsUpdateChannelEsr
+  Pop $0
+  ${AssertEqual} 0 "1"
+FunctionEnd
+
+Function TestShouldInstallDesktopLauncherFailure
+  StrCpy $MockParameters ""
+  Call ShouldInstallDesktopLauncher
+  Pop $0
+  ${AssertEqual} 0 "0"
+FunctionEnd
+
+Function TestShouldInstallDesktopLauncherSuccess
+  StrCpy $MockParameters "/DesktopLauncher"
+  Call ShouldInstallDesktopLauncher
+  Pop $0
+  ${AssertEqual} 0 "1"
 FunctionEnd
 
 Section

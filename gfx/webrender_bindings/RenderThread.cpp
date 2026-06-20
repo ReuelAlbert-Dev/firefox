@@ -938,9 +938,11 @@ bool RenderThread::Resume(wr::WindowId aWindowId) {
 
 void RenderThread::NotifyIdle() {
   if (!IsInRenderThread()) {
-    PostRunnable(NewRunnableMethod("RenderThread::NotifyIdle", this,
-                                   &RenderThread::NotifyIdle));
-
+    PostRunnable(NS_NewRunnableFunction("RenderThread::NotifyIdle", []() {
+      if (auto* rt = RenderThread::Get()) {
+        rt->NotifyIdle();
+      }
+    }));
     return;
   }
 
@@ -1037,7 +1039,8 @@ void RenderThread::RegisterExternalImage(
   if (texture->SyncObjectNeeded()) {
     mSyncObjectNeededRenderTextures.emplace(aExternalImageId, texture);
   }
-  mRenderTextures.emplace(aExternalImageId, texture);
+  auto [it, inserted] = mRenderTextures.emplace(aExternalImageId, texture);
+  MOZ_RELEASE_ASSERT(inserted, "ExternalImageId collision");
 
 #ifdef DEBUG
   int32_t maxAllowedIncrease =

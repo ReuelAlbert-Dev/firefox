@@ -38,6 +38,12 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/bounce-tracking-protection;1",
   Ci.nsIBounceTrackingProtection
 );
+XPCOMUtils.defineLazyServiceGetter(
+  lazy,
+  "nssComponent",
+  "@mozilla.org/psm;1",
+  Ci.nsINSSComponent
+);
 
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
@@ -1455,7 +1461,7 @@ const AuthCacheCleaner = {
 };
 
 // Type of the shutdown exception permission.
-const SHUTDOWN_EXCEPTION_PERMISSION = "cookie";
+const SHUTDOWN_EXCEPTION_PERMISSION = "persist-data-on-shutdown";
 
 const ShutdownExceptionsCleaner = {
   async _deleteInternal(filter) {
@@ -1528,7 +1534,8 @@ const ShutdownExceptionsCleaner = {
 const PermissionsCleaner = {
   async _deleteInternal(filter) {
     Services.perms.all
-      // Skip shutdown exception permission because it is handled by ShutDownExceptionsCleaner
+      // Skip persist-data-on-shutdown because it is handled by
+      // ShutdownExceptionsCleaner.
       .filter(({ type }) => type != SHUTDOWN_EXCEPTION_PERMISSION)
       .filter(filter)
       .forEach(perm => {
@@ -1736,6 +1743,39 @@ const PreferencesCleaner = {
         },
       });
     });
+  },
+};
+
+const TlsTokenCacheCleaner = {
+  async deleteByHost(aHost, aOriginAttributes) {
+    // Only propagate partitionKey into the OA pattern: TLS tokens are keyed
+    // by host:port + full OA suffix, but we want to clear all tokens for a
+    // given host regardless of container (userContextId) or other attributes.
+    // The partitionKey is included so that clearing from a given first-party
+    // site only affects tokens partitioned under that site.
+    let pattern = {};
+    if (aOriginAttributes.partitionKey) {
+      pattern.partitionKey = aOriginAttributes.partitionKey;
+    }
+    lazy.nssComponent.removeSSLTokensByHostAndOriginAttributesPattern(
+      aHost,
+      JSON.stringify(pattern)
+    );
+  },
+
+  async deleteByPrincipal(aPrincipal) {
+    return this.deleteByHost(aPrincipal.host, aPrincipal.originAttributes);
+  },
+
+  async deleteBySite(aSchemelessSite, aOriginAttributesPattern) {
+    lazy.nssComponent.removeSSLTokensBySiteAndOriginAttributesPattern(
+      aSchemelessSite,
+      JSON.stringify(aOriginAttributesPattern)
+    );
+  },
+
+  async deleteAll() {
+    lazy.nssComponent.clearSSLExternalAndInternalSessionCache();
   },
 };
 
@@ -2339,6 +2379,11 @@ const FLAGS_MAP = [
   {
     flag: Ci.nsIClearDataService.CLEAR_CLIENT_AUTH_REMEMBER_SERVICE,
     cleaners: [ClientAuthRememberCleaner],
+  },
+
+  {
+    flag: Ci.nsIClearDataService.CLEAR_TLS_TOKEN_CACHE,
+    cleaners: [TlsTokenCacheCleaner],
   },
 
   {

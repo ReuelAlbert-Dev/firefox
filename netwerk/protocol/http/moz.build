@@ -26,7 +26,6 @@ XPIDL_SOURCES += [
     "nsINetworkErrorLogging.idl",
     "nsIObliviousHttp.idl",
     "nsIObliviousHttpChannel.idl",
-    "nsIRaceCacheWithNetwork.idl",
     "nsIReplacedHttpResponse.idl",
     "nsITlsHandshakeListener.idl",
     "nsIWellKnownOpportunisticUtils.idl",
@@ -70,6 +69,7 @@ EXPORTS.mozilla.net += [
     "HttpConnectionMgrParent.h",
     "HttpConnectionMgrShell.h",
     "HttpInfo.h",
+    "HttpTrafficAnalyzer.h",
     "HttpTransactionChild.h",
     "HttpTransactionParent.h",
     "HttpTransactionShell.h",
@@ -119,6 +119,7 @@ UNIFIED_SOURCES += [
     "EarlyHintRegistrar.cpp",
     "EarlyHintsService.cpp",
     "HappyEyeballsConnectionAttempt.cpp",
+    "HappyEyeballsTransaction.cpp",
     "Http2Compression.cpp",
     "Http2Session.cpp",
     "Http2Stream.cpp",
@@ -187,6 +188,7 @@ UNIFIED_SOURCES += [
     "WebTransportFlowControl.cpp",
     "WebTransportSessionBase.cpp",
     "WebTransportStreamBase.cpp",
+    "ZeroRttHandle.cpp",
 ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":

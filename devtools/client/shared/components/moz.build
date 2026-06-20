@@ -17,6 +17,8 @@ DIRS += [
 DevToolsModules(
     "Accordion.js",
     "AppErrorBoundary.js",
+    "CloseButton.js",
+    "DebuggerImage.js",
     "FileSearchBar.js",
     "Frame.js",
     "HSplitBox.js",
@@ -25,6 +27,7 @@ DevToolsModules(
     "NotificationBox.js",
     "SearchBox.js",
     "SearchBoxAutocompletePopup.js",
+    "SearchInput.js",
     "SearchModifiers.js",
     "Sidebar.js",
     "SidebarToggle.js",

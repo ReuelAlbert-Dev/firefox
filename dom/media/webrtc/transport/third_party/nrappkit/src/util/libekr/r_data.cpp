@@ -91,7 +91,7 @@ int r_data_create(Data **dp, const UCHAR *d, size_t l)
 
     if(!(d_=R_NEW(Data)))
       ABORT(R_NO_MEMORY);
-    if(!(d_->data=(UCHAR *)RMALLOC(l)))
+    if(!(d_->data=(UCHAR *)malloc(l)))
       ABORT(R_NO_MEMORY);
 
     if (d) {
@@ -132,7 +132,7 @@ int r_data_alloc(Data **dp, size_t l)
 
 int r_data_make(Data *dp, const UCHAR *d, size_t l)
   {
-    if(!(dp->data=(UCHAR *)RMALLOC(l)))
+    if(!(dp->data=(UCHAR *)malloc(l)))
       ERETURN(R_NO_MEMORY);
 
     memcpy(dp->data,d,l);
@@ -147,9 +147,9 @@ int r_data_destroy(Data **dp)
       return(0);
 
     if((*dp)->data)
-      RFREE((*dp)->data);
+      free((*dp)->data);
 
-    RFREE(*dp);
+    free(*dp);
     *dp=0;
 
     return(0);
@@ -157,7 +157,7 @@ int r_data_destroy(Data **dp)
 
 int r_data_copy(Data *dst, Data *src)
   {
-    if(!(dst->data=(UCHAR *)RMALLOC(src->len)))
+    if(!(dst->data=(UCHAR *)malloc(src->len)))
       ERETURN(R_NO_MEMORY);
     memcpy(dst->data,src->data,dst->len=src->len);
     return(0);
@@ -170,6 +170,6 @@ int r_data_zfree(Data *d)
     if(!d->data)
       return(0);
     memset(d->data,0,d->len);
-    RFREE(d->data);
+    free(d->data);
     return(0);
   }

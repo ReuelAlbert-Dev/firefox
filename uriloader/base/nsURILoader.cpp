@@ -84,7 +84,7 @@ nsDocumentOpenInfo::nsDocumentOpenInfo(uint32_t aFlags,
           mozilla::StaticPrefs::general_document_open_conversion_depth_limit()),
       mAllowListenerConversions(aAllowListenerConversions) {}
 
-nsDocumentOpenInfo::~nsDocumentOpenInfo() {}
+nsDocumentOpenInfo::~nsDocumentOpenInfo() = default;
 
 nsresult nsDocumentOpenInfo::Prepare() {
   LOG(("[0x%p] nsDocumentOpenInfo::Prepare", this));
@@ -188,8 +188,10 @@ NS_IMETHODIMP nsDocumentOpenInfo::OnStartRequest(nsIRequest* request) {
 
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (m_targetStreamListener)
-    rv = m_targetStreamListener->OnStartRequest(request);
+  if (nsCOMPtr<nsIStreamListener> targetStreamListener =
+          m_targetStreamListener) {
+    rv = targetStreamListener->OnStartRequest(request);
+  }
 
   LOG(("  OnStartRequest returning: 0x%08" PRIX32, static_cast<uint32_t>(rv)));
 
@@ -222,9 +224,11 @@ nsDocumentOpenInfo::OnDataAvailable(nsIRequest* request, nsIInputStream* inStr,
   mReceivedData = true;
   nsresult rv = NS_OK;
 
-  if (m_targetStreamListener)
-    rv = m_targetStreamListener->OnDataAvailable(request, inStr, sourceOffset,
-                                                 count);
+  if (nsCOMPtr<nsIStreamListener> targetStreamListener =
+          m_targetStreamListener) {
+    rv = targetStreamListener->OnDataAvailable(request, inStr, sourceOffset,
+                                               count);
+  }
   return rv;
 }
 
@@ -817,9 +821,9 @@ bool nsDocumentOpenInfo::TryDefaultContentListener(nsIChannel* aChannel) {
 // Implementation of nsURILoader
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-nsURILoader::nsURILoader() {}
+nsURILoader::nsURILoader() = default;
 
-nsURILoader::~nsURILoader() {}
+nsURILoader::~nsURILoader() = default;
 
 NS_IMPL_ADDREF(nsURILoader)
 NS_IMPL_RELEASE(nsURILoader)
@@ -905,8 +909,8 @@ nsresult nsURILoader::OpenChannel(nsIChannel* channel, uint32_t aFlags,
 
   // we need to create a DocumentOpenInfo object which will go ahead and open
   // the url and discover the content type....
-  RefPtr<nsDocumentOpenInfo> loader =
-      new nsDocumentOpenInfo(aWindowContext, aFlags, this);
+  RefPtr loader =
+      mozilla::MakeRefPtr<nsDocumentOpenInfo>(aWindowContext, aFlags, this);
 
   // Set the correct loadgroup on the channel
   nsCOMPtr<nsILoadGroup> loadGroup(do_GetInterface(aWindowContext));
@@ -920,7 +924,7 @@ nsresult nsURILoader::OpenChannel(nsIChannel* channel, uint32_t aFlags,
       nsCOMPtr<nsISupports> cookie;
       listener->GetLoadCookie(getter_AddRefs(cookie));
       if (!cookie) {
-        RefPtr<nsDocLoader> newDocLoader = new nsDocLoader();
+        RefPtr newDocLoader = mozilla::MakeRefPtr<nsDocLoader>();
         nsresult rv = newDocLoader->Init();
         if (NS_FAILED(rv)) return rv;
         rv = nsDocLoader::AddDocLoaderAsChildOfRoot(newDocLoader);

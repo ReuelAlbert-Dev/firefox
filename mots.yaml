@@ -8,7 +8,7 @@
 # documentation and how to modify this file.
 repo: mozilla-central
 created_at: '2021-10-14T12:50:40.073465'
-updated_at: '2026-03-20T09:34:11.282579+00:00'
+updated_at: '2026-06-15T20:34:10.621425+00:00'
 export:
   path: ./docs/mots/index.rst
   format: rst
@@ -46,6 +46,10 @@ people:
     bmo_id: 382067
     name: Andrew Halberstadt
     nick: ahal
+  - &ahale
+    bmo_id: 706885
+    name: Ashley Hale
+    nick: ahale
   - &ahochheiden
     bmo_id: 693303
     name: Alex Hochheiden
@@ -73,6 +77,10 @@ people:
     bmo_id: 339940
     name: André Bargull
     nick: anba
+  - &andhuang
+    bmo_id: 789204
+    name: Andy Huang
+    nick: andhuang
   - &andi
     bmo_id: 555858
     name: Andi
@@ -164,6 +172,10 @@ people:
     bmo_id: 474533
     name: Botond Ballo
     nick: botond
+  - &bradwerth
+    bmo_id: 571010
+    name: Brad Werth
+    nick: bradwerth
   - bmo_id: 560379
     name: Bryce Seager van Dyk
     nick: bryce
@@ -393,7 +405,7 @@ people:
     nick: florian
   - &fredwang
     bmo_id: 739410
-    name: Frédéric Wang
+    name: Frédéric Wang Nélar
     nick: fred.wang
   - &freddy
     bmo_id: 428608
@@ -458,6 +470,10 @@ people:
     bmo_id: 506442
     name: David Parks
     nick: handyman
+  - &hannaa
+    bmo_id: 708282
+    name: Hanna Alemu
+    nick: hanna_a
   - &hiro
     bmo_id: 131213
     name: Hiroyuki Ikezoe
@@ -494,6 +510,10 @@ people:
     bmo_id: 353822
     name: Itiel
     nick: itiel_yn8
+  - &jaas
+    bmo_id: 18821
+    name: Josh Aas
+    nick: jaas
   - &Jamie
     bmo_id: 219126
     name: James Teh
@@ -598,6 +618,10 @@ people:
     bmo_id: 621062
     name: Josh Groves
     nick: josh
+  - &jprickett
+    bmo_id: 708280
+    name: Jason Prickett
+    nick: jprickett
   - &jrmuizel
     bmo_id: 309398
     name: Jeff Muizelaar
@@ -933,6 +957,10 @@ people:
     bmo_id: 697076
     name: Perry McManis
     nick: perry.mcmanis
+  - &polly
+    bmo_id: 750904
+    name: Polly McEldowney
+    nick: polly
   - &prathiksha
     bmo_id: 580428
     name: ''
@@ -941,10 +969,6 @@ people:
     bmo_id: 5630
     name: ''
     nick: rbs
-  - &relud
-    bmo_id: 444787
-    name: Daniel Thorn
-    nick: relud
   - &rhamoui
     bmo_id: 690143
     name: Reem Hamoui
@@ -977,8 +1001,7 @@ people:
     bmo_id: 11099
     name: Robert Relyea
     nick: rrelyea
-  - &rsainani
-    bmo_id: 718207
+  - bmo_id: 718207
     name: Rahul Sainani
     nick: rsainani
   - &ryansleevi
@@ -989,6 +1012,10 @@ people:
     bmo_id: 75935
     name: Ryan VanderMeulen
     nick: RyanVM
+  - &sachung
+    bmo_id: 753877
+    name: Sarah Chung
+    nick: sachung
   - &saschanaz
     bmo_id: 473060
     name: Kagami Rosylight
@@ -1892,7 +1919,7 @@ modules:
         - Aaron Klotz
         - Jim Chen
         - Randall E. Barker
-        - Jon Almeida
+        - Jonathan Almeida
       url: https://wiki.mozilla.org/Mobile/GeckoView
       components:
         - GeckoView::General
@@ -1960,9 +1987,8 @@ modules:
       review_group: gfx-reviewers
     owners:
       - *jrmuizel
-    peers:
       - *nical
-      - *jgilbert
+    peers:
       - *mstange
       - *basschouten
       - *jfkthame
@@ -1971,6 +1997,7 @@ modules:
       - *gw
       - *lsalzman
       - *aosmond
+      - *ahale
     machine_name: core_graphics
 
   - name: 'Core: HAL'
@@ -2543,7 +2570,7 @@ modules:
       - toolkit/system/gnome/nsAlertsIconListener*
       - toolkit/system/gnome/nsSystemAlertsService*
       - widget/windows/ToastNotification*
-      - widget/cocoa/OSXNotificationCenter*
+      - widget/cocoa/MacOSNotificationCenter*
     meta:
       group: dev-platform
       components:
@@ -2751,8 +2778,8 @@ modules:
       - *gcp
     machine_name: core_sandboxing_linux
 
-  - name: 'Core: Sandboxing (OSX)'
-    description: Sandboxing for the OSX platform
+  - name: 'Core: Sandboxing (macOS)'
+    description: Sandboxing for the macOS platform
     includes:
       - security/sandbox/mac/**/*
     meta:
@@ -3294,7 +3321,6 @@ modules:
         - Robert O'Callahan
         - Markus Stange
       peers_emeritus:
-        - Josh Aas
         - Benoit Girard
         - Steven Michaud
       group: dev-platform
@@ -3306,6 +3332,8 @@ modules:
     peers:
       - *mstange
       - *haik
+      - *jaas
+      - *bradwerth
     machine_name: core_widget_macos
 
   - name: 'Core: Widget - Windows'
@@ -3330,6 +3358,7 @@ modules:
       group: dev-platform
       components:
         - 'Core::Widget: Win32'
+      review_group: win-reviewers
     owners:
       - *cmartin
     peers:
@@ -3559,6 +3588,7 @@ modules:
           - *adw
         peers:
           - *daisuke
+          - *daleharvey
           - *dao
           - *jteow
           - *mak
@@ -3695,6 +3725,8 @@ modules:
         meta:
           owners_emeritus:
             - Michael Cooper
+          peers_emeritus:
+            - Daniel Thorn
           components:
             - Firefox::Normandy
             - Firefox::Nimbus Desktop Client
@@ -3706,7 +3738,7 @@ modules:
           - *Gijs
           - *emcminn
           - *charlie
-          - *relud
+          - *aminomancer
         machine_name: normandy
 
       - machine_name: firefox_view
@@ -3773,6 +3805,10 @@ modules:
           - browser/components/aboutwelcome/**/*
           - browser/components/uitour/**/*
           - toolkit/components/messaging-system/**/*
+          - browser/components/asrouter/docs/**/*
+          - browser/components/aboutwelcome/docs/**/*
+          - toolkit/components/messaging-system/schemas/**/*
+          - browser/components/uitour/docs/**/*
         meta:
           components:
             - Firefox::Messaging System
@@ -3789,6 +3825,10 @@ modules:
           - *dmosedale
           - *emcminn
           - *mimi
+          - *hannaa
+          - *jprickett
+          - *sachung
+          - *andhuang
         machine_name: inproduct_messaging
 
       - name: Launcher Process
@@ -3969,6 +4009,7 @@ modules:
           - *emz
         peers:
           - *timhuang
+          - *daleharvey
         machine_name: security_and_privacy_ui
 
       - name: Session Restore
@@ -4138,8 +4179,10 @@ modules:
       - *gl
     peers:
       - *royang
-      - *rsainani
+      - *polly
     meta:
+      peers_emeritus:
+        - Rahul Sainani
     submodules:
 
       - machine_name: fenix_addons
@@ -4756,5 +4799,5 @@ modules:
         - Ryan Tilder
       group: dev-platform
 hashes:
-  config: 8a84000338470da76a72781426a74b0e160c8a2e
-  export: d1955b830228b17ffcf1ed35b2798978aeb77381
+  config: 963ca0d13962b3e43afea6c2cfe714ea33a8249b
+  export: 1cf17a05ad39db8dc2410fa58e8bc5caf91a2a45

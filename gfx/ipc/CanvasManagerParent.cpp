@@ -21,7 +21,7 @@
 
 namespace mozilla::gfx {
 
-MOZ_RUNINIT CanvasManagerParent::ManagerSet CanvasManagerParent::sManagers;
+constinit CanvasManagerParent::ManagerSet CanvasManagerParent::sManagers;
 
 /* static */ void CanvasManagerParent::Init(
     Endpoint<PCanvasManagerParent>&& aEndpoint,
@@ -130,11 +130,11 @@ void CanvasManagerParent::ActorDestroy(ActorDestroyReason aWhy) {
 }
 
 already_AddRefed<dom::PWebGLParent> CanvasManagerParent::AllocPWebGLParent() {
-  if (NS_WARN_IF(!gfxVars::AllowWebglOop() &&
-                 !StaticPrefs::webgl_out_of_process_force())) {
-    MOZ_ASSERT_UNREACHABLE("AllocPWebGLParent without remote WebGL");
+  if (NS_WARN_IF(!gfxVars::AllowWebGL())) {
+    MOZ_ASSERT_UNREACHABLE("AllocPWebGLParent without WebGL");
     return nullptr;
   }
+
   return MakeAndAddRef<dom::WebGLParent>(mSharedSurfacesHolder, mContentId);
 }
 

@@ -195,7 +195,6 @@ FWD_TS_T_ADDREF(GetScriptableSelfAddr, nsINetAddr);
 FWD_TS_T_ADDREF(GetTlsSocketControl, nsITLSSocketControl);
 FWD_TS_T_PTR(GetConnectionFlags, uint32_t);
 FWD_TS_T(SetConnectionFlags, uint32_t);
-FWD_TS_T(SetIsPrivate, bool);
 FWD_TS_T(SetIsTRRConnection, bool);
 FWD_TS_T_PTR(GetIsTRRConnection, bool);
 FWD_TS_T_PTR(GetTlsFlags, uint32_t);
@@ -430,8 +429,8 @@ OutputStreamTunnel::AsyncWait(nsIOutputStreamCallback* callback, uint32_t flags,
   LOG(("OutputStreamTunnel::AsyncWait [this=%p]\n", this));
 
   // The following parametr are not used:
-  MOZ_ASSERT(!flags);
-  MOZ_ASSERT(!amount);
+  (void)flags;
+  (void)amount;
   (void)target;
 
   RefPtr<OutputStreamTunnel> self(this);
@@ -563,8 +562,8 @@ InputStreamTunnel::AsyncWait(nsIInputStreamCallback* callback, uint32_t flags,
        static_cast<uint32_t>(mCondition)));
 
   // The following parametr are not used:
-  MOZ_ASSERT(!flags);
-  MOZ_ASSERT(!amount);
+  (void)flags;
+  (void)amount;
   (void)target;
 
   RefPtr<InputStreamTunnel> self(this);

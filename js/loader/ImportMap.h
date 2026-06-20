@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,10 +21,10 @@ class nsIScriptElement;
 class nsIURI;
 
 namespace JS::loader {
-class LoadedScript;
 class ModuleLoaderBase;
-class ScriptLoaderInterface;
+class ScriptFetchInfo;
 class ScriptLoadRequest;
+class ScriptLoaderInterface;
 
 /**
  * A helper class to report warning to ScriptLoaderInterface.
@@ -106,7 +104,7 @@ class ImportMap {
    */
   static ResolveResult ResolveModuleSpecifier(ImportMap* aImportMap,
                                               ScriptLoaderInterface* aLoader,
-                                              LoadedScript* aScript,
+                                              ScriptFetchInfo* aFetchInfo,
                                               const nsAString& aSpecifier);
 
   static mozilla::Maybe<nsString> LookupIntegrity(ImportMap* aImportMap,

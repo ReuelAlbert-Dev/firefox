@@ -20,7 +20,7 @@ class TransformerAlgorithmsBase;
 class TransformStreamDefaultController final : public nsISupports,
                                                public nsWrapperCache {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(TransformStreamDefaultController)
 
   MOZ_KNOWN_LIVE TransformStream* Stream();
@@ -53,17 +53,6 @@ class TransformStreamDefaultController final : public nsISupports,
   RefPtr<TransformStream> mStream;
   RefPtr<TransformerAlgorithmsBase> mTransformerAlgorithms;
 };
-
-namespace streams_abstract {
-void SetUpTransformStreamDefaultController(
-    JSContext* aCx, TransformStream& aStream,
-    TransformStreamDefaultController& aController,
-    TransformerAlgorithmsBase& aTransformerAlgorithms);
-
-void SetUpTransformStreamDefaultControllerFromTransformer(
-    JSContext* aCx, TransformStream& aStream,
-    JS::Handle<JSObject*> aTransformer, Transformer& aTransformerDict);
-}  // namespace streams_abstract
 
 }  // namespace mozilla::dom
 

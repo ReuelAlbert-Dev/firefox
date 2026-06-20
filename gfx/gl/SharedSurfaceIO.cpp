@@ -48,8 +48,8 @@ static bool BackTextureWithIOSurf(GLContext* const gl, const GLuint tex,
 UniquePtr<SharedSurface_IOSurface> SharedSurface_IOSurface::Create(
     const SharedSurfaceDesc& desc) {
   const auto& size = desc.size;
-  const RefPtr<MacIOSurface> ioSurf =
-      MacIOSurface::CreateIOSurface(size.width, size.height, true);
+  const RefPtr<MacIOSurface> ioSurf = MacIOSurface::CreateIOSurface(
+      size.width, size.height, MacIOSurface::AllowAlpha::Yes);
   if (!ioSurf) {
     NS_WARNING("Failed to create MacIOSurface.");
     return nullptr;
@@ -94,7 +94,7 @@ SharedSurface_IOSurface::ToSurfaceDescriptor() {
   const bool isOpaque = false;  // RGBA
   return Some(layers::SurfaceDescriptorMacIOSurface(
       mIOSurf->GetIOSurfaceID(), isOpaque, mIOSurf->GetYUVColorSpace(),
-      (layers::GpuFence*)nullptr));
+      mIOSurf->GetTransferFunction(), (layers::GpuFence*)nullptr));
 }
 
 }  // namespace gl

@@ -68,12 +68,12 @@ class DOMSVGNumber final : public nsWrapperCache {
 
  public:
   /**
-   * Create an unowned copy. The caller is responsible for the first AddRef().
+   * Create an unowned copy.
    */
-  DOMSVGNumber* Clone() {
-    DOMSVGNumber* clone = new DOMSVGNumber(mParent);
+  already_AddRefed<DOMSVGNumber> Clone() {
+    RefPtr clone = new DOMSVGNumber(mParent);
     clone->mValue = ToSVGNumber();
-    return clone;
+    return clone.forget();
   }
 
   bool IsInList() const { return !!mList; }
@@ -106,7 +106,10 @@ class DOMSVGNumber final : public nsWrapperCache {
   }
 
   /// This method is called to notify this object that its list index changed.
-  void UpdateListIndex(uint32_t aListIndex) { mListIndex = aListIndex; }
+  void UpdateListIndex(uint32_t aListIndex) {
+    MOZ_RELEASE_ASSERT(aListIndex <= MaxListIndex());
+    mListIndex = aListIndex;
+  }
 
   /**
    * This method is called to notify this DOM object that it is about to be

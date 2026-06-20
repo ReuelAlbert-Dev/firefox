@@ -6,10 +6,12 @@
 #define IPC_GLUE_IPCMESSAGEUTILS_H_
 
 #include <cstdint>
+#include <tuple>
 #include "chrome/common/ipc_message.h"
 #include "chrome/common/ipc_message_utils.h"
 #include "mozilla/ipc/IPCCore.h"
 #include "mozilla/MacroForEach.h"
+#include "mozilla/TiedFields.h"
 
 class PickleIterator;
 
@@ -152,6 +154,29 @@ static bool ReadParams(MessageReader* aReader, Ts&... aArgs) {
   return (ReadParam(aReader, &aArgs) && ...);
 }
 
+// Helper class to implement ParamTraits for classes using mozilla::TiedFields.
+// Asserts that the tied fields account for all members of the class.
+template <class T>
+struct ParamTraits_TiedFields {
+  static_assert(mozilla::AssertTiedFieldsAreExhaustive<T>());
+
+  static void Write(MessageWriter* const writer, const T& in) {
+    const auto& fields = mozilla::TiedFields(in);
+    std::apply([=](const auto&... field) { WriteParams(writer, field...); },
+               fields);
+  }
+
+  static bool Read(MessageReader* const reader, T* const out) {
+    const auto& fields = mozilla::TiedFields(*out);
+    return std::apply(
+        [=](auto&... field) { return ReadParams(reader, field...); }, fields);
+  }
+};
+
+template <class U, size_t N>
+struct ParamTraits<mozilla::PaddingField<U, N>> final
+    : public ParamTraits_TiedFields<mozilla::PaddingField<U, N>> {};
+
 // Macros that allow syntax like:
 // DEFINE_IPC_SERIALIZER_WITH_FIELDS(SomeType, member1, member2, member3)
 // Makes sure that serialize/deserialize code do the same members in the same
@@ -174,6 +199,29 @@ static bool ReadParams(MessageReader* aReader, Ts&... aArgs) {
                                                (__VA_ARGS__)));              \
     }                                                                        \
   };
+
+// Intended to be used with IMPLEMENT_IPC_SERIALIZER_WITH_FIELDS.
+#define DECLARE_IPC_SERIALIZER(Type)                                    \
+  template <>                                                           \
+  struct ParamTraits<Type> {                                            \
+    typedef Type paramType;                                             \
+    static void Write(MessageWriter* aWriter, const paramType& aParam); \
+    static bool Read(MessageReader* aReader, paramType* aResult);       \
+  };
+
+#define IMPLEMENT_IPC_SERIALIZER_WITH_FIELDS(Type, ...)                       \
+  void ParamTraits<Type>::Write(MessageWriter* aWriter,                       \
+                                const paramType& aParam) {                    \
+    WriteParams(aWriter, MOZ_FOR_EACH_SEPARATED(ACCESS_PARAM_FIELD, (, ), (), \
+                                                (__VA_ARGS__)));              \
+  }                                                                           \
+                                                                              \
+  bool ParamTraits<Type>::Read(MessageReader* aReader, paramType* aResult) {  \
+    paramType& aParam = *aResult;                                             \
+    return ReadParams(                                                        \
+        aReader,                                                              \
+        MOZ_FOR_EACH_SEPARATED(ACCESS_PARAM_FIELD, (, ), (), (__VA_ARGS__))); \
+  }
 
 #define DEFINE_IPC_SERIALIZER_WITHOUT_FIELDS(Type) \
   template <>                                      \

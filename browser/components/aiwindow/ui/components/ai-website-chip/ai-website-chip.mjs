@@ -33,6 +33,8 @@ export class AIWebsiteChip extends MozLitElement {
     removable: { type: Boolean },
   };
 
+  #parentHost = null;
+
   constructor() {
     super();
     this.type = "in-line";
@@ -40,6 +42,30 @@ export class AIWebsiteChip extends MozLitElement {
     this.iconSrc = "";
     this.href = "";
     this.removable = false;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.#parentHost = this.getRootNode()?.host;
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    // Dispatch only when the parent is still connected: Chip was removed by
+    // the user and not due to the parent unmounting.
+    if (this.#parentHost?.isConnected) {
+      this.#parentHost.dispatchEvent(
+        new CustomEvent("ai-website-chip:disconnected", {
+          bubbles: true,
+          composed: true,
+          detail: {
+            label: this.label,
+            type: this.type,
+          },
+        })
+      );
+    }
+    this.#parentHost = null;
   }
 
   get #isEmpty() {
@@ -68,6 +94,31 @@ export class AIWebsiteChip extends MozLitElement {
         bubbles: true,
         composed: true,
         detail: { label: this.label },
+      })
+    );
+  }
+
+  #handleAnchorClick(e) {
+    if (!this.href) {
+      return;
+    }
+    e.preventDefault();
+    const hasModifier =
+      e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || e.button !== 0;
+
+    this.dispatchEvent(
+      new CustomEvent("AIChatContent:OpenLink", {
+        bubbles: true,
+        composed: true,
+        detail: {
+          url: this.href,
+          preferSwitchToTab: !hasModifier,
+          shiftKey: e.shiftKey,
+          metaKey: e.metaKey,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          button: e.button,
+        },
       })
     );
   }
@@ -120,7 +171,7 @@ export class AIWebsiteChip extends MozLitElement {
           class="chip"
           ?data-removable=${isRemovable}
           href=${this.href}
-          target="_blank"
+          @click=${this.#handleAnchorClick}
         >
           ${chipContent}
         </a>`

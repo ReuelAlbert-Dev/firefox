@@ -681,6 +681,9 @@ impl StylesheetInvalidationSet {
                 // @position-try changes doesn't change style-time information (only layout
                 // information) and is handled by invalidate_position_try. So do nothing.
             },
+            ViewTransition(..) => {
+                // @view-transition doesn't affect element styles.
+            },
             CustomMedia(..) => {
                 // @custom-media might be referenced by other rules which we can't get a hand on in
                 // here, so we don't know which elements are affected.
@@ -715,7 +718,7 @@ where
     let style = data.styles.primary();
     if style.clone_position().is_absolutely_positioned() {
         let fallbacks = style.clone_position_try_fallbacks();
-        let referenced = fallbacks.0.iter().any(|f| match f {
+        let referenced = fallbacks.value.0.iter().any(|f| match f {
             PositionTryFallbacksItem::IdentAndOrTactic(ident_or_tactic) => {
                 changed_names.contains(&ident_or_tactic.ident.0)
             },

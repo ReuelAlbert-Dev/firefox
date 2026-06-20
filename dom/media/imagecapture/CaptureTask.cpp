@@ -50,7 +50,7 @@ nsresult CaptureTask::TaskComplete(already_AddRefed<dom::BlobImpl> aBlobImpl,
   // one.
   RefPtr<dom::Blob> blob;
   if (blobImpl) {
-    blob = dom::Blob::Create(mImageCapture->GetOwnerGlobal(), blobImpl);
+    blob = dom::Blob::Create(mImageCapture->GetRelevantGlobal(), blobImpl);
     if (NS_WARN_IF(!blob)) {
       return NS_ERROR_FAILURE;
     }
@@ -139,8 +139,7 @@ void CaptureTask::NotifyRealtimeTrackData(MediaTrackGraph* aGraph,
 
     RefPtr<layers::Image> image;
     if (chunk.mFrame.GetForceBlack()) {
-      // Create a black image.
-      image = VideoFrame::CreateBlackImage(chunk.mFrame.GetIntrinsicSize());
+      image = chunk.mFrame.CloneAsBlackImage();
     } else {
       image = chunk.mFrame.GetImage();
     }

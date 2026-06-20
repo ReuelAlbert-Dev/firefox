@@ -54,7 +54,7 @@ void nsHttpConnectionMgr::OnMsgPrintDiagnostics(int32_t, ARefBase*) {
     ent->PrintDiagnostics(mLogData, MaxPersistConnections(ent));
   }
 
-  consoleService->LogStringMessage(NS_ConvertUTF8toUTF16(mLogData).Data());
+  consoleService->LogStringMessage(NS_ConvertUTF8toUTF16(mLogData).get());
   mLogData.Truncate();
 }
 

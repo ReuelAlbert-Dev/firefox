@@ -79,6 +79,15 @@ static inline void wl_data_offer_set_actions(
 typedef struct wl_data_offer_listener moz_wl_data_offer_listener;
 #endif
 
+#ifndef WL_DATA_OFFER_FINISH
+#  define WL_DATA_OFFER_FINISH 3
+static inline void wl_data_offer_finish(struct wl_data_offer* wl_data_offer) {
+  wl_proxy_marshal_flags(
+      (struct wl_proxy*)wl_data_offer, WL_DATA_OFFER_FINISH, NULL,
+      wl_proxy_get_version((struct wl_proxy*)wl_data_offer), 0);
+}
+#endif
+
 #ifndef WL_SUBCOMPOSITOR_GET_SUBSURFACE
 #  define WL_SUBCOMPOSITOR_GET_SUBSURFACE 1
 struct wl_subcompositor;
@@ -594,12 +603,6 @@ struct moz_wl_pointer_listener {
 #ifndef WL_FIXES_DESTROY_SINCE_VERSION
 #  define WL_FIXES_DESTROY_SINCE_VERSION 1
 
-// Emulate what mozilla header wrapper does - make the
-// wl_fixes_interface always visible.
-#  pragma GCC visibility push(default)
-extern const struct wl_interface wl_fixes_interface;
-#  pragma GCC visibility pop
-
 #  define WL_FIXES_DESTROY 0
 #  define WL_FIXES_DESTROY_REGISTRY 1
 #  define WL_FIXES_DESTROY_SINCE_VERSION 1
@@ -698,6 +701,24 @@ static inline void wl_fixes_ack_global_remove(struct wl_fixes* wl_fixes,
   wl_proxy_marshal_flags((struct wl_proxy*)wl_fixes, WL_FIXES_ACK_GLOBAL_REMOVE,
                          NULL, wl_proxy_get_version((struct wl_proxy*)wl_fixes),
                          0, registry, name);
+}
+#endif
+
+#ifndef WL_OUTPUT_RELEASE_SINCE_VERSION
+#  define WL_OUTPUT_RELEASE_SINCE_VERSION 3
+
+#  define WL_OUTPUT_RELEASE 0
+
+/**
+ * @ingroup iface_wl_output
+ *
+ * Using this request a client can tell the server that it is not going to
+ * use the output object anymore.
+ */
+static inline void wl_output_release(struct wl_output* wl_output) {
+  wl_proxy_marshal_flags((struct wl_proxy*)wl_output, WL_OUTPUT_RELEASE, NULL,
+                         wl_proxy_get_version((struct wl_proxy*)wl_output),
+                         WL_MARSHAL_FLAG_DESTROY);
 }
 #endif
 

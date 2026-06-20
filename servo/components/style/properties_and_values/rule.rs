@@ -22,7 +22,6 @@ use crate::values::{computed, serialize_atom_name};
 use cssparser::{
     BasicParseErrorKind, ParseErrorKind, Parser, ParserInput, RuleBodyParser, SourceLocation,
 };
-#[cfg(feature = "gecko")]
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
 use servo_arc::Arc;
 use std::fmt::{self, Write};
@@ -173,6 +172,7 @@ impl PropertyRegistration {
             &self.url_data,
             computed_context,
             AllowComputationallyDependent::No,
+            /* attr_taint */ Default::default(),
         ) {
             Ok(computed) => Ok(computed),
             Err(_) => Err(()),
@@ -222,6 +222,7 @@ impl PropertyRegistration {
             &initial.url_data,
             None,
             AllowComputationallyDependent::No,
+            /* attr_taint */ Default::default(),
         ) {
             Ok(_) => {},
             Err(_) => return Err(PropertyRegistrationError::InvalidInitialValue),

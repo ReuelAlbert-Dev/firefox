@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 plugins {
-    alias(libs.plugins.kotlin.dsl)
+    `kotlin-dsl`
     alias(libs.plugins.kotlin.serialization)
 }
 
@@ -30,6 +30,12 @@ gradlePlugin {
     plugins.register("org.mozilla.conventions.zip-test-reports") {
         id = "org.mozilla.conventions.zip-test-reports"
         implementationClass = "org.mozilla.conventions.ZipTestReportsPlugin"
+    }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        allWarningsAsErrors.set(true)
     }
 }
 

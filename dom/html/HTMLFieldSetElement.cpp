@@ -8,9 +8,9 @@
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/dom/ContentList.h"
 #include "mozilla/dom/CustomElementRegistry.h"
 #include "mozilla/dom/HTMLFieldSetElementBinding.h"
-#include "nsContentList.h"
 #include "nsQueryObject.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(FieldSet)
@@ -18,11 +18,10 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(FieldSet)
 namespace mozilla::dom {
 
 HTMLFieldSetElement::HTMLFieldSetElement(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+    already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
     : nsGenericHTMLFormControlElement(std::move(aNodeInfo),
                                       FormControlType::Fieldset),
       mElements(nullptr),
-      mFirstLegend(nullptr),
       mInvalidElementsCount(0) {
   // <fieldset> is always barred from constraint validation.
   SetBarredFromConstraintValidation(true);
@@ -40,7 +39,7 @@ HTMLFieldSetElement::~HTMLFieldSetElement() {
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(HTMLFieldSetElement,
                                    nsGenericHTMLFormControlElement, mValidity,
-                                   mElements)
+                                   mElements, mFirstLegend)
 
 NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(HTMLFieldSetElement,
                                              nsGenericHTMLFormControlElement,
@@ -92,10 +91,10 @@ bool HTMLFieldSetElement::MatchListedElements(Element* aElement,
   return nsIFormControl::FromNodeOrNull(aElement) != nullptr;
 }
 
-nsIHTMLCollection* HTMLFieldSetElement::Elements() {
+HTMLCollection* HTMLFieldSetElement::Elements() {
   if (!mElements) {
     mElements =
-        new nsContentList(this, MatchListedElements, nullptr, nullptr, true);
+        new ContentList(this, MatchListedElements, nullptr, nullptr, true);
   }
 
   return mElements;
@@ -109,6 +108,7 @@ void HTMLFieldSetElement::InsertChildBefore(
     nsIContent* aChild, nsIContent* aBeforeThis, bool aNotify, ErrorResult& aRv,
     nsINode* aOldParent, MutationEffectOnScript aMutationEffectOnScript) {
   bool firstLegendHasChanged = false;
+  RefPtr<nsIContent> oldFirstLegend = mFirstLegend;
 
   if (aChild->IsHTMLElement(nsGkAtoms::legend)) {
     if (!mFirstLegend) {
@@ -133,6 +133,7 @@ void HTMLFieldSetElement::InsertChildBefore(
   nsGenericHTMLFormControlElement::InsertChildBefore(
       aChild, aBeforeThis, aNotify, aRv, aOldParent, aMutationEffectOnScript);
   if (aRv.Failed()) {
+    mFirstLegend = oldFirstLegend;
     return;
   }
 
@@ -271,7 +272,7 @@ void HTMLFieldSetElement::NotifyElementsForFirstLegendChange(bool aNotify) {
    */
   if (!mElements) {
     mElements =
-        new nsContentList(this, MatchListedElements, nullptr, nullptr, true);
+        new ContentList(this, MatchListedElements, nullptr, nullptr, true);
   }
 
   uint32_t length = mElements->Length(true);

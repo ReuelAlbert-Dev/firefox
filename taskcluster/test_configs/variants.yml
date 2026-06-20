@@ -95,7 +95,7 @@ trainhop-release:
     component: "Firefox::New Tab Page"
     suffix: "trainhop-rel"
     mozinfo: "trainhop"
-    expiration: None
+    expiration: "never"
     merge:
         worker:
             env:
@@ -139,7 +139,7 @@ trainhop-beta:
     component: "Firefox::New Tab Page"
     suffix: "trainhop-beta"
     mozinfo: "trainhop"
-    expiration: None
+    expiration: "never"
     merge:
         worker:
             env:
@@ -178,6 +178,21 @@ trainhop-beta:
                     index: gecko.v2.mozilla-beta.shippable.latest.firefox.win64-opt
                     name: build/target.zip
 
+
+standalone:
+    description: "{description} with browser restart after each test to identify test dependencies"
+    component: "Testing::General"
+    expiration: "never"
+    suffix: "standalone"
+    treeherder-suffix: "sa"
+    mozinfo: "standalone"
+    replace:
+        optimization:
+            skip-unless-backstop: null
+    merge:
+        mozharness:
+            extra-options:
+                - "--restart-between-tests"
 
 geckoview-no-fission:
     description: "{description} without fission enabled"
@@ -256,7 +271,6 @@ xorigin:
         mozharness:
             extra-options:
                 - "--enable-xorigin-tests"
-                - "--setpref=privacy.partition.always_partition_third_party_non_cookie_storage=false"
 
 conditioned_profile:
     description: "{description} with conditioned profile"
@@ -288,8 +302,6 @@ conditioned_profile:
         mozharness:
             extra-options:
                 - "--conditioned-profile"
-    replace:
-        chunks: 8
 
 socketprocess:
     description: "{description} with socket process enabled"
@@ -441,7 +453,12 @@ media-gpu:
                         "windows" in task["test-platform"]
                         && "hw" in task["test-platform"]
                     )
-                    || "macosx" in task["test-platform"] ||
+                    ||
+                    (
+                        "macosx" in task["test-platform"]
+                        && !("vms" in task["test-platform"])
+                    )
+                    ||
                     (
                         "android" in task["test-platform"]
                         && "hw" in task["test-platform"]
@@ -497,11 +514,15 @@ msix:
                         || "debug" in task["test-platform"]
                     ) && !(
                         "asan" in task["test-platform"]
+                        || "artifact" in task["test-platform"]
                         || "ccov" in task["test-platform"]
                         || "devedition" in task["test-platform"]
                     )
                 '
     replace:
+        target:
+            by-test-platform:
+                windows11-64.*: target.installer.msix
         mozharness:
             extra-options:
                 - "--variant=msix"
@@ -584,7 +605,7 @@ async-event-dispatching:
 vertical-tabs:
     description: "{description} limited to tests identified as being applicable to also run with vertical tabs enabled"
     component: "Firefox::Tabbed Browser"
-    expiration: "2026-11-01"
+    expiration: "never"
     suffix: "vt"
     mozinfo: "vertical_tab"
     merge:
@@ -599,7 +620,7 @@ vertical-tabs:
 inc-origin-init:
     description: "{description} limited to tests identified as being applicable to also run with incremental origin initialization enabled"
     component: "Core::Storage: Quota Manager"
-    expiration: "2026-05-01"
+    expiration: "2026-12-31"
     suffix: "ioi"
     mozinfo: "inc_origin_init"
     replace:
@@ -629,7 +650,7 @@ privatebrowsing:
 privatebrowsing-inc-origin-init:
     description: "{description} limited to tests identified as being applicable to also run in private browsing mode and with incremental origin initialization enabled"
     component: "Core::Storage: Quota Manager"
-    expiration: "2026-05-01"
+    expiration: "2026-12-31"
     suffix: "pb-ioi"
     replace:
         tier: 3
@@ -642,3 +663,15 @@ privatebrowsing-inc-origin-init:
         mozharness:
             extra-options:
                 - "--setpref=browser.privatebrowsing.autostart=true"
+
+nova:
+    description: "{description} with Nova enabled"
+    component: "Firefox::Theme"
+    expiration: "2026-12-31"
+    suffix: "nv"
+    replace:
+        tier: 3
+    merge:
+        mozharness:
+            extra-options:
+                - "--setpref=browser.nova.enabled=true"

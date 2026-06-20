@@ -7,6 +7,7 @@
 #include "mozilla/BuiltInStyleSheets.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/HTMLDetailsElementBinding.h"
+#include "mozilla/dom/HTMLSlotElement.h"
 #include "mozilla/dom/HTMLSummaryElement.h"
 #include "mozilla/dom/ShadowRoot.h"
 #include "nsContentUtils.h"
@@ -20,7 +21,7 @@ HTMLDetailsElement::~HTMLDetailsElement() = default;
 
 NS_IMPL_ELEMENT_CLONE(HTMLDetailsElement)
 
-HTMLDetailsElement::HTMLDetailsElement(already_AddRefed<NodeInfo>&& aNodeInfo)
+HTMLDetailsElement::HTMLDetailsElement(already_AddRefed<NodeInfo> aNodeInfo)
     : nsGenericHTMLElement(std::move(aNodeInfo)) {
   SetupShadowTree();
 }
@@ -91,7 +92,8 @@ nsresult HTMLDetailsElement::BindToTree(BindContext& aContext,
 
 void HTMLDetailsElement::SetupShadowTree() {
   const bool kNotify = false;
-  AttachAndSetUAShadowRoot(NotifyUAWidget::No);
+  AttachAndSetUAShadowRoot(NotifyUAWidget::No, DelegatesFocus::No,
+                           CustomSlotDispatch::Yes);
   RefPtr<ShadowRoot> sr = GetShadowRoot();
   if (NS_WARN_IF(!sr)) {
     return;
@@ -120,7 +122,7 @@ void HTMLDetailsElement::SetupShadowTree() {
     }
 
     nsAutoString defaultSummaryText;
-    nsContentUtils::GetMaybeLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
+    nsContentUtils::GetMaybeLocalizedString(PropertiesFile::FORMS_PROPERTIES,
                                             "DefaultSummary", OwnerDoc(),
                                             defaultSummaryText);
     RefPtr<nsTextNode> description = new (nim) nsTextNode(nim);
@@ -139,6 +141,42 @@ void HTMLDetailsElement::SetupShadowTree() {
       slot->SetPseudoElementType(PseudoStyleType::DetailsContent);
     }
     sr->AppendChildTo(slot, kNotify, IgnoreErrors());
+  }
+}
+
+void HTMLDetailsElement::GetSlotNameFor(const ShadowRoot&,
+                                        const nsIContent& aContent,
+                                        nsAString& aName) const {
+  const auto* summary = HTMLSummaryElement::FromNode(aContent);
+  if (summary && summary->IsMainSummary()) {
+    aName.AssignLiteral("internal-main-summary");
+  }
+}
+
+void HTMLDetailsElement::OnChildBeforeSlotted(ShadowRoot& aShadow,
+                                              nsIContent& aChild) {
+  if (!aChild.IsHTMLElement(nsGkAtoms::summary)) {
+    return;
+  }
+  HTMLSlotElement* slot =
+      aShadow.GetFirstNamedSlot(u"internal-main-summary"_ns);
+  MOZ_RELEASE_ASSERT(slot);
+  const auto& assigned = slot->AssignedNodes();
+  if (assigned.IsEmpty()) {
+    return;
+  }
+  if (auto* summary = HTMLSummaryElement::FromNode(assigned[0])) {
+    aShadow.MaybeReassignContent(*summary);
+  }
+}
+
+void HTMLDetailsElement::OnChildUnslotted(ShadowRoot& aShadow,
+                                          nsIContent& aChild) {
+  if (!aChild.IsHTMLElement(nsGkAtoms::summary)) {
+    return;
+  }
+  if (HTMLSummaryElement* newMainSummary = GetFirstSummary()) {
+    aShadow.MaybeReassignContent(*newMainSummary);
   }
 }
 

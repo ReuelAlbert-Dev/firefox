@@ -32,7 +32,7 @@ using mozilla::VsyncId from "mozilla/VsyncDispatcher.h";
 namespace mozilla {
 namespace layers {
 
-[ManualDealloc, ParentImpl=virtual]
+[ParentImpl=virtual]
 sync protocol PWebRenderBridge
 {
   manager PCompositorBridge;
@@ -75,7 +75,7 @@ parent:
 
   // Start capturing each frame to disk. See
   // nsIDOMWindowUtils::wrStartCaptureSequence for documentation.
-  async StartCaptureSequence(nsCString aPath, uint32_t aFlags);
+  async StartCaptureSequence(uint32_t aFlags);
 
   // Stop the captures started by StartCaptureSequence. See
   // nsIDOMWindowUtils::wrStopCaptureSequence for documentation.

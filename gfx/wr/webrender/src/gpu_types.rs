@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{AlphaType, ExtendMode, PremultipliedColorF, YuvFormat, YuvRangedColorSpace};
+use api::{AlphaType, PremultipliedColorF, YuvFormat, YuvRangedColorSpace};
 use api::units::*;
 use euclid::HomogeneousVector;
 use crate::composite::{CompositeFeatures, CompositorClip};
@@ -11,7 +11,7 @@ use crate::quad::LayoutOrDeviceRect;
 use crate::segment::EdgeMask;
 use crate::transform::GpuTransformId;
 use crate::internal_types::{FrameVec, FrameMemory};
-use crate::prim_store::{ClipData, VECS_PER_SEGMENT};
+use crate::prim_store::VECS_PER_SEGMENT;
 use crate::render_task::RenderTaskAddress;
 use crate::render_task_graph::RenderTaskId;
 use crate::renderer::{GpuBufferAddress, GpuBufferBuilderF, GpuBufferHandle, GpuBufferWriterF, GpuBufferDataF, GpuBufferDataI, GpuBufferWriterI, ShaderColorMode};
@@ -89,15 +89,6 @@ pub struct CopyInstance {
 pub enum RasterizationSpace {
     Local = 0,
     Screen = 1,
-}
-
-#[derive(Debug, Copy, Clone, MallocSizeOf)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub enum BoxShadowStretchMode {
-    Stretch = 0,
-    Simple = 1,
 }
 
 #[repr(i32)]
@@ -203,64 +194,37 @@ pub enum BorderSegment {
     Bottom,
 }
 
+pub struct BorderInstanceGpuData {
+    pub local_rect: DeviceRect,
+    pub color0: PremultipliedColorF,
+    pub color1: PremultipliedColorF,
+    pub widths: DeviceSize,
+    pub radius: DeviceSize,
+    pub shape: f32,
+}
+
+impl BorderInstanceGpuData {
+    pub fn write(&self, gpu_buffer_builder: &mut GpuBufferBuilderF) -> GpuBufferAddress {
+        let mut writer = gpu_buffer_builder.write_blocks(5);
+        writer.push_one(self.local_rect);
+        writer.push_one(self.color0);
+        writer.push_one(self.color1);
+        writer.push_one([self.widths.width, self.widths.height, self.radius.width, self.radius.height]);
+        writer.push_one([self.shape, 0.0, 0.0, 0.0]);
+
+        writer.finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 #[repr(C)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct BorderInstance {
     pub task_origin: DevicePoint,
-    pub local_rect: DeviceRect,
-    pub color0: PremultipliedColorF,
-    pub color1: PremultipliedColorF,
     pub flags: i32,
-    pub widths: DeviceSize,
-    pub radius: DeviceSize,
+    pub gpu_data_address: GpuBufferAddress,
     pub clip_params: [f32; 8],
-}
-
-#[derive(Copy, Clone, Debug)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub struct ClipMaskInstanceCommon {
-    pub sub_rect: DeviceRect,
-    pub task_origin: DevicePoint,
-    pub screen_origin: DevicePoint,
-    pub device_pixel_scale: f32,
-    pub clip_transform_id: GpuTransformId,
-    pub prim_transform_id: GpuTransformId,
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub struct ClipMaskInstanceRect {
-    pub common: ClipMaskInstanceCommon,
-    pub local_pos: LayoutPoint,
-    pub clip_data: ClipData,
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub struct BoxShadowData {
-    pub src_rect_size: LayoutSize,
-    pub clip_mode: i32,
-    pub stretch_mode_x: i32,
-    pub stretch_mode_y: i32,
-    pub dest_rect: LayoutRect,
-}
-
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[repr(C)]
-pub struct ClipMaskInstanceBoxShadow {
-    pub common: ClipMaskInstanceCommon,
-    pub resource_address: i32,
-    pub shadow_data: BoxShadowData,
 }
 
 // 16 bytes per instance should be enough for anyone!
@@ -716,31 +680,6 @@ impl GpuBufferDataF for QuadSegment {
     }
 }
 
-/// Matches LinearGradientBrushData in brush_linear_gradient.glsl
-pub struct LinearGradientBrushData {
-    pub start: LayoutPoint,
-    pub end: LayoutPoint,
-    pub extend_mode: ExtendMode,
-    pub stretch_size: LayoutSize,
-}
-
-impl GpuBufferDataF for LinearGradientBrushData {
-    const NUM_BLOCKS: usize = 2;
-    fn write(&self, writer: &mut GpuBufferWriterF) {
-        writer.push_one([
-            self.start.x,
-            self.start.y,
-            self.end.x,
-            self.end.y,
-        ]);
-        writer.push_one([
-            pack_as_float(self.extend_mode as u32),
-            self.stretch_size.width,
-            self.stretch_size.height,
-            0.0,
-        ]);
-    }
-}
 
 /// The cooridnate space that the clip geometry (the quad rect) is relative to.
 ///
@@ -979,25 +918,6 @@ impl GpuBufferDataF for BrushSegmentGpuData {
     fn write(&self, writer: &mut GpuBufferWriterF) {
         writer.push_one(self.local_rect);
         writer.push_one(self.extra_data);
-    }
-}
-
-/// Matches YuvPrimitive in yuv.glsl
-pub struct YuvPrimitive {
-    pub channel_bit_depth: u32,
-    pub color_space: YuvRangedColorSpace,
-    pub yuv_format: YuvFormat,
-}
-
-impl GpuBufferDataF for YuvPrimitive {
-    const NUM_BLOCKS: usize = 1;
-    fn write(&self, writer: &mut GpuBufferWriterF) {
-        writer.push_one([
-            pack_as_float(self.channel_bit_depth),
-            pack_as_float(self.color_space as u32),
-            pack_as_float(self.yuv_format as u32),
-            0.0
-        ]);
     }
 }
 

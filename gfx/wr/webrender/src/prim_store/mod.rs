@@ -2,14 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{BorderRadius, ClipMode, ColorF, ColorU};
-use api::{ImageRendering, RepeatMode, PrimitiveFlags};
-use api::{PropertyBinding};
+use api::ColorF;
+use api::{ImageRendering, PrimitiveFlags};
 use api::{FillRule, POLYGON_CLIP_VERTEX_MAX};
 use api::units::*;
-use euclid::{SideOffsets2D, Size2D};
 use malloc_size_of::MallocSizeOf;
-use crate::composite::CompositorSurfaceKind;
 use crate::clip::ClipLeafId;
 use crate::quad::QuadTileClassifier;
 use crate::renderer::{GpuBufferAddress, GpuBufferHandle, GpuBufferWriterF};
@@ -20,13 +17,13 @@ use crate::debug_colors;
 use glyph_rasterizer::GlyphKey;
 use crate::gpu_types::{BrushFlags, BrushSegmentGpuData, QuadSegment};
 use crate::intern;
-use crate::picture::PicturePrimitive;
+use crate::picture::{PictureInstance, PictureScratch};
 use crate::render_task_graph::RenderTaskId;
 use crate::resource_cache::ImageProperties;
 use std::{hash, u32, usize};
 use crate::util::Recycler;
 use crate::internal_types::{FastHashSet, LayoutPrimitiveInfo};
-use crate::visibility::PrimitiveVisibility;
+use crate::visibility::PrimitiveDrawHeader;
 
 pub mod backdrop;
 pub mod borders;
@@ -38,16 +35,16 @@ pub mod rectangle;
 pub mod text_run;
 pub mod interned;
 
-mod storage;
+pub mod storage;
 
 use backdrop::{BackdropCaptureDataHandle, BackdropRenderDataHandle};
-use borders::{ImageBorderDataHandle, NormalBorderDataHandle};
-use gradient::{LinearGradientPrimitive, LinearGradientDataHandle, RadialGradientDataHandle, ConicGradientDataHandle};
-use image::{ImageDataHandle, ImageInstance, YuvImageDataHandle};
+use borders::{ImageBorderDataHandle, ImageBorderScratch, NormalBorderDataHandle, NormalBorderScratch};
+use gradient::{LinearGradientDataHandle, RadialGradientDataHandle, ConicGradientDataHandle};
+use image::{ImageDataHandle, ImageScratch, VisibleImageTile, YuvImageDataHandle};
 use line_dec::LineDecorationDataHandle;
 use picture::PictureDataHandle;
 use rectangle::RectangleDataHandle;
-use text_run::{TextRunDataHandle, TextRunPrimitive};
+use text_run::{TextRunDataHandle, TextRunScratch};
 use crate::box_shadow::BoxShadowDataHandle;
 
 pub const VECS_PER_SEGMENT: usize = 2;
@@ -232,206 +229,14 @@ impl PolygonKey {
 
 impl Eq for PolygonKey {}
 
-/// A hashable SideOffset2D that can be used in primitive keys.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Clone, MallocSizeOf, PartialEq)]
-pub struct SideOffsetsKey {
-    pub top: f32,
-    pub right: f32,
-    pub bottom: f32,
-    pub left: f32,
-}
+// `SideOffsetsKey`, `SizeKey`, `PointKey` and `VectorKey` now live in
+// `webrender_api` so builder-side interning keys can reference them. Re-exported
+// here to keep existing references working.
+pub use api::key_types::{PointKey, SizeKey, VectorKey};
 
-impl Eq for SideOffsetsKey {}
-
-impl hash::Hash for SideOffsetsKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.top.to_bits().hash(state);
-        self.right.to_bits().hash(state);
-        self.bottom.to_bits().hash(state);
-        self.left.to_bits().hash(state);
-    }
-}
-
-impl From<SideOffsetsKey> for LayoutSideOffsets {
-    fn from(key: SideOffsetsKey) -> LayoutSideOffsets {
-        LayoutSideOffsets::new(
-            key.top,
-            key.right,
-            key.bottom,
-            key.left,
-        )
-    }
-}
-
-impl<U> From<SideOffsets2D<f32, U>> for SideOffsetsKey {
-    fn from(offsets: SideOffsets2D<f32, U>) -> SideOffsetsKey {
-        SideOffsetsKey {
-            top: offsets.top,
-            right: offsets.right,
-            bottom: offsets.bottom,
-            left: offsets.left,
-        }
-    }
-}
-
-/// A hashable size for using as a key during primitive interning.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Copy, Debug, Clone, MallocSizeOf, PartialEq)]
-pub struct SizeKey {
-    w: f32,
-    h: f32,
-}
-
-impl Eq for SizeKey {}
-
-impl hash::Hash for SizeKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.w.to_bits().hash(state);
-        self.h.to_bits().hash(state);
-    }
-}
-
-impl From<SizeKey> for LayoutSize {
-    fn from(key: SizeKey) -> LayoutSize {
-        LayoutSize::new(key.w, key.h)
-    }
-}
-
-impl<U> From<Size2D<f32, U>> for SizeKey {
-    fn from(size: Size2D<f32, U>) -> SizeKey {
-        SizeKey {
-            w: size.width,
-            h: size.height,
-        }
-    }
-}
-
-/// A hashable vec for using as a key during primitive interning.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Copy, Debug, Clone, MallocSizeOf, PartialEq)]
-pub struct VectorKey {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl Eq for VectorKey {}
-
-impl hash::Hash for VectorKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.x.to_bits().hash(state);
-        self.y.to_bits().hash(state);
-    }
-}
-
-impl From<VectorKey> for LayoutVector2D {
-    fn from(key: VectorKey) -> LayoutVector2D {
-        LayoutVector2D::new(key.x, key.y)
-    }
-}
-
-impl From<VectorKey> for WorldVector2D {
-    fn from(key: VectorKey) -> WorldVector2D {
-        WorldVector2D::new(key.x, key.y)
-    }
-}
-
-impl From<LayoutVector2D> for VectorKey {
-    fn from(vec: LayoutVector2D) -> VectorKey {
-        VectorKey {
-            x: vec.x,
-            y: vec.y,
-        }
-    }
-}
-
-impl From<WorldVector2D> for VectorKey {
-    fn from(vec: WorldVector2D) -> VectorKey {
-        VectorKey {
-            x: vec.x,
-            y: vec.y,
-        }
-    }
-}
-
-/// A hashable point for using as a key during primitive interning.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Copy, Clone, MallocSizeOf, PartialEq)]
-pub struct PointKey {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl Eq for PointKey {}
-
-impl hash::Hash for PointKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.x.to_bits().hash(state);
-        self.y.to_bits().hash(state);
-    }
-}
-
-impl From<PointKey> for LayoutPoint {
-    fn from(key: PointKey) -> LayoutPoint {
-        LayoutPoint::new(key.x, key.y)
-    }
-}
-
-impl From<LayoutPoint> for PointKey {
-    fn from(p: LayoutPoint) -> PointKey {
-        PointKey {
-            x: p.x,
-            y: p.y,
-        }
-    }
-}
-
-impl From<PicturePoint> for PointKey {
-    fn from(p: PicturePoint) -> PointKey {
-        PointKey {
-            x: p.x,
-            y: p.y,
-        }
-    }
-}
-
-impl From<WorldPoint> for PointKey {
-    fn from(p: WorldPoint) -> PointKey {
-        PointKey {
-            x: p.x,
-            y: p.y,
-        }
-    }
-}
-
-/// A hashable float for using as a key during primitive interning.
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Copy, Clone, MallocSizeOf, PartialEq)]
-pub struct FloatKey(f32);
-
-impl Eq for FloatKey {}
-
-impl hash::Hash for FloatKey {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
-    }
-}
-
-
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Clone, Eq, MallocSizeOf, PartialEq, Hash)]
-pub struct PrimKeyCommonData {
-    pub flags: PrimitiveFlags,
-    pub aligned_aa_edges: EdgeMask,
-    pub transformed_aa_edges: EdgeMask,
-    pub prim_rect: RectKey,
-}
+// `PrimKeyCommonData` now lives in `webrender_api` so interned keys reference
+// only api-resident types. Re-exported here to keep existing references working.
+pub use api::key_types::PrimKeyCommonData;
 
 impl From<&LayoutPrimitiveInfo> for PrimKeyCommonData {
     fn from(info: &LayoutPrimitiveInfo) -> Self {
@@ -439,7 +244,6 @@ impl From<&LayoutPrimitiveInfo> for PrimKeyCommonData {
             flags: info.flags,
             aligned_aa_edges: info.aligned_aa_edges,
             transformed_aa_edges: info.transformed_aa_edges,
-            prim_rect: info.rect.into(),
         }
     }
 }
@@ -458,8 +262,6 @@ pub struct PrimKey<T: MallocSizeOf> {
 #[derive(Debug)]
 pub struct PrimTemplateCommonData {
     pub flags: PrimitiveFlags,
-    pub may_need_repetition: bool,
-    pub prim_rect: LayoutRect,
     pub opacity: PrimitiveOpacity,
     /// Address of the per-primitive data in the GPU cache.
     ///
@@ -475,8 +277,6 @@ impl PrimTemplateCommonData {
     pub fn with_key_common(common: PrimKeyCommonData) -> Self {
         PrimTemplateCommonData {
             flags: common.flags,
-            may_need_repetition: true,
-            prim_rect: common.prim_rect.into(),
             gpu_buffer_address: GpuBufferAddress::INVALID,
             opacity: PrimitiveOpacity::translucent(),
             aligned_aa_edges: common.aligned_aa_edges,
@@ -500,14 +300,6 @@ pub struct VisibleMaskImageTile {
     pub tile_offset: TileOffset,
     pub tile_rect: LayoutRect,
     pub task_id: RenderTaskId,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-pub struct VisibleGradientTile {
-    pub address: GpuBufferAddress,
-    pub local_rect: LayoutRect,
-    pub local_clip_rect: LayoutRect,
 }
 
 /// Information about how to cache a border segment,
@@ -572,185 +364,13 @@ impl BrushSegment {
     }
 }
 
-#[derive(Debug, Clone)]
-#[repr(C)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-struct ClipRect {
-    rect: LayoutRect,
-    mode: f32,
-}
-
-#[derive(Debug, Clone)]
-#[repr(C)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-struct ClipCorner {
-    rect: LayoutRect,
-    outer_radius_x: f32,
-    outer_radius_y: f32,
-    inner_radius_x: f32,
-    inner_radius_y: f32,
-}
-
-impl ClipCorner {
-    fn uniform(rect: LayoutRect, outer_radius: f32, inner_radius: f32) -> ClipCorner {
-        ClipCorner {
-            rect,
-            outer_radius_x: outer_radius,
-            outer_radius_y: outer_radius,
-            inner_radius_x: inner_radius,
-            inner_radius_y: inner_radius,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-#[repr(C)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct ClipData {
-    rect: ClipRect,
-    top_left: ClipCorner,
-    top_right: ClipCorner,
-    bottom_left: ClipCorner,
-    bottom_right: ClipCorner,
-}
-
-impl ClipData {
-    pub fn rounded_rect(size: LayoutSize, radii: &BorderRadius, mode: ClipMode) -> ClipData {
-        // TODO(gw): For simplicity, keep most of the clip GPU structs the
-        //           same as they were, even though the origin is now always
-        //           zero, since they are in the clip's local space. In future,
-        //           we could reduce the GPU cache size of ClipData.
-        let rect = LayoutRect::from_size(size);
-
-        ClipData {
-            rect: ClipRect {
-                rect,
-                mode: mode as u32 as f32,
-            },
-            top_left: ClipCorner {
-                rect: LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(rect.min.x, rect.min.y),
-                    LayoutSize::new(radii.top_left.width, radii.top_left.height),
-                ),
-                outer_radius_x: radii.top_left.width,
-                outer_radius_y: radii.top_left.height,
-                inner_radius_x: 0.0,
-                inner_radius_y: 0.0,
-            },
-            top_right: ClipCorner {
-                rect: LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(
-                        rect.max.x - radii.top_right.width,
-                        rect.min.y,
-                    ),
-                    LayoutSize::new(radii.top_right.width, radii.top_right.height),
-                ),
-                outer_radius_x: radii.top_right.width,
-                outer_radius_y: radii.top_right.height,
-                inner_radius_x: 0.0,
-                inner_radius_y: 0.0,
-            },
-            bottom_left: ClipCorner {
-                rect: LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(
-                        rect.min.x,
-                        rect.max.y - radii.bottom_left.height,
-                    ),
-                    LayoutSize::new(radii.bottom_left.width, radii.bottom_left.height),
-                ),
-                outer_radius_x: radii.bottom_left.width,
-                outer_radius_y: radii.bottom_left.height,
-                inner_radius_x: 0.0,
-                inner_radius_y: 0.0,
-            },
-            bottom_right: ClipCorner {
-                rect: LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(
-                        rect.max.x - radii.bottom_right.width,
-                        rect.max.y - radii.bottom_right.height,
-                    ),
-                    LayoutSize::new(radii.bottom_right.width, radii.bottom_right.height),
-                ),
-                outer_radius_x: radii.bottom_right.width,
-                outer_radius_y: radii.bottom_right.height,
-                inner_radius_x: 0.0,
-                inner_radius_y: 0.0,
-            },
-        }
-    }
-
-    pub fn uniform(size: LayoutSize, radius: f32, mode: ClipMode) -> ClipData {
-        // TODO(gw): For simplicity, keep most of the clip GPU structs the
-        //           same as they were, even though the origin is now always
-        //           zero, since they are in the clip's local space. In future,
-        //           we could reduce the GPU cache size of ClipData.
-        let rect = LayoutRect::from_size(size);
-
-        ClipData {
-            rect: ClipRect {
-                rect,
-                mode: mode as u32 as f32,
-            },
-            top_left: ClipCorner::uniform(
-                LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(rect.min.x, rect.min.y),
-                    LayoutSize::new(radius, radius),
-                ),
-                radius,
-                0.0,
-            ),
-            top_right: ClipCorner::uniform(
-                LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(rect.max.x - radius, rect.min.y),
-                    LayoutSize::new(radius, radius),
-                ),
-                radius,
-                0.0,
-            ),
-            bottom_left: ClipCorner::uniform(
-                LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(rect.min.x, rect.max.y - radius),
-                    LayoutSize::new(radius, radius),
-                ),
-                radius,
-                0.0,
-            ),
-            bottom_right: ClipCorner::uniform(
-                LayoutRect::from_origin_and_size(
-                    LayoutPoint::new(
-                        rect.max.x - radius,
-                        rect.max.y - radius,
-                    ),
-                    LayoutSize::new(radius, radius),
-                ),
-                radius,
-                0.0,
-            ),
-        }
-    }
-}
-
-/// A hashable descriptor for nine-patches, used by image and
-/// gradient borders.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, MallocSizeOf)]
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct NinePatchDescriptor {
-    pub width: i32,
-    pub height: i32,
-    pub slice: DeviceIntSideOffsets,
-    pub fill: bool,
-    pub repeat_horizontal: RepeatMode,
-    pub repeat_vertical: RepeatMode,
-    pub widths: SideOffsetsKey,
-}
+// `NinePatchDescriptor` now lives in `webrender_api` so builder-side interning
+// keys can reference it. Re-exported here to keep existing references working.
+pub use api::key_types::NinePatchDescriptor;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
-pub enum PrimitiveInstanceKind {
+pub enum PrimitiveKind {
     /// Direct reference to a Picture
     Picture {
         /// Handle to the common interned data for this primitive.
@@ -761,28 +381,16 @@ pub enum PrimitiveInstanceKind {
     TextRun {
         /// Handle to the common interned data for this primitive.
         data_handle: TextRunDataHandle,
-        /// Index to the per instance scratch data for this primitive.
-        run_index: TextRunIndex,
     },
     /// A line decoration. cache_handle refers to a cached render
     /// task handle, if this line decoration is not a simple solid.
     LineDecoration {
         /// Handle to the common interned data for this primitive.
         data_handle: LineDecorationDataHandle,
-        // TODO(gw): For now, we need to store some information in
-        //           the primitive instance that is created during
-        //           prepare_prims and read during the batching pass.
-        //           Once we unify the prepare_prims and batching to
-        //           occur at the same time, we can remove most of
-        //           the things we store here in the instance, and
-        //           use them directly. This will remove cache_handle,
-        //           but also the opacity, clip_task_id etc below.
-        render_task: Option<RenderTaskId>,
     },
     NormalBorder {
         /// Handle to the common interned data for this primitive.
         data_handle: NormalBorderDataHandle,
-        render_task_ids: storage::Range<RenderTaskId>,
     },
     ImageBorder {
         /// Handle to the common interned data for this primitive.
@@ -791,48 +399,26 @@ pub enum PrimitiveInstanceKind {
     Rectangle {
         /// Handle to the common interned data for this primitive.
         data_handle: RectangleDataHandle,
-        segment_instance_index: SegmentInstanceIndex,
-        color_binding_index: ColorBindingIndex,
-        use_legacy_path: bool,
     },
     YuvImage {
         /// Handle to the common interned data for this primitive.
         data_handle: YuvImageDataHandle,
-        segment_instance_index: SegmentInstanceIndex,
-        compositor_surface_kind: CompositorSurfaceKind,
     },
     Image {
         /// Handle to the common interned data for this primitive.
         data_handle: ImageDataHandle,
-        image_instance_index: ImageInstanceIndex,
-        compositor_surface_kind: CompositorSurfaceKind,
     },
-    /// Always rendered directly into the picture. This tends to be
-    /// faster with SWGL.
     LinearGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: LinearGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
-    },
-    /// Always rendered via a cached render task. Usually faster with
-    /// a GPU.
-    CachedLinearGradient {
-        /// Handle to the common interned data for this primitive.
-        data_handle: LinearGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
     },
     RadialGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: RadialGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
     },
     ConicGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: ConicGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
     },
     /// Render a portion of a specified backdrop.
     BackdropCapture {
@@ -847,10 +433,10 @@ pub enum PrimitiveInstanceKind {
     },
 }
 
-impl PrimitiveInstanceKind {
+impl PrimitiveKind {
     pub fn as_pic(&self) -> PictureIndex {
         match self {
-            PrimitiveInstanceKind::Picture { pic_index, .. } => *pic_index,
+            PrimitiveKind::Picture { pic_index, .. } => *pic_index,
             _ => panic!("bug: as_pic called on a prim that is not a picture"),
         }
     }
@@ -861,6 +447,10 @@ impl PrimitiveInstanceKind {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct PrimitiveInstanceIndex(pub u32);
 
+impl PrimitiveInstanceIndex {
+    pub const INVALID: PrimitiveInstanceIndex = PrimitiveInstanceIndex(!0);
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveInstance {
@@ -868,216 +458,311 @@ pub struct PrimitiveInstance {
     /// instance is, and references to where
     /// the relevant information for the primitive
     /// can be found.
-    pub kind: PrimitiveInstanceKind,
+    pub kind: PrimitiveKind,
 
     /// All information and state related to clip(s) for this primitive
     pub clip_leaf_id: ClipLeafId,
 
-    /// Information related to the current visibility state of this
-    /// primitive.
-    // TODO(gw): Currently built each frame, but can be retained.
-    pub vis: PrimitiveVisibility,
+    /// Local-space rect of the primitive (origin + size), as authored by the
+    /// display list (not snapped to the device pixel grid). Carries both the
+    /// position and the per-instance size; the latter used to live on
+    /// `PrimTemplateCommonData.prim_size` but is per-instance now so that the
+    /// intern key can deduplicate across differently-sized instances of the
+    /// same prim shape.
+    pub unsnapped_prim_rect: LayoutRect,
 }
 
 impl PrimitiveInstance {
     pub fn new(
-        kind: PrimitiveInstanceKind,
+        kind: PrimitiveKind,
         clip_leaf_id: ClipLeafId,
+        unsnapped_prim_rect: LayoutRect,
     ) -> Self {
         PrimitiveInstance {
             kind,
-            vis: PrimitiveVisibility::new(),
             clip_leaf_id,
+            unsnapped_prim_rect,
         }
-    }
-
-    // Reset any pre-frame state for this primitive.
-    pub fn reset(&mut self) {
-        self.vis.reset();
-    }
-
-    pub fn clear_visibility(&mut self) {
-        self.vis.reset();
     }
 
     pub fn uid(&self) -> intern::ItemUid {
         match &self.kind {
-            PrimitiveInstanceKind::Rectangle { data_handle, .. } => {
+            PrimitiveKind::Rectangle { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::Image { data_handle, .. } => {
+            PrimitiveKind::Image { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::ImageBorder { data_handle, .. } => {
+            PrimitiveKind::ImageBorder { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::LineDecoration { data_handle, .. } => {
+            PrimitiveKind::LineDecoration { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::LinearGradient { data_handle, .. } => {
+            PrimitiveKind::LinearGradient { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::CachedLinearGradient { data_handle, .. } => {
+            PrimitiveKind::NormalBorder { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::NormalBorder { data_handle, .. } => {
+            PrimitiveKind::Picture { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::Picture { data_handle, .. } => {
+            PrimitiveKind::RadialGradient { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::RadialGradient { data_handle, .. } => {
+            PrimitiveKind::ConicGradient { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::ConicGradient { data_handle, .. } => {
+            PrimitiveKind::TextRun { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::TextRun { data_handle, .. } => {
+            PrimitiveKind::YuvImage { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::YuvImage { data_handle, .. } => {
+            PrimitiveKind::BackdropCapture { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::BackdropCapture { data_handle, .. } => {
+            PrimitiveKind::BackdropRender { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::BackdropRender { data_handle, .. } => {
+            PrimitiveKind::BoxShadow { data_handle, .. } => {
                 data_handle.uid()
             }
-            PrimitiveInstanceKind::BoxShadow { data_handle, .. } => {
-                data_handle.uid()
-            }
+
         }
     }
 }
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[derive(Debug)]
-pub struct SegmentedInstance {
+pub struct BrushSegmentation {
     pub gpu_data: GpuBufferAddress,
     pub segments_range: SegmentsRange,
 }
 
 pub type GlyphKeyStorage = storage::Storage<GlyphKey>;
-pub type TextRunIndex = storage::Index<TextRunPrimitive>;
-pub type TextRunStorage = storage::Storage<TextRunPrimitive>;
-pub type ColorBindingIndex = storage::Index<PropertyBinding<ColorU>>;
-pub type ColorBindingStorage = storage::Storage<PropertyBinding<ColorU>>;
-pub type BorderHandleStorage = storage::Storage<RenderTaskId>;
 pub type SegmentStorage = storage::Storage<BrushSegment>;
 pub type SegmentsRange = storage::Range<BrushSegment>;
-pub type SegmentInstanceStorage = storage::Storage<SegmentedInstance>;
-pub type SegmentInstanceIndex = storage::Index<SegmentedInstance>;
-pub type ImageInstanceStorage = storage::Storage<ImageInstance>;
-pub type ImageInstanceIndex = storage::Index<ImageInstance>;
-pub type GradientTileStorage = storage::Storage<VisibleGradientTile>;
-pub type GradientTileRange = storage::Range<VisibleGradientTile>;
-pub type LinearGradientStorage = storage::Storage<LinearGradientPrimitive>;
-
-/// Contains various vecs of data that is used only during frame building,
-/// where we want to recycle the memory each new display list, to avoid constantly
-/// re-allocating and moving memory around. Written during primitive preparation,
-/// and read during batching.
+pub type SegmentInstanceStorage = storage::Storage<BrushSegmentation>;
+pub type SegmentInstanceIndex = storage::Index<BrushSegmentation>;
+/// Per-frame scratch storage. All fields are cleared every frame in
+/// `begin_frame`. Anything written here lives only for the current frame.
 #[cfg_attr(feature = "capture", derive(Serialize))]
-pub struct PrimitiveScratchBuffer {
+pub struct PrimitiveFrameScratch {
+    /// Per-frame draw headers, one entry per `PrimitiveInstance`.
+    /// Resized to `prim_instances.len()` at frame start and identity-
+    /// indexed by `PrimitiveInstanceIndex.0` (a follow-up will switch
+    /// this to push-per-draw with `Index<PrimitiveDrawHeader>`). Holds
+    /// visibility state, clip chain and clip-task index for each
+    /// visible primitive.
+    pub draws: Vec<PrimitiveDrawHeader>,
+
+    /// Per-frame scratch for NormalBorder primitives.
+    pub normal_border: storage::Storage<NormalBorderScratch>,
+
+    /// Per-frame scratch for Picture primitives. Holds the picture's
+    /// primary/secondary render task ids and any per-composite-mode
+    /// extra GPU buffer addresses. Indexed by `scratch_handle` on
+    /// `PrimitiveKind::Picture`.
+    pub pictures: storage::Storage<PictureScratch>,
+
+    /// Per-frame scratch for Image primitives. Holds the source render
+    /// task (or a Range of per-tile tasks for tiled images), normalized-
+    /// uvs flag, and image adjustment.
+    pub images: storage::Storage<ImageScratch>,
+
+    /// Per-tile entries for tiled Image primitives. Each `ImageScratch`
+    /// holds a `Range` into this storage.
+    pub visible_image_tiles: storage::Storage<VisibleImageTile>,
+
+    /// Per-frame scratch for TextRun primitives. Holds the per-frame
+    /// font snapshot, glyph-key range, snapping offset, and raster
+    /// scale for each visible text run.
+    pub text_runs: storage::Storage<TextRunScratch>,
+
+    /// Per-frame storage for glyph keys allocated by visible text
+    /// runs. Each `TextRunScratch` holds a `Range` into this storage.
+    /// Used to be on `PrimitiveSceneCache` (memoized across frames);
+    /// graduated to per-frame here so the scene buffer cannot grow
+    /// unbounded between scene rebuilds.
+    pub glyph_keys: GlyphKeyStorage,
+
+    /// A list of brush segments built each frame for the segmented
+    /// brush primitives (Rectangle, YuvImage, non-tiled Image). The
+    /// segment builder runs every frame for every visible segmented
+    /// prim.
+    pub segments: SegmentStorage,
+
+    /// A list of per-prim brush segmentation records (segments range
+    /// + GPU buffer address). Each PrimitiveDrawHeader.segment_instance_index
+    /// holds an index into this storage, or UNUSED for non-segmented
+    /// prims.
+    pub segment_instances: SegmentInstanceStorage,
+
+    /// Trailing-array store for per-segment cached render-task ids
+    /// referenced by NormalBorderScratch entries.
+    pub border_task_ids: storage::Storage<RenderTaskId>,
+
+    /// Per-frame BorderSegmentInfo arena. NormalBorder builds its
+    /// edge/corner segment list each frame against the prim's size and
+    /// stores the resulting range on `NormalBorderScratch`.
+    pub border_segments: storage::Storage<BorderSegmentInfo>,
+
+    /// Per-frame scratch for ImageBorder primitives. Holds the range
+    /// into `segments` for the nine-patch brush segments built each
+    /// frame against the prim's size.
+    pub image_border: storage::Storage<ImageBorderScratch>,
+
     /// Contains a list of clip mask instance parameters
     /// per segment generated.
     pub clip_mask_instances: Vec<ClipMaskKind>,
 
-    /// List of glyphs keys that are allocated by each
-    /// text run instance.
-    pub glyph_keys: GlyphKeyStorage,
-
-    /// List of render task handles for border segment instances
-    /// that have been added this frame.
-    pub border_cache_handles: BorderHandleStorage,
-
-    /// A list of brush segments that have been built for this scene.
-    pub segments: SegmentStorage,
-
-    /// A list of segment ranges and GPU cache handles for prim instances
-    /// that have opted into segment building. In future, this should be
-    /// removed in favor of segment building during primitive interning.
-    pub segment_instances: SegmentInstanceStorage,
-
-    /// A list of visible tiles that tiled gradients use to store
-    /// per-tile information.
-    pub gradient_tiles: GradientTileStorage,
-
-    /// List of debug display items for rendering.
+    /// List of debug display items for rendering. Cleared in `begin_frame`
+    /// and refilled in `end_frame` (where retained `messages` are flushed
+    /// into it for on-screen display).
     pub debug_items: Vec<DebugItem>,
-
-    /// List of current debug messages to log on screen
-    messages: Vec<DebugMessage>,
 
     /// Set of sub-graphs that are required, determined during visibility pass
     pub required_sub_graphs: FastHashSet<PictureIndex>,
 
     /// Temporary buffers for building segments in to during prepare pass
     pub quad_direct_segments: Vec<QuadSegment>,
-    pub quad_color_segments: Vec<QuadSegment>,
     pub quad_indirect_segments: Vec<QuadSegment>,
-
-    /// A retained classifier for checking which segments of a tiled primitive
-    /// need a mask / are clipped / can be rendered directly
-    pub quad_tile_classifier: QuadTileClassifier,
 }
 
-impl Default for PrimitiveScratchBuffer {
+impl Default for PrimitiveFrameScratch {
     fn default() -> Self {
-        PrimitiveScratchBuffer {
-            clip_mask_instances: Vec::new(),
+        PrimitiveFrameScratch {
+            draws: Vec::new(),
+            normal_border: storage::Storage::new(0),
+            pictures: storage::Storage::new(0),
+            images: storage::Storage::new(0),
+            visible_image_tiles: storage::Storage::new(0),
+            text_runs: storage::Storage::new(0),
             glyph_keys: GlyphKeyStorage::new(0),
-            border_cache_handles: BorderHandleStorage::new(0),
             segments: SegmentStorage::new(0),
             segment_instances: SegmentInstanceStorage::new(0),
-            gradient_tiles: GradientTileStorage::new(0),
+            border_task_ids: storage::Storage::new(0),
+            border_segments: storage::Storage::new(0),
+            image_border: storage::Storage::new(0),
+            clip_mask_instances: Vec::new(),
             debug_items: Vec::new(),
-            messages: Vec::new(),
             required_sub_graphs: FastHashSet::default(),
             quad_direct_segments: Vec::new(),
-            quad_color_segments: Vec::new(),
             quad_indirect_segments: Vec::new(),
-            quad_tile_classifier: QuadTileClassifier::new(),
         }
     }
 }
 
-impl PrimitiveScratchBuffer {
+impl PrimitiveFrameScratch {
     pub fn recycle(&mut self, recycler: &mut Recycler) {
-        recycler.recycle_vec(&mut self.clip_mask_instances);
+        recycler.recycle_vec(&mut self.draws);
+        self.normal_border.recycle(recycler);
+        self.pictures.recycle(recycler);
+        self.images.recycle(recycler);
+        self.visible_image_tiles.recycle(recycler);
+        self.text_runs.recycle(recycler);
         self.glyph_keys.recycle(recycler);
-        self.border_cache_handles.recycle(recycler);
         self.segments.recycle(recycler);
         self.segment_instances.recycle(recycler);
-        self.gradient_tiles.recycle(recycler);
+        self.border_task_ids.recycle(recycler);
+        self.border_segments.recycle(recycler);
+        self.image_border.recycle(recycler);
+        recycler.recycle_vec(&mut self.clip_mask_instances);
         recycler.recycle_vec(&mut self.debug_items);
         recycler.recycle_vec(&mut self.quad_direct_segments);
-        recycler.recycle_vec(&mut self.quad_color_segments);
         recycler.recycle_vec(&mut self.quad_indirect_segments);
     }
 
     pub fn begin_frame(&mut self) {
+        self.normal_border.clear();
+        self.pictures.clear();
+        self.images.clear();
+        self.visible_image_tiles.clear();
+        self.text_runs.clear();
+        self.glyph_keys.clear();
+        self.segments.clear();
+        self.segment_instances.clear();
+        self.border_task_ids.clear();
+        self.border_segments.clear();
+        self.image_border.clear();
+
         // Clear the clip mask tasks for the beginning of the frame. Append
         // a single kind representing no clip mask, at the ClipTaskIndex::INVALID
         // location.
         self.clip_mask_instances.clear();
         self.clip_mask_instances.push(ClipMaskKind::None);
         self.quad_direct_segments.clear();
-        self.quad_color_segments.clear();
         self.quad_indirect_segments.clear();
-
-        self.border_cache_handles.clear();
-
-        // TODO(gw): As in the previous code, the gradient tiles store GPU cache
-        //           handles that are cleared (and thus invalidated + re-uploaded)
-        //           every frame. This maintains the existing behavior, but we
-        //           should fix this in the future to retain handles.
-        self.gradient_tiles.clear();
 
         self.required_sub_graphs.clear();
 
         self.debug_items.clear();
+    }
+}
+
+/// Per-scene cache. Now empty — the originally memoized fields have
+/// migrated to per-frame storage. Kept as a placeholder for any future
+/// scene-stable state and so the lifetime invariant on
+/// PrimitiveScratchBuffer (frame / scene / retained) remains visible
+/// at the type level; a follow-up may drop it entirely.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[derive(Default)]
+pub struct PrimitiveSceneCache {}
+
+impl PrimitiveSceneCache {
+    pub fn recycle(&mut self, _recycler: &mut Recycler) {}
+}
+
+/// State that lives strictly longer than a single frame *and* is not tied
+/// to scene lifetime. These fields manage their own trim/eviction policy
+/// rather than being cleared by `begin_frame` or `recycle`.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+pub struct PrimitiveRetained {
+    /// Debug log of recent messages. Trimmed by time/count in
+    /// `PrimitiveScratchBuffer::end_frame` and flushed into
+    /// `PrimitiveFrameScratch::debug_items` for display.
+    messages: Vec<DebugMessage>,
+
+    /// A retained classifier for checking which segments of a tiled
+    /// primitive need a mask / are clipped / can be rendered directly.
+    pub quad_tile_classifier: QuadTileClassifier,
+}
+
+impl Default for PrimitiveRetained {
+    fn default() -> Self {
+        PrimitiveRetained {
+            messages: Vec::new(),
+            quad_tile_classifier: QuadTileClassifier::new(),
+        }
+    }
+}
+
+/// Contains various vecs of data that is used only during frame building,
+/// where we want to recycle the memory each new display list, to avoid
+/// constantly re-allocating and moving memory around. Written during
+/// primitive preparation, and read during batching.
+///
+/// Storage is partitioned by lifetime: `frame` is per-frame (cleared in
+/// `begin_frame`), `scene` is per-scene (recycled on scene rebuild), and
+/// `retained` lives across both with its own trim policy.
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[derive(Default)]
+pub struct PrimitiveScratchBuffer {
+    pub frame: PrimitiveFrameScratch,
+    pub scene: PrimitiveSceneCache,
+    pub retained: PrimitiveRetained,
+}
+
+impl PrimitiveScratchBuffer {
+    pub fn recycle(&mut self, recycler: &mut Recycler) {
+        self.frame.recycle(recycler);
+        self.scene.recycle(recycler);
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.frame.begin_frame();
     }
 
     pub fn end_frame(&mut self) {
@@ -1088,10 +773,11 @@ impl PrimitiveScratchBuffer {
         const Y0: f32 = 32.0;
         let now = zeitstempel::now();
 
-        let msgs_to_remove = self.messages.len().max(MSGS_TO_RETAIN) - MSGS_TO_RETAIN;
+        let messages = &mut self.retained.messages;
+        let msgs_to_remove = messages.len().max(MSGS_TO_RETAIN) - MSGS_TO_RETAIN;
         let mut msgs_removed = 0;
 
-        self.messages.retain(|msg| {
+        messages.retain(|msg| {
             if msgs_removed < msgs_to_remove {
                 msgs_removed += 1;
                 return false;
@@ -1104,17 +790,18 @@ impl PrimitiveScratchBuffer {
             true
         });
 
-        let mut y = Y0 + self.messages.len() as f32 * LINE_HEIGHT;
+        let mut y = Y0 + messages.len() as f32 * LINE_HEIGHT;
         let shadow_offset = 1.0;
+        let debug_items = &mut self.frame.debug_items;
 
-        for msg in &self.messages {
-            self.debug_items.push(DebugItem::Text {
+        for msg in messages.iter() {
+            debug_items.push(DebugItem::Text {
                 position: DevicePoint::new(X0 + shadow_offset, y + shadow_offset),
                 color: debug_colors::BLACK,
                 msg: msg.msg.clone(),
             });
 
-            self.debug_items.push(DebugItem::Text {
+            debug_items.push(DebugItem::Text {
                 position: DevicePoint::new(X0, y),
                 color: debug_colors::RED,
                 msg: msg.msg.clone(),
@@ -1163,7 +850,7 @@ impl PrimitiveScratchBuffer {
         outer_color: ColorF,
         inner_color: ColorF,
     ) {
-        self.debug_items.push(DebugItem::Rect {
+        self.frame.debug_items.push(DebugItem::Rect {
             rect,
             outer_color,
             inner_color,
@@ -1178,7 +865,7 @@ impl PrimitiveScratchBuffer {
         color: ColorF,
         msg: String,
     ) {
-        self.debug_items.push(DebugItem::Text {
+        self.frame.debug_items.push(DebugItem::Text {
             position,
             color,
             msg,
@@ -1190,7 +877,7 @@ impl PrimitiveScratchBuffer {
         &mut self,
         msg: String,
     ) {
-        self.messages.push(DebugMessage {
+        self.retained.messages.push(DebugMessage {
             msg,
             timestamp: zeitstempel::now(),
         })
@@ -1202,65 +889,35 @@ impl PrimitiveScratchBuffer {
 #[derive(Clone, Debug)]
 pub struct PrimitiveStoreStats {
     picture_count: usize,
-    text_run_count: usize,
-    image_count: usize,
-    linear_gradient_count: usize,
-    color_binding_count: usize,
 }
 
 impl PrimitiveStoreStats {
     pub fn empty() -> Self {
         PrimitiveStoreStats {
             picture_count: 0,
-            text_run_count: 0,
-            image_count: 0,
-            linear_gradient_count: 0,
-            color_binding_count: 0,
         }
     }
 }
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveStore {
-    pub pictures: Vec<PicturePrimitive>,
-    pub text_runs: TextRunStorage,
-    pub linear_gradients: LinearGradientStorage,
-
-    /// A list of image instances. These are stored separately as
-    /// storing them inline in the instance makes the structure bigger
-    /// for other types.
-    pub images: ImageInstanceStorage,
-
-    /// animated color bindings for this primitive.
-    pub color_bindings: ColorBindingStorage,
+    pub pictures: Vec<PictureInstance>,
 }
 
 impl PrimitiveStore {
     pub fn new(stats: &PrimitiveStoreStats) -> PrimitiveStore {
         PrimitiveStore {
             pictures: Vec::with_capacity(stats.picture_count),
-            text_runs: TextRunStorage::new(stats.text_run_count),
-            images: ImageInstanceStorage::new(stats.image_count),
-            color_bindings: ColorBindingStorage::new(stats.color_binding_count),
-            linear_gradients: LinearGradientStorage::new(stats.linear_gradient_count),
         }
     }
 
     pub fn reset(&mut self) {
         self.pictures.clear();
-        self.text_runs.clear();
-        self.images.clear();
-        self.color_bindings.clear();
-        self.linear_gradients.clear();
     }
 
     pub fn get_stats(&self) -> PrimitiveStoreStats {
         PrimitiveStoreStats {
             picture_count: self.pictures.len(),
-            text_run_count: self.text_runs.len(),
-            image_count: self.images.len(),
-            linear_gradient_count: self.linear_gradients.len(),
-            color_binding_count: self.color_bindings.len(),
         }
     }
 
@@ -1291,7 +948,7 @@ pub trait InternablePrimitive: intern::Internable<InternData = ()> + Sized {
         key: Self::Key,
         data_handle: intern::Handle<Self>,
         prim_store: &mut PrimitiveStore,
-    ) -> PrimitiveInstanceKind;
+    ) -> PrimitiveKind;
 }
 
 
@@ -1305,6 +962,6 @@ fn test_struct_sizes() {
     //     test expectations and move on.
     // (b) You made a structure larger. This is not necessarily a problem, but should only
     //     be done with care, and after checking if talos performance regresses badly.
-    assert_eq!(mem::size_of::<PrimitiveInstance>(), 88, "PrimitiveInstance size changed");
-    assert_eq!(mem::size_of::<PrimitiveInstanceKind>(), 24, "PrimitiveInstanceKind size changed");
+    assert_eq!(mem::size_of::<PrimitiveInstance>(), 48, "PrimitiveInstance size changed");
+    assert_eq!(mem::size_of::<PrimitiveKind>(), 24, "PrimitiveKind size changed");
 }

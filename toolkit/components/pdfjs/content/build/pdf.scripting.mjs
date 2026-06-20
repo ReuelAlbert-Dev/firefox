@@ -21,8 +21,8 @@
  */
 
 /**
- * pdfjsVersion = 5.6.65
- * pdfjsBuild = bda745672
+ * pdfjsVersion = 6.0.393
+ * pdfjsBuild = e74be4491
  */
 
 ;// ./src/scripting_api/constants.js
@@ -183,12 +183,18 @@ function getFieldType(actions) {
   return FieldType.none;
 }
 
+;// ./src/shared/math_clamp.js
+function MathClamp(v, min, max) {
+  return Math.min(Math.max(v, min), max);
+}
+
 ;// ./src/shared/scripting_utils.js
+
 function makeColorComp(n) {
-  return Math.floor(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, "0");
+  return Math.floor(MathClamp(n, 0, 1) * 255).toString(16).padStart(2, "0");
 }
 function scaleAndClamp(x) {
-  return Math.max(0, Math.min(255, 255 * x));
+  return MathClamp(x, 0, 1) * 255;
 }
 class ColorConverters {
   static CMYK_G([c, y, m, k]) {
@@ -420,7 +426,7 @@ class Field extends PDFObject {
     this._fillColor = data.fillColor || ["T"];
     this._isChoice = Array.isArray(data.items);
     this._items = data.items || [];
-    this._hasValue = data.hasOwnProperty("value");
+    this._hasValue = Object.hasOwn(data, "value");
     this._page = data.page || 0;
     this._strokeColor = data.strokeColor || ["G", 0];
     this._textColor = data.textColor || ["G", 0];
@@ -958,13 +964,14 @@ class CheckboxField extends RadioButtonField {
 ;// ./src/scripting_api/aform.js
 
 
+
 class AForm {
   constructor(document, app, util, color) {
     this._document = document;
     this._app = app;
     this._util = util;
     this._color = color;
-    this._emailRegex = new RegExp("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+" + "@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?" + "(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$");
+    this._emailRegex = new RegExp("^[\\w.!#$%&'*+/=?^`{|}~-]+" + "@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?" + "(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$");
   }
   _mkTargetName(event) {
     return event.target ? `[ ${event.target.name} ]` : "";
@@ -1046,7 +1053,7 @@ class AForm {
     if (bCurrencyPrepend) {
       buf.push(strCurrency);
     }
-    sepStyle = Math.min(Math.max(0, Math.floor(sepStyle)), 4);
+    sepStyle = MathClamp(Math.floor(sepStyle), 0, 4);
     buf.push("%,", sepStyle, ".", nDec.toString(), "f");
     if (!bCurrencyPrepend) {
       buf.push(strCurrency);
@@ -1072,9 +1079,9 @@ class AForm {
     value = value.trim();
     let pattern;
     if (sepStyle > 1) {
-      pattern = event.willCommit ? /^[+-]?(\d+(,\d*)?|,\d+)$/ : /^[+-]?\d*,?\d*$/;
+      pattern = event.willCommit ? /^[+-]?(\d+(,\d*)?|,\d+)$/ : /^[+-]?\d*(?:,\d*)?$/;
     } else {
-      pattern = event.willCommit ? /^[+-]?(\d+(\.\d*)?|\.\d+)$/ : /^[+-]?\d*\.?\d*$/;
+      pattern = event.willCommit ? /^[+-]?(\d+(\.\d*)?|\.\d+)$/ : /^[+-]?\d*(?:\.\d*)?$/;
     }
     if (!pattern.test(value)) {
       if (event.willCommit) {
@@ -1103,7 +1110,7 @@ class AForm {
       return;
     }
     nDec = Math.floor(nDec);
-    sepStyle = Math.min(Math.max(0, Math.floor(sepStyle)), 4);
+    sepStyle = MathClamp(Math.floor(sepStyle), 0, 4);
     let value = this.AFMakeNumber(event.value);
     if (value === null) {
       event.value = "%";
@@ -1372,7 +1379,7 @@ class AForm {
       }
       event.rc = true;
     }
-    const re = /([-()]|\s)+/g;
+    const re = /[-()\s]+/g;
     value = value.replaceAll(re, "");
     for (const format of formats) {
       this.#AFSpecial_KeystrokeEx_helper(format.replaceAll(re, ""), value, false);
@@ -1592,10 +1599,7 @@ class EventDispatcher {
       source.obj.value = event.value;
       this.runCalculate(source, event);
       const savedValue = event.value = source.obj._getValue();
-      let formattedValue = null;
-      if (this.runActions(source, source, event, "Format")) {
-        formattedValue = event.value?.toString?.();
-      }
+      const formattedValue = this.runActions(source, source, event, "Format") ? event.value?.toString?.() : null;
       source.obj._send({
         id: source.obj._id,
         siblings: source.obj._siblings,
@@ -1667,10 +1671,7 @@ class EventDispatcher {
         event.value = target.obj._getValue();
       }
       savedValue = target.obj._getValue();
-      let formattedValue = null;
-      if (this.runActions(target, target, event, "Format")) {
-        formattedValue = event.value?.toString?.();
-      }
+      const formattedValue = this.runActions(target, target, event, "Format") ? event.value?.toString?.() : null;
       target.obj._send({
         id: target.obj._id,
         siblings: target.obj._siblings,
@@ -2314,7 +2315,7 @@ class PrintParams {
       suppressBG: 1 << 8,
       suppressCenter: 1 << 9,
       suppressCJKFontSubst: 1 << 10,
-      suppressCropClip: 1 << 1,
+      suppressCropClip: 1 << 11,
       suppressRotate: 1 << 12,
       suppressTransfer: 1 << 13,
       suppressUCR: 1 << 14,

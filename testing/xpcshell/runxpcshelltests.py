@@ -91,7 +91,7 @@ import mozfile
 import mozinfo
 from manifestparser import TestManifest
 from manifestparser.expression import parse
-from manifestparser.filters import chunk_by_slice, failures, pathprefix, tags
+from manifestparser.filters import failures, pathprefix, tags
 from manifestparser.util import normsep
 from mozlog import commandline
 from mozprofile import Profile
@@ -893,6 +893,8 @@ class XPCShellTestThread(Thread):
             self.keep_going = True
             return
 
+        self.log.test_start(name, group=group)
+
         # Check for known-fail tests
         expect_pass = self.test_object["expected"] == "pass"
 
@@ -989,7 +991,6 @@ class XPCShellTestThread(Thread):
         process_output = None
 
         try:
-            self.log.test_start(name, group=group)
             if self.verbose:
                 self.logCommand(name, self.command, test_dir)
 
@@ -1292,8 +1293,6 @@ class XPCShellTests:
             filters.append(failures(self.runFailures))
             noDefaultFilters = True
 
-        if self.totalChunks > 1:
-            filters.append(chunk_by_slice(self.thisChunk, self.totalChunks))
         try:
             self.alltests = list(
                 map(
@@ -1617,7 +1616,10 @@ class XPCShellTests:
             if self.mozInfo["buildapp"] == "mobile/android":
                 # For android, use binary from host utilities.
                 http3ServerPath = os.path.join(self.xrePath, "http3server" + binSuffix)
-                serverEnv["LD_LIBRARY_PATH"] = self.xrePath
+                if sys.platform == "darwin":
+                    serverEnv["DYLD_LIBRARY_PATH"] = self.xrePath
+                else:
+                    serverEnv["LD_LIBRARY_PATH"] = self.xrePath
             elif build:
                 http3ServerPath = os.path.join(
                     build.topobjdir, "dist", "bin", "http3server" + binSuffix
@@ -1721,7 +1723,7 @@ class XPCShellTests:
             (release, versioninfo, machine) = platform.mac_ver()
             versionNums = release.split(".")[:2]
             os_version = "%s.%s" % (versionNums[0], versionNums[1].ljust(2, "0"))
-            if os_version.split(".")[0] in ["14", "15"]:
+            if os_version.split(".", 1)[0] in ["14", "15"]:
                 self.mozInfo["crashreporter"] = False
 
         # we default to false for e10s on xpcshell
@@ -1994,8 +1996,6 @@ class XPCShellTests:
         self.verboseIfFails = options.get("verboseIfFails")
         self.keepGoing = options.get("keepGoing")
         self.logfiles = options.get("logfiles")
-        self.totalChunks = options.get("totalChunks", 1)
-        self.thisChunk = options.get("thisChunk")
         self.profileName = options.get("profileName") or "xpcshell"
         self.mozInfo = options.get("mozInfo")
         self.testingModulesDir = testingModulesDir

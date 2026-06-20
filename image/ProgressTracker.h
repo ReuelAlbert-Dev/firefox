@@ -84,7 +84,7 @@ class ObserverTable : public nsTHashMap<nsPtrHashKey<IProgressObserver>,
   }
 
  private:
-  ~ObserverTable() {}
+  ~ObserverTable() = default;
 };
 
 /**
@@ -98,12 +98,13 @@ class ObserverTable : public nsTHashMap<nsPtrHashKey<IProgressObserver>,
  * asynchronously.
  */
 class ProgressTracker : public mozilla::SupportsWeakPtr {
-  virtual ~ProgressTracker() {}
+  virtual ~ProgressTracker() = default;
 
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(ProgressTracker)
 
   ProgressTracker();
+  ProgressTracker(const ProgressTracker& aOther) = delete;
 
   bool HasImage() const {
     MutexAutoLock lock(mMutex);
@@ -189,8 +190,6 @@ class ProgressTracker : public mozilla::SupportsWeakPtr {
   friend class AsyncNotifyCurrentStateRunnable;
   friend class ImageFactory;
 
-  ProgressTracker(const ProgressTracker& aOther) = delete;
-
   // Sets our weak reference to our image. Only ImageFactory should call this.
   void SetImage(Image* aImage);
 
@@ -206,7 +205,7 @@ class ProgressTracker : public mozilla::SupportsWeakPtr {
   // other imagelib runnables.
   class RenderBlockingRunnable final : public PrioritizableRunnable {
     explicit RenderBlockingRunnable(
-        already_AddRefed<AsyncNotifyRunnable>&& aEvent);
+        already_AddRefed<AsyncNotifyRunnable> aEvent);
     virtual ~RenderBlockingRunnable() = default;
 
    public:
@@ -214,7 +213,7 @@ class ProgressTracker : public mozilla::SupportsWeakPtr {
     void RemoveObserver(IProgressObserver* aObserver);
 
     static already_AddRefed<RenderBlockingRunnable> Create(
-        already_AddRefed<AsyncNotifyRunnable>&& aEvent);
+        already_AddRefed<AsyncNotifyRunnable> aEvent);
   };
 
   // The runnable, if any, that we've scheduled to deliver async notifications.

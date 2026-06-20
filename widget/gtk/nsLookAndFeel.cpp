@@ -390,8 +390,8 @@ nsLookAndFeel::nsLookAndFeel() {
     GUniquePtr<gchar> path(
         g_strconcat(g_get_user_config_dir(), "/gtk-3.0/colors.css", NULL));
     mKdeColors = dont_AddRef(g_file_new_for_path(path.get()));
-    mKdeColorsMonitor = dont_AddRef(
-        g_file_monitor_file(mKdeColors.get(), G_FILE_MONITOR_NONE, NULL, NULL));
+    mKdeColorsMonitor = dont_AddRef(g_file_monitor_file(
+        mKdeColors.get(), G_FILE_MONITOR_NONE, nullptr, nullptr));
     if (mKdeColorsMonitor) {
       g_signal_connect(mKdeColorsMonitor.get(), "changed",
                        G_CALLBACK(kde_colors_changed), NULL);
@@ -1337,6 +1337,7 @@ bool nsLookAndFeel::PerThemeData::GetFont(FontID aID, nsString& aFontName,
       aFontStyle = mDefaultFontStyle;
       break;
   }
+  aFontStyle.systemFont = true;
 
   // Convert GDK pixels to CSS pixels.
   // Note that this is generally a no-op, except when text scale factor is

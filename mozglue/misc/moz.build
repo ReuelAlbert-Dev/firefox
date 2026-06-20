@@ -8,10 +8,12 @@ EXPORTS.mozilla += [
     "AwakeTimeStamp.h",
     "decimal/Decimal.h",
     "decimal/DoubleConversion.h",
+    "Futex.h",
     "IntegerPrintfMacros.h",
     "LoggingCore.h",
     "MmapFaultHandler.h",
     "Now.h",
+    "PerfStats.h",
     "PlatformConditionVariable.h",
     "PlatformMutex.h",
     "PlatformRWLock.h",
@@ -43,6 +45,7 @@ SOURCES += [
     "Debug.cpp",
     "LoggingCore.cpp",
     "MmapFaultHandler.cpp",
+    "PerfStats.cpp",
     "Printf.cpp",
     "SIMD.cpp",
     "StackWalk.cpp",
@@ -105,8 +108,9 @@ if CONFIG["OS_ARCH"] == "WINNT":
 
 if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
-        "ConditionVariable_windows.cpp",
-        "Mutex_windows.cpp",
+        "ConditionVariable_futex.cpp",
+        "Futex_windows.cpp",
+        "Mutex_futex.cpp",
         "RWLock_windows.cpp",
     ]
 # WASI hasn't supported cond vars and mutexes yet so noop implementation is used.

@@ -672,8 +672,7 @@ void JumpListBuilder::DoPopulateJumpList(
     }
 
     hr = mJumpListBackend->AppendCategory(
-        reinterpret_cast<const wchar_t*>(aCustomTitle.BeginReading()),
-        pCustomArray);
+        PromiseFlatString(aCustomTitle).getW(), pCustomArray);
 
     // E_ACCESSDENIED might be returned if Windows is configured not to show
     // recently opened items in the start menu or jump lists. In that case, we

@@ -7,12 +7,9 @@ use crate::scene_building::{CreateShadow, IsVisible};
 use crate::intern;
 use crate::internal_types::LayoutPrimitiveInfo;
 use crate::prim_store::{
-    PrimKey, InternablePrimitive, PrimitiveStore, PrimitiveInstanceKind,
-    ColorBindingIndex, SegmentInstanceIndex,
+    PrimKey, InternablePrimitive, PrimitiveStore, PrimitiveKind,
     PrimTemplate, PrimTemplateCommonData, PrimitiveOpacity,
 };
-use api::units::{DeviceRect, LayoutVector2D};
-use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState};
 use crate::frame_builder::FrameBuildingState;
 use crate::scene::SceneProperties;
 use std::ops;
@@ -52,21 +49,12 @@ impl InternablePrimitive for RectanglePrim {
     }
 
     fn make_instance_kind(
-        key: RectangleKey,
+        _key: RectangleKey,
         data_handle: RectangleDataHandle,
-        prim_store: &mut PrimitiveStore,
-    ) -> PrimitiveInstanceKind {
-        let color_binding_index = match key.kind.color {
-            PropertyBinding::Binding(..) => {
-                prim_store.color_bindings.push(key.kind.color)
-            }
-            PropertyBinding::Value(..) => ColorBindingIndex::INVALID,
-        };
-        PrimitiveInstanceKind::Rectangle {
+        _prim_store: &mut PrimitiveStore,
+    ) -> PrimitiveKind {
+        PrimitiveKind::Rectangle {
             data_handle,
-            segment_instance_index: SegmentInstanceIndex::INVALID,
-            color_binding_index,
-            use_legacy_path: false,
         }
     }
 }
@@ -102,6 +90,12 @@ pub struct RectangleData {
 
 pub type RectangleTemplate = PrimTemplate<RectangleData>;
 
+impl RectangleTemplate {
+    pub fn resolve(&self, scene_properties: &SceneProperties) -> ColorF {
+        scene_properties.resolve_color(&self.kind.color)
+    }
+}
+
 impl ops::Deref for RectangleTemplate {
     type Target = PrimTemplateCommonData;
     fn deref(&self) -> &Self::Target {
@@ -112,18 +106,6 @@ impl ops::Deref for RectangleTemplate {
 impl ops::DerefMut for RectangleTemplate {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.common
-    }
-}
-
-impl PatternBuilder for RectangleTemplate {
-    fn build(
-        &self,
-        _sub_rect: Option<DeviceRect>,
-        _offset: LayoutVector2D,
-        ctx: &PatternBuilderContext,
-        _state: &mut PatternBuilderState,
-    ) -> Pattern {
-        Pattern::color(ctx.scene_properties.resolve_color(&self.kind.color))
     }
 }
 
@@ -156,6 +138,6 @@ impl RectangleTemplate {
 fn test_struct_sizes() {
     use std::mem;
     assert_eq!(mem::size_of::<RectanglePrim>(), 16, "RectanglePrim size changed");
-    assert_eq!(mem::size_of::<RectangleTemplate>(), 56, "RectangleTemplate size changed");
-    assert_eq!(mem::size_of::<RectangleKey>(), 36, "RectangleKey size changed");
+    assert_eq!(mem::size_of::<RectangleTemplate>(), 36, "RectangleTemplate size changed");
+    assert_eq!(mem::size_of::<RectangleKey>(), 20, "RectangleKey size changed");
 }

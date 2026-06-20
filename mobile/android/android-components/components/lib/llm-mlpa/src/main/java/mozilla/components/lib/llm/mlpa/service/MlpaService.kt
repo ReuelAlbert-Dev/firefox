@@ -4,6 +4,7 @@
 
 package mozilla.components.lib.llm.mlpa.service
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -13,20 +14,121 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import mozilla.components.concept.integrity.IntegrityToken
+import mozilla.components.concept.llm.AuthFailure
+import mozilla.components.concept.llm.Llm
+import mozilla.components.concept.llm.LlmProvider
+import mozilla.components.concept.llm.NetworkError
+import mozilla.components.concept.llm.RateLimited as ConceptRateLimited
+import mozilla.components.concept.llm.RequestTooLarge as ConceptRequestTooLarge
+import mozilla.components.concept.llm.ServerError as ConceptServerError
+
+/**
+ * Marker interface for all MLPA-originated errors. Closed within this module so the
+ * full set of MLPA failure modes is exhaustively known here, while remaining open to
+ * categorisation against the concept-level [mozilla.components.concept.llm.CloudFailure]
+ * categories.
+ */
+sealed interface MlpaError
+
+/**
+ * Thrown when the Integrity client experiences a failure, propagating its error message.
+ */
+class IntegrityHandshakeFailure(message: String) : Llm.Exception(message), MlpaError
 
 /**
  * Thrown when the MLPA verification service fails to process or validate a request.
  *
  * @param reason A human-readable explanation of the failure.
  */
-class VerificationServiceFailed(reason: String) : Exception("Verification Service Failed: $reason")
+class VerificationServiceFailed(reason: String) :
+    Llm.Exception("Verification Service Failed: $reason"), MlpaError
+
+/** Token expired or invalid. Re-authenticate via [AuthenticationService.verify]. */
+class InvalidToken : Llm.Exception("Invalid token"), MlpaError, AuthFailure
+
+/** The user has been blocked from accessing the service. */
+class UserBlocked : Llm.Exception("User blocked"), MlpaError, AuthFailure
+
+/** The request body exceeded the 10MB limit. */
+class RequestTooLarge : Llm.Exception("Request too large"), MlpaError, ConceptRequestTooLarge
 
 /**
- * Thrown when the MLPA chat/completion service fails to process a request.
+ * The user's total budget has been exhausted.
  *
- * @param reason A human-readable explanation of the failure.
+ * @property retryAfter Duration in seconds before the budget resets (typically 86400s).
  */
-class ChatServiceFailed(reason: String) : Exception("Chat Service Failed: $reason")
+data class BudgetExceeded(override val retryAfter: Long?) :
+    Llm.Exception("Budget exceeded"), MlpaError, ConceptRateLimited
+
+/**
+ * Requests per minute or tokens per minute limit reached.
+ *
+ * @property retryAfter Duration in seconds before the limit resets (typically 60s).
+ */
+data class RateLimited(override val retryAfter: Long?) :
+    Llm.Exception("Rate limited"), MlpaError, ConceptRateLimited
+
+/** The upstream LLM was unreachable or returned an error (502). */
+data class UpstreamError(val reason: String) :
+    Llm.Exception("Upstream error: $reason"), MlpaError, ConceptServerError {
+    override val statusCode: Int = 502
+}
+
+/**
+ * An unexpected server-side error occurred.
+ *
+ * @property statusCode The HTTP status code returned.
+ */
+data class ServerError(override val statusCode: Int) :
+    Llm.Exception("Server error: $statusCode"), MlpaError, ConceptServerError
+
+/**
+ * A network error occurred while communicating with the service.
+ *
+ * @param cause The underlying network exception.
+ */
+class ChatNetworkError(cause: Throwable) :
+    Llm.Exception("Chat network error: ${cause.message}", cause), MlpaError, NetworkError
+
+/**
+ * The server response could not be parsed.
+ *
+ * @param cause The underlying serialization exception.
+ */
+class ResponseParseError(cause: Throwable) :
+    Llm.Exception("Response parse error: ${cause.message}", cause), MlpaError
+
+/**
+ * The rate-limit error response body (HTTP 429) could not be parsed.
+ *
+ * @param cause The underlying serialization exception.
+ */
+class RateLimitResponseParseError(cause: Throwable) :
+    Llm.Exception("Rate limit response parse error: ${cause.message}", cause), MlpaError
+
+/**
+ * The upstream error response body (HTTP 502) could not be parsed.
+ *
+ * @param cause The underlying serialization exception.
+ */
+class UpstreamResponseParseError(cause: Throwable) :
+    Llm.Exception("Upstream response parse error: ${cause.message}", cause), MlpaError
+
+/**
+ * An error occurred while serializing the verification request.
+ *
+ * @param cause The underlying serialization exception.
+ */
+class VerificationResponseParseError(cause: Throwable) :
+    Llm.Exception("Could not decode request: ${cause.message}", cause), MlpaError
+
+/**
+ * A network error occurred while communicating with the authentication service.
+ *
+ * @param cause The underlying network exception.
+ */
+class VerificationNetworkError(cause: Throwable) :
+    Llm.Exception("Auth network error: ${cause.message}", cause), MlpaError, NetworkError
 
 /**
  * Configuration for connecting to MLPA services.
@@ -161,10 +263,26 @@ fun interface ChatService {
      * @param request The completion request payload.
      * @return A [Result] containing a [Response] on success, or a failure otherwise.
      */
-    suspend fun completion(
+    fun completion(
         authorizationToken: AuthorizationToken,
         request: Request,
-    ): Result<Response>
+    ): Flow<String>
+
+    /**
+     * Body of an error response with a code.
+     *
+     * @property error the error number the [ChatService] returned.
+     */
+    @Serializable
+    data class ResponseErrorCode(val error: Int)
+
+    /**
+     * Body of an error response with a reason.
+     *
+     * @property error the error reason the [ChatService] returned.
+     */
+    @Serializable
+    data class ResponseErrorReason(val error: String)
 
     /**
      * Response returned from a completion request.
@@ -204,26 +322,12 @@ fun interface ChatService {
      */
     @Serializable
     data class Request(
-        val model: ModelID,
+        @Serializable(with = ModelIDSerializer::class) val model: LlmProvider.ModelID,
         val messages: List<Message>,
+        val stream: Boolean = true,
+        val temperature: Float = 0.1f,
+        @SerialName("top_p") val topP: Float = 0.01f,
     ) {
-        /**
-         * Identifier of a model supported by MLPA.
-         *
-         * @property value The raw model identifier string.
-         */
-        @JvmInline
-        @Serializable
-        value class ModelID(val value: String) {
-            companion object {
-                /**
-                 * Predefined model identifier for the Mistral Small model hosted via Vertex AI.
-                 */
-                val mistral: ModelID
-                    get() = ModelID("vertex_ai/mistral-small-2503")
-            }
-        }
-
         /**
          * Represents a single message in the conversation.
          *
@@ -242,6 +346,12 @@ fun interface ChatService {
                  */
                 @SerialName("user")
                 User,
+
+                /**
+                 * A system-level instruction that shapes model behavior.
+                 */
+                @SerialName("system")
+                System,
             }
 
             companion object {
@@ -251,9 +361,28 @@ fun interface ChatService {
                  * @param content The message content.
                  */
                 fun user(content: String) = Message(Role.User, content)
+
+                /**
+                 * Convenience factory for creating a system message.
+                 *
+                 * @param content The message content.
+                 */
+                fun system(content: String) = Message(Role.System, content)
             }
         }
     }
+}
+
+private object ModelIDSerializer : KSerializer<LlmProvider.ModelID> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("model_id", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: LlmProvider.ModelID) {
+        encoder.encodeString(value.value)
+    }
+
+    override fun deserialize(decoder: Decoder): LlmProvider.ModelID =
+        LlmProvider.ModelID(decoder.decodeString())
 }
 
 private object IntegrityTokenSerializer : KSerializer<IntegrityToken> {

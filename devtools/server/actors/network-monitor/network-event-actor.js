@@ -215,6 +215,8 @@ class NetworkEventActor extends Actor {
       blockedReason = "unknown";
     }
 
+    const priority = lazy.NetworkUtils.getChannelPriority(channel);
+
     const resource = {
       resourceId: this._channelId,
       resourceType: NETWORK_EVENT,
@@ -231,7 +233,7 @@ class NetworkEventActor extends Actor {
         lazy.NetworkUtils.isThirdPartyTrackingResource(channel),
       isXHR,
       method,
-      priority: lazy.NetworkUtils.getChannelPriority(channel),
+      priority,
       private: lazy.NetworkUtils.isChannelPrivate(channel),
       referrerPolicy: lazy.NetworkUtils.getReferrerPolicy(channel),
       stacktraceResourceId,
@@ -440,7 +442,7 @@ class NetworkEventActor extends Actor {
    * @return object
    *         The response packet - network response content.
    */
-  getResponseContent() {
+  async getResponseContent() {
     if (!this._response.content.text && this._memoryCacheData) {
       const data = this._memoryCacheData;
       this._memoryCacheData = null;
@@ -461,6 +463,20 @@ class NetworkEventActor extends Actor {
           this._discardResponseBody = true;
         }
       }
+    }
+
+    if (!this._response.content.text && this._response.content.encodedData) {
+      this._response.content.text =
+        await lazy.NetworkUtils.decodeResponseChunks(
+          this._response.content.encodedData,
+          {
+            charset: this._response.content.contentCharset,
+            compressionEncodings: this._response.content.compressionEncodings,
+            encodedBodySize: this._response.content.encodedBodySize,
+            encoding: this._response.content.encoding,
+          }
+        );
+      delete this._response.content.encodedData;
     }
 
     const content = { ...this._response.content };
@@ -648,6 +664,8 @@ class NetworkEventActor extends Actor {
       proxyInfo = proxyResponseRawHeaders.split("\r\n")[0].split(" ");
     }
 
+    const priority = lazy.NetworkUtils.getChannelPriority(channel);
+
     this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.RESPONSE_START, {
       httpVersion: isDataOrFile
         ? null
@@ -661,6 +679,7 @@ class NetworkEventActor extends Actor {
       earlyHintsStatus: earlyHintsResponseRawHeaders ? "103" : "",
       waitingTime,
       isResolvedByTRR: channel.isResolvedByTRR,
+      priority,
       proxyHttpVersion: proxyInfo[0],
       proxyStatus: proxyInfo[1],
       proxyStatusText: proxyInfo[2],
@@ -673,7 +692,7 @@ class NetworkEventActor extends Actor {
    * @param object info
    *        The object containing security information.
    */
-  addSecurityInfo(info, isRacing) {
+  addSecurityInfo(info) {
     // Ignore calls when this actor is already destroyed
     if (this.isDestroyed()) {
       return;
@@ -683,7 +702,6 @@ class NetworkEventActor extends Actor {
 
     this._onEventUpdate(lazy.NetworkUtils.NETWORK_EVENT_TYPES.SECURITY_INFO, {
       state: info.state,
-      isRacing,
     });
   }
 
@@ -692,18 +710,29 @@ class NetworkEventActor extends Actor {
    *
    * @param object
    */
-  addResponseContentComplete({ blockedReason, extension }) {
+  addResponseContentComplete({ blockedReason, extension, channel }) {
     // Ignore calls when this actor is already destroyed
     if (this.isDestroyed()) {
       return;
     }
 
+    const changed = {
+      blockedReason,
+      extension,
+    };
+
+    if (channel) {
+      // Get the final priority. It can't change after now.
+      const priority = lazy.NetworkUtils.getChannelPriority(channel);
+
+      if (Number.isInteger(priority) && priority != this._resource.priority) {
+        changed.priority = priority;
+      }
+    }
+
     this._onEventUpdate(
       lazy.NetworkUtils.NETWORK_EVENT_TYPES.RESPONSE_CONTENT_COMPLETE,
-      {
-        blockedReason,
-        extension,
-      }
+      changed
     );
   }
 

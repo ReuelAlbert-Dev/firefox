@@ -419,7 +419,7 @@ static bool IsHTMLBlockElementByDefault(const nsIContent& aContent) {
   }
   if (aContent.IsHTMLElement(nsGkAtoms::br)) {  // shortcut for TextEditor
     MOZ_ASSERT(!nsHTMLElement::IsBlock(
-        nsHTMLTags::CaseSensitiveAtomTagToId(nsGkAtoms::br)));
+        aContent.NodeInfo()->HTMLTag().valueOr(eHTMLTag_userdefined)));
     return false;
   }
   // We want to treat these as block nodes even though nsHTMLElement says
@@ -432,7 +432,7 @@ static bool IsHTMLBlockElementByDefault(const nsIContent& aContent) {
   }
 
   return nsHTMLElement::IsBlock(
-      nsHTMLTags::CaseSensitiveAtomTagToId(aContent.NodeInfo()->NameAtom()));
+      aContent.NodeInfo()->HTMLTag().valueOr(eHTMLTag_userdefined));
 }
 
 bool HTMLEditUtils::IsBlockElement(const nsIContent& aContent,
@@ -632,11 +632,6 @@ bool HTMLEditUtils::IsVisibleElementEvenIfLeafNode(const nsIContent& aContent) {
   if (!aContent.IsHTMLElement()) {
     return true;
   }
-  nsIFrame* const primaryFrame = aContent.GetPrimaryFrame();
-  if (primaryFrame && aContent.IsInComposedDoc() &&
-      HTMLEditUtils::IsInclusiveAncestorCSSDisplayNone(aContent)) {
-    return false;
-  }
   if (HTMLEditUtils::IsBlockElement(
           aContent, BlockInlineCheck::UseComputedDisplayStyle)) {
     return true;
@@ -650,11 +645,10 @@ bool HTMLEditUtils::IsVisibleElementEvenIfLeafNode(const nsIContent& aContent) {
                                    nsGkAtoms::select, nsGkAtoms::textarea)) {
     return true;
   }
-  if (const HTMLInputElement* inputElement =
-          HTMLInputElement::FromNode(&aContent)) {
+  if (const auto* inputElement = HTMLInputElement::FromNode(aContent)) {
     return inputElement->ControlType() != FormControlType::InputHidden;
   }
-  if (primaryFrame) {
+  if (nsIFrame* const primaryFrame = aContent.GetPrimaryFrame()) {
     // If the frame is not dirty or non-inline container frame, we can trust
     // whether the frame is empty or not.
     if (!primaryFrame->IsSubtreeDirty() || !primaryFrame->IsInlineFrame()) {
@@ -831,9 +825,6 @@ bool HTMLEditUtils::IsReplacedElement(const Element& aElement) {
     return !aElement.AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
                                  nsGkAtoms::hidden, eIgnoreCase);
   }
-  if (HTMLEditUtils::IsFormWidgetElement(aElement)) {
-    return true;
-  }
   // <object> is a special element, it shows its subtree when it does not load
   // its content.
   if (aElement.IsHTMLElement(nsGkAtoms::object)) {
@@ -849,20 +840,14 @@ bool HTMLEditUtils::IsReplacedElement(const Element& aElement) {
       nsGkAtoms::audio,
       // In strictly speaking, <br> is not a replaced element, but treating it
       // as a replaced element makes HTMLEditor and its peers simpler.
-      nsGkAtoms::br, nsGkAtoms::canvas, nsGkAtoms::embed, nsGkAtoms::iframe,
-      nsGkAtoms::img,
+      nsGkAtoms::br, nsGkAtoms::button, nsGkAtoms::canvas, nsGkAtoms::embed,
+      nsGkAtoms::iframe, nsGkAtoms::img, nsGkAtoms::meter,
       // <optgroup> and <option> are not replaced element actually but they
       // are treated as so for the compatibility with Chrome.
       // XXX I wonder if we can treat them as so only when they are in
       // <select>.
-      nsGkAtoms::optgroup, nsGkAtoms::option, nsGkAtoms::video);
-}
-
-bool HTMLEditUtils::IsFormWidgetElement(const nsIContent& aContent) {
-  return aContent.IsAnyOfHTMLElements(nsGkAtoms::textarea, nsGkAtoms::select,
-                                      nsGkAtoms::button, nsGkAtoms::output,
-                                      nsGkAtoms::progress, nsGkAtoms::meter,
-                                      nsGkAtoms::input);
+      nsGkAtoms::optgroup, nsGkAtoms::option, nsGkAtoms::progress,
+      nsGkAtoms::select, nsGkAtoms::textarea, nsGkAtoms::video);
 }
 
 bool HTMLEditUtils::IsAlignAttrSupported(const nsIContent& aContent) {
@@ -2935,6 +2920,7 @@ static const ElementInfo kElements[eHTMLTag_userdefined] = {
     ELEM(search, true, true, GROUP_BLOCK, GROUP_FLOW_ELEMENT),
     ELEM(section, true, true, GROUP_BLOCK, GROUP_FLOW_ELEMENT),
     ELEM(select, true, false, GROUP_FORMCONTROL, GROUP_SELECT_CONTENT),
+    ELEM(selectedcontent, true, false, GROUP_NONE, GROUP_INLINE_ELEMENT),
     ELEM(small, true, true, GROUP_FONTSTYLE, GROUP_INLINE_ELEMENT),
     ELEM(slot, true, false, GROUP_NONE, GROUP_FLOW_ELEMENT),
     ELEM(source, false, false, GROUP_PICTURE_CONTENT, GROUP_NONE),

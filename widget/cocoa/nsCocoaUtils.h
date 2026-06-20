@@ -87,12 +87,12 @@ class nsAutoreleasePool {
 
 @interface NSApplication (Undocumented)
 
-// Present in all versions of OS X from (at least) 10.2.8 through 10.5.
+// Present in all versions of macOS from (at least) 10.2.8 through 10.5.
 - (BOOL)_isRunningModal;
 - (BOOL)_isRunningAppModal;
 
 // Send an event to the current Cocoa app-modal session.  Present in all
-// versions of OS X from (at least) 10.2.8 through 10.5.
+// versions of macOS from (at least) 10.2.8 through 10.5.
 - (void)_modalSession:(NSModalSession)aSession sendEvent:(NSEvent*)theEvent;
 
 @end
@@ -248,14 +248,6 @@ class nsCocoaUtils {
    * at login?
    */
   static BOOL ShouldRestoreStateDueToLaunchAtLogin();
-
-  /**
-   * Returns true if the application is ready to run an app modal dialog, false
-   * otherwise. This has to be balanced with a call to
-   * CleanUpAfterNativeAppModalDialog once the app modal dialog is closed.
-   */
-  static bool PrepareForNativeAppModalDialog();
-  static void CleanUpAfterNativeAppModalDialog();
 
   // 3 utility functions to go from a frame of imgIContainer to CGImage and then
   // to NSImage Convert imgIContainer -> CGImageRef, caller owns result
@@ -428,7 +420,7 @@ class nsCocoaUtils {
    * to native modifier flags of macOS.
    */
   static NSEventModifierFlags ConvertWidgetModifiersToMacModifierFlags(
-      nsIWidget::Modifiers aNativeModifiers);
+      nsIWidget::NativeModifiers aNativeModifiers);
 
   /**
    * Get the mouse button, which depends on the event's type and buttonNumber.
@@ -525,6 +517,11 @@ class nsCocoaUtils {
   static void SetTransferDataForTypeFromPasteboardItem(
       nsITransferable* aTransferable, const nsCString& aFlavor,
       NSPasteboardItem* aItem);
+
+  /**
+   * Converts a POPUPPOSITION value to the closest corresponding NSRectEdge.
+   */
+  static NSRectEdge PopupPositionToNSRectEdge(int8_t aPosition);
 
  private:
   /**

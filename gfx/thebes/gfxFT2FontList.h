@@ -34,26 +34,28 @@ class FT2FontEntry final : public gfxFT2FontEntryBase {
   explicit FT2FontEntry(const nsACString& aFaceName)
       : gfxFT2FontEntryBase(aFaceName), mFTFontIndex(0) {}
 
-  ~FT2FontEntry();
-
   gfxFontEntry* Clone() const override;
 
   const nsCString& GetName() const { return Name(); }
 
   // create a font entry for a downloaded font
-  static FT2FontEntry* CreateFontEntry(
+  static already_AddRefed<FT2FontEntry> CreateFontEntry(
       const nsACString& aFontName, WeightRange aWeight, StretchRange aStretch,
       SlantStyleRange aStyle, const uint8_t* aFontData, uint32_t aLength);
 
   // create a font entry representing an installed font, identified by
   // a FontListEntry; the freetype and cairo faces will not be instantiated
   // until actually needed
+  // TODO(dholbert) Ideally this should return already_AddRefed like the
+  // one for downloaded fonts does. See bug 2046683.
   static FT2FontEntry* CreateFontEntry(const FontListEntry& aFLE);
 
   // Create a font entry with the given name; if it is an installed font,
   // also record the filename and index.
   // If a non-null harfbuzz face is passed, also set style/weight/stretch
   // properties of the entry from the values in the face.
+  // TODO(dholbert) Ideally this should return already_AddRefed like the
+  // one for downloaded fonts does. See bug 2046683.
   static FT2FontEntry* CreateFontEntry(const nsACString& aName,
                                        const char* aFilename, uint8_t aIndex,
                                        const hb_face_t* aFace);
@@ -85,9 +87,11 @@ class FT2FontEntry final : public gfxFT2FontEntryBase {
 
   // Get a harfbuzz face for this font, if possible. The caller is responsible
   // to destroy the face when no longer needed.
+  // Note that a face may be cached by the font entry, and a new reference
+  // returned to the caller.
   // This may be a bit expensive, so avoid calling multiple times if the same
   // face can be re-used for several purposes instead.
-  hb_face_t* CreateHBFace() const;
+  hb_face_t* CreateHBFace();
 
   /**
    * Append this face's metadata to aFaceList for storage in the FontNameCache
@@ -105,14 +109,24 @@ class FT2FontEntry final : public gfxFT2FontEntryBase {
   void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                               FontListSizes* aSizes) const override;
 
+  nsCString mFilename;
+  uint8_t mFTFontIndex;
+
+ protected:
+  // Protected destructor, to discourage deletion outside of Release():
+  ~FT2FontEntry();
+
+  FontTableCache* GetFontTableCache(bool aCreate) override;
+
+  mozilla::Atomic<FontTableCache*> mFontTableCache;
+
+  mozilla::Atomic<hb_face_t*> mHBFace;
+
   // Strong reference (addref'd), but held in an atomic ptr rather than a
   // normal RefPtr.
   mozilla::Atomic<mozilla::gfx::SharedFTFace*> mFTFace;
 
   FT_MM_Var* mMMVar = nullptr;
-
-  nsCString mFilename;
-  uint8_t mFTFontIndex;
 
   mozilla::ThreadSafeWeakPtr<mozilla::gfx::UnscaledFontFreeType> mUnscaledFont;
 
@@ -149,22 +163,19 @@ class gfxFT2FontList final : public gfxPlatformFontList {
   gfxFT2FontList();
   virtual ~gfxFT2FontList();
 
-  gfxFontEntry* CreateFontEntry(
+  already_AddRefed<gfxFontEntry> CreateFontEntry(
       mozilla::fontlist::Face* aFace,
       const mozilla::fontlist::Family* aFamily) override;
 
-  gfxFontEntry* LookupLocalFont(FontVisibilityProvider* aFontVisibilityProvider,
-                                const nsACString& aFontName,
-                                WeightRange aWeightForEntry,
-                                StretchRange aStretchForEntry,
-                                SlantStyleRange aStyleForEntry) override;
+  already_AddRefed<gfxFontEntry> LookupLocalFont(
+      FontVisibilityProvider* aFontVisibilityProvider,
+      const nsACString& aFontName, WeightRange aWeightForEntry,
+      StretchRange aStretchForEntry, SlantStyleRange aStyleForEntry) override;
 
-  gfxFontEntry* MakePlatformFont(const nsACString& aFontName,
-                                 WeightRange aWeightForEntry,
-                                 StretchRange aStretchForEntry,
-                                 SlantStyleRange aStyleForEntry,
-                                 const uint8_t* aFontData,
-                                 uint32_t aLength) override;
+  already_AddRefed<gfxFontEntry> MakePlatformFont(
+      const nsACString& aFontName, WeightRange aWeightForEntry,
+      StretchRange aStretchForEntry, SlantStyleRange aStyleForEntry,
+      const uint8_t* aFontData, uint32_t aLength) override;
 
   void WriteCache();
 
@@ -175,8 +186,8 @@ class gfxFT2FontList final : public gfxPlatformFontList {
         gfxPlatformFontList::PlatformFontList());
   }
 
-  gfxFontFamily* CreateFontFamily(const nsACString& aName,
-                                  FontVisibility aVisibility) const override;
+  already_AddRefed<gfxFontFamily> CreateFontFamily(
+      const nsACString& aName, FontVisibility aVisibility) const override;
 
   void WillShutdown();
 

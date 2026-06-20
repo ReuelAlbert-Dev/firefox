@@ -1,5 +1,4 @@
-/* vim: se cin sw=2 ts=2 et filetype=javascript :
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -47,7 +46,7 @@ export class TaskbarTabsWindowManager {
    * @returns {Promise<DOMWindow>} The newly created Taskbar Tab window.
    */
   async replaceTabWithWindow(aTaskbarTab, aTab, aIcon) {
-    let originWindow = aTab.ownerGlobal;
+    let originWindow = aTab.documentGlobal;
 
     Glean.webApp.moveToTaskbar.record({});
 
@@ -125,7 +124,20 @@ export class TaskbarTabsWindowManager {
 
     if (AppConstants.platform === "win") {
       lazy.WindowsUIUtils.setWindowIcon(win, aIcon, aIcon);
-      lazy.WinTaskbar.setGroupIdForWindow(win, aTaskbarTab.id);
+
+      // If on MSIX, we need to match the system's expectations.
+      let pfn = Services.sysinfo.getProperty("winPackageFamilyName");
+      if (pfn) {
+        lazy.WinTaskbar.setGroupIdForWindow(
+          win,
+          // This is based on the tile ID set when we create the secondary tile
+          // in TaskbarTabsPin.sys.mjs.
+          `${pfn}!App:taskbartab-${aTaskbarTab.id}`
+        );
+      } else {
+        // If on non-MSIX, use the AUMID of the shortcut (which is just the ID).
+        lazy.WinTaskbar.setGroupIdForWindow(win, aTaskbarTab.id);
+      }
     }
 
     this.#attachWindowFocusTelemetry(win);

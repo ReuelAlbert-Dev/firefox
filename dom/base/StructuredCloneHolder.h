@@ -223,6 +223,8 @@ class StructuredCloneHolder : public StructuredCloneHolderBase {
   // Call this method to know if this object is keeping some DOM object alive.
   bool HasClonedDOMObjects();
 
+  bool SupportsTransferring() const { return mSupportsTransferring; }
+
   GeckoChildID GetOriginChildID() const { return mOriginChildID; }
 
   nsTArray<NotNull<RefPtr<BlobImpl>>>& BlobImpls() {
@@ -356,6 +358,10 @@ class StructuredCloneHolder : public StructuredCloneHolderBase {
  protected:
   void SameProcessScopeRequired(bool* aSameProcessScopeRequired);
 
+  // If SupportsTransferring(), clears out the internal attachment arrays and
+  // storage to prevent future attempts from reading our internal state.
+  void MaybeClearTransferredState();
+
   already_AddRefed<MessagePort> ReceiveMessagePort(nsIGlobalObject* aGlobal,
                                                    uint64_t aIndex);
 
@@ -370,9 +376,7 @@ class StructuredCloneHolder : public StructuredCloneHolderBase {
   // If you add a new array for attachments below, make sure to add it to the
   // appropriate tuple below. This is used for generic checks or operations
   // which need to be performed over all attachment arrays.
-  auto CloneableAttachmentArrays() {
-    return std::tie(mBlobImplArray, mInputStreamArray);
-  }
+  auto CloneableAttachmentArrays() { return std::tie(mBlobImplArray); }
   auto InProcessCloneableAttachmentArrays() {
     return std::tie(mWasmModuleArray, mClonedSurfaces, mVideoFrames, mAudioData,
                     mEncodedVideoChunks, mEncodedAudioChunks
@@ -385,7 +389,9 @@ class StructuredCloneHolder : public StructuredCloneHolderBase {
   auto TransferableAttachmentArrays() {
     // NOTE: mTransferredPorts is intentionally skipped, as it it not part of
     // the serialized state (it is used as an extra return value from `Read`).
-    return std::tie(mPortIdentifiers);
+    // NOTE: Input streams are not explicitly passed in the transfer list, but
+    // are only supported by streams which support transferring.
+    return std::tie(mPortIdentifiers, mInputStreamArray);
   }
   auto AttachmentArrays() {
     return std::tuple_cat(CloneableAttachmentArrays(),

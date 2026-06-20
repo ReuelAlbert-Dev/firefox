@@ -6,11 +6,13 @@
 #include "HttpLog.h"
 
 #include "ConnectionEstablisher.h"
+#include "HappyEyeballsConnectionAttempt.h"
 #include "mozilla/Components.h"
 #include "nsSocketTransportService2.h"
 #include "nsHttpConnectionMgr.h"
 #include "nsHttpHandler.h"
 #include "nsIDNSRecord.h"
+#include "nsHttpTransaction.h"
 #include "HttpConnectionUDP.h"
 
 // Log on level :5, instead of default :4.
@@ -23,26 +25,34 @@ namespace mozilla::net {
 
 // -------------------- SingleDNSAddrRecord --------------------
 
+void DnsMetadata::Fill(nsIDNSAddrRecord* aRecord) {
+  if (!aRecord) {
+    return;
+  }
+  aRecord->IsTRR(&mIsTRR);
+  aRecord->ResolvedInSocketProcess(&mResolvedInSocketProcess);
+  aRecord->GetTrrFetchDuration(&mTrrFetchDuration);
+  aRecord->GetTrrFetchDurationNetworkOnly(&mTrrFetchDurationNetworkOnly);
+  aRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
+  aRecord->GetTrrSkipReason(&mTrrSkipReason);
+}
+
 class SingleDNSAddrRecord final : public nsIDNSAddrRecord {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIDNSRECORD
   NS_DECL_NSIDNSADDRRECORD
 
-  SingleDNSAddrRecord(NetAddr aAddr, nsIDNSAddrRecord* aRecord)
-      : mAddress(aAddr) {
-    LOG(("SingleDNSAddrRecord ctor:%p", this));
-    if (aRecord) {
-      aRecord->GetCanonicalName(mCanonicalName);
-      aRecord->IsTRR(&mIsTRR);
-      aRecord->ResolvedInSocketProcess(&mResolvedInSocketProcess);
-      aRecord->GetTrrFetchDuration(&mTrrFetchDuration);
-      aRecord->GetTrrFetchDurationNetworkOnly(&mTrrFetchDurationNetworkOnly);
-      aRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
-      aRecord->GetTrrSkipReason(&mTrrSkipReason);
-      aRecord->GetTtl(&mTTL);
-      aRecord->GetLastUpdate(&mLastUpdate);
-    }
+  SingleDNSAddrRecord(NetAddr aAddr, const DnsMetadata& aMetadata)
+      : mAddress(aAddr),
+        mIsTRR(aMetadata.mIsTRR),
+        mResolvedInSocketProcess(aMetadata.mResolvedInSocketProcess),
+        mTrrFetchDuration(aMetadata.mTrrFetchDuration),
+        mTrrFetchDurationNetworkOnly(aMetadata.mTrrFetchDurationNetworkOnly),
+        mEffectiveTRRMode(aMetadata.mEffectiveTRRMode),
+        mTrrSkipReason(aMetadata.mTrrSkipReason) {
+    LOG(("SingleDNSAddrRecord ctor:%p mIsTRR=%d mEffectiveTRRMode=%d", this,
+         mIsTRR, static_cast<uint32_t>(mEffectiveTRRMode)));
   }
 
  private:
@@ -149,13 +159,32 @@ SingleDNSAddrRecord::GetNextAddr(uint16_t aPort, NetAddr* aAddr) {
 
   *aAddr = mAddress;
   mDone = true;
+
+  uint16_t port = htons(aPort);
+  if (aAddr->raw.family == AF_INET) {
+    aAddr->inet.port = port;
+  } else if (aAddr->raw.family == AF_INET6) {
+    aAddr->inet6.port = port;
+  }
+
   return NS_OK;
 }
 
 NS_IMETHODIMP
 SingleDNSAddrRecord::GetAddresses(nsTArray<NetAddr>& aAddressArray) {
-  MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // Match a regular DNS address record, which stores port-less addresses (the
+  // port is applied later via GetNextAddr). Connection coalescing compares the
+  // stored addresses against a connection's peer address with the port zeroed
+  // (see FindCoalescableConnection), so a non-zero port here would prevent the
+  // match.
+  NetAddr addr = mAddress;
+  if (addr.raw.family == AF_INET) {
+    addr.inet.port = 0;
+  } else if (addr.raw.family == AF_INET6) {
+    addr.inet6.port = 0;
+  }
+  aAddressArray.AppendElement(addr);
+  return NS_OK;
 }
 
 // -------------------- ConnectionEstablisher --------------------
@@ -173,6 +202,18 @@ ConnectionEstablisher::ConnectionEstablisher(nsHttpConnectionInfo* aConnInfo,
 ConnectionEstablisher::~ConnectionEstablisher() {
   LOG(("ConnectionEstablisher dtor:%p", this));
   MaybeSetConnectingDone();
+
+  if (!OnSocketThread() && gSocketTransportService) {
+    gSocketTransportService->Dispatch(
+        NS_NewRunnableFunction(
+            "~ConnectionEstablisher",
+            [transaction = std::move(mTransaction), handle = std::move(mHandle),
+             resultConn = std::move(mResultConn),
+             transportStatusCallback = std::move(mTransportStatusCallback),
+             lnaCheckCallback = std::move(mLnaCheckCallback),
+             callback = std::move(mCallback)]() {}),
+        NS_DISPATCH_NORMAL);
+  }
 }
 
 void ConnectionEstablisher::SetConnecting() {
@@ -193,38 +234,38 @@ void ConnectionEstablisher::ClearResultConnection() { mResultConn = nullptr; }
 nsresult ConnectionEstablisher::ActivateConnectionWithTransaction(
     RefPtr<HttpConnectionBase> aConn,
     std::function<void(nsresult)> aOnActivated) {
-  LOG(("ConnectionEstablisher::ActivateConnectionWithTransaction %p conn=%p",
-       this, aConn.get()));
+  LOG(
+      ("ConnectionEstablisher::ActivateConnectionWithTransaction %p conn=%p "
+       "trans=%p",
+       this, aConn.get(), mTransaction.get()));
 
   aConn->SetIsRacing(true);
 
   mHasConnected = true;
   mResultConn = aConn;
-
-  auto callback = [self = RefPtr{this},
-                   onActivated = std::move(aOnActivated)](nsresult aResult) {
-    NS_DispatchToCurrentThread(NS_NewRunnableFunction(
-        "ConnectionEstablisher::ActivateCallback",
-        [self, aResult, onActivated = std::move(onActivated)]() {
-          if (NS_FAILED(aResult)) {
-            self->Finish(aResult);
-            return;
-          }
-
-          onActivated(NS_OK);
-        }));
-  };
-
-  RefPtr<SpeculativeTransaction> trans =
-      new SpeculativeTransaction(mConnInfo, this, mCaps, std::move(callback));
-
-  LOG(("speculative transaction %p will be used to finish handshake on conn %p",
-       trans.get(), aConn.get()));
-
   mHandle = new ConnectionHandle(aConn);
-  trans->SetConnection(mHandle);
 
-  nsresult rv = aConn->Activate(trans, mCaps, 0);
+  MOZ_ASSERT(mTransaction,
+             "HappyEyeballsConnectionAttempt must hand us a transaction "
+             "before we can activate a connection.");
+
+  mTransaction->SetConnectedCallback(
+      [self = RefPtr{this},
+       onActivated = std::move(aOnActivated)](nsresult aResult) {
+        NS_DispatchToCurrentThread(NS_NewRunnableFunction(
+            "ConnectionEstablisher::ActivateCallback",
+            [self, aResult, onActivated = std::move(onActivated)]() {
+              if (NS_FAILED(aResult)) {
+                self->Finish(aResult);
+                return;
+              }
+
+              onActivated(NS_OK);
+            }));
+      });
+
+  mTransaction->SetConnection(mHandle);
+  nsresult rv = aConn->Activate(mTransaction, mCaps, 0);
   if (NS_FAILED(rv)) {
     Finish(rv);
     return rv;
@@ -244,25 +285,62 @@ void ConnectionEstablisher::FinishInternal(nsresult aResult) {
 
   MaybeSetConnectingDone();
   mTransportStatusCallback = nullptr;
-  mAddrRecord = nullptr;
+  mLnaCheckCallback = nullptr;
+
+  if (mTransaction) {
+    // Detach the connected-callback so later Close/cleanup on the
+    // transaction can't call us back. Keep the ref itself: the winning
+    // HandleTCPConnectionResult / HandleUDPConnectionResult still needs
+    // to query establisher->Transaction() afterwards to grab the
+    // handshake timings.
+    mTransaction->SetConnectedCallback(nullptr);
+  }
 
   if (mCallback) {
     auto cb = std::move(mCallback);
     mCallback = nullptr;
+    // HappyEyeballsTransaction is speculative — the real transaction is
+    // never driving I/O on this conn — so the H1 fallback path always
+    // applies: reset the handle so the conn doesn't cling to it after
+    // we're done (H2/H3 manage reuse via their sessions).
     if (mHandle && mHandle->Conn() && !mHandle->Conn()->UsingSpdy() &&
         !mHandle->Conn()->UsingHttp3()) {
       mHandle->Reset();
     }
 
-    if (NS_SUCCEEDED(aResult) && mResultConn) {
+    // Clear mHandle to break the ref cycle: the establisher holds mHandle
+    // (which refs the connection), while the connection holds mCallbacks
+    // (which refs the establisher).
+    mHandle = nullptr;
+
+    // For H3, check CanReuse() to guard against mHttp3Session being
+    // destroyed between the async handshake callback and this point.
+    // For H1/H2, skip: H1 needs the connection even if the socket is dead
+    // (e.g. cert error) to propagate the proper error code; H2 sessions
+    // may be incorrectly marked DontReuse by the proxy transaction's caps.
+    bool connUsable =
+        mResultConn && (!mResultConn->UsingHttp3() || mResultConn->CanReuse());
+    if (NS_SUCCEEDED(aResult) && connUsable) {
       if (!mConnectStart.IsNull()) {
         mResultConn->SetConnectBootstrapTimings(mConnectStart, mTcpConnectEnd);
       }
       cb(std::move(mResultConn));
     } else {
-      cb(Err(aResult));
+      LOG(
+          ("ConnectionEstablisher::FinishInternal %p conn rejected "
+           "aResult=%x connUsable=%d UsingHttp3=%d",
+           this, static_cast<uint32_t>(aResult), connUsable,
+           mResultConn ? mResultConn->UsingHttp3() : 0));
+      cb(Err(NS_FAILED(aResult) ? aResult : NS_ERROR_ABORT));
     }
   }
+
+  mAddrRecord = nullptr;
+}
+
+already_AddRefed<nsIDNSAddrRecord> ConnectionEstablisher::AddrRecord() const {
+  nsCOMPtr<nsIDNSAddrRecord> record = mAddrRecord;
+  return record.forget();
 }
 
 NS_IMETHODIMP
@@ -301,11 +379,22 @@ TCPConnectionEstablisher::TCPConnectionEstablisher(
       mSpeculative(aSpeculative),
       mAllow1918(aAllow1918) {}
 
-TCPConnectionEstablisher::~TCPConnectionEstablisher() = default;
+TCPConnectionEstablisher::~TCPConnectionEstablisher() {
+  // mSocketTransport / mStreamOut / mStreamIn must be released on the
+  // socket thread.
+  if (!OnSocketThread() && gSocketTransportService) {
+    gSocketTransportService->Dispatch(
+        NS_NewRunnableFunction("~TCPConnectionEstablisher",
+                               [socketTransport = std::move(mSocketTransport),
+                                streamOut = std::move(mStreamOut),
+                                streamIn = std::move(mStreamIn)]() {}),
+        NS_DISPATCH_NORMAL);
+  }
+}
 
 bool TCPConnectionEstablisher::Start(DoneCallback&& aCallback) {
   mCallback = std::move(aCallback);
-  mAddrRecord = new SingleDNSAddrRecord(mAddr, nullptr);
+  mAddrRecord = new SingleDNSAddrRecord(mAddr, mDnsMetadata);
 
   nsresult rv = CreateAndConfigureSocketTransport();
   if (NS_FAILED(rv)) {
@@ -333,9 +422,25 @@ void TCPConnectionEstablisher::Close(nsresult aReason) {
 
   mHandle = nullptr;
   if (mResultConn) {
-    LOG(("TCPConnectionEstablisher::Close closing connection %p",
-         mResultConn.get()));
-    mResultConn->Close(aReason);
+    // Every connection touched by HE is marked non-reusable: adopted conns
+    // finish serving the in-flight real txn then close; losing conns are
+    // torn down immediately below.  Either way the CM must never hand a new
+    // transaction to a connection that participated in an HE race.
+    bool adopted = mTransaction && mTransaction->IsAdopted();
+    mResultConn->DontReuse();
+    if (adopted) {
+      LOG(("TCPConnectionEstablisher::Close %p adopted conn %p DontReuse", this,
+           mResultConn.get()));
+    } else {
+      LOG(("TCPConnectionEstablisher::Close closing connection %p",
+           mResultConn.get()));
+      // Use CloseTransaction rather than Close to properly clean up the
+      // SPDY session: if we only called Close, an Http2Session in
+      // mSpdySession/mTransaction would never be released and the conn
+      // would stay alive indefinitely without a pending socket read to
+      // trigger CloseTransaction naturally.
+      mResultConn->CloseTransaction(mResultConn->Transaction(), aReason);
+    }
     mResultConn = nullptr;
   }
 
@@ -441,8 +546,6 @@ nsresult TCPConnectionEstablisher::CreateAndConfigureSocketTransport() {
     tmpFlags |= nsISocketTransport::NO_PERMANENT_STORAGE;
   }
 
-  (void)socketTransport->SetIsPrivate(mConnInfo->GetPrivate());
-
   if (mCaps & NS_HTTP_DISALLOW_ECH) {
     tmpFlags |= nsISocketTransport::DONT_TRY_ECH;
   }
@@ -530,6 +633,16 @@ TCPConnectionEstablisher::OnOutputStreamReady(nsIAsyncOutputStream* aOut) {
     return NS_OK;
   }
 
+  // Early LNA check: reject the connection before TLS handshake can send SNI.
+  if (mLnaCheckCallback && mSocketTransport) {
+    nsresult rv = mLnaCheckCallback(mSocketTransport);
+    if (NS_FAILED(rv)) {
+      mSocketTransport->Close(rv);
+      Finish(rv);
+      return NS_OK;
+    }
+  }
+
   // Create nsHttpConnection when the output stream is ready.
   RefPtr<nsHttpConnection> conn = new nsHttpConnection();
   conn->SetTransactionCaps(mCaps);
@@ -577,11 +690,10 @@ UDPConnectionEstablisher::~UDPConnectionEstablisher() {
 bool UDPConnectionEstablisher::Start(DoneCallback&& aCallback) {
   LOG(("UDPConnectionEstablisher::Start %p", this));
   mCallback = std::move(aCallback);
-  mAddrRecord = new SingleDNSAddrRecord(mAddr, nullptr);
+  mAddrRecord = new SingleDNSAddrRecord(mAddr, mDnsMetadata);
 
   nsresult rv = CreateAndConfigureUDPConn();
   if (NS_FAILED(rv)) {
-    Finish(rv);
     return false;
   }
 
@@ -594,11 +706,22 @@ void UDPConnectionEstablisher::Close(nsresult aReason) {
 
   mHandle = nullptr;
   if (mResultConn) {
-    LOG(("UDPConnectionEstablisher::Close closing connection %p",
-         mResultConn.get()));
-    // TODO: for some cases we might want to exclude HTTP/3.
-    mResultConn->SetDontExclude();
-    mResultConn->Close(aReason);
+    // If the HT on this conn has been adopted, the conn is already
+    // driving the real nsHttpTransaction — tearing it down here would
+    // close the real txn. Just mark the conn non-reusable and let it
+    // finish serving the in-flight request naturally.
+    bool adopted = mTransaction && mTransaction->IsAdopted();
+    if (adopted) {
+      LOG(("UDPConnectionEstablisher::Close %p adopted conn %p DontReuse", this,
+           mResultConn.get()));
+      mResultConn->DontReuse();
+    } else {
+      LOG(("UDPConnectionEstablisher::Close closing connection %p",
+           mResultConn.get()));
+      // TODO: for some cases we might want to exclude HTTP/3.
+      mResultConn->SetDontExclude();
+      mResultConn->Close(aReason);
+    }
     mResultConn = nullptr;
   }
 

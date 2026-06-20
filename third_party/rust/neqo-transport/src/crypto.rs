@@ -16,13 +16,14 @@ use std::{
 
 use enum_map::EnumMap;
 use neqo_common::{Buffer, Encoder, Role, hex, hex_snip_middle, qdebug, qinfo, qtrace};
-pub use neqo_crypto::Epoch;
-use neqo_crypto::{
-    Aead, AeadTrait as _, Agent, AntiReplay, Cipher, Error as CryptoError, HandshakeState,
-    PrivateKey, PublicKey, Record, RecordList, ResumptionToken, SymKey, TLS_AES_128_GCM_SHA256,
-    TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256, TLS_CT_HANDSHAKE, TLS_GRP_EC_SECP256R1,
-    TLS_GRP_EC_SECP384R1, TLS_GRP_EC_SECP521R1, TLS_GRP_EC_X25519, TLS_GRP_KEM_MLKEM768X25519,
-    TLS_VERSION_1_3, ZeroRttChecker, hkdf, hp, random,
+pub use nss::Epoch;
+use nss::{
+    Agent, AntiReplay, Cipher, Error as CryptoError, HandshakeState, Mode, PrivateKey, PublicKey,
+    Record, RecordList, RecordProtection as Aead, RecordProtectionOps as _, ResumptionToken,
+    SymKey, TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256,
+    TLS_CT_HANDSHAKE, TLS_GRP_EC_SECP256R1, TLS_GRP_EC_SECP384R1, TLS_GRP_EC_SECP521R1,
+    TLS_GRP_EC_X25519, TLS_GRP_KEM_MLKEM768X25519, TLS_VERSION_1_3, ZeroRttChecker, hkdf, hp,
+    random,
 };
 
 use crate::{
@@ -222,10 +223,9 @@ impl Crypto {
         let info = self.tls.preinfo()?;
         // `info.early_data()` returns false for a server,
         // so use `early_data_cipher()` to tell if 0-RTT is enabled.
-        let cipher = info.early_data_cipher();
-        if cipher.is_none() {
+        let Some(cipher) = info.early_data_cipher() else {
             return Ok(false);
-        }
+        };
         let (dir, secret) = match role {
             Role::Client => (
                 CryptoDxDirection::Write,
@@ -237,8 +237,7 @@ impl Crypto {
             ),
         };
         let secret = secret.ok_or(Error::Internal)?;
-        self.states
-            .set_0rtt_keys(version, dir, &secret, cipher.ok_or(Error::Internal)?)?;
+        self.states.set_0rtt_keys(version, dir, &secret, cipher)?;
         Ok(true)
     }
 
@@ -446,6 +445,15 @@ pub enum CryptoDxDirection {
     Write,
 }
 
+impl From<CryptoDxDirection> for Mode {
+    fn from(dir: CryptoDxDirection) -> Self {
+        match dir {
+            CryptoDxDirection::Read => Self::Decrypt,
+            CryptoDxDirection::Write => Self::Encrypt,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct CryptoDxState {
     /// The QUIC version.
@@ -491,7 +499,13 @@ impl CryptoDxState {
             version,
             direction,
             epoch: usize::from(epoch),
-            aead: Aead::new(TLS_VERSION_1_3, cipher, secret, version.label_prefix())?,
+            aead: Aead::new(
+                TLS_VERSION_1_3,
+                cipher,
+                secret,
+                version.label_prefix(),
+                Mode::from(direction),
+            )?,
             hpkey: hp::Key::extract(TLS_VERSION_1_3, cipher, secret, &hplabel)?,
             used_pn: min_pn..min_pn,
             min_pn,
@@ -546,7 +560,7 @@ impl CryptoDxState {
         #[cfg(test)]
         OVERWRITE_INVOCATIONS.with(|v| {
             if let Some(i) = v.borrow_mut().take() {
-                log::warn!("Setting {:?} invocations to {}", self.direction, i);
+                log::warn!("Setting {:?} invocations to {i}", self.direction);
                 self.invocations = i;
             }
         });
@@ -583,8 +597,9 @@ impl CryptoDxState {
                 cipher,
                 next_secret,
                 self.version.label_prefix(),
+                Mode::from(self.direction),
             )?,
-            hpkey: self.hpkey.clone(),
+            hpkey: self.hpkey.try_clone()?,
             used_pn: pn..pn,
             min_pn: pn,
             invocations,
@@ -735,17 +750,22 @@ impl CryptoDxState {
 
     #[cfg(not(feature = "disable-encryption"))]
     #[cfg(test)]
-    pub(crate) fn test_default() -> Self {
+    pub(crate) fn test_default_write() -> Self {
+        Self::test_default_with_direction(CryptoDxDirection::Write)
+    }
+
+    #[cfg(not(feature = "disable-encryption"))]
+    #[cfg(test)]
+    pub(crate) fn test_default_read() -> Self {
+        Self::test_default_with_direction(CryptoDxDirection::Read)
+    }
+
+    #[cfg(not(feature = "disable-encryption"))]
+    #[cfg(test)]
+    fn test_default_with_direction(direction: CryptoDxDirection) -> Self {
         // This matches the value in packet.rs
         const CLIENT_CID: &[u8] = &[0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08];
-        Self::new_initial(
-            Version::default(),
-            CryptoDxDirection::Write,
-            "server in",
-            CLIENT_CID,
-            0,
-        )
-        .unwrap()
+        Self::new_initial(Version::default(), direction, "server in", CLIENT_CID, 0).unwrap()
     }
 
     /// Get the amount of extra padding packets protected with this profile need.
@@ -1342,8 +1362,7 @@ impl CryptoStates {
     #[cfg(test)]
     pub(crate) fn test_default() -> Self {
         let read = |epoch| {
-            let mut dx = CryptoDxState::test_default();
-            dx.direction = CryptoDxDirection::Read;
+            let mut dx = CryptoDxState::test_default_read();
             dx.epoch = epoch;
             dx
         };
@@ -1355,7 +1374,7 @@ impl CryptoStates {
         let initials = EnumMap::from_array([
             None,
             Some(CryptoState {
-                tx: CryptoDxState::test_default(),
+                tx: CryptoDxState::test_default_write(),
                 rx: read(0),
             }),
             None,
@@ -1392,6 +1411,7 @@ impl CryptoStates {
                     TLS_CHACHA20_POLY1305_SHA256,
                     &secret,
                     "quic ", // This is a v1 test so hard-code the label.
+                    Mode::Decrypt,
                 )
                 .unwrap(),
                 hpkey: hp::Key::extract(
@@ -1739,7 +1759,7 @@ mod tests {
     #[test]
     fn crypto_dx_state_display() {
         fixture_init();
-        let dx = CryptoDxState::test_default();
+        let dx = CryptoDxState::test_default_write();
         assert_eq!(dx.to_string(), "epoch 0 Write");
     }
 }

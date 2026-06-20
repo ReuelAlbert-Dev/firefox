@@ -13,7 +13,7 @@ namespace wr {
 
 class RenderTextureHostSWGL : public RenderTextureHost {
  public:
-  RenderTextureHostSWGL() {}
+  RenderTextureHostSWGL() = default;
 
   wr::WrExternalImage LockSWGL(uint8_t aChannelIndex, void* aContext,
                                RenderCompositor* aCompositor) override;
@@ -26,6 +26,10 @@ class RenderTextureHostSWGL : public RenderTextureHost {
 
   virtual gfx::ColorDepth GetColorDepth() const {
     return gfx::ColorDepth::COLOR_8;
+  }
+
+  virtual gfx::TransferFunction GetTransferFunction() const {
+    return gfx::TransferFunction::BT709;
   }
 
   struct PlaneInfo {
@@ -47,7 +51,7 @@ class RenderTextureHostSWGL : public RenderTextureHost {
   // WrSWGLCompositeSurfaceInfo. This is paired with a call to UnlockSWGL when
   // composition is done.
   bool LockSWGLCompositeSurface(void* aContext,
-                                wr::SWGLCompositeSurfaceInfo* aInfo);
+                                wr::SWGLCompositeSurfaceInfo* aInfo) override;
 
   size_t BytesFromPlanes() {
     NS_ASSERTION(mPlanes.size(), "Can't compute bytes without any planes");

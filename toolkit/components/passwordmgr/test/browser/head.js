@@ -425,7 +425,7 @@ function getDoorhangerButton(aPopup, aButtonIndex) {
  * @param {number} aButtonIndex Number indicating which button to click.
  *                              See the constants in this file.
  */
-function clickDoorhangerButton(aPopup, aButtonIndex) {
+async function clickDoorhangerButton(aPopup, aButtonIndex) {
   Assert.ok(true, "Looking for action at index " + aButtonIndex);
 
   let button = getDoorhangerButton(aPopup, aButtonIndex);
@@ -436,7 +436,13 @@ function clickDoorhangerButton(aPopup, aButtonIndex) {
   } else {
     Assert.ok(true, "Triggering menuitem # " + aButtonIndex);
   }
-  button.doCommand();
+  let panel = aPopup.owner?.panel;
+  let promiseHidden =
+    panel && aPopup.owner.isPanelOpen
+      ? BrowserTestUtils.waitForEvent(panel, "popuphidden")
+      : Promise.resolve();
+  button.click();
+  await promiseHidden;
 }
 
 async function cleanupDoorhanger(notif) {
@@ -479,7 +485,7 @@ async function clearMessageCache(browser) {
  * @param {string} password The password.
  */
 async function checkDoorhangerUsernamePassword(username, password) {
-  await BrowserTestUtils.waitForCondition(() => {
+  await TestUtils.waitForCondition(() => {
     return (
       document.getElementById("password-notification-username").value ==
         username &&
@@ -552,25 +558,7 @@ async function updateDoorhangerInputValues(
  *                 Noop if `text` is falsy.
  */
 async function selectDoorhangerUsername(text) {
-  await _selectDoorhanger(
-    text,
-    "#password-notification-username",
-    "#password-notification-username-dropmarker"
-  );
-}
-
-/**
- * Open doorhanger autocomplete popup and select a password value.
- *
- * @param {string} text the text value of the password that should be selected.
- *                 Noop if `text` is falsy.
- */
-async function selectDoorhangerPassword(text) {
-  await _selectDoorhanger(
-    text,
-    "#password-notification-password",
-    "#password-notification-password-dropmarker"
-  );
+  await _selectDoorhanger(text, "#password-notification-username", null);
 }
 
 async function _selectDoorhanger(text, inputSelector, dropmarkerSelector) {
@@ -581,7 +569,9 @@ async function _selectDoorhanger(text, inputSelector, dropmarkerSelector) {
   info("Opening doorhanger suggestion popup");
 
   let doorhangerPopup = document.getElementById("password-notification");
-  let dropmarker = doorhangerPopup.querySelector(dropmarkerSelector);
+  let dropmarker = dropmarkerSelector
+    ? doorhangerPopup.querySelector(dropmarkerSelector)
+    : doorhangerPopup.querySelector(inputSelector).dropmarkerEl;
 
   let autocompletePopup = document.getElementById("PopupAutoComplete");
   let popupShown = BrowserTestUtils.waitForEvent(
@@ -896,7 +886,7 @@ async function changeContentInputValue(
   str,
   shouldBlur = true
 ) {
-  await SimpleTest.promiseFocus(browser.ownerGlobal);
+  await SimpleTest.promiseFocus(browser.documentGlobal);
   // TODO: Switch to SpecialPowers.spawn
   // eslint-disable-next-line mozilla/reject-contenttask-spawn
   let oldValue = await ContentTask.spawn(browser, selector, function (sel) {
@@ -959,7 +949,7 @@ async function verifyConfirmationHint(
   anchorID = "password-notification-icon",
   expectedL10nMessageId = null
 ) {
-  let hintElem = browser.ownerGlobal.ConfirmationHint._panel;
+  let hintElem = browser.documentGlobal.ConfirmationHint._panel;
   await BrowserTestUtils.waitForPopupEvent(hintElem, "shown");
   try {
     Assert.equal(hintElem.state, "open", "hint popup is open");
@@ -967,9 +957,11 @@ async function verifyConfirmationHint(
       BrowserTestUtils.isVisible(hintElem.anchorNode),
       "hint anchorNode is visible"
     );
-    Assert.equal(
-      hintElem.anchorNode.id,
-      anchorID,
+    let matchedAnchor = Array.isArray(anchorID)
+      ? anchorID.includes(hintElem.anchorNode.id)
+      : hintElem.anchorNode.id == anchorID;
+    Assert.ok(
+      matchedAnchor,
       "Hint should be anchored on the expected notification icon"
     );
     info("verifyConfirmationHint, hint is shown and has its anchorNode");

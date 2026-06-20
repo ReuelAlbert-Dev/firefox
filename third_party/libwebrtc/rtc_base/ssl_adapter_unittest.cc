@@ -30,6 +30,7 @@
 #include "rtc_base/virtual_socket_server.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
+#include "test/run_loop.h"
 #include "test/wait_until.h"
 
 namespace webrtc {
@@ -38,9 +39,9 @@ namespace {
 using ::testing::_;
 using ::testing::Return;
 
-static const TimeDelta kTimeout = TimeDelta::Millis(5000);
+const TimeDelta kTimeout = TimeDelta::Millis(5000);
 
-static Socket* CreateSocket() {
+Socket* CreateSocket() {
   SocketAddress address(IPAddress(INADDR_ANY), 0);
 
   Socket* socket = Thread::Current()->socketserver()->CreateSocket(
@@ -74,7 +75,7 @@ class SSLAdapterTestDummy {
 
     ssl_adapter_->SubscribeReadEvent(
         this, [this](Socket* socket) { OnSSLAdapterReadEvent(socket); });
-    ssl_adapter_->SubscribeCloseEvent([this](Socket* socket, int error) {
+    ssl_adapter_->SubscribeCloseEvent(this, [this](Socket* socket, int error) {
       OnSSLAdapterCloseEvent(socket, error);
     });
     ssl_adapter_->SetRole(role);
@@ -291,7 +292,7 @@ class SSLAdapterTestBase : public ::testing::Test {
 
  protected:
   std::unique_ptr<VirtualSocketServer> vss_;
-  AutoSocketServerThread thread_;
+  test::RunLoop thread_;
   std::unique_ptr<SSLAdapterTestDummyServer> server_;
   std::unique_ptr<SSLAdapterTestDummyClient> client_;
   std::unique_ptr<SSLCertificateVerifier> cert_verifier_;

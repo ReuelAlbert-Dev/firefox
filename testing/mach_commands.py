@@ -428,6 +428,11 @@ def test(command_context, what, extra_args, **log_args):
     if log_args.get("auto"):
         from itertools import chain
 
+        # The packages required by gecko_taskgraph are only available in the taskgraph virtualenv.
+        # We only switch to it here to avoid network access unless --auto is used.
+        command_context._virtualenv_name = "taskgraph"
+        command_context.activate_virtualenv()
+
         from gecko_taskgraph.util.bugbug import patch_schedules
         from mozversioncontrol.factory import get_specific_repository_object
 
@@ -1393,20 +1398,17 @@ def run_migration_tests(command_context, test_paths=None, **kwargs):
     from test_fluent_migrations import fmt
 
     rv = 0
+    report = []
     with_context = []
     for to_test in test_paths:
         try:
             context = fmt.inspect_migration(to_test)
             for issue in context["issues"]:
-                command_context.log(
+                report.append((
                     logging.ERROR,
-                    "fluent-migration-test",
-                    {
-                        "error": issue["msg"],
-                        "file": to_test,
-                    },
+                    {"error": issue["msg"], "file": to_test},
                     "ERROR in {file}: {error}",
-                )
+                ))
             if context["issues"]:
                 continue
             with_context.append({
@@ -1414,16 +1416,16 @@ def run_migration_tests(command_context, test_paths=None, **kwargs):
                 "references": context["references"],
             })
         except Exception as e:
-            command_context.log(
+            report.append((
                 logging.ERROR,
-                "fluent-migration-test",
                 {"error": str(e), "file": to_test},
                 "ERROR in {file}: {error}",
-            )
+            ))
             rv |= 1
     obj_dir, repo_dir = fmt.prepare_directories(command_context)
     for context in with_context:
-        rv |= fmt.test_migration(command_context, obj_dir, repo_dir, **context)
+        rv |= fmt.test_migration(command_context, obj_dir, repo_dir, report, **context)
+    fmt.render_report(report)
     return rv
 
 

@@ -331,8 +331,11 @@ nsUnknownDecoder::GetMIMETypeFromContent(nsIRequest* aRequest,
   DetermineContentType(aRequest);
   mBuffer = nullptr;
   mBufferLen = 0;
-  type.Assign(mContentType);
-  mContentType.Truncate();
+  {
+    MutexAutoLock lock(mMutex);
+    type.Assign(mContentType);
+    mContentType.Truncate();
+  }
   return type.IsEmpty() ? NS_ERROR_NOT_AVAILABLE : NS_OK;
 }
 
@@ -812,18 +815,7 @@ nsresult nsUnknownDecoder::ConvertEncodedData(nsIRequest* request,
 // nsIThreadRetargetableStreamListener methods
 //
 NS_IMETHODIMP
-nsUnknownDecoder::CheckListenerChain() {
-  nsCOMPtr<nsIThreadRetargetableStreamListener> listener;
-  {
-    MutexAutoLock lock(mMutex);
-    listener = do_QueryInterface(mNextListener);
-  }
-  if (!listener) {
-    return NS_ERROR_NO_INTERFACE;
-  }
-
-  return listener->CheckListenerChain();
-}
+nsUnknownDecoder::CheckListenerChain() { return NS_ERROR_NO_INTERFACE; }
 
 NS_IMETHODIMP
 nsUnknownDecoder::OnDataFinished(nsresult aStatus) {

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -147,9 +145,15 @@ void PdfStructTreeBuilder::InitInternal(
   dom::CanonicalBrowsingContext* cbc = aBrowsingContext->Canonical();
   if (dom::BrowserParent* bp = cbc->GetBrowserParent()) {
     // Request the accessibility tree for each descendant out-of-process
-    // iframe.
+    // iframe. While all of the direct children should be reachable, some of the
+    // deeper descendants might not be yet, so we also traverse the descendants
+    // for each OOP iframe when InitInternal is called for it , skipping any
+    // that have already been requested. We could instead walk only the direct
+    // children, but walking descendants means we benefit from greater
+    // parallelism in the case that deeper descendants *are* already reachable.
     bp->VisitAllDescendants([this](dom::BrowserParent* descBp) {
-      if (!descBp->GetTopLevelDocAccessible()) {
+      if (mRequestedBrowserParentIds.EnsureInserted(descBp->GetTabId())) {
+        MOZ_ASSERT(!descBp->GetTopLevelDocAccessible());
         (void)descBp->SendRequestDocAccessibleForPrint();
         ++mPendingOopIframes;
       }
@@ -262,6 +266,13 @@ void PdfStructTreeBuilder::BuildStructSubtree(
       // this?
       break;
     case roles::HEADING: {
+      // For the PDF outline, SkPDF can accumulate text from headings itself,
+      // but it requires that glyph runs include text, whereas we provide glyph
+      // indexes when drawing. Rather than plumbing the text through to the draw
+      // target, we instead explicitly provide the heading name as alt text
+      // here, since it's readily available.
+      AccNameToPdfAlt(aAcc, aPdf);
+      aPdf.fExposeAlt = false;
       int32_t level = aAcc->GroupPosition().level;
       // PDF has H1 through H6.
       if (1 <= level && level <= 6) {

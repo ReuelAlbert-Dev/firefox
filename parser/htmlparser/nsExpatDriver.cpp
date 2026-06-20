@@ -432,6 +432,8 @@ void nsExpatDriver::HandleStartElement(rlbox_sandbox_expat& aSandbox,
   tainted_expat<int> count =
       RLBOX_EXPAT_CALL(MOZ_XML_GetSpecifiedAttributeCount);
   MOZ_RELEASE_ASSERT_TAINTED(count >= 0, "Unexpected attribute count");
+  // aAttrs is an array of pairs, so it needs to have an even length.
+  MOZ_RELEASE_ASSERT_TAINTED(count % 2 == 0, "Attribute count must be even");
 
   tainted_expat<uint64_t> attrArrayLengthTainted;
   for (attrArrayLengthTainted = rlbox::sandbox_static_cast<uint64_t>(count);
@@ -1617,11 +1619,12 @@ nsresult nsExpatDriver::Initialize(nsIURI* aURI, nsIContentSink* aSink) {
                     XML_PARAM_ENTITY_PARSING_ALWAYS);
 #endif
 
-  rlbox_sandbox_expat::convert_to_sandbox_equivalent_nonclass_t<unsigned long>
-      salt;
-  MOZ_RELEASE_ASSERT(mozilla::GenerateRandomBytesFromOS(&salt, sizeof(salt)));
-  MOZ_RELEASE_ASSERT(
-      RLBOX_EXPAT_SAFE_MCALL(MOZ_XML_SetHashSalt, safe_unverified<int>, salt));
+  char salt[16];
+  MOZ_RELEASE_ASSERT(mozilla::GenerateRandomBytesFromOS(salt, sizeof(salt)));
+  auto saltBuf = TransferBuffer<char>(Sandbox(), salt, std::size(salt));
+  MOZ_RELEASE_ASSERT(*saltBuf);
+  MOZ_RELEASE_ASSERT(RLBOX_EXPAT_SAFE_MCALL(
+      MOZ_XML_SetHashSalt16Bytes, safe_unverified<XML_Bool>, *saltBuf));
   MOZ_RELEASE_ASSERT(RLBOX_EXPAT_SAFE_MCALL(
       MOZ_XML_SetReparseDeferralEnabled, safe_unverified<XML_Bool>, XML_FALSE));
 

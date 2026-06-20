@@ -30,6 +30,7 @@ namespace wr {
 
 class RenderEGLImageTextureHost;
 class RenderAndroidHardwareBufferTextureHost;
+class RenderAndroidImageReaderImageTextureHost;
 class RenderAndroidSurfaceTextureHost;
 class RenderCompositor;
 class RenderDXGITextureHost;
@@ -95,6 +96,11 @@ class RenderTextureHost {
 
   virtual void UnlockSWGL() {}
 
+  virtual bool LockSWGLCompositeSurface(void* aContext,
+                                        wr::SWGLCompositeSurfaceInfo* aInfo) {
+    return false;
+  }
+
   virtual RefPtr<layers::TextureSource> CreateTextureSource(
       layers::TextureSourceProvider* aProvider);
 
@@ -141,6 +147,11 @@ class RenderTextureHost {
     return nullptr;
   }
 
+  virtual RenderAndroidImageReaderImageTextureHost*
+  AsRenderAndroidImageReaderImageTextureHost() {
+    return nullptr;
+  }
+
   virtual RenderAndroidSurfaceTextureHost* AsRenderAndroidSurfaceTextureHost() {
     return nullptr;
   }
@@ -175,6 +186,11 @@ class RenderTextureHost {
   virtual RefPtr<RenderTextureHostUsageInfo> GetTextureHostUsageInfo(
       const MutexAutoLock& aProofOfMapLock);
 
+  void SetDestroyedCallback(std::function<void()>&& aDestroyedCallback) {
+    MOZ_ASSERT(!mDestroyedCallback);
+    mDestroyedCallback = std::move(aDestroyedCallback);
+  }
+
  protected:
   virtual ~RenderTextureHost();
 
@@ -182,6 +198,7 @@ class RenderTextureHost {
 
   // protected by RenderThread::mRenderTextureMapLock
   RefPtr<RenderTextureHostUsageInfo> mRenderTextureHostUsageInfo;
+  std::function<void()> mDestroyedCallback;
 
   friend class RenderTextureHostWrapper;
 };

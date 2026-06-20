@@ -1,4 +1,3 @@
-//* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -23,6 +22,7 @@
 #include "mozilla/Base64.h"
 #include "nsUrlClassifierDBService.h"
 #include "nsUrlClassifierUtils.h"
+#include <bit>
 
 // MOZ_LOG=UrlClassifierDbService:5
 extern mozilla::LazyLogModule gUrlClassifierDbServiceLog;
@@ -537,7 +537,7 @@ nsresult Classifier::CheckURIFragments(
         urlIdx = i;
       }
     }
-    LOG(("Checking table %s, URL is %s", aTable.BeginReading(),
+    LOG(("Checking table %s, URL is %s", PromiseFlatCString(aTable).get(),
          aSpecFragments[urlIdx].get()));
   }
 
@@ -1303,7 +1303,7 @@ nsCString Classifier::GetProvider(const nsACString& aTableName) {
   nsCString provider;
   nsresult rv = urlUtil->GetProvider(aTableName, provider);
 
-  return NS_SUCCEEDED(rv) ? provider : ""_ns;
+  return NS_SUCCEEDED(rv) ? std::move(provider) : nsCString(""_ns);
 }
 
 /*
@@ -1635,7 +1635,7 @@ RefPtr<LookupCache> Classifier::GetLookupCache(const nsACString& aTable,
   if (rv == NS_ERROR_FILE_CORRUPTED) {
     // Remove all the on-disk data when the table's prefix file is corrupted.
     LOG(("Failed to get prefixes from file for table %s, delete on-disk data!",
-         aTable.BeginReading()));
+         PromiseFlatCString(aTable).get()));
 
     DeleteTables(mRootStoreDirectory, nsTArray<nsCString>{nsCString(aTable)});
   }
@@ -1699,7 +1699,7 @@ nsresult Classifier::ReadNoiseEntries(const Prefix& aPrefix,
     // In the case V4 little endian, we did swapping endian when converting from
     // char* to int, should revert endian to make sure we will send hex string
     // correctly See https://bugzilla.mozilla.org/show_bug.cgi?id=1283007#c23
-    if (!cacheV2 && !bool(MOZ_BIG_ENDIAN())) {
+    if (!cacheV2 && std::endian::native != std::endian::big) {
       hash = NativeEndian::swapFromBigEndian(hash);
     }
 

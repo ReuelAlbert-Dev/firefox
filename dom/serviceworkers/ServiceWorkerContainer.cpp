@@ -289,7 +289,7 @@ already_AddRefed<Promise> ServiceWorkerContainer::Register(
     AutoTArray<nsString, 1> param;
     CopyUTF8toUTF16(cleanedScopeURL, *param.AppendElement());
     aGlobal->ReportToConsole(nsIScriptError::errorFlag, "Service Workers"_ns,
-                             nsContentUtils::eDOM_PROPERTIES,
+                             PropertiesFile::DOM_PROPERTIES,
                              "ServiceWorkerRegisterStorageError"_ns, param);
   });
 
@@ -364,7 +364,7 @@ already_AddRefed<Promise> ServiceWorkerContainer::GetRegistrations(
     ErrorResult& aRv) {
   nsIGlobalObject* global = GetGlobalIfValid(aRv, [](nsIGlobalObject* aGlobal) {
     aGlobal->ReportToConsole(nsIScriptError::errorFlag, "Service Workers"_ns,
-                             nsContentUtils::eDOM_PROPERTIES,
+                             PropertiesFile::DOM_PROPERTIES,
                              "ServiceWorkerGetRegistrationStorageError"_ns);
   });
   if (aRv.Failed()) {
@@ -449,7 +449,7 @@ already_AddRefed<Promise> ServiceWorkerContainer::GetRegistration(
     const nsAString& aURL, ErrorResult& aRv) {
   nsIGlobalObject* global = GetGlobalIfValid(aRv, [](nsIGlobalObject* aGlobal) {
     aGlobal->ReportToConsole(nsIScriptError::errorFlag, "Service Workers"_ns,
-                             nsContentUtils::eDOM_PROPERTIES,
+                             PropertiesFile::DOM_PROPERTIES,
                              "ServiceWorkerGetRegistrationStorageError"_ns);
   });
   if (aRv.Failed()) {
@@ -615,7 +615,7 @@ Promise* ServiceWorkerContainer::GetReady(ErrorResult& aRv) {
 nsIGlobalObject* ServiceWorkerContainer::GetGlobalIfValid(
     ErrorResult& aRv,
     const std::function<void(nsIGlobalObject*)>&& aStorageFailureCB) const {
-  nsIGlobalObject* global = GetOwnerGlobal();
+  nsIGlobalObject* global = GetRelevantGlobal();
   if (NS_WARN_IF(!global)) {
     aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
@@ -657,7 +657,7 @@ void ServiceWorkerContainer::EnqueueReceivedMessageDispatch(
 
 template <typename F>
 void ServiceWorkerContainer::RunWithJSContext(F&& aCallable) {
-  nsCOMPtr<nsIGlobalObject> globalObject = GetOwnerGlobal();
+  nsCOMPtr<nsIGlobalObject> globalObject = GetRelevantGlobal();
 
   // If AutoJSAPI::Init() fails then either global is nullptr or not
   // in a usable state.

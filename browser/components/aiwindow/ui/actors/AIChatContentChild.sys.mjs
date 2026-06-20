@@ -28,25 +28,32 @@ export class AIChatContentChild extends JSWindowActorChild {
     "AIChatContent:RemoveAppliedMemory": {
       event: "aiChatContentActor:remove-applied-memory",
     },
+    "AIChatContent:SeenUrls": {
+      event: "aiChatContentActor:seen-urls",
+    },
+    "AIChatContent:SetGenerating": {
+      event: "aiChatContentActor:set-generating",
+    },
+    "AIChatContent:AssetsReady": {
+      event: "aiChatContentActor:assets-ready",
+    },
+    "AIChatContent:HistoryResults": {
+      event: "aiChatContentActor:history-results",
+    },
   };
 
   static #VALID_EVENTS_FROM_CONTENT = new Set([
-    "AIChatContent:DispatchSearch",
     "AIChatContent:DispatchFollowUp",
     "AIChatContent:Ready",
     "AIChatContent:DispatchAction",
     "AIChatContent:OpenLink",
     "AIChatContent:DispatchNewChat",
     "AIChatContent:AccountSignIn",
+    "AIChatContent:ToolUIUpdate",
+    "AIChatContent:RequestAssets",
+    "AIChatContent:HistoryGridRender",
+    "AIChatContent:HistoryGridItemClick",
   ]);
-
-  /**
-   * Trusted URLs pushed from parent for synchronous validation.
-   * Stored as array for Xray wrapper compatibility.
-   *
-   * @type {string[]}
-   */
-  #trustedUrls = [];
 
   /**
    *  Receives event from the content process and sends to the parent.
@@ -59,85 +66,28 @@ export class AIChatContentChild extends JSWindowActorChild {
       return;
     }
 
+    const { action, text } = event.detail ?? {};
+    const copyActions = ["copy", "copy-table"];
+    const isCopyAction = copyActions.includes(action) && text;
+
     switch (event.type) {
-      case "AIChatContent:DispatchSearch":
-        this.#handleSearchDispatch(event);
-        break;
-
       case "AIChatContent:DispatchAction":
-        this.#handleActionDispatch(event);
-        break;
-
-      case "AIChatContent:DispatchFollowUp":
-        this.#handleFollowUpDispatch(event);
-        break;
-
-      case "AIChatContent:DispatchNewChat":
-        /*
-         * This message round-trips:
-         * child
-         * -> parent (to reset conversation state in ai-window)
-         * -> child (to clear the UI via "clear-conversation").
-         * The parent owns the conversation state, so we must go through it to start a new chat.
-         */
-        this.sendAsyncMessage("AIChatContent:DispatchNewChat");
-        break;
-
-      case "AIChatContent:Ready":
-        this.sendAsyncMessage("AIChatContent:Ready");
-
-        // Flush any trusted URLs that arrived before chatContent existed.
-        // Parent also re-pushes on Ready via #notifyContentReady
-        if (this.#trustedUrls.length) {
-          this.#dispatchToChatContent("aiChatContentActor:trustedUrlsUpdated", {
-            trustedUrls: this.#trustedUrls,
-          });
-          this.#trustedUrls = [];
+        // Copy is handled in the child actor since it depends on content-side
+        // selection and clipboard context.
+        if (isCopyAction) {
+          lazy.ClipboardHelper.copyString(text, this.windowContext);
         }
 
+        this.sendAsyncMessage(event.type, event.detail);
         break;
 
-      case "AIChatContent:OpenLink":
-        this.sendAsyncMessage("AIChatContent:OpenLink", event.detail);
-        break;
-
-      case "AIChatContent:AccountSignIn":
-        this.sendAsyncMessage("AIChatContent:AccountSignIn", event.detail);
-        break;
-
+      // Relay known events to AIChatContentParent
       default:
-        console.warn(
-          `AIChatContentChild received unknown event: ${event.type}`
-        );
+        this.sendAsyncMessage(event.type, event.detail);
     }
-  }
-
-  #handleSearchDispatch(event) {
-    this.sendAsyncMessage("aiChatContentActor:search", event.detail);
-  }
-
-  #handleActionDispatch(event) {
-    const { action, text } = event.detail ?? {};
-    // Copy is handled in the child actor since it depends on content-side
-    // selection and clipboard context.
-    if (action === "copy") {
-      if (text) {
-        lazy.ClipboardHelper.copyString(text, this.windowContext);
-      }
-    }
-    this.sendAsyncMessage("aiChatContentActor:footer-action", event.detail);
-  }
-
-  #handleFollowUpDispatch(event) {
-    this.sendAsyncMessage("aiChatContentActor:followUp", event.detail);
   }
 
   async receiveMessage(message) {
-    if (message.name === "AIChatContent:TrustedUrlsUpdated") {
-      this.#handleTrustedUrlsUpdated(message.data);
-      return undefined;
-    }
-
     const mapping =
       AIChatContentChild.#EVENT_MAPPINGS_FROM_PARENT[message.name];
 
@@ -150,40 +100,6 @@ export class AIChatContentChild extends JSWindowActorChild {
 
     const payload = message.data;
     return this.#dispatchToChatContent(mapping.event, payload);
-  }
-
-  /**
-   * Handles trusted URLs pushed from parent.
-   *
-   * Normalizes URLs: canonicalizes via URL.parse().href and strips fragments
-   * to ensure "example.com/page" and "example.com/page#section" match.
-   *
-   * @param {object} data - Message data
-   * @param {string[]} data.trustedUrls - Array of trusted URLs from parent
-   */
-  #handleTrustedUrlsUpdated(data) {
-    const { trustedUrls } = data;
-    const list = Array.isArray(trustedUrls) ? trustedUrls : [];
-
-    const normalized = list
-      .map(url => {
-        const parsed = URL.parse(url);
-        if (!parsed) {
-          return null;
-        }
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-          return null;
-        }
-        parsed.hash = "";
-        return parsed.href;
-      })
-      .filter(Boolean);
-
-    this.#trustedUrls = normalized;
-
-    this.#dispatchToChatContent("aiChatContentActor:trustedUrlsUpdated", {
-      trustedUrls: normalized,
-    });
   }
 
   #dispatchToChatContent(eventName, payload) {

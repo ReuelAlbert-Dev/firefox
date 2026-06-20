@@ -23,9 +23,12 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
 
 ChromeUtils.defineESModuleGetters(lazy, {
   AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonManagerPrivate: "resource://gre/modules/AddonManager.sys.mjs",
   BookmarksPolicies: "resource:///modules/policies/BookmarksPolicies.sys.mjs",
   CustomizableUI:
     "moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs",
+  ExtensionPermissions: "resource://gre/modules/ExtensionPermissions.sys.mjs",
+  setEnterpriseGuards: "resource://gre/modules/ExtensionPermissions.sys.mjs",
   FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
   ProxyPolicies: "resource:///modules/policies/ProxyPolicies.sys.mjs",
   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
@@ -47,7 +50,7 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
     prefix: "Policies",
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
     // messages during development. See LOG_LEVELS in Console.sys.mjs for details.
-    maxLogLevel: "error",
+    maxLogLevel: "warn",
     maxLogLevelPref: PREF_LOGLEVEL,
   });
 });
@@ -108,6 +111,63 @@ export var Policies = {
   "3rdparty": {
     onBeforeAddons(manager, param) {
       manager.setExtensionPolicies(param.Extensions);
+    },
+  },
+
+  AIControls: {
+    onBeforeAddons(manager, param) {
+      const features = [
+        [
+          "SidebarChatbot",
+          ["browser.ml.chat.enabled", "browser.ml.chat.page"],
+          "browser.ai.control.sidebarChatbot",
+        ],
+        [
+          "Translations",
+          ["browser.translations.enable"],
+          "browser.ai.control.translations",
+        ],
+        [
+          "PDFAltText",
+          ["pdfjs.enableAltText"],
+          "browser.ai.control.pdfjsAltText",
+        ],
+        [
+          "LinkPreviewKeyPoints",
+          ["browser.ml.linkPreview.enabled"],
+          "browser.ai.control.linkPreviewKeyPoints",
+        ],
+        [
+          "SmartTabGroups",
+          ["browser.tabs.groups.smart.userEnabled"],
+          "browser.ai.control.smartTabGroups",
+        ],
+        ["SmartWindow", [], "browser.ai.control.smartWindow"],
+      ];
+
+      const defaultItem = param.Default;
+      const defaultLocked = defaultItem?.Locked ?? false;
+
+      for (const [key, prefs, aiControlPref] of features) {
+        let item = param[key] ?? defaultItem;
+        if (!item) {
+          continue;
+        }
+        let value = item.Value;
+        let locked = item.Locked ?? defaultLocked;
+        PoliciesUtils.setDefaultPref(aiControlPref, value, locked);
+        for (const pref of prefs) {
+          PoliciesUtils.setDefaultPref(pref, value === "available", locked);
+        }
+      }
+
+      if (defaultItem) {
+        PoliciesUtils.setDefaultPref(
+          "browser.ai.control.default",
+          defaultItem.Value,
+          defaultLocked
+        );
+      }
     },
   },
 
@@ -784,7 +844,8 @@ export var Policies = {
           "limit-foreign": Ci.nsICookieService.BEHAVIOR_LIMIT_FOREIGN,
           "reject-tracker": Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER,
           "reject-tracker-and-partition-foreign":
-            Ci.nsICookieService.BEHAVIOR_REJECT_TRACKER_AND_PARTITION_FOREIGN,
+            Ci.nsICookieService.BEHAVIOR_PARTITION_FOREIGN,
+          "partition-foreign": Ci.nsICookieService.BEHAVIOR_PARTITION_FOREIGN,
         };
         if ("Behavior" in param) {
           newCookieBehavior = behaviors[param.Behavior];
@@ -841,6 +902,29 @@ export var Policies = {
     },
   },
 
+  DefaultSerialGuardSetting: {
+    onBeforeAddons(manager, param) {
+      if (!Number.isInteger(param)) {
+        lazy.log.error(
+          `Non-integer value for DefaultSerialGuardSetting: ${param}`
+        );
+        return;
+      }
+      if (param == 3) {
+        // allow access to serial ports, but don't lock the
+        // pref so it can be manually disabled
+        PoliciesUtils.setDefaultPref("dom.webserial.enabled", true, false);
+      } else if (param == 2) {
+        // do not allow access to serial ports
+        setAndLockPref("dom.webserial.enabled", false);
+      } else {
+        lazy.log.error(
+          `Unrecognized value for DefaultSerialGuardSetting: ${param}`
+        );
+      }
+    },
+  },
+
   DisableAccounts: {
     onBeforeAddons(manager, param) {
       if (param) {
@@ -869,14 +953,25 @@ export var Policies = {
         // don't do anything.
         return;
       }
+      if (!param) {
+        // Ensure PDF.js is not blocked by the pref (no UI exists for this pref).
+        Services.prefs.clearUserPref("pdfjs.disabled");
+        // Only set handleInternally once per policy value; don't override the
+        // user's handler choice on every subsequent startup.
+        runOncePerModification("disableBuiltinPDFViewer", "false", () => {
+          let pdfMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
+            "application/pdf",
+            "pdf"
+          );
+          processMIMEInfo({ action: "handleInternally" }, pdfMIMEInfo);
+        });
+        return;
+      }
       let pdfMIMEInfo = lazy.gMIMEService.getFromTypeAndExtension(
         "application/pdf",
         "pdf"
       );
-      let mimeInfo = {
-        action: param ? "useSystemDefault" : "handleInternally",
-      };
-      processMIMEInfo(mimeInfo, pdfMIMEInfo);
+      processMIMEInfo({ action: "useSystemDefault" }, pdfMIMEInfo);
     },
   },
 
@@ -1064,6 +1159,14 @@ export var Policies = {
     onBeforeAddons(manager, param) {
       if (param) {
         manager.disallowFeature("NimbusRollouts");
+      }
+    },
+  },
+
+  DisableRemoteSettingsAndAcceptSecurityConsequences: {
+    onBeforeUIStartup(manager, param) {
+      if (param) {
+        manager.disallowFeature("remoteSettings");
       }
     },
   },
@@ -1442,6 +1545,14 @@ export var Policies = {
       } catch (e) {
         lazy.log.error("Invalid ExtensionSettings");
       }
+      try {
+        applyExtensionGuards(param);
+      } catch (e) {
+        lazy.log.error(
+          `Invalid runtime_blocked_hosts/runtime_allowed_hosts in ` +
+            `ExtensionSettings: ${e.message}`
+        );
+      }
     },
     async onBeforeUIStartup(manager, param) {
       let extensionSettings = param;
@@ -1473,7 +1584,10 @@ export var Policies = {
           );
         }
       }
-      let addons = await lazy.AddonManager.getAllAddons();
+      let addons = new Map();
+      for (let a of await lazy.AddonManager.getAllAddons()) {
+        addons.set(a.id, a);
+      }
       let allowedExtensions = [];
       for (let extensionID in extensionSettings) {
         if (extensionID == "*") {
@@ -1493,7 +1607,7 @@ export var Policies = {
             installAddonFromURL(
               extensionSettings[extensionID].install_url,
               extensionID,
-              addons.find(addon => addon.id == extensionID)
+              addons.get(extensionID)
             );
             manager.disallowFeature(`uninstall-extension:${extensionID}`);
             if (
@@ -1510,11 +1624,12 @@ export var Policies = {
           } else if (
             extensionSettings[extensionID].installation_mode == "blocked"
           ) {
-            if (addons.find(addon => addon.id == extensionID)) {
+            if (addons.has(extensionID)) {
               // Can't use the addon from getActiveAddons since it doesn't have uninstall.
               let addon = await lazy.AddonManager.getAddonByID(extensionID);
               try {
                 await addon.uninstall();
+                addons.delete(extensionID);
               } catch (e) {
                 // This can fail for add-ons that can't be uninstalled.
                 lazy.log.debug(
@@ -1525,8 +1640,9 @@ export var Policies = {
           }
         }
       }
-      if (blockAllExtensions) {
-        for (let addon of addons) {
+      let allowedTypes = extensionSettings["*"]?.allowed_types;
+      if (blockAllExtensions || allowedTypes) {
+        for (let addon of addons.values()) {
           if (
             addon.isSystem ||
             addon.isBuiltin ||
@@ -1534,13 +1650,21 @@ export var Policies = {
           ) {
             continue;
           }
-          if (!allowedExtensions.includes(addon.id)) {
+          // Match Chrome: any per-id ExtensionSettings entry (even empty)
+          // shadows the "*" defaults entirely, so an addon with its own
+          // entry is exempt from blockAllExtensions.
+          if (
+            !allowedExtensions.includes(addon.id) &&
+            !(blockAllExtensions && addon.id in extensionSettings) &&
+            (blockAllExtensions || !allowedTypes.includes(addon.type))
+          ) {
             try {
               // Can't use the addon from getActiveAddons since it doesn't have uninstall.
               let addonToUninstall = await lazy.AddonManager.getAddonByID(
                 addon.id
               );
               await addonToUninstall.uninstall();
+              addons.delete(addon.id);
             } catch (e) {
               // This can fail for add-ons that can't be uninstalled.
               lazy.log.debug(
@@ -1550,6 +1674,48 @@ export var Policies = {
           }
         }
       }
+
+      // Revoke any granted optional permissions that are now blocked. The
+      // appDisabled refresh below handles addons whose required permissions
+      // are blocked (via mayInstallAddon -> isUsableAddon).
+      for (let addon of addons.values()) {
+        if (
+          addon.isSystem ||
+          addon.isBuiltin ||
+          !(addon.scope & lazy.AddonManager.SCOPE_PROFILE)
+        ) {
+          continue;
+        }
+        let blockedPerms =
+          Services.policies.getExtensionSettings(addon.id)
+            ?.blocked_permissions ?? [];
+        if (!blockedPerms.length) {
+          continue;
+        }
+        try {
+          let granted = await lazy.ExtensionPermissions.get(addon.id);
+          let toRemove = granted.permissions.filter(perm =>
+            blockedPerms.includes(perm)
+          );
+          if (toRemove.length) {
+            let extension = WebExtensionPolicy.getByID(addon.id)?.extension;
+            await lazy.ExtensionPermissions.remove(
+              addon.id,
+              { permissions: toRemove, origins: [], data_collection: [] },
+              extension
+            );
+          }
+        } catch (e) {
+          lazy.log.debug(
+            `Could not revoke blocked optional permissions for ${addon.id}: ${e}`
+          );
+        }
+      }
+      // Recompute appDisabled across all addons against the new policy. This
+      // catches addons whose required permissions are now blocked (via
+      // mayInstallAddon) without persisting userDisabled, so an update that
+      // drops the blocked permission re-enables the addon automatically.
+      lazy.AddonManagerPrivate.updateAddonAppDisabledStates();
     },
   },
 
@@ -1567,6 +1733,13 @@ export var Policies = {
         PoliciesUtils.setDefaultPref(
           "browser.newtabpage.activity-stream.showSearch",
           param.Search,
+          param.Locked
+        );
+      }
+      if ("Weather" in param) {
+        PoliciesUtils.setDefaultPref(
+          "browser.newtabpage.activity-stream.showWeather",
+          param.Weather,
           param.Locked
         );
       }
@@ -1664,6 +1837,12 @@ export var Policies = {
 
   GenerativeAI: {
     onBeforeAddons(manager, param) {
+      let policies = Services.policies.getActivePolicies();
+      if (policies.AIControls) {
+        lazy.log.warn("Ignoring GenerativeAI policy in favor of AIControls");
+        return;
+      }
+
       const defaultValue = "Enabled" in param ? param.Enabled : undefined;
 
       const features = [
@@ -1867,6 +2046,14 @@ export var Policies = {
     },
   },
 
+  IPProtectionAvailable: {
+    onBeforeAddons(manager, param) {
+      if (!param) {
+        setAndLockPref("browser.ipProtection.enabled", false);
+      }
+    },
+  },
+
   LegacyProfiles: {
     // Handled in nsToolkitProfileService.cpp (Windows only)
   },
@@ -2044,6 +2231,7 @@ export var Policies = {
       if (!param) {
         blockAboutPage(manager, "about:logins", true);
         setAndLockPref("pref.privacy.disable_button.view_passwords", true);
+        setAndLockPref("browser.contextual-password-manager.enabled", false);
       }
       setAndLockPref("signon.rememberSignons", param);
     },
@@ -2210,6 +2398,7 @@ export var Policies = {
         "app.update.",
         "browser.",
         "datareporting.policy.",
+        "devtools.",
         "dom.",
         "extensions.",
         "general.autoScroll",
@@ -2233,6 +2422,7 @@ export var Policies = {
         "privacy.globalprivacycontrol.enabled",
         "privacy.userContext.enabled",
         "privacy.userContext.ui.enabled",
+        "sidebar.",
         "signon.",
         "spellchecker.",
         "svg.context-properties.content.enabled",
@@ -2268,6 +2458,7 @@ export var Policies = {
         "security.ssl.enable_ocsp_stapling",
         "security.ssl.errorReporting.enabled",
         "security.ssl.require_safe_negotiation",
+        "security.storage.encryption.sqlite.enabled",
         "security.tls.enable_0rtt_data",
         "security.tls.hello_downgrade_check",
         "security.tls.version.enable-deprecated",
@@ -2427,6 +2618,39 @@ export var Policies = {
       lazy.ProxyPolicies.configureProxySettings(
         param,
         PoliciesUtils.setDefaultPref
+      );
+    },
+  },
+
+  RelaunchRequired: {
+    onBeforeUIStartup(_manager, param) {
+      let notificationPeriodHours = 24;
+      let restartTimeOfDay = { Hour: 12, Minute: 0 };
+      if (
+        typeof param.NotificationPeriodHours === "number" &&
+        param.NotificationPeriodHours >= 0
+      ) {
+        notificationPeriodHours = param.NotificationPeriodHours;
+      }
+      if (typeof param.RestartTimeOfDay === "object") {
+        try {
+          const timeOfDay = Temporal.PlainTime.from({
+            hour: param.RestartTimeOfDay.Hour,
+            minute: param.RestartTimeOfDay.Minute,
+          });
+          // Looks like it's a valid time.
+          restartTimeOfDay.Hour = timeOfDay.hour;
+          restartTimeOfDay.Minute = timeOfDay.minute;
+        } catch (ex) {
+          lazy.log.error("Incorrect format for RestartTimeOfDay");
+        }
+      }
+      setAndLockPref(
+        "app.update.compulsory_restart",
+        JSON.stringify({
+          NotificationPeriodHours: notificationPeriodHours,
+          RestartTimeOfDay: restartTimeOfDay,
+        })
       );
     },
   },
@@ -2772,7 +2996,7 @@ export var Policies = {
   },
 
   SecurityDevices: {
-    async onProfileAfterChange(manager, param) {
+    async _onProfileAfterChangeImpl(manager, param) {
       let pkcs11db = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
         Ci.nsIPKCS11ModuleDB
       );
@@ -2821,6 +3045,20 @@ export var Policies = {
           lazy.log.debug(ex);
         }
       }
+    },
+
+    onProfileAfterChange(manager, param) {
+      this._onProfileAfterChangeImpl(manager, param)
+        .then(() => {
+          Services.obs.notifyObservers(
+            null,
+            "test-enterprisepolicies-securitydevices"
+          );
+        })
+        .catch(ex => {
+          lazy.log.error(`Error running SecurityDevices.onProfileAfterChange`);
+          lazy.log.debug(ex);
+        });
     },
   },
 
@@ -3018,6 +3256,13 @@ export var Policies = {
 
   TranslateEnabled: {
     onBeforeAddons(manager, param) {
+      let policies = Services.policies.getActivePolicies();
+      if (policies.AIControls?.Translations || policies.AIControls?.Default) {
+        lazy.log.warn(
+          "Ignoring TranslateEnabled policy in favor of AIControls"
+        );
+        return;
+      }
       setAndLockPref("browser.translations.enable", param);
       setAndLockPref(
         "browser.ai.control.translations",
@@ -3104,6 +3349,12 @@ export var Policies = {
   WindowsSSO: {
     onBeforeAddons(manager, param) {
       setAndLockPref("network.http.windows-sso.enabled", param);
+    },
+  },
+
+  XSLTEnabled: {
+    onBeforeAddons(manager, param) {
+      setAndLockPref("dom.xslt.enabled", param);
     },
   },
 };
@@ -3366,6 +3617,55 @@ function replacePathVariables(path) {
 }
 
 /**
+ * Validates a list of host patterns intended for runtime_blocked_hosts or
+ * runtime_allowed_hosts. These accept match patterns without a path
+ * component (e.g. `*://*.example.com` or `<all_urls>`), matching Chrome's
+ * ExtensionSettings policy format. Throws on the first invalid pattern.
+ */
+function validateExtensionGuardPatterns(patterns) {
+  for (let pattern of patterns) {
+    if (typeof pattern !== "string") {
+      throw new Error(`Expected a string, got ${typeof pattern}`);
+    }
+    if (pattern === "<all_urls>") {
+      continue;
+    }
+    if (!/^[a-z*][a-z0-9*+.-]*:\/\/[^/]+$/i.test(pattern)) {
+      throw new Error(`Host pattern must not include a path: ${pattern}`);
+    }
+  }
+  // MatchPatternSet throws on any other malformed pattern (bad scheme,
+  // malformed host, etc.). ignorePath:true mirrors the backend's parser
+  // in setEnterpriseGuards; restrictSchemes defaults to true.
+  new MatchPatternSet(patterns, { ignorePath: true });
+}
+
+/**
+ * Build the enterprise guards map from an ExtensionSettings policy value and
+ * apply it via setEnterpriseGuards from ExtensionPermissions.sys.mjs.
+ *
+ * Throws if any pattern is malformed; the caller logs and skips applying
+ * guards in that case.
+ */
+function applyExtensionGuards(extensionSettings) {
+  let guards = {};
+  for (let [extensionID, settings] of Object.entries(extensionSettings)) {
+    let blocked = settings.runtime_blocked_hosts;
+    let allowed = settings.runtime_allowed_hosts;
+    if (!blocked && !allowed) {
+      continue;
+    }
+    validateExtensionGuardPatterns(blocked ?? []);
+    validateExtensionGuardPatterns(allowed ?? []);
+    guards[extensionID] = {
+      runtime_blocked_hosts: blocked ?? [],
+      runtime_allowed_hosts: allowed ?? [],
+    };
+  }
+  lazy.setEnterpriseGuards(guards);
+}
+
+/**
  * installAddonFromURL
  *
  * Helper function that installs an addon from a URL
@@ -3414,6 +3714,19 @@ function installAddonFromURL(url, extensionID, addon) {
         ) {
           lazy.log.debug(
             "Installation cancelled because versions are the same"
+          );
+          install.removeListener(listener);
+          install.cancel();
+        }
+
+        // Cancel install if the addon version downloaded is detected
+        // to be a downgrade compared to the version already installed.
+        if (
+          addon &&
+          Services.vc.compare(addon.version, install.addon.version) > 0
+        ) {
+          lazy.log.warn(
+            `Installation cancelled because installed version ${addon.version} is greater than ${install.addon.version} downloaded from ${url}`
           );
           install.removeListener(listener);
           install.cancel();

@@ -51,43 +51,51 @@
 // Allocation requests are rounded up to the nearest size class, and no record
 // of the original request size is maintained.  Allocations are broken into
 // categories according to size class.  Assuming runtime defaults, the size
-// classes in each category are as follows.  These are generally true across OSs
-// and architectures because mozjemalloc uses 4KiB pages internally.
+// classes in each category are as follows (for x86, x86_64 and Apple Silicon):
 //
-//   |==========================================|
-//   | Small    | Quantum-spaced |           16 |
-//   |          |                |           32 |
-//   |          |                |           48 |
-//   |          |                |          ... |
-//   |          |                |          480 |
-//   |          |                |          496 |
-//   |          |----------------+--------------|
-//   |          | Quantum-wide-  |          512 |
-//   |          | spaced         |          768 |
-//   |          |                |          ... |
-//   |          |                |         3584 |
-//   |          |                |         3840 |
-//   |==========================================|
-//   | Large                     |         4 kB |
-//   |                           |         8 kB |
-//   |                           |        12 kB |
-//   |                           |        16 kB |
-//   |                           |          ... |
-//   |                           |        32 kB |
-//   |                           |          ... |
-//   |                           |      1008 kB |
-//   |                           |      1012 kB |
-//   |                           |      1016 kB |
-//   |                           |      1020 kB |
-//   |==========================================|
-//   | Huge                      |         1 MB |
-//   |                           |         2 MB |
-//   |                           |         3 MB |
-//   |                           |          ... |
-//   |==========================================|
+//   |=========================================================|
+//   | Category | Subcategory    |     x86 |  x86_64 | Mac ARM |
+//   |---------------------------+---------+---------+---------|
+//   | Word size                 |  32 bit |  64 bit |  64 bit |
+//   | Page size                 |    4 Kb |    4 Kb |   16 Kb |
+//   |=========================================================|
+//   | Small    | Quantum-spaced |      16 |      16 |      16 |
+//   |          |                |      32 |      32 |      32 |
+//   |          |                |      48 |      48 |      48 |
+//   |          |                |     ... |     ... |     ... |
+//   |          |                |     480 |     480 |     480 |
+//   |          |                |     496 |     496 |     496 |
+//   |          |----------------+---------|---------|---------|
+//   |          | Quantum-wide-  |     512 |     512 |     512 |
+//   |          | spaced         |     768 |     768 |     768 |
+//   |          |                |     ... |     ... |     ... |
+//   |          |                |    3584 |    3584 |    3584 |
+//   |          |                |    3840 |    3840 |    3840 |
+//   |          |----------------+---------|---------|---------|
+//   |          | Sub-page       |       - |       - |    4096 |
+//   |          |                |       - |       - |    8 kB |
+//   |=========================================================|
+//   | Large                     |    4 kB |    4 kB |       - |
+//   |                           |    8 kB |    8 kB |       - |
+//   |                           |   12 kB |   12 kB |       - |
+//   |                           |   16 kB |   16 kB |   16 kB |
+//   |                           |     ... |     ... |       - |
+//   |                           |   32 kB |   32 kB |   32 kB |
+//   |                           |     ... |     ... |     ... |
+//   |                           | 1008 kB | 1008 kB | 1008 kB |
+//   |                           | 1012 kB | 1012 kB |       - |
+//   |                           | 1016 kB | 1016 kB |       - |
+//   |                           | 1020 kB | 1020 kB |       - |
+//   |=========================================================|
+//   | Huge                      |    1 MB |    1 MB |    1 MB |
+//   |                           |    2 MB |    2 MB |    2 MB |
+//   |                           |    3 MB |    3 MB |    3 MB |
+//   |                           |     ... |     ... |     ... |
+//   |=========================================================|
 //
 // Legend:
 //   n:    Size class exists for this platform.
+//   -:    This size class doesn't exist for this platform.
 //   ...:  Size classes follow a pattern here.
 //
 // A different mechanism is used for each category:
@@ -233,6 +241,13 @@ struct ArenaTreeTrait {
     MOZ_ASSERT(aOther);
     return CompareInt(aNode->mId, aOther->mId);
   }
+
+  using SearchKey = arena_id_t;
+
+  static inline Order Compare(SearchKey aKey, arena_t* aOther) {
+    MOZ_ASSERT(aOther);
+    return CompareInt(aKey, aOther->mId);
+  }
 };
 
 // Bookkeeping for all the arenas used by the allocator.
@@ -242,7 +257,7 @@ struct ArenaTreeTrait {
 //   used by the standard API.
 class ArenaCollection {
  public:
-  constexpr ArenaCollection() {}
+  constexpr ArenaCollection() = default;
 
   bool Init() MOZ_REQUIRES(gInitLock) MOZ_EXCLUDES(mLock) {
     arena_params_t params;
@@ -277,7 +292,7 @@ class ArenaCollection {
 #endif
                                      mPrivateArenas;
 
-      MOZ_RELEASE_ASSERT(tree.Search(aArena), "Arena not in tree");
+      MOZ_RELEASE_ASSERT(tree.Search(aArena->mId), "Arena not in tree");
       tree.Remove(aArena);
       mNumOperationsDisposedArenas += aArena->Operations();
     }
@@ -513,9 +528,6 @@ class ArenaCollection {
   const static arena_id_t MAIN_THREAD_ARENA_BIT = 0x1;
 
 #ifndef NON_RANDOM_ARENA_IDS
-  // Can be called with or without lock, depending on aTree.
-  inline arena_t* GetByIdInternal(Tree& aTree, arena_id_t aArenaId);
-
   arena_id_t MakeRandArenaId(bool aIsMainThreadOnly) const MOZ_REQUIRES(mLock);
 #endif
   static bool ArenaIdIsMainThreadOnly(arena_id_t aArenaId) {
@@ -645,15 +657,6 @@ void jemalloc_set_profiler_callbacks(
 
 }  // namespace mozilla
 #endif
-
-template <>
-arena_t* TypedBaseAlloc<arena_t>::sFirstFree = nullptr;
-
-template <>
-size_t TypedBaseAlloc<arena_t>::size_of() {
-  // Allocate enough space for trailing bins.
-  return sizeof(arena_t) + (sizeof(arena_bin_t) * NUM_SMALL_CLASSES);
-}
 
 // End Utility functions/macros.
 // ***************************************************************************
@@ -832,8 +835,8 @@ void arena_t::TouchMadvisedPage(arena_chunk_t* aChunk, size_t page) {
 }
 #endif
 
-bool arena_t::SplitRun(arena_run_t* aRun, size_t aSize, bool aLarge,
-                       bool aZero) {
+bool arena_t::SplitAndAllocRun(arena_run_t* aRun, size_t aSize, bool aLarge,
+                               bool aZero) {
   arena_chunk_t* chunk = GetChunkForPtr(aRun);
   size_t old_ndirty = chunk->mNumDirty;
   size_t run_ind =
@@ -911,8 +914,6 @@ bool arena_t::SplitRun(arena_run_t* aRun, size_t aSize, bool aLarge,
     }
   }
 #endif
-
-  mRunsAvail.Remove(&chunk->mPageMap[run_ind]);
 
   // Keep track of trailing unused pages for later use.
   if (rem_pages > 0) {
@@ -1055,8 +1056,8 @@ void arena_t::InitChunk(arena_chunk_t* aChunk, size_t aMinCommittedPages) {
       gChunkNumPages - gPagesPerRealPage - gChunkHeaderNumPages;
 #endif
 
-  // The committed pages are marked as Fresh.  Our caller, SplitRun will update
-  // this when it uses them.
+  // The committed pages are marked as Fresh.  Our caller, SplitAndAllocRun will
+  // update this when it uses them.
   for (size_t j = 0; j < n_fresh_pages; j++) {
     aChunk->mPageMap[i + j].bits = CHUNK_MAP_ZEROED | CHUNK_MAP_FRESH;
   }
@@ -1088,7 +1089,6 @@ void arena_t::InitChunk(arena_chunk_t* aChunk, size_t aMinCommittedPages) {
   aChunk->mPageMap[gChunkHeaderNumPages].bits |= gMaxLargeClass;
   aChunk->mPageMap[gChunkNumPages - gPagesPerRealPage - 1].bits |=
       gMaxLargeClass;
-  mRunsAvail.Insert(&aChunk->mPageMap[gChunkHeaderNumPages]);
 }
 
 bool arena_t::RemoveChunk(arena_chunk_t* aChunk) {
@@ -1114,10 +1114,7 @@ bool arena_t::RemoveChunk(arena_chunk_t* aChunk) {
   size_t fresh = 0;
   for (size_t i = gChunkHeaderNumPages; i < gChunkNumPages - gPagesPerRealPage;
        i++) {
-    // There must not be any pages that are not fresh, madvised, decommitted or
-    // dirty.
-    MOZ_ASSERT(aChunk->mPageMap[i].bits &
-               (CHUNK_MAP_FRESH_MADVISED_OR_DECOMMITTED | CHUNK_MAP_DIRTY));
+    MOZ_ASSERT((aChunk->mPageMap[i].bits & CHUNK_MAP_ALLOCATED) == 0);
     MOZ_ASSERT((aChunk->mPageMap[i].bits & CHUNK_MAP_BUSY) == 0);
 
     if (aChunk->mPageMap[i].bits & CHUNK_MAP_MADVISED) {
@@ -1160,14 +1157,12 @@ arena_chunk_t* arena_t::DemoteChunkToSpare(arena_chunk_t* aChunk) {
 arena_run_t* arena_t::AllocRun(size_t aSize, bool aLarge, bool aZero) {
   arena_run_t* run;
   arena_chunk_map_t* mapelm;
-  arena_chunk_map_t key;
 
   MOZ_ASSERT(aSize <= gMaxLargeClass);
   MOZ_ASSERT((aSize & gPageSizeMask) == 0);
 
-  // Search the arena's chunks for the lowest best fit.
-  key.bits = aSize | CHUNK_MAP_KEY;
-  mapelm = mRunsAvail.SearchOrNext(&key);
+  // Search the arena's chunks for the best fit.
+  mapelm = mRunsAvail.SearchOrNext(aSize);
   if (mapelm) {
     arena_chunk_t* chunk = GetChunkForPtr(mapelm);
     size_t pageind = (uintptr_t(mapelm) - uintptr_t(chunk->mPageMap)) /
@@ -1175,21 +1170,21 @@ arena_run_t* arena_t::AllocRun(size_t aSize, bool aLarge, bool aZero) {
 
     MOZ_ASSERT((chunk->mPageMap[pageind].bits & CHUNK_MAP_BUSY) == 0);
     run = (arena_run_t*)(uintptr_t(chunk) + (pageind << gPageSize2Pow));
+    mRunsAvail.Remove(mapelm);
   } else if (mSpare && !mSpare->mIsPurging) {
     // Use the spare.
     arena_chunk_t* chunk = mSpare;
     mSpare = nullptr;
     run = (arena_run_t*)(uintptr_t(chunk) +
                          (gChunkHeaderNumPages << gPageSize2Pow));
-    // Insert the run into the tree of available runs.
     MOZ_ASSERT((chunk->mPageMap[gChunkHeaderNumPages].bits & CHUNK_MAP_BUSY) ==
                0);
-    mRunsAvail.Insert(&chunk->mPageMap[gChunkHeaderNumPages]);
+    mapelm = &chunk->mPageMap[gChunkHeaderNumPages];
   } else {
     // No usable runs.  Create a new chunk from which to allocate
     // the run.
-    arena_chunk_t* chunk =
-        (arena_chunk_t*)chunk_alloc(kChunkSize, kChunkSize, false);
+    arena_chunk_t* chunk = (arena_chunk_t*)arena_chunk_alloc(
+        mChunkAllocator, kChunkSize, kChunkSize);
     if (!chunk) {
       return nullptr;
     }
@@ -1197,9 +1192,14 @@ arena_run_t* arena_t::AllocRun(size_t aSize, bool aLarge, bool aZero) {
     InitChunk(chunk, aSize >> gPageSize2Pow);
     run = (arena_run_t*)(uintptr_t(chunk) +
                          (gChunkHeaderNumPages << gPageSize2Pow));
+    mapelm = &chunk->mPageMap[gChunkHeaderNumPages];
   }
   // Update page map.
-  return SplitRun(run, aSize, aLarge, aZero) ? run : nullptr;
+  if (!SplitAndAllocRun(run, aSize, aLarge, aZero)) {
+    mRunsAvail.Insert(mapelm);
+    return nullptr;
+  }
+  return run;
 }
 
 void arena_t::UpdateMaxDirty() {
@@ -1306,8 +1306,7 @@ ArenaPurgeResult arena_t::Purge(
     const Maybe<std::function<bool()>>& aKeepGoing) {
   arena_chunk_t* chunk = nullptr;
 
-  // The first critical section will find a chunk and mark dirty pages in it as
-  // busy.
+  // The first critical section will find a chunk with dirty pages.
   {
     MaybeMutexAutoLock lock(mLock);
 
@@ -1421,7 +1420,8 @@ ArenaPurgeResult arena_t::Purge(
       if (chunk_is_dying) {
         // Phase one already unlinked the chunk from structures, we just need to
         // release the memory.
-        chunk_dealloc((void*)chunk, kChunkSize, ARENA_CHUNK);
+        arena_chunk_dealloc(purge_info.mArena.mChunkAllocator, (void*)chunk,
+                            kChunkSize);
       }
       // There's nothing else to do here, our caller may execute Purge() again
       // if continue_purge_arena is true.
@@ -1479,7 +1479,8 @@ ArenaPurgeResult arena_t::Purge(
     // Phase 2 can release the spare chunk (not always == chunk) so an extra
     // parameter is used to return that chunk.
     if (chunk_to_release) {
-      chunk_dealloc((void*)chunk_to_release, kChunkSize, ARENA_CHUNK);
+      arena_chunk_dealloc(purge_info.mArena.mChunkAllocator,
+                          (void*)chunk_to_release, kChunkSize);
     }
     if (arena_is_dying) {
       return Dying;
@@ -2050,7 +2051,7 @@ arena_bin_t::arena_bin_t(SizeClass aSizeClass) : mSizeClass(aSizeClass.Size()) {
 
   MOZ_ASSERT(aSizeClass.Size() <= gMaxBinClass);
 
-  try_run_size = gPageSize;
+  try_run_size = gMinimumRunSize;
 
   // Run size expansion loop.
   while (true) {
@@ -2175,6 +2176,10 @@ void* arena_t::MallocSmall(size_t aSize, bool aZero) {
     case SizeClass::QuantumWide:
       bin = &mBins[kNumQuantumClasses + (aSize / kQuantumWide) -
                    (kMinQuantumWideClass / kQuantumWide)];
+      break;
+    case SizeClass::SubPage:
+      bin = &mBins[kNumQuantumClasses + kNumQuantumWideClasses +
+                   (FloorLog2(aSize) - LOG2(kMinSubPageClass))];
       break;
     default:
       MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Unexpected size class type");
@@ -2436,12 +2441,9 @@ class AllocInfo {
       return GetInChunk(aPtr, chunk, pageind);
     }
 
-    extent_node_t key;
-
     // Huge allocation
-    key.mAddr = chunk;
     MutexAutoLock lock(huge_mtx);
-    extent_node_t* node = huge.Search(&key);
+    extent_node_t* node = huge.Search(chunk);
     if (Validate && !node) {
       return AllocInfo();
     }
@@ -2537,14 +2539,12 @@ inline void MozJemalloc::jemalloc_ptr_info(const void* aPtr,
   // This is necessary because |chunk| won't be in gChunkRTree if it's
   // the second or subsequent chunk in a huge allocation.
   extent_node_t* node;
-  extent_node_t key;
   {
     MutexAutoLock lock(huge_mtx);
-    key.mAddr = const_cast<void*>(aPtr);
     node =
         reinterpret_cast<RedBlackTree<extent_node_t, ExtentTreeBoundsTrait>*>(
             &huge)
-            ->Search(&key);
+            ->Search(const_cast<void*>(aPtr));
     if (node) {
       *aInfo = {TagLiveAlloc, node->mAddr, node->mSize, node->mArena->mId};
       return;
@@ -2746,7 +2746,8 @@ static inline void arena_dalloc(void* aPtr, size_t aOffset, arena_t* aArena) {
   }
 
   if (chunk_dealloc_delay) {
-    chunk_dealloc((void*)chunk_dealloc_delay, kChunkSize, ARENA_CHUNK);
+    arena_chunk_dealloc(arena->mChunkAllocator, (void*)chunk_dealloc_delay,
+                        kChunkSize);
   }
 
   arena->MayDoOrQueuePurge(purge_action, "arena_dalloc");
@@ -2854,9 +2855,12 @@ bool arena_t::RallocGrowLarge(arena_chunk_t* aChunk, void* aPtr, size_t aSize,
       // The next run is available and sufficiently large.  Split the
       // following run, then merge the first part with the existing
       // allocation.
-      if (!SplitRun((arena_run_t*)(uintptr_t(aChunk) +
-                                   ((pageind + npages) << gPageSize2Pow)),
-                    aSize - aOldSize, true, false)) {
+      mRunsAvail.Remove(&aChunk->mPageMap[pageind + npages]);
+      if (!SplitAndAllocRun(
+              (arena_run_t*)(uintptr_t(aChunk) +
+                             ((pageind + npages) << gPageSize2Pow)),
+              aSize - aOldSize, true, false)) {
+        mRunsAvail.Insert(&aChunk->mPageMap[pageind + npages]);
         return false;
       }
 
@@ -2954,11 +2958,10 @@ void* arena_t::Ralloc(void* aPtr, size_t aSize, size_t aOldSize) {
 
 void* arena_t::operator new(size_t aCount, const fallible_t&) noexcept {
   MOZ_ASSERT(aCount == sizeof(arena_t));
-  return TypedBaseAlloc<arena_t>::alloc();
-}
-
-void arena_t::operator delete(void* aPtr) {
-  TypedBaseAlloc<arena_t>::dealloc((arena_t*)aPtr);
+  // Ignore aCount, instead allocate axtra space for the trailing array of
+  // bins.
+  return sBaseAlloc.alloc(sizeof(arena_t) +
+                          (sizeof(arena_bin_t) * NUM_SMALL_CLASSES));
 }
 
 arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate)
@@ -2969,7 +2972,8 @@ arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate)
       mMaxDirtyBase((aParams && aParams->mMaxDirty) ? aParams->mMaxDirty
                                                     : (opt_dirty_max / 8)),
       mLastSignificantReuseNS(GetTimestampNS()),
-      mIsDeferredPurgeEnabled(gArenas.IsDeferredPurgeEnabled()) {
+      mIsDeferredPurgeEnabled(gArenas.IsDeferredPurgeEnabled()),
+      mChunkAllocator(&gSystemChunkAllocator) {
   MaybeMutex::DoLock doLock = MaybeMutex::MUST_LOCK;
   if (aParams) {
     uint32_t randFlags = aParams->mFlags & ARENA_FLAG_RANDOMIZE_SMALL_MASK;
@@ -3018,6 +3022,11 @@ arena_t::arena_t(arena_params_t* aParams, bool aIsPrivate)
         }
       }
     }
+
+    if (aParams->mChunkAllocator) {
+      MOZ_ASSERT(aIsPrivate);
+      mChunkAllocator = aParams->mChunkAllocator;
+    }
   }
 
   MOZ_RELEASE_ASSERT(mLock.Init(doLock));
@@ -3049,7 +3058,7 @@ arena_t::~arena_t() {
   MOZ_RELEASE_ASSERT(!mStats.allocated_small && !mStats.allocated_large,
                      "Arena is not empty");
   if (mSpare) {
-    chunk_dealloc(mSpare, kChunkSize, ARENA_CHUNK);
+    arena_chunk_dealloc(mChunkAllocator, mSpare, kChunkSize);
   }
   for (i = 0; i < NUM_SMALL_CLASSES; i++) {
     MOZ_RELEASE_ASSERT(mBins[i].mNonFullRuns.isEmpty(), "Bin is not empty");
@@ -3117,7 +3126,7 @@ arena_t* ArenaCollection::CreateArena(bool aIsPrivate,
     arena_id = MakeRandArenaId(ret->IsMainThreadOnly());
     // Keep looping until we ensure that the random number we just generated
     // isn't already in use by another active arena
-  } while (GetByIdInternal(tree, arena_id));
+  } while (tree.Search(arena_id));
 
   ret->mId = arena_id;
   tree.Insert(ret);
@@ -3183,15 +3192,15 @@ void* arena_t::PallocHuge(size_t aSize, size_t aAlignment, bool aZero) {
   }
 
   // Allocate an extent node with which to track the chunk.
-  node = ExtentAlloc::alloc();
+  node = new (fallible) extent_node_t();
   if (!node) {
     return nullptr;
   }
 
   // Allocate one or more contiguous chunks for this request.
-  ret = chunk_alloc(csize, aAlignment, false);
+  ret = arena_chunk_alloc(mChunkAllocator, csize, aAlignment);
   if (!ret) {
-    ExtentAlloc::dealloc(node);
+    delete node;
     return nullptr;
   }
   psize = REAL_PAGE_CEILING(aSize);
@@ -3257,14 +3266,11 @@ void* arena_t::RallocHuge(void* aPtr, size_t aSize, size_t aOldSize) {
       MaybePoison((void*)((uintptr_t)aPtr + aSize), aOldSize - aSize);
     }
     if (psize < aOldSize) {
-      extent_node_t key;
-
       pages_decommit((void*)((uintptr_t)aPtr + psize), aOldSize - psize);
 
       // Update recorded size.
       MutexAutoLock lock(huge_mtx);
-      key.mAddr = const_cast<void*>(aPtr);
-      extent_node_t* node = huge.Search(&key);
+      extent_node_t* node = huge.Search(aPtr);
       MOZ_ASSERT(node);
       MOZ_ASSERT(node->mSize == aOldSize);
       MOZ_RELEASE_ASSERT(node->mArena == this);
@@ -3281,10 +3287,8 @@ void* arena_t::RallocHuge(void* aPtr, size_t aSize, size_t aOldSize) {
       // We need to update the recorded size if the size increased,
       // so malloc_usable_size doesn't return a value smaller than
       // what was requested via realloc().
-      extent_node_t key;
       MutexAutoLock lock(huge_mtx);
-      key.mAddr = const_cast<void*>(aPtr);
-      extent_node_t* node = huge.Search(&key);
+      extent_node_t* node = huge.Search(aPtr);
       MOZ_ASSERT(node);
       MOZ_ASSERT(node->mSize == aOldSize);
       MOZ_RELEASE_ASSERT(node->mArena == this);
@@ -3326,12 +3330,10 @@ static void huge_dalloc(void* aPtr, arena_t* aArena) {
   extent_node_t* node;
   size_t mapped = 0;
   {
-    extent_node_t key;
     MutexAutoLock lock(huge_mtx);
 
     // Extract from tree of huge allocations.
-    key.mAddr = aPtr;
-    node = huge.Search(&key);
+    node = huge.Search(aPtr);
     MOZ_RELEASE_ASSERT(node, "Double-free?");
     MOZ_ASSERT(node->mAddr == aPtr);
     MOZ_RELEASE_ASSERT(!aArena || node->mArena == aArena);
@@ -3346,9 +3348,9 @@ static void huge_dalloc(void* aPtr, arena_t* aArena) {
   }
 
   // Unmap chunk.
-  chunk_dealloc(node->mAddr, mapped, HUGE_CHUNK);
+  arena_chunk_dealloc(node->mArena->mChunkAllocator, node->mAddr, mapped);
 
-  ExtentAlloc::dealloc(node);
+  delete node;
 }
 
 // Returns whether the allocator was successfully initialized.
@@ -3381,7 +3383,7 @@ static bool malloc_init_hard() {
   }
 #else
   gRealPageSize = page_size;
-  gPageSize = std::min(4_KiB, page_size);
+  gPageSize = page_size;
 #endif
 
   // Get runtime configuration.
@@ -3733,12 +3735,13 @@ inline void MozJemalloc::jemalloc_stats_internal(
   aStats->quantum_max = kMaxQuantumClass;
   aStats->quantum_wide = kQuantumWide;
   aStats->quantum_wide_max = kMaxQuantumWideClass;
-  aStats->unused = kMaxQuantumWideClass;
+  aStats->subpage_max = gMaxSubPageClass;
   aStats->large_max = gMaxLargeClass;
   aStats->chunksize = kChunkSize;
   aStats->page_size = gPageSize;
   aStats->real_page_size = gRealPageSize;
   aStats->dirty_max = opt_dirty_max;
+  aStats->arena_run_header = offsetof(arena_run_t, mRegionsMask);
 
   // Gather current memory usage statistics.
   aStats->narenas = 0;
@@ -3991,17 +3994,6 @@ inline void MozJemalloc::jemalloc_free_excess_dirty_pages(void) {
   }
 }
 
-#ifndef NON_RANDOM_ARENA_IDS
-inline arena_t* ArenaCollection::GetByIdInternal(Tree& aTree,
-                                                 arena_id_t aArenaId) {
-  // Use AlignedStorage2 to avoid running the arena_t constructor, while
-  // we only need it as a placeholder for mId.
-  mozilla::AlignedStorage2<arena_t> key;
-  key.addr()->mId = aArenaId;
-  return aTree.Search(key.addr());
-}
-#endif
-
 inline arena_t* ArenaCollection::GetById(arena_id_t aArenaId, bool aIsPrivate) {
   if (!malloc_initialized) {
     return nullptr;
@@ -4032,7 +4024,7 @@ inline arena_t* ArenaCollection::GetById(arena_id_t aArenaId, bool aIsPrivate) {
       // reading.
       MOZ_ASSERT(IsOnMainThread());
       MOZ_PUSH_IGNORE_THREAD_SAFETY
-      arena_t* result = GetByIdInternal(mMainThreadArenas, aArenaId);
+      arena_t* result = mMainThreadArenas.Search(aArenaId);
       MOZ_POP_THREAD_SAFETY
       MOZ_RELEASE_ASSERT(result);
       return result;
@@ -4043,7 +4035,7 @@ inline arena_t* ArenaCollection::GetById(arena_id_t aArenaId, bool aIsPrivate) {
   }
 
   MutexAutoLock lock(mLock);
-  arena_t* result = GetByIdInternal(*tree, aArenaId);
+  arena_t* result = tree->Search(aArenaId);
 #endif
   MOZ_RELEASE_ASSERT(result);
   MOZ_RELEASE_ASSERT(result->mId == aArenaId);

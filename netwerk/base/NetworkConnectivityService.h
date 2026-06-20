@@ -21,7 +21,7 @@ class NetworkConnectivityService : public nsINetworkConnectivityService,
                                    public nsIDNSListener,
                                    public nsIStreamListener {
  public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSINETWORKCONNECTIVITYSERVICE
   NS_DECL_NSIOBSERVER
   NS_DECL_NSIDNSLISTENER
@@ -56,7 +56,8 @@ class NetworkConnectivityService : public nsINetworkConnectivityService,
 
   Atomic<ConnectivityState, Relaxed> mNAT64{ConnectivityState::UNKNOWN};
 
-  nsTArray<NetAddr> mNAT64Prefixes{ConnectivityState::UNKNOWN};
+  nsTArray<NetAddr> mNAT64Prefixes MOZ_GUARDED_BY(mLock){
+      ConnectivityState::UNKNOWN};
 
   nsCOMPtr<nsICancelable> mDNSv4Request;
   nsCOMPtr<nsICancelable> mDNSv6Request;
@@ -70,7 +71,7 @@ class NetworkConnectivityService : public nsINetworkConnectivityService,
   bool mHasNetworkId = false;
   bool mIdleStartupDone{false};
 
-  Mutex mLock MOZ_UNANNOTATED{"nat64prefixes"};
+  Mutex mLock{"nat64prefixes"};
 };
 
 }  // namespace net

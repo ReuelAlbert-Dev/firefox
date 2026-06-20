@@ -8,7 +8,6 @@ from taskgraph.util import json
 from taskgraph.util.copy import deepcopy
 from taskgraph.util.treeherder import join_symbol, split_symbol
 
-from gecko_taskgraph.util.attributes import is_try
 from gecko_taskgraph.util.chunking import (
     WPT_SUBSUITES,
     chunk_manifests,
@@ -35,7 +34,7 @@ def set_test_verify_chunks(config, tasks):
             env = config.params.get("try_task_config", {}) or {}
             env = env.get("templates", {}).get("env", {})
             task["chunks"] = perfile_number_of_chunks(
-                is_try(config.params),
+                config.params["try_mode"] is not None,
                 env.get("MOZHARNESS_TEST_PATHS", ""),
                 frozenset(config.params["files_changed"]),
                 task["test-name"],
@@ -190,7 +189,9 @@ def resolve_dynamic_chunks(config, tasks):
             yield task
             continue
 
-        all_runtimes = get_runtimes(task["test-platform"], task["test-name"])
+        suite_name = task["test-name"] + task.get("variant-suffix", "")
+        all_runtimes = get_runtimes(task["test-platform"], suite_name)
+
         runtimes = resolve_manifest_runtimes(
             all_runtimes, task["test-manifests"]["active"]
         )
@@ -241,8 +242,9 @@ def split_chunks(config, tasks):
                 task["max-run-time"] = int(task["max-run-time"] * 2)
 
             manifests = task["test-manifests"]
+            suite_name = task["test-name"] + task.get("variant-suffix", "")
             chunked_manifests = chunk_manifests(
-                task["test-name"],
+                suite_name,
                 task["test-platform"],
                 task["chunks"],
                 manifests["active"],

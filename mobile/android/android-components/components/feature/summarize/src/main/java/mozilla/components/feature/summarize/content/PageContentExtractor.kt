@@ -11,5 +11,10 @@ fun interface PageContentExtractor {
     /**
      * Retrieve the page content.
      */
-    suspend fun getPageContent(): Result<String>
+    suspend fun getPageContent(options: Options): Result<String>
+
+    /**
+     * Options defining how the content should be extracted.
+     */
+    data class Options(val shouldUseReaderModeContent: Boolean)
 }

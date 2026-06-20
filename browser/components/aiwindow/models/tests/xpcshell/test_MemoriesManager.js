@@ -13,10 +13,14 @@ const { sinon } = ChromeUtils.importESModule(
 const { MemoriesManager } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/memories/MemoriesManager.sys.mjs"
 );
-const { HISTORY: SOURCE_HISTORY, CONVERSATION: SOURCE_CONVERSATION } =
-  ChromeUtils.importESModule(
-    "moz-src:///browser/components/aiwindow/models/memories/MemoriesConstants.sys.mjs"
-  );
+const {
+  HISTORY: SOURCE_HISTORY,
+  CONVERSATION: SOURCE_CONVERSATION,
+  CONVERSATION_USER_REQUEST: SOURCE_USER_REQUEST,
+  MAX_MEMORY_SUMMARY_LENGTH,
+} = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/models/memories/MemoriesConstants.sys.mjs"
+);
 const { MemoryStore } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/services/MemoryStore.sys.mjs"
 );
@@ -24,6 +28,21 @@ const { EmbeddingsGenerator } = ChromeUtils.importESModule(
   "chrome://global/content/ml/EmbeddingsGenerator.sys.mjs"
 );
 
+const { sanitizeUntrustedContent } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/models/ChatUtils.sys.mjs"
+);
+const { AIWindow } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs"
+);
+const { AIWindowAccountAuth } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/AIWindowAccountAuth.sys.mjs"
+);
+const { EveryWindow } = ChromeUtils.importESModule(
+  "resource:///modules/EveryWindow.sys.mjs"
+);
+const { ChatStore } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs"
+);
 /**
  * Constants for test memories
  */
@@ -131,6 +150,9 @@ add_task(async function test_getAggregatedBrowserHistory() {
   ];
   await PlacesUtils.history.clear();
   await PlacesUtils.history.insertMany(seeded);
+  for (const { url, visits } of [seeded[1], seeded[2]]) {
+    await insertPlacesMetadata(url, visits[0].date.getTime());
+  }
 
   // Check that all 3 outputs are arrays
   const [domainItems, titleItems, searchItems] =
@@ -152,12 +174,21 @@ add_task(async function test_getAggregatedBrowserHistory() {
   );
   Assert.deepEqual(
     titleItems[0],
-    ["Internet for people, not profit — Mozilla | mozilla.org", 100],
+    [
+      sanitizeUntrustedContent(
+        "Internet for people, not profit — Mozilla | mozilla.org",
+        true
+      ),
+      100,
+    ],
     "Top title should be 'Internet for people, not profit — Mozilla' with score 100"
   );
   Assert.equal(
     searchItems[0].q[0],
-    "Google Search: firefox history | www.google.com",
+    sanitizeUntrustedContent(
+      "Google Search: firefox history | www.google.com",
+      true
+    ),
     "Top search item query should be 'Google Search: firefox history'"
   );
   Assert.equal(searchItems[0].r, 1, "Top search item rank should be 1");
@@ -403,10 +434,11 @@ add_task(async function test_hardDeleteMemoryById_not_found() {
 add_task(async function test_memoryClassifyMessage_happy_path() {
   const sb = sinon.createSandbox();
   try {
-    const fakeEngine = {
-      loadPrompt() {
-        return "fake prompt";
-      },
+    const fakeConversation = {
+      replaceMessages() {},
+      clearMessages() {},
+      setSystemMessage() {},
+      addUserMessage() {},
       run() {
         return {
           finalOutput: `{
@@ -418,14 +450,14 @@ add_task(async function test_memoryClassifyMessage_happy_path() {
     };
 
     const stub = sb
-      .stub(MemoriesManager, "ensureOpenAIEngineForUsage")
-      .returns(fakeEngine);
+      .stub(MemoriesManager, "ensureConversationForUsage")
+      .returns(fakeConversation);
     const messageClassification =
       await MemoriesManager.memoryClassifyMessage(TEST_MESSAGE);
     // Check that the stub was called
     Assert.ok(
       stub.calledOnce,
-      "ensureOpenAIEngineForUsage should be called once"
+      "ensureConversationForUsage should be called once"
     );
 
     // Check classification result was returned correctly
@@ -460,10 +492,11 @@ add_task(async function test_memoryClassifyMessage_happy_path() {
 add_task(async function test_memoryClassifyMessage_sad_path_empty_output() {
   const sb = sinon.createSandbox();
   try {
-    const fakeEngine = {
-      loadPrompt() {
-        return "fake prompt";
-      },
+    const fakeConversation = {
+      replaceMessages() {},
+      clearMessages() {},
+      setSystemMessage() {},
+      addUserMessage() {},
       run() {
         return {
           finalOutput: ``,
@@ -472,14 +505,14 @@ add_task(async function test_memoryClassifyMessage_sad_path_empty_output() {
     };
 
     const stub = sb
-      .stub(MemoriesManager, "ensureOpenAIEngineForUsage")
-      .returns(fakeEngine);
+      .stub(MemoriesManager, "ensureConversationForUsage")
+      .returns(fakeConversation);
     const messageClassification =
       await MemoriesManager.memoryClassifyMessage(TEST_MESSAGE);
     // Check that the stub was called
     Assert.ok(
       stub.calledOnce,
-      "ensureOpenAIEngineForUsage should be called once"
+      "ensureConversationForUsage should be called once"
     );
 
     // Check classification result was returned correctly despite empty output
@@ -514,10 +547,11 @@ add_task(async function test_memoryClassifyMessage_sad_path_empty_output() {
 add_task(async function test_memoryClassifyMessage_sad_path_bad_schema() {
   const sb = sinon.createSandbox();
   try {
-    const fakeEngine = {
-      loadPrompt() {
-        return "fake prompt";
-      },
+    const fakeConversation = {
+      replaceMessages() {},
+      clearMessages() {},
+      setSystemMessage() {},
+      addUserMessage() {},
       run() {
         return {
           finalOutput: `{
@@ -528,14 +562,14 @@ add_task(async function test_memoryClassifyMessage_sad_path_bad_schema() {
     };
 
     const stub = sb
-      .stub(MemoriesManager, "ensureOpenAIEngineForUsage")
-      .returns(fakeEngine);
+      .stub(MemoriesManager, "ensureConversationForUsage")
+      .returns(fakeConversation);
     const messageClassification =
       await MemoriesManager.memoryClassifyMessage(TEST_MESSAGE);
     // Check that the stub was called
     Assert.ok(
       stub.calledOnce,
-      "ensureOpenAIEngineForUsage should be called once"
+      "ensureConversationForUsage should be called once"
     );
 
     // Check classification result was returned correctly despite bad schema
@@ -1304,5 +1338,156 @@ add_task(async function test_conversationGeneration_skips_when_chats_empty() {
     );
   } finally {
     sb.restore();
+  }
+});
+
+/**
+ * Tests that shouldEnableMemoriesFromSchedulers returns false when the
+ * browser.smartwindow.firstrun.hasCompleted pref is false, even if every
+ * other gate (AI Window enabled, source pref, ToS consent, active window)
+ * is satisfied.
+ */
+add_task(async function test_shouldEnableMemoriesFromSchedulers_firstrunGate() {
+  const PREF_GENERATE_MEMORIES_FROM_HISTORY =
+    "browser.smartwindow.memories.generateFromHistory";
+  const PREF_FIRSTRUN_HAS_COMPLETED =
+    "browser.smartwindow.firstrun.hasCompleted";
+
+  const sb = sinon.createSandbox();
+
+  try {
+    sb.stub(AIWindow, "isAIWindowEnabled").returns(true);
+    sb.stub(AIWindow, "isAIWindowActive").returns(true);
+    sb.stub(AIWindowAccountAuth, "hasToSConsent").get(() => true);
+    sb.stub(EveryWindow, "readyWindows").get(() => [{}]);
+
+    Services.prefs.setBoolPref(PREF_GENERATE_MEMORIES_FROM_HISTORY, true);
+
+    Services.prefs.setBoolPref(PREF_FIRSTRUN_HAS_COMPLETED, false);
+    Assert.equal(
+      MemoriesManager.shouldEnableMemoriesFromSchedulers(SOURCE_HISTORY),
+      false,
+      "Should be false when firstrun has not completed"
+    );
+
+    Services.prefs.setBoolPref(PREF_FIRSTRUN_HAS_COMPLETED, true);
+    Assert.equal(
+      MemoriesManager.shouldEnableMemoriesFromSchedulers(SOURCE_HISTORY),
+      true,
+      "Should be true when all gates pass (including firstrun completed)"
+    );
+  } finally {
+    sb.restore();
+    Services.prefs.clearUserPref(PREF_GENERATE_MEMORIES_FROM_HISTORY);
+    Services.prefs.clearUserPref(PREF_FIRSTRUN_HAS_COMPLETED);
+  }
+});
+
+// --- saveRequestedMemory tests ---
+add_task(async function test_saveRequestedMemory_rejects_empty_summary() {
+  try {
+    const result = await MemoriesManager.saveRequestedMemory("");
+    Assert.equal(result.ok, false, "Should reject empty summary");
+  } finally {
+    await deleteAllMemories();
+  }
+});
+
+add_task(async function test_saveRequestedMemory_rejects_whitespace_summary() {
+  try {
+    const result = await MemoriesManager.saveRequestedMemory("   ");
+    Assert.equal(result.ok, false, "Should reject whitespace-only summary");
+  } finally {
+    await deleteAllMemories();
+  }
+});
+
+add_task(async function test_saveRequestedMemory_truncates_long_summary() {
+  const sandbox = sinon.createSandbox();
+  sandbox
+    .stub(ChatStore, "getMostRecentMessages")
+    .resolves([{ content: { body: "remember I prefer Walmart" } }]);
+  sandbox.stub(MemoriesManager, "getRelevantMemories").resolves([]);
+  try {
+    await deleteAllMemories();
+    const result = await MemoriesManager.saveRequestedMemory(
+      "a".repeat(MAX_MEMORY_SUMMARY_LENGTH + 50)
+    );
+    Assert.equal(result.ok, true, "Truncated summary should be accepted");
+    Assert.equal(
+      result.memory.memory_summary.length,
+      MAX_MEMORY_SUMMARY_LENGTH,
+      `Summary not truncated to ${MAX_MEMORY_SUMMARY_LENGTH} characters`
+    );
+  } finally {
+    sandbox.restore();
+    await deleteAllMemories();
+  }
+});
+
+add_task(async function test_saveRequestedMemory_blocks_pii_in_summary() {
+  const sandbox = sinon.createSandbox();
+  sandbox
+    .stub(ChatStore, "getMostRecentMessages")
+    .resolves([{ content: { body: "contact me" } }]);
+  try {
+    const result = await MemoriesManager.saveRequestedMemory(
+      "My email is jane.doe@example.com"
+    );
+    Assert.equal(result.ok, false, "PII should be blocked in summary");
+  } finally {
+    sandbox.restore();
+    await deleteAllMemories();
+  }
+});
+
+add_task(async function test_saveRequestedMemory_blocks_pii_in_message() {
+  const sandbox = sinon.createSandbox();
+  sandbox
+    .stub(ChatStore, "getMostRecentMessages")
+    .resolves([{ content: { body: "remember my card 4111 1111 1111 1111" } }]);
+  try {
+    const result =
+      await MemoriesManager.saveRequestedMemory("Has a credit card");
+    Assert.equal(
+      result.ok,
+      false,
+      "PII should be blocked in originating message"
+    );
+  } finally {
+    sandbox.restore();
+    await deleteAllMemories();
+  }
+});
+
+add_task(async function test_saveRequestedMemory_happy_path_creates() {
+  const sandbox = sinon.createSandbox();
+  sandbox
+    .stub(ChatStore, "getMostRecentMessages")
+    .resolves([{ content: { body: "remember I prefer Walmart" } }]);
+  sandbox.stub(MemoriesManager, "getRelevantMemories").resolves([]);
+  try {
+    await deleteAllMemories();
+    const result = await MemoriesManager.saveRequestedMemory(
+      "Prefers Walmart for shopping"
+    );
+    Assert.equal(result.ok, true, "save succeeded");
+    Assert.equal(result.action, "created", "action is created");
+    Assert.equal(
+      result.memory.memory_summary,
+      "Prefers Walmart for shopping",
+      "memory_summary should match the input summary"
+    );
+    Assert.equal(result.memory.category, "", "category defaults to empty");
+    Assert.equal(result.memory.intent, "", "intent defaults to empty");
+    Assert.equal(
+      result.memory.source,
+      SOURCE_USER_REQUEST,
+      `Source should be ${SOURCE_USER_REQUEST}`
+    );
+    // Assert.equal(result.memory.score, 5, "Score should be 5"); #??
+  } finally {
+    sandbox.restore();
+    await deleteAllMemories();
   }
 });

@@ -25,10 +25,10 @@ function clickDoorhangerButton(buttonIndex, browser, notificationID) {
 
   if (buttonIndex === PROMPT_ALLOW_BUTTON) {
     ok(true, "Triggering main action (allow)");
-    notification.button.doCommand();
+    notification.button.click();
   } else {
     ok(true, "Triggering secondary action (deny)");
-    notification.secondaryButton.doCommand();
+    notification.secondaryButton.click();
   }
 }
 
@@ -232,7 +232,6 @@ async function setupLnaPrefs() {
       ["network.websocket.max-connections", 1000],
       ["network.lna.block_trackers", true],
       ["network.lna.blocking", true],
-      ["network.http.rcwn.enabled", false],
       ["network.lna.websocket.enabled", true],
       ["network.lna.local-network-to-localhost.skip-checks", false],
       ["browser.ipProtection.enabled", false],

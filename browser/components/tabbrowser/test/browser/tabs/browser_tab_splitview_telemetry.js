@@ -272,7 +272,7 @@ add_task(async function test_splitview_start_event_menu_open() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -299,7 +299,7 @@ add_task(async function test_splitview_start_event_menu_add() {
   await closeTabContextMenu(menu);
 
   // This should create a split view with tab1 and a new "about:opentabs" tab
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => tab1.splitview,
     "Waiting for split view to be created"
   );
@@ -325,7 +325,7 @@ add_task(async function test_splitview_start_event_menu_add() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(newTab);
@@ -382,7 +382,7 @@ add_task(async function test_splitview_start_event_tabgroup_main() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -442,7 +442,7 @@ add_task(async function test_splitview_start_event_tabgroup_other() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -503,7 +503,7 @@ add_task(async function test_splitview_start_event_tabgroup_both_same() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -565,7 +565,7 @@ add_task(async function test_splitview_start_event_tabgroup_both_different() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -682,7 +682,7 @@ add_task(async function test_splitview_end_event_icon_separate() {
   menu.activateItem(separateItem);
 
   // Wait for split view to be removed
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => !tab1.splitview && !tab2.splitview,
     "Waiting for split view to be removed"
   );
@@ -740,7 +740,7 @@ add_task(async function test_splitview_end_event_footer_separate() {
   menu.activateItem(separateItem);
 
   // Wait for split view to be removed
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => !tab1.splitview && !tab2.splitview,
     "Waiting for split view to be removed"
   );
@@ -950,7 +950,7 @@ add_task(async function test_splitview_reverse_event_icon() {
   menu.activateItem(reverseItem);
 
   // Wait for tabs to be reversed
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => splitView.tabs[0] !== originalFirstTab,
     "Waiting for tabs to be reversed"
   );
@@ -963,7 +963,7 @@ add_task(async function test_splitview_reverse_event_icon() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -1013,7 +1013,7 @@ add_task(async function test_splitview_reverse_event_footer() {
   menu.activateItem(reverseItem);
 
   // Wait for tabs to be reversed
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => splitView.tabs[0] !== originalFirstTab,
     "Waiting for tabs to be reversed"
   );
@@ -1026,7 +1026,7 @@ add_task(async function test_splitview_reverse_event_footer() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
@@ -1073,7 +1073,7 @@ add_task(async function test_splitview_resize_event() {
   AccessibilityUtils.resetEnv();
 
   // Wait for panel width to be updated
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => leftPanel.hasAttribute("width"),
     "Left panel should have width attribute after resize"
   );
@@ -1094,7 +1094,7 @@ add_task(async function test_splitview_resize_event() {
 
   // Clean up without recording telemetry
   if (splitView) {
-    gBrowser.unsplitTabs(splitView);
+    splitView.unsplitTabs();
   }
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);

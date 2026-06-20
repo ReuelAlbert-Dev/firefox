@@ -821,7 +821,7 @@ nsresult Http2StreamBase::ConvertResponseHeaders(
     LOG3(
         ("Http2StreamBase::ConvertResposeHeaders %p status %s is not just a "
          "code",
-         this, statusString.BeginReading()));
+         this, statusString.get()));
     // Results in stream reset with PROTOCOL_ERROR
     return NS_ERROR_ILLEGAL_VALUE;
   }
@@ -840,7 +840,8 @@ nsresult Http2StreamBase::ConvertResponseHeaders(
   aHeadersIn.Truncate();
   aHeadersOut.AppendLiteral("X-Firefox-Spdy: h2");
   aHeadersOut.AppendLiteral("\r\n\r\n");
-  LOG(("decoded response headers are:\n%s", aHeadersOut.BeginReading()));
+  LOG(("decoded response headers are:\n%s",
+       PromiseFlatCString(aHeadersOut).get()));
   HandleResponseHeaders(aHeadersOut, httpResponseCode);
 
   return NS_OK;

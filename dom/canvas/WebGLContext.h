@@ -244,11 +244,6 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   class LruPosition final {
     std::list<WebGLContext*>::iterator mItr;
 
-    LruPosition(const LruPosition&) = delete;
-    LruPosition(LruPosition&&) = delete;
-    LruPosition& operator=(const LruPosition&) = delete;
-    LruPosition& operator=(LruPosition&&) = delete;
-
    public:
     void AssignLocked(WebGLContext& aContext) MOZ_REQUIRES(sLruMutex);
     void Reset();
@@ -259,6 +254,11 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
     explicit LruPosition(WebGLContext&);
 
     ~LruPosition() { Reset(); }
+
+    LruPosition(const LruPosition&) = delete;
+    LruPosition(LruPosition&&) = delete;
+    LruPosition& operator=(const LruPosition&) = delete;
+    LruPosition& operator=(LruPosition&&) = delete;
   };
 
   mutable LruPosition mLruPosition MOZ_GUARDED_BY(sLruMutex);
@@ -289,6 +289,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   WebGLContextOptions mOptions;
   const uint32_t mPrincipalKey;
   Maybe<webgl::Limits> mLimits;
+  webgl::EnumMask<layers::SurfaceDescriptor::Type> mUploadableSdTypes;
   const uint32_t mMaxVertIdsPerDraw =
       StaticPrefs::webgl_max_vert_ids_per_draw();
 
@@ -337,6 +338,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   webgl::OptionalRenderableFormatBits mOptionalRenderableFormatBits =
       webgl::OptionalRenderableFormatBits{0};
   void FinishInit();
+  void InitUploadableSdTypes();
 
  protected:
   WebGLContext(HostWebGLContext*, const webgl::InitContextDesc&);
@@ -398,7 +400,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   };
 
   void GenerateErrorImpl(const GLenum err, const nsACString& text) const {
-    GenerateErrorImpl(err, std::string(text.BeginReading()));
+    GenerateErrorImpl(err, std::string(text.View()));
   }
   void GenerateErrorImpl(const GLenum err, const std::string& text) const;
 
@@ -461,7 +463,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
         "https://bugzilla.mozilla.org/"
         "enter_bug.cgi?product=Core&component=Canvas%3A+WebGL",
         fmt);
-    GenerateError(LOCAL_GL_OUT_OF_MEMORY, newFmt.BeginReading(), args...);
+    GenerateError(LOCAL_GL_OUT_OF_MEMORY, newFmt.get(), args...);
     MOZ_ASSERT(false, "WebGLContext::ErrorImplementationBug");
     NS_ERROR("WebGLContext::ErrorImplementationBug");
   }
@@ -968,6 +970,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   // ES3:
   uint32_t mGLMinProgramTexelOffset = 0;
   uint32_t mGLMaxProgramTexelOffset = 0;
+  uint32_t mGLMaxVertexUniformBlocks = 0;
+  uint32_t mGLMaxFragmentUniformBlocks = 0;
 
  public:
   auto GLMaxDrawBuffers() const { return mLimits->maxColorDrawBuffers; }
@@ -995,6 +999,8 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
   auto GLMaxTextureUnits() const { return mLimits->maxTexUnits; }
 
   bool IsFormatValidForFB(TexInternalFormat format) const;
+
+  bool IsUploadableSdType(const layers::SurfaceDescriptor& sd) const;
 
  protected:
   // -------------------------------------------------------------------------
@@ -1115,7 +1121,7 @@ class WebGLContext : public VRefCounted, public SupportsWeakPtr {
 
  public:
   bool ValidateNonNegative(const char* argName, int64_t val) const {
-    if (MOZ_UNLIKELY(val < 0)) {
+    if (val < 0) [[unlikely]] {
       ErrorInvalidValue("`%s` must be non-negative.", argName);
       return false;
     }

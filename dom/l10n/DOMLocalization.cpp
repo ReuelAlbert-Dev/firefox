@@ -7,6 +7,7 @@
 #include "js/ForOfIterator.h"  // JS::ForOfIterator
 #include "json/json.h"
 #include "mozilla/dom/AutoEntryScript.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/L10nOverlays.h"
 #include "mozilla/intl/L10nRegistry.h"
@@ -110,7 +111,7 @@ bool DOMLocalization::HasPendingMutations() const {
  */
 
 void DOMLocalization::ConnectRoot(nsINode& aNode) {
-  nsCOMPtr<nsIGlobalObject> global = aNode.GetOwnerGlobal();
+  nsCOMPtr<nsIGlobalObject> global = aNode.GetDocumentGlobal();
   if (!global) {
     return;
   }
@@ -404,7 +405,7 @@ already_AddRefed<Promise> DOMLocalization::TranslateElements(
  */
 class L10nRootTranslationHandler final : public PromiseNativeHandler {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_CLASS(L10nRootTranslationHandler)
 
   explicit L10nRootTranslationHandler(Element* aRoot) : mRoot(aRoot) {}

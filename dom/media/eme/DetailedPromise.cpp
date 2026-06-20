@@ -14,18 +14,17 @@ DetailedPromise::DetailedPromise(nsIGlobalObject* aGlobal,
                                  const nsACString& aName)
     : Promise(aGlobal), mName(aName), mStartTime(TimeStamp::Now()) {}
 
-DetailedPromise::~DetailedPromise() {
-  // It would be nice to assert that mResponded is identical to
-  // GetPromiseState() == PromiseState::Rejected.  But by now we've been
-  // unlinked, so don't have a reference to our actual JS Promise object
-  // anymore.
-}
+// It would be nice to assert that mResponded is identical to
+// GetPromiseState() == PromiseState::Rejected.  But by now we've been
+// unlinked, so don't have a reference to our actual JS Promise object
+// anymore.
+DetailedPromise::~DetailedPromise() = default;
 
 void DetailedPromise::LogRejectionReason(uint32_t aErrorCode,
                                          const nsACString& aReason) {
   nsPrintfCString msg("%s promise rejected 0x%" PRIx32 " '%s'", mName.get(),
                       aErrorCode, PromiseFlatCString(aReason).get());
-  EME_LOG("%s", msg.get());
+  EME_LOG("{}", msg.get());
 
   LogToBrowserConsole(NS_ConvertUTF8toUTF16(msg));
 }

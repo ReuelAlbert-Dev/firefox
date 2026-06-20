@@ -17,6 +17,8 @@
 //!
 //! [recalc_style_at]: traversal/fn.recalc_style_at.html
 //!
+//! A list of supported style properties can be found as [docs::supported_properties]
+//!
 //! Major dependencies are the [cssparser][cssparser] and [selectors][selectors]
 //! crates.
 //!
@@ -113,11 +115,22 @@ pub mod thread_state;
 pub mod traversal;
 pub mod traversal_flags;
 pub mod typed_om;
+pub mod url;
 pub mod use_counters;
 
 #[macro_use]
 #[allow(non_camel_case_types)]
 pub mod values;
+
+#[cfg(all(doc, feature = "servo"))]
+/// Documentation
+pub mod docs {
+    /// The CSS properties supported by the style system.
+    /// Generated from the `properties.mako.rs` template by `build.rs`
+    pub mod supported_properties {
+        #![doc = include_str!(concat!(env!("OUT_DIR"), "/css-properties.html"))]
+    }
+}
 
 #[cfg(feature = "gecko")]
 pub use crate::gecko_string_cache as string_cache;
@@ -146,6 +159,7 @@ pub type Namespace = crate::values::GenericAtomIdent<web_atoms::NamespaceStaticS
 pub type Prefix = crate::values::GenericAtomIdent<web_atoms::PrefixStaticSet>;
 
 pub use style_traits::arc_slice::ArcSlice;
+pub use style_traits::owned_array::OwnedArray;
 pub use style_traits::owned_slice::OwnedSlice;
 pub use style_traits::owned_str::OwnedStr;
 

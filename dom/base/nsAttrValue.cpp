@@ -413,12 +413,23 @@ void nsAttrValue::SetTo(const nsAString& aValue) {
   }
 }
 
+void nsAttrValue::SetToAssumeUnset(
+    already_AddRefed<mozilla::StringBuffer> aValue) {
+  MOZ_ASSERT(!mBits);
+  SetPtrValueAndType(aValue.take(), eStringBase);
+}
+
 void nsAttrValue::SetTo(nsAtom* aValue) {
   ResetIfSet();
   if (aValue) {
     NS_ADDREF(aValue);
     SetPtrValueAndType(aValue, eAtomBase);
   }
+}
+
+void nsAttrValue::SetToAssumeUnset(already_AddRefed<nsAtom> aValue) {
+  MOZ_ASSERT(!mBits);
+  SetPtrValueAndType(aValue.take(), eAtomBase);
 }
 
 void nsAttrValue::SetTo(int16_t aInt) {
@@ -634,7 +645,7 @@ void nsAttrValue::ToString(nsAString& aResult) const {
     case eInteger: {
       nsAutoString intStr;
       intStr.AppendInt(GetIntegerValue());
-      aResult = intStr;
+      aResult = std::move(intStr);
 
       break;
     }
@@ -1332,7 +1343,11 @@ void nsAttrValue::ParseAtom(const nsAString& aValue) {
 void nsAttrValue::ParseAtomArray(nsAtom* aValue) {
   if (MiscContainer* cont = AtomArrayCache::Lookup(aValue)) {
     // Set our MiscContainer to the cached one.
+    // AddRef must happen before ResetIfSet: the cache does not hold a strong
+    // reference, and ResetIfSet could release the last reference to cont if
+    // this nsAttrValue is already holding it.
     NS_ADDREF(cont);
+    ResetIfSet();
     SetPtrValueAndType(cont, eOtherBase);
     return;
   }
@@ -1932,7 +1947,11 @@ bool nsAttrValue::ParseStyleAttribute(const nsAString& aString,
   if (cachingAllowed) {
     if (MiscContainer* cont = attrStyles->LookupStyleAttr(aString)) {
       // Set our MiscContainer to the cached one.
+      // AddRef must happen before ResetIfSet: the cache does not hold a strong
+      // reference, and ResetIfSet could release the last reference to cont if
+      // this nsAttrValue is already holding it.
       NS_ADDREF(cont);
+      ResetIfSet();
       SetPtrValueAndType(cont, eOtherBase);
       return true;
     }

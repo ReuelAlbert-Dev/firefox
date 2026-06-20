@@ -9,6 +9,7 @@
 #include "ActiveLayerTracker.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/RenderRootStateManager.h"
@@ -16,7 +17,6 @@
 #include "mozilla/layers/WebRenderCanvasRenderer.h"
 #include "mozilla/webgpu/CanvasContext.h"
 #include "nsDisplayList.h"
-#include "nsGkAtoms.h"
 #include "nsLayoutUtils.h"
 #include "nsStyleUtil.h"
 
@@ -262,7 +262,7 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
       return;
     }
 
-    RefPtr<CanvasRenderer> renderer = new CanvasRenderer();
+    auto renderer = MakeRefPtr<CanvasRenderer>();
     if (!canvas->InitializeCanvasRenderer(aBuilder, renderer)) {
       return;
     }
@@ -284,12 +284,14 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
       aCtx->Multiply(transform);
     }
 
-    const auto& srcRect = surface->GetRect();
-    dt.DrawSurface(
-        surface, destRect,
-        Rect(float(srcRect.X()), float(srcRect.Y()), float(srcRect.Width()),
-             float(srcRect.Height())),
-        DrawSurfaceOptions(nsLayoutUtils::GetSamplingFilterForFrame(f)));
+    const Rect srcRect(surface->GetRect());
+    if (presContext->Type() != nsPresContext::eContext_Print ||
+        !canvas->GetMozPrintCallback() ||
+        !dt.TryToReplaySurface(surface, destRect, srcRect)) {
+      dt.DrawSurface(
+          surface, destRect, srcRect,
+          DrawSurfaceOptions(nsLayoutUtils::GetSamplingFilterForFrame(f)));
+    }
 
     renderer->FireDidTransactionCallback();
     renderer->ResetDirty();

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -197,7 +195,7 @@ class Registers {
       (1 << Registers::x28) | (1 << Registers::x29) | (1 << Registers::x30);
 
   static const SetType NonAllocatableMask =
-      (1 << Registers::x28) |  // PseudoStackPointer.
+      (1 << Registers::x20) |  // PseudoStackPointer.
       (1 << Registers::ip0) |  // First scratch register.
       (1 << Registers::ip1) |  // Second scratch register.
       (1 << Registers::tls) | (1 << Registers::lr) | (1 << Registers::sp) |

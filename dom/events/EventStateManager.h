@@ -62,7 +62,7 @@ class OverOutElementsWrapper final : public nsISupports {
   enum class BoundaryEventType : bool { Mouse, Pointer };
   explicit OverOutElementsWrapper(BoundaryEventType aType) : mType(aType) {}
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_CLASS(OverOutElementsWrapper)
 
   already_AddRefed<nsIWidget> GetLastOverWidget() const;
@@ -273,7 +273,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void ClearFrameRefs(nsIFrame* aFrame);
 
   nsIFrame* GetEventTarget();
-  already_AddRefed<nsIContent> GetEventTargetContent(WidgetEvent* aEvent);
+  nsIContent* GetExplicitEventTargetContent(const WidgetEvent* = nullptr);
+  nsIContent* GetEventTargetContent(const WidgetEvent* = nullptr);
 
   // We manage 4 states here: ACTIVE, HOVER, DRAGOVER, URLTARGET
   static bool ManagesState(ElementState aState) {
@@ -296,6 +297,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   bool SetContentState(nsIContent* aContent, ElementState aState);
 
   nsIContent* GetActiveContent() const { return mActiveContent; }
+
+  void SetLinkOverFrame(nsIFrame* aFrame) { mLinkOverFrame = aFrame; }
 
   void NativeAnonymousContentRemoved(nsIContent* aAnonContent);
   void ContentInserted(nsIContent* aChild, const ContentInsertInfo& aInfo);
@@ -497,17 +500,18 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    *
    * @param aPresShell              The PresShell for the ESM.  This lifetime
    *                                should be guaranteed by the caller.
-   * @param aMouseEvent             The ePointerClick event which caused the
-   *                                paste.
-   * @param aStatus                 The event status of aMouseEvent.
+   * @param aMouseOrPointerEvent    The eAuxPointerClick event which caused the
+   *                                paste or eMouseUp event which causes an
+   *                                ePointerAuxClick event.
+   * @param aStatus                 The event status of aMouseOrPointerEvent.
    * @param aEditorBase             EditorBase which may be pasted the
    *                                clipboard text by the middle click.
-   *                                If there is no editor for aMouseEvent,
-   *                                set nullptr.
+   *                                If there is no editor for
+   *                                aMouseOrPointerEvent, set nullptr.
    */
   MOZ_CAN_RUN_SCRIPT
   nsresult HandleMiddleClickPaste(PresShell* aPresShell,
-                                  WidgetMouseEvent* aMouseEvent,
+                                  WidgetMouseEvent* aMouseOrPointerEvent,
                                   nsEventStatus* aStatus,
                                   EditorBase* aEditorBase);
 
@@ -527,6 +531,13 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
     return mMouseEnterLeaveHelper;
   }
 
+  /**
+   * Return the content node which is the explicit target of the drag gesture
+   * start event (typically a "mousedown"). I.e., the result may be a `Text`
+   * even though the event target should be an `Element`. Or if the original
+   * target was once removed, this returns the connected node which contained
+   * the origin target.
+   */
   nsIContent* GetTrackingDragGestureContent() const {
     return mGestureDownContent;
   }
@@ -536,6 +547,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void NotifyContentWillBeRemovedForGesture(nsIContent& aContent);
 
   bool IsTrackingDragGesture() const { return mGestureDownContent != nullptr; }
+
+  nsIContent* GetURLTargetContent() const { return mURLTargetContent; }
 
  protected:
   /*
@@ -590,7 +603,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void NotifyMouseOut(WidgetMouseEvent* aMouseEvent,
                                                   nsIContent* aMovingInto);
   MOZ_CAN_RUN_SCRIPT void GenerateDragDropEnterExit(
-      nsPresContext* aPresContext, WidgetDragEvent* aDragEvent);
+      nsPresContext* aPresContext, WidgetDragEvent& aDragEvent);
 
   /**
    * Return mMouseEnterLeaveHelper or relevant mPointersEnterLeaveHelper
@@ -608,7 +621,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    * @param aTargetFrame target frame for the event
    */
   MOZ_CAN_RUN_SCRIPT void FireDragEnterOrExit(nsPresContext* aPresContext,
-                                              WidgetDragEvent* aDragEvent,
+                                              const WidgetDragEvent& aDragEvent,
                                               EventMessage aMessage,
                                               nsIContent* aRelatedTarget,
                                               nsIContent* aTargetContent,
@@ -1162,22 +1175,34 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void DecideGestureEvent(WidgetGestureNotifyEvent* aEvent,
                           nsIFrame* targetFrame);
 
-  // routines for the d&d gesture tracking state machine
+  /**
+   * Called when starting to track a mouse button press.
+   *
+   * @param aMouseDownOrTouchDragEvent eMouseDown or eMouseTouchDrag event.
+   */
   void BeginTrackingDragGesture(nsPresContext* aPresContext,
-                                WidgetMouseEvent* aDownEvent,
-                                nsIFrame* aDownFrame);
+                                WidgetMouseEvent& aMouseDownOrTouchDragEvent,
+                                nsIFrame* aMouseDownOrTouchDragFrame);
 
-  void SetGestureDownPoint(WidgetGUIEvent* aEvent);
+  void SetGestureDownPoint(const WidgetGUIEvent& aEvent);
 
-  LayoutDeviceIntPoint GetEventRefPoint(WidgetEvent* aEvent) const;
+  [[nodiscard]] LayoutDeviceIntPoint GetEventRefPoint(
+      const WidgetEvent& aEvent) const;
 
   friend class mozilla::dom::BrowserParent;
   void BeginTrackingRemoteDragGesture(nsIContent* aContent,
                                       dom::RemoteDragStartData* aDragStartData);
 
-  MOZ_CAN_RUN_SCRIPT
-  void GenerateDragGesture(nsPresContext* aPresContext,
-                           WidgetInputEvent* aEvent);
+  /**
+   * Called when a move event is going to be dispatched to the DOM.
+   *
+   * @param aMouseOrTouchOrPointerEvent eMouseMove, eTouchMove, ePointerMove or
+   * ePointerDown event. StopPropagation() will be called if new drag session
+   * starts by this call.
+   */
+  MOZ_CAN_RUN_SCRIPT void GenerateDragGesture(
+      nsPresContext* aPresContext,
+      WidgetInputEvent& aMouseOrTouchOrPointerEvent);
 
   /**
    * Try to dispatch ePointerCancel for aSourceEvent to aTargetContent.
@@ -1288,7 +1313,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   void RemoveNodeFromChainIfNeeded(ElementState aState,
                                    nsIContent* aContentRemoved, bool aNotify);
 
-  bool IsEventOutsideDragThreshold(WidgetInputEvent* aEvent) const;
+  [[nodiscard]] bool IsEventOutsideDragThreshold(
+      const WidgetInputEvent& aEvent) const;
 
   static inline void DoStateChange(dom::Element* aElement, ElementState aState,
                                    bool aAddState);
@@ -1370,7 +1396,10 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 
   // member variables for the d&d gesture state machine
   LayoutDeviceIntPoint mGestureDownPoint;  // screen coordinates
-  // The content to use as target if we start a d&d (what we drag).
+  // The content node which the preceding event (typically a "mousedown) starts
+  // the dragging gesture. So, this may be a `Text` even though the event target
+  // should be an `Element`. If the origin node is removed, this is set to the
+  // connected node which contained the original node.
   RefPtr<nsIContent> mGestureDownContent;
   // The content of the frame where the mouse-down event occurred. It's the same
   // as the target in most cases but not always - for example when dragging
@@ -1392,6 +1421,10 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   static nsCOMPtr<nsIContent> sDragOverContent;
   nsCOMPtr<nsIContent> mURLTargetContent;
   nsCOMPtr<nsINode> mPopoverPointerDownTarget;
+
+  // The primary frame of the link currently shown in the status bar.
+  // Checked in ClearFrameRefs to avoid stalling link status bar.
+  WeakFrame mLinkOverFrame;
 
   nsPresContext* mPresContext;      // Not refcnted
   RefPtr<dom::Document> mDocument;  // Doesn't necessarily need to be owner
@@ -1432,7 +1465,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void FireContextClick();
 
   MOZ_CAN_RUN_SCRIPT static void SetPointerLock(nsIWidget* aWidget,
-                                                nsPresContext* aPresContext);
+                                                nsPresContext* aPresContext,
+                                                bool aUnadjustedMovement);
   static void sClickHoldCallback(nsITimer* aTimer, void* aESM);
 };
 

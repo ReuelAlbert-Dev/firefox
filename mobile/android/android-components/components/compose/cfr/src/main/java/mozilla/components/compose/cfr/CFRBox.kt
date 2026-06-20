@@ -16,11 +16,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -73,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupPositionProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import mozilla.components.compose.base.button.FilledButton
+import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.compose.cfr.CFRPopup.IndicatorDirection
 import mozilla.components.ui.icons.R as iconsR
@@ -128,7 +127,10 @@ fun rememberCFRState(
  * @param state Visibility state of the CFR tooltip.
  * @param modifier Modifier for the component.
  * @param onDismissRequest Called when the user taps outside the CFR tooltip.
- * @param focusable Whether the CFR tooltip consumes touch events while shown.
+ * @param focusable Whether the CFR tooltip consumes touch events while shown. If this is set to true,
+ * it allows the tooltip to handle events like back button presses, and it will get dismissed on
+ * back-pressed. If you wish to handle back-press to dismiss the CFR on your own, then set [focusable]
+ * to false.
  * @param anchor The anchor composable the CFR tooltip is attached to.
  */
 @OptIn(ExperimentalMaterial3Api::class) // TooltipBox
@@ -139,7 +141,7 @@ fun CFRBox(
     modifier: Modifier = Modifier,
     positionProvider: CFRPositionProvider = rememberCFRPositionProvider(IndicatorDirection.UP),
     onDismissRequest: (() -> Unit)? = null,
-    focusable: Boolean = false,
+    focusable: Boolean = true,
     anchor: @Composable () -> Unit,
 ) {
     TooltipBox(
@@ -260,6 +262,9 @@ private fun CFRContentLayout(
             Box(contentAlignment = Alignment.TopEnd) {
                 IconButton(
                     onClick = { onDismiss() },
+                    contentDescription = stringResource(
+                        R.string.mozac_cfr_dismiss_button_content_description,
+                    ),
                     modifier = Modifier
                         .semantics {
                             testTagsAsResourceId = true
@@ -268,9 +273,7 @@ private fun CFRContentLayout(
                 ) {
                     Icon(
                         painter = painterResource(iconsR.drawable.mozac_ic_cross_20),
-                        contentDescription = stringResource(
-                            R.string.mozac_cfr_dismiss_button_content_description,
-                        ),
+                        contentDescription = null,
                         modifier = Modifier.size(24.dp),
                         tint = colors.dismissButtonColor,
                     )
@@ -590,8 +593,8 @@ object CFRDefaults {
      * The shape of the CFR
      */
     @Composable
-    fun cfrShape(cornerRadius: Dp = 12.dp): Shape {
-        return RoundedCornerShape(cornerRadius)
+    fun cfrShape(): Shape {
+        return MaterialTheme.shapes.medium
     }
 
     /**
@@ -667,15 +670,14 @@ private fun SampleButtonWithCFR(
         },
         state = state,
     ) {
-        Button(
+        FilledButton(
+            text = buttonText,
             onClick = {
                 scope.launch {
                     state.show()
                 }
             },
-        ) {
-            Text(text = buttonText)
-        }
+        )
     }
 
     DisposableEffect(Unit) {

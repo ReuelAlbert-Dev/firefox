@@ -64,10 +64,12 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
     EXPORTS.mozilla.webrender += [
         "RenderAndroidHardwareBufferTextureHost.h",
+        "RenderAndroidImageReaderImageTextureHost.h",
         "RenderAndroidSurfaceTextureHost.h",
     ]
     UNIFIED_SOURCES += [
         "RenderAndroidHardwareBufferTextureHost.cpp",
+        "RenderAndroidImageReaderImageTextureHost.cpp",
         "RenderAndroidSurfaceTextureHost.cpp",
     ]
 
@@ -133,4 +135,4 @@ LOCAL_INCLUDES += [
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
 
-CXXFLAGS += ["-Werror=switch"]
+COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += ["-Werror=switch"]

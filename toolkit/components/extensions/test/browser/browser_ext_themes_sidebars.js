@@ -3,11 +3,23 @@
 // This test checks whether the sidebar color properties work.
 const LIGHT_SALMON = "#ffa07a";
 
-registerCleanupFunction(async function () {
-  // Ensure sidebar is hidden after each test:
-  if (!document.getElementById("sidebar-box").hidden) {
-    SidebarController.hide({ dismissPanel: true });
-  }
+// Schedule reset to the initial sidebar state after the test.
+const { SidebarTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/SidebarTestUtils.sys.mjs"
+);
+SidebarTestUtils.init(this);
+SidebarTestUtils.restoreStateAtCleanup(window);
+
+add_setup(async () => {
+  // withSidebarTree opens the legacy bookmarks sidebar panel and inspects its
+  // tree view, so opt out of the updated bookmarks panel here.
+  // TODO(Bug 2039395): adapt this test to the new bookmarks sidear panel and remove this sidebar.updateBookmarks.enabled pushPrefEnv)
+  await SpecialPowers.pushPrefEnv({
+    set: [["sidebar.updatedBookmarks.enabled", false]],
+  });
+});
+
+registerCleanupFunction(() => {
   Services.prefs.clearUserPref(
     "browser.toolbarbuttons.introduced.sidebar-button"
   );

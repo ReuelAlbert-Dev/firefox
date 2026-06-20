@@ -134,7 +134,8 @@ already_AddRefed<dom::Promise> Queue::OnSubmittedWorkDone(ErrorResult& aRv) {
     return nullptr;
   }
 
-  ffi::wgpu_client_on_submitted_work_done(GetClient(), GetId());
+  ffi::wgpu_client_on_submitted_work_done(GetClient(), mParent->GetId(),
+                                          GetId());
 
   GetChild()->EnqueueOnSubmittedWorkDonePromise(GetId(), promise);
 
@@ -444,7 +445,7 @@ void Queue::CopyExternalImageToTexture(
   }
 
   if (!sfeResult.mCORSUsed) {
-    nsIGlobalObject* global = mParent->GetOwnerGlobal();
+    nsIGlobalObject* global = mParent->GetRelevantGlobal();
     nsIPrincipal* dstPrincipal = global ? global->PrincipalOrNull() : nullptr;
     if (!sfeResult.mPrincipal || !dstPrincipal ||
         !dstPrincipal->Subsumes(sfeResult.mPrincipal)) {

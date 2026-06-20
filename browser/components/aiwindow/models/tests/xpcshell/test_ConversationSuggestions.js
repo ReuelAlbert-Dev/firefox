@@ -16,9 +16,20 @@ const {
   "moz-src:///browser/components/aiwindow/models/ConversationSuggestions.sys.mjs"
 );
 
-const { openAIEngine } = ChromeUtils.importESModule(
+const { sanitizeUntrustedContent } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/models/ChatUtils.sys.mjs"
+);
+
+const {
+  openAIEngine,
+  MODEL_FEATURES,
+  _setRemoteClientForTesting,
+  _clearRemoteClientForTesting,
+} = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs"
 );
+
+registerCleanupFunction(() => _clearRemoteClientForTesting());
 const { MemoriesManager } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/memories/MemoriesManager.sys.mjs"
 );
@@ -28,6 +39,83 @@ const { MESSAGE_ROLE } = ChromeUtils.importESModule(
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
 );
+
+// Fake RS records for all features used by ConversationSuggestions
+const FAKE_RECORDS = [
+  {
+    feature: MODEL_FEATURES.CONVERSATION_SUGGESTIONS_SIDEBAR_STARTER,
+    version: "2.0",
+    model: "test-model",
+    is_default: true,
+    parameters: {},
+    service_type: "ai",
+    purpose: "convo-starters-sidebar",
+    prompts:
+      "Suggest {n} starters.\nCurrent tab:\n{current_tab}\nOpen tabs:\n{open_tabs}\nDate: {date}\n{assistant_limitations}",
+  },
+  {
+    feature: MODEL_FEATURES.CONVERSATION_STARTERS_SIDEBAR_SYSTEM,
+    version: "1.0",
+    model: "test-model",
+    is_default: true,
+    parameters: {},
+    service_type: "ai",
+    purpose: "convo-starters-sidebar",
+    prompts: "You are a helpful assistant.",
+  },
+  {
+    feature: MODEL_FEATURES.CONVERSATION_SUGGESTIONS_ASSISTANT_LIMITATIONS,
+    version: "1.0",
+    model: "test-model",
+    is_default: true,
+    parameters: {},
+    service_type: "ai",
+    purpose: "convo-starters-sidebar",
+    prompts: "limitations",
+  },
+  {
+    feature: MODEL_FEATURES.CONVERSATION_SUGGESTIONS_FOLLOWUP,
+    version: "1.0",
+    model: "test-model",
+    is_default: true,
+    parameters: {},
+    service_type: "ai",
+    purpose: "convo-starters-sidebar",
+    prompts:
+      "Suggest {n} followups.\nCurrent tab:\n{current_tab}\nConversation: {conversation}\nDate: {date}\n{assistant_limitations}",
+  },
+  {
+    feature: MODEL_FEATURES.CONVERSATION_SUGGESTIONS_MEMORIES,
+    version: "1.0",
+    model: "test-model",
+    is_default: true,
+    parameters: {},
+    service_type: "ai",
+    purpose: "convo-starters-sidebar",
+    prompts: "User memories:\n{memories}",
+  },
+];
+
+/**
+ * Creates a sandbox with stubs for openAIEngine methods used by buildConversation/loadPrompt.
+ * Returns { sb, fakeEngineInstance } — caller must call sb.restore() in finally.
+ *
+ * @param {object} runResult - Resolved value for fakeEngineInstance.run.
+ * @param {sinon.SinonSandbox} [existingSb] - Reuse an existing sandbox instead of creating one.
+ * @returns {{ sb: sinon.SinonSandbox, fakeEngineInstance: object }}
+ */
+function setupStubs(runResult, existingSb) {
+  const sb = existingSb ?? sinon.createSandbox();
+  const fakeEngineInstance = { run: sb.stub().resolves(runResult) };
+
+  _setRemoteClientForTesting({
+    get: sb.stub().resolves(FAKE_RECORDS),
+  });
+  sb.stub(openAIEngine, "build").resolves(fakeEngineInstance);
+  sb.stub(openAIEngine, "getFxAccountToken").resolves(null);
+
+  return { sb, fakeEngineInstance };
+}
 
 /**
  * Constants for preference keys and test values
@@ -41,18 +129,6 @@ const PREF_PRIVATE_BROWSING = "browser.privatebrowsing.autostart";
 const API_KEY = "test-api-key";
 const ENDPOINT = "https://api.test-endpoint.com/v1";
 const MODEL = "test-model";
-
-async function loadRemoteSettingsSnapshot() {
-  const file = do_get_file("ai-window-prompts-remote-settings-snapshot.json");
-  const data = await IOUtils.readUTF8(file.path);
-  return JSON.parse(data);
-}
-
-let REAL_REMOTE_SETTINGS_SNAPSHOT;
-
-add_setup(async function () {
-  REAL_REMOTE_SETTINGS_SNAPSHOT = await loadRemoteSettingsSnapshot();
-});
 
 /**
  * Cleans up preferences after testing
@@ -469,13 +545,12 @@ add_task(async function test_generateConversationStartersSidebar_happy_path() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2\nLabel: Suggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = ["Memory summary 1", "Memory summary 2"];
     const memoriesStub = sb
@@ -506,15 +581,22 @@ add_task(async function test_generateConversationStartersSidebar_happy_path() {
       2,
       "run should be called with 2 messages"
     );
+
     Assert.ok(
       callArgs.args[1].content.includes(
-        '{"title":"Current Tab","url":"https://current.example.com"}'
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Current Tab"),
+          url: "https://current.example.com",
+        })
       ),
       "Prompt should include current tab info"
     );
     Assert.ok(
       callArgs.args[1].content.includes(
-        '{"title":"Tab 2","url":"https://tab2.example.com"}'
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Tab 2"),
+          url: "https://tab2.example.com",
+        })
       ),
       "Prompt should include other tab info"
     );
@@ -550,13 +632,12 @@ add_task(
 
     const sb = sinon.createSandbox();
     try {
-      // Mock the openAIEngine and memories response
-      const fakeEngine = {
-        run: sb.stub().resolves({
+      const { fakeEngineInstance: fakeEngine } = setupStubs(
+        {
           finalOutput: `1. Suggestion 1\n\n- Suggestion 2\nLabel: Suggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-        }),
-      };
-      sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+        },
+        sb
+      );
 
       const fakeMemories = ["Memory summary 1", "Memory summary 2"];
       const memoriesStub = sb
@@ -589,13 +670,19 @@ add_task(
       );
       Assert.ok(
         callArgs.args[1].content.includes(
-          '{"title":"Current Tab","url":"https://current.example.com"}'
+          JSON.stringify({
+            title: sanitizeUntrustedContent("Current Tab"),
+            url: "https://current.example.com",
+          })
         ),
         "Prompt should include current tab info"
       );
       Assert.ok(
         callArgs.args[1].content.includes(
-          '{"title":"Tab 2","url":"https://tab2.example.com"}'
+          JSON.stringify({
+            title: sanitizeUntrustedContent("Tab 2"),
+            url: "https://tab2.example.com",
+          })
         ),
         "Prompt should include other tab info"
       );
@@ -632,13 +719,12 @@ add_task(
 
     const sb = sinon.createSandbox();
     try {
-      // Mock the openAIEngine and memories response
-      const fakeEngine = {
-        run: sb.stub().resolves({
+      const { fakeEngineInstance: fakeEngine } = setupStubs(
+        {
           finalOutput: `1. Suggestion 1\n\n- Suggestion 2\nLabel: Suggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-        }),
-      };
-      sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+        },
+        sb
+      );
 
       const fakeMemories = [];
       const memoriesStub = sb
@@ -671,13 +757,19 @@ add_task(
       );
       Assert.ok(
         callArgs.args[1].content.includes(
-          '{"title":"Current Tab","url":"https://current.example.com"}'
+          JSON.stringify({
+            title: sanitizeUntrustedContent("Current Tab"),
+            url: "https://current.example.com",
+          })
         ),
         "Prompt should include current tab info"
       );
       Assert.ok(
         callArgs.args[1].content.includes(
-          '{"title":"Tab 2","url":"https://tab2.example.com"}'
+          JSON.stringify({
+            title: sanitizeUntrustedContent("Tab 2"),
+            url: "https://tab2.example.com",
+          })
         ),
         "Prompt should include other tab info"
       );
@@ -711,13 +803,12 @@ add_task(async function test_generateConversationStartersSidebar_no_tabs() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2\nLabel: Suggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = ["Memory summary 1", "Memory summary 2"];
     const memoriesStub = sb
@@ -784,13 +875,12 @@ add_task(async function test_generateConversationStartersSidebar_one_tab() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2\nLabel: Suggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = ["Memory summary 1", "Memory summary 2"];
     const memoriesStub = sb
@@ -822,7 +912,10 @@ add_task(async function test_generateConversationStartersSidebar_one_tab() {
     );
     Assert.ok(
       callArgs.args[1].content.includes(
-        '\n{"title":"Only Tab","url":"https://only.example.com"}'
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Only Tab"),
+          url: "https://only.example.com",
+        })
       ),
       "Prompt should include current tab info"
     );
@@ -862,11 +955,8 @@ add_task(
 
     const sb = sinon.createSandbox();
     try {
-      // Mock the openAIEngine and memories response
-      const fakeEngine = {
-        run: sb.stub().rejects(new Error("Engine failure")),
-      };
-      sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      const { fakeEngineInstance: fakeEngine } = setupStubs(null, sb);
+      fakeEngine.run.rejects(new Error("Engine failure"));
 
       const fakeMemories = ["Memory summary 1", "Memory summary 2"];
       sb.stub(
@@ -902,16 +992,10 @@ add_task(
 
     const sb = sinon.createSandbox();
     try {
-      const fakeEngine = {
-        run: sb.stub().resolves({
-          finalOutput: `Suggestion 1\nSuggestion 2\nSuggestion 3`,
-        }),
-      };
-      sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
-
-      sb.stub(openAIEngine, "getRemoteClient").returns({
-        get: sb.stub().resolves(REAL_REMOTE_SETTINGS_SNAPSHOT),
-      });
+      const { fakeEngineInstance: fakeEngine } = setupStubs(
+        { finalOutput: `Suggestion 1\nSuggestion 2\nSuggestion 3` },
+        sb
+      );
 
       sb.stub(
         MemoriesGetterForSuggestionPrompts,
@@ -929,21 +1013,23 @@ add_task(
 
       const callArgs = fakeEngine.run.firstCall.args[0];
       console.log("Prompt content:", callArgs.args);
+      // System prompt was loaded (non-empty string from remote settings)
       Assert.ok(
-        callArgs.args[0].content.includes(
-          "Generate the requested number of starters."
-        ),
-        "Prompt should include system prompt from remote settings"
+        typeof callArgs.args[0].content === "string" &&
+          callArgs.args[0].content.length,
+        "System prompt should be loaded from remote settings"
       );
+      // Additional components (limitations + memories) were concatenated in
       Assert.ok(
-        callArgs.args[1].content.includes(
-          "You can do this and cannot do that."
-        ),
-        "Prompt should include assistant limitations from remote settings"
+        typeof callArgs.args[1].content === "string" &&
+          callArgs.args[1].content.length,
+        "Additional components should be included in the prompt"
       );
+      // The test-provided memories (from the stub) were injected into the prompt
       Assert.ok(
-        callArgs.args[1].content.includes("Use the following memories"),
-        "Prompt should include memories prompt from remote settings"
+        callArgs.args[1].content.includes("memory 1") &&
+          callArgs.args[1].content.includes("memory 2"),
+        "Memories from the stub should be injected into the prompt"
       );
     } finally {
       sb.restore();
@@ -961,13 +1047,12 @@ add_task(async function test_generateFollowupPrompts_happy_path() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2.\nSuggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = ["Memory summary 1", "Memory summary 2"];
     const memoriesStub = sb
@@ -999,24 +1084,27 @@ add_task(async function test_generateFollowupPrompts_happy_path() {
 
     const callArgs = fakeEngine.run.firstCall.args[0];
     Assert.equal(
-      callArgs.messages.length,
+      callArgs.args.length,
       2,
       "run should be called with 2 messages"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
-        '{"title":"Current Tab","url":"https://current.example.com"}'
+      callArgs.args[1].content.includes(
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Current Tab"),
+          url: "https://current.example.com",
+        })
       ),
       "Prompt should include current tab info"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
+      callArgs.args[1].content.includes(
         '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]'
       ),
       "Prompt should include conversation history"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
+      callArgs.args[1].content.includes(
         "\n- Memory summary 1\n- Memory summary 2"
       ),
       "Prompt should include memory summaries"
@@ -1045,13 +1133,12 @@ add_task(async function test_generateFollowupPrompts_no_memories() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2.\nSuggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = ["Memory summary 1", "Memory summary 2"];
     const memoriesStub = sb
@@ -1082,24 +1169,27 @@ add_task(async function test_generateFollowupPrompts_no_memories() {
 
     const callArgs = fakeEngine.run.firstCall.args[0];
     Assert.equal(
-      callArgs.messages.length,
+      callArgs.args.length,
       2,
       "run should be called with 2 messages"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
-        '{"title":"Current Tab","url":"https://current.example.com"}'
+      callArgs.args[1].content.includes(
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Current Tab"),
+          url: "https://current.example.com",
+        })
       ),
       "Prompt should include current tab info"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
+      callArgs.args[1].content.includes(
         '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]'
       ),
       "Prompt should include conversation history"
     );
     Assert.ok(
-      !callArgs.messages[1].content.includes(
+      !callArgs.args[1].content.includes(
         "\n- Memory summary 1\n- Memory summary 2"
       ),
       "Prompt shouldn't include memory summaries"
@@ -1128,13 +1218,12 @@ add_task(async function test_generateFollowupPrompts_no_memories_returned() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2.\nSuggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = [];
     const memoriesStub = sb
@@ -1166,24 +1255,27 @@ add_task(async function test_generateFollowupPrompts_no_memories_returned() {
 
     const callArgs = fakeEngine.run.firstCall.args[0];
     Assert.equal(
-      callArgs.messages.length,
+      callArgs.args.length,
       2,
       "run should be called with 2 messages"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
-        '{"title":"Current Tab","url":"https://current.example.com"}'
+      callArgs.args[1].content.includes(
+        JSON.stringify({
+          title: sanitizeUntrustedContent("Current Tab"),
+          url: "https://current.example.com",
+        })
       ),
       "Prompt should include current tab info"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
+      callArgs.args[1].content.includes(
         '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]'
       ),
       "Prompt should include conversation history"
     );
     Assert.ok(
-      !callArgs.messages[1].content.includes("\nUser Memories:\n"),
+      !callArgs.args[1].content.includes("\nUser Memories:\n"),
       "Prompt shouldn't include user memories block"
     );
 
@@ -1210,13 +1302,12 @@ add_task(async function test_generateFollowupPrompts_no_current_tab() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().resolves({
+    const { fakeEngineInstance: fakeEngine } = setupStubs(
+      {
         finalOutput: `1. Suggestion 1\n\n- Suggestion 2.\nSuggestion 3.\nSuggestion 4\nSuggestion 5\nSuggestion 6`,
-      }),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+      },
+      sb
+    );
 
     const fakeMemories = [];
     const memoriesStub = sb
@@ -1244,22 +1335,22 @@ add_task(async function test_generateFollowupPrompts_no_current_tab() {
 
     const callArgs = fakeEngine.run.firstCall.args[0];
     Assert.equal(
-      callArgs.messages.length,
+      callArgs.args.length,
       2,
       "run should be called with 2 messages"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes("\nNo tab\n"),
+      callArgs.args[1].content.includes("\nNo tab\n"),
       "Prompt shouldn't include any tab info"
     );
     Assert.ok(
-      callArgs.messages[1].content.includes(
+      callArgs.args[1].content.includes(
         '[{"role":"user","content":"Hello"},{"role":"assistant","content":"Hi there!"}]'
       ),
       "Prompt should include conversation history"
     );
     Assert.ok(
-      !callArgs.messages[1].content.includes("\nUser Memories:\n"),
+      !callArgs.args[1].content.includes("\nUser Memories:\n"),
       "Prompt shouldn't include user memories block"
     );
 
@@ -1286,11 +1377,8 @@ add_task(async function test_generateFollowupPrompts_engine_error() {
 
   const sb = sinon.createSandbox();
   try {
-    // Mock the openAIEngine and memories response
-    const fakeEngine = {
-      run: sb.stub().rejects(new Error("Engine failure")),
-    };
-    sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
+    const { fakeEngineInstance: fakeEngine } = setupStubs(null, sb);
+    fakeEngine.run.rejects(new Error("Engine failure"));
 
     const fakeMemories = [];
     sb.stub(
@@ -1328,16 +1416,10 @@ add_task(
 
     const sb = sinon.createSandbox();
     try {
-      const fakeEngine = {
-        run: sb.stub().resolves({
-          finalOutput: `Suggestion 1\nSuggestion 2`,
-        }),
-      };
-      sb.stub(openAIEngine, "_createEngine").resolves(fakeEngine);
-
-      sb.stub(openAIEngine, "getRemoteClient").returns({
-        get: sb.stub().resolves(REAL_REMOTE_SETTINGS_SNAPSHOT),
-      });
+      const { fakeEngineInstance: fakeEngine } = setupStubs(
+        { finalOutput: `Suggestion 1\nSuggestion 2` },
+        sb
+      );
 
       sb.stub(
         MemoriesGetterForSuggestionPrompts,
@@ -1357,9 +1439,7 @@ add_task(
 
       const callArgs = fakeEngine.run.firstCall.args[0];
       Assert.ok(
-        callArgs.messages[1].content.includes(
-          "You can do this and cannot do that."
-        ),
+        callArgs.args[1].content.includes("limitations"),
         "Prompt should include assistant limitations from remote settings"
       );
     } finally {

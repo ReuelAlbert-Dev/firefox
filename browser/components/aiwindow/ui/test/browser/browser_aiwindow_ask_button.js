@@ -73,6 +73,11 @@ add_task(async function test_ask_button() {
       "Ask button is initially visible for AI Window"
     );
 
+    const focusAskButton = () => {
+      askButton.focus();
+      Services.focus.setFocus(askButton, Services.focus.FLAG_BYKEY);
+    };
+
     // Navigation away from aiWindow.html may auto-open the sidebar via
     // AIWindowTabStatesManager, wait for it to settle then ensure closed.
     await TestUtils.waitForCondition(
@@ -100,12 +105,13 @@ add_task(async function test_ask_button() {
 
     await BrowserTestUtils.waitForMutationCondition(
       askButton,
-      { attributes: true, attributeFilter: ["class"] },
-      () => askButton.classList.contains("sidebar-is-open")
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "true"
     );
-    Assert.ok(
-      askButton.classList.contains("sidebar-is-open"),
-      "Ask button has the class sidebar-is-open after click"
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "true",
+      "Ask button has aria-expanded=true after click"
     );
 
     const sidebar = win.document.getElementById("ai-window-box");
@@ -113,34 +119,79 @@ add_task(async function test_ask_button() {
       Assert.ok(!sidebar.collapsed, "AI Sidebar exists and is not hidden");
     }
     EventUtils.synthesizeMouseAtCenter(askButton, {}, win);
-    Assert.ok(
-      !askButton.classList.contains("sidebar-is-open"),
-      "Ask button removed the sidebar-is-open class after second click"
+
+    await BrowserTestUtils.waitForMutationCondition(
+      askButton,
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "false"
+    );
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "false",
+      "Ask button has aria-expanded=false after second click"
     );
     Assert.ok(sidebar.collapsed, "AI Sidebar is hidden after second click");
 
     askButton.setAttribute("tabindex", "-1");
-    askButton.focus();
-    Services.focus.setFocus(askButton, Services.focus.FLAG_BYKEY);
+    focusAskButton();
     EventUtils.synthesizeKey("KEY_Enter", {}, win);
 
     await BrowserTestUtils.waitForMutationCondition(
       askButton,
-      { attributes: true, attributeFilter: ["class"] },
-      () => askButton.classList.contains("sidebar-is-open")
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "true"
     );
-    Assert.ok(
-      askButton.classList.contains("sidebar-is-open"),
-      "Ask button has the class sidebar-is-open after tab enter"
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "true",
+      "Ask button has aria-expanded=true after tab enter"
     );
     Assert.ok(!sidebar.hidden, "AI Sidebar is not hidden after tab enter");
 
+    focusAskButton();
     EventUtils.synthesizeKey("KEY_Enter", {}, win);
-    Assert.ok(
-      !askButton.classList.contains("sidebar-is-open"),
-      "Ask button removed the sidebar-is-open class after second tab enter"
+
+    await BrowserTestUtils.waitForMutationCondition(
+      askButton,
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "false"
+    );
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "false",
+      "Ask button has aria-expanded=false after second tab enter"
     );
     Assert.ok(sidebar.collapsed, "AI Sidebar is hidden after second tab enter");
+
+    focusAskButton();
+    EventUtils.synthesizeKey(" ", {}, win);
+
+    await BrowserTestUtils.waitForMutationCondition(
+      askButton,
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "true"
+    );
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "true",
+      "Ask button has aria-expanded=true after space"
+    );
+    Assert.ok(!sidebar.hidden, "AI Sidebar is not hidden after space");
+
+    focusAskButton();
+    EventUtils.synthesizeKey(" ", {}, win);
+
+    await BrowserTestUtils.waitForMutationCondition(
+      askButton,
+      { attributes: true, attributeFilter: ["aria-expanded"] },
+      () => askButton.getAttribute("aria-expanded") === "false"
+    );
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "false",
+      "Ask button has aria-expanded=false after second space"
+    );
+    Assert.ok(sidebar.collapsed, "AI Sidebar is hidden after second space");
     askButton.removeAttribute("tabindex");
   } finally {
     await BrowserTestUtils.closeWindow(win);
@@ -189,4 +240,71 @@ add_task(async function test_ask_button_immersive_view() {
  */
 add_task(async function test_ask_button_immersive_view_vertical_tabs() {
   await testImmersiveView(true);
+});
+
+/**
+ * Test if the close button inside the sidebar chat closes the sidebar
+ */
+add_task(async function test_sidebar_close_button() {
+  const { restore } = await stubEngineNetworkBoundaries({
+    serverOptions: null,
+  });
+  let win;
+  try {
+    win = await openAIWindow();
+    const exampleUrl = "https://example.com/";
+    const browser = win.gBrowser.selectedTab.linkedBrowser;
+    const loaded = BrowserTestUtils.browserLoaded(browser, false, exampleUrl);
+    BrowserTestUtils.startLoadingURIString(browser, exampleUrl);
+    await loaded;
+
+    await TestUtils.waitForCondition(
+      () => AIWindowUI.isSidebarOpen(win),
+      "Wait for sidebar to auto-open after navigation"
+    );
+
+    const askButton = win.document.getElementById(
+      "smartwindow-ask-button-inner"
+    );
+    const sidebar = win.document.getElementById("ai-window-box");
+
+    Assert.ok(!sidebar.collapsed, "Sidebar is open");
+
+    const aiBrowser = win.document.getElementById("ai-window-browser");
+
+    await TestUtils.waitForCondition(
+      () => aiBrowser.contentDocument.querySelector("ai-window")?.shadowRoot,
+      "Wait for ai-window shadow root to be ready"
+    );
+
+    const aiWindow = aiBrowser.contentDocument.querySelector("ai-window");
+    const closeButton = aiWindow.shadowRoot.querySelector(
+      ".close-sidebar-button"
+    );
+    Assert.ok(closeButton, "Close button exists in the sidebar header");
+
+    closeButton.click();
+
+    await TestUtils.waitForCondition(
+      () => !AIWindowUI.isSidebarOpen(win),
+      "Wait for sidebar to close after clicking close button"
+    );
+
+    Assert.ok(
+      sidebar.collapsed,
+      "Sidebar is closed after clicking close button"
+    );
+    Assert.ok(
+      !askButton.hasAttribute("checked"),
+      "Ask button is unchecked after sidebar close"
+    );
+    Assert.equal(
+      askButton.getAttribute("aria-expanded"),
+      "false",
+      "Ask button has aria-expanded=false after sidebar close"
+    );
+  } finally {
+    await BrowserTestUtils.closeWindow(win);
+    await restore();
+  }
 });

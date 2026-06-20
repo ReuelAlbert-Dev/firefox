@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -976,7 +974,25 @@ void LIRGenerator::visitWasmStore(MWasmStore* ins) {
     return;
   }
 
-  LAllocation valueAlloc = useRegisterAtStart(value);
+  LAllocation valueAlloc;
+  switch (ins->access().type()) {
+    case Scalar::Int8:
+    case Scalar::Uint8:
+    case Scalar::Int16:
+    case Scalar::Uint16:
+    case Scalar::Int32:
+    case Scalar::Uint32:
+      if (value->type() == MIRType::Int32 && value->isConstant() &&
+          value->toConstant()->toInt32() == 0) {
+        valueAlloc = useRegisterOrConstantAtStart(value);
+      } else {
+        valueAlloc = useRegisterAtStart(value);
+      }
+      break;
+    default:
+      valueAlloc = useRegisterAtStart(value);
+      break;
+  }
   auto* lir = new (alloc()) LWasmStore(baseAlloc, valueAlloc, memoryBase);
   add(lir, ins);
 }
@@ -1260,8 +1276,12 @@ void LIRGenerator::visitWasmReplaceLaneSimd128(MWasmReplaceLaneSimd128* ins) {
         LWasmReplaceInt64LaneSimd128(lhs, useInt64Register(ins->rhs()));
     defineReuseInput(lir, ins, 0);
   } else {
-    auto* lir =
-        new (alloc()) LWasmReplaceLaneSimd128(lhs, useRegister(ins->rhs()));
+    LAllocation rhsAlloc =
+        (ins->rhs()->type() == MIRType::Int32 && ins->rhs()->isConstant() &&
+         ins->rhs()->toConstant()->toInt32() == 0)
+            ? useRegisterOrConstant(ins->rhs())
+            : useRegister(ins->rhs());
+    auto* lir = new (alloc()) LWasmReplaceLaneSimd128(lhs, rhsAlloc);
     defineReuseInput(lir, ins, 0);
   }
 #else

@@ -52,6 +52,8 @@ class GfxInfo final : public GfxInfoBase {
 
   NS_IMETHOD_(void) GetData() override;
 
+  const nsTArray<uint64_t>& GetDMABufEGLModifiers(uint32_t aDrmFourcc) const;
+
   static bool FireGLXTestProcess();
 
 #ifdef DEBUG
@@ -126,6 +128,14 @@ class GfxInfo final : public GfxInfoBase {
   int mVAAPISupportedCodecs = 0;
   mozilla::Maybe<bool> mIsV4L2Supported;
   int mV4L2SupportedCodecs = 0;
+  mozilla::Maybe<bool> mIsVulkanSupported;
+  int mVulkanSupportedCodecs = 0;
+
+  nsTArray<uint64_t> mDMABufEGLModifiersXRGB;
+  nsTArray<uint64_t> mDMABufEGLModifiersARGB;
+  nsTArray<uint64_t> mDMABufEGLModifiersNV12;
+  nsTArray<uint64_t> mDMABufEGLModifiersP010;
+  nsTArray<uint64_t> mDMABufEGLModifiersYUV420;
 
   static int sGLXTestPipe;
   static pid_t sGLXTestPID;
@@ -136,6 +146,7 @@ class GfxInfo final : public GfxInfoBase {
 
   void GetDataVAAPI();
   void GetDataV4L2();
+  void GetDataVulkan();
   void V4L2ProbeDevice(nsCString& dev);
   void AddCrashReportAnnotations();
 };

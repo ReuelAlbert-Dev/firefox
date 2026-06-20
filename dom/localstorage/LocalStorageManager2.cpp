@@ -202,7 +202,7 @@ LocalStorageManager2::PrecacheStorage(nsIPrincipal* aPrincipal,
   // implementation to perform a preload in the content/current process.  That's
   // not how things work in LSNG.  Instead everything happens in the parent
   // process, triggered by the official preloading spot,
-  // ContentParent::AboutToLoadHttpDocumentForChild.
+  // ContentParent::AboutToLoadDocumentForChild.
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -307,8 +307,8 @@ LocalStorageManager2::Preload(nsIPrincipal* aPrincipal, JSContext* aContext,
 
   LSRequestCommonParams commonParams;
   commonParams.principalInfo() = principalInfo;
-  commonParams.storagePrincipalInfo() = principalInfo;
-  commonParams.originKey() = originKey;
+  commonParams.storagePrincipalInfo() = std::move(principalInfo);
+  commonParams.originKey() = std::move(originKey);
 
   LSRequestPreloadDatastoreParams params(commonParams);
 

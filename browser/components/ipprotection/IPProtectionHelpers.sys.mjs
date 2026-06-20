@@ -7,6 +7,7 @@
  * corresponding documentation in the `docs` folder as well.
  */
 
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { IPProtectionActivator } from "moz-src:///toolkit/components/ipprotection/IPProtectionActivator.sys.mjs";
 
 const lazy = {};
@@ -20,8 +21,18 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   IPProtectionStates:
     "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
+  IPPFxaAuthProvider:
+    "moz-src:///toolkit/components/ipprotection/fxa/IPPFxaAuthProvider.sys.mjs",
+  IPPFxaActivateAuthProvider:
+    "moz-src:///toolkit/components/ipprotection/fxa/IPPFxaActivateAuthProvider.sys.mjs",
 });
 
+if (AppConstants.MOZ_ENTERPRISE) {
+  ChromeUtils.defineESModuleGetters(lazy, {
+    IPPEnterpriseAuthProvider:
+      "moz-src:///toolkit/components/ipprotection/enterprise/IPPEnterpriseAuthProvider.sys.mjs",
+  });
+}
 import { IPPUsageHelper } from "moz-src:///browser/components/ipprotection/IPPUsageHelper.sys.mjs";
 import { IPPOnboardingMessage } from "moz-src:///browser/components/ipprotection/IPPOnboardingMessageHelper.sys.mjs";
 import { IPPOptOutHelper } from "moz-src:///browser/components/ipprotection/IPPOptOutHelper.sys.mjs";
@@ -77,6 +88,23 @@ class UIHelper {
   }
 }
 
+function pickAuthProvider() {
+  if (AppConstants.MOZ_ENTERPRISE) {
+    return lazy.IPPEnterpriseAuthProvider;
+  }
+  if (
+    Services.prefs.getBoolPref(
+      "browser.ipProtection.fxa.useActivateFlow",
+      false
+    )
+  ) {
+    return lazy.IPPFxaActivateAuthProvider;
+  }
+  return lazy.IPPFxaAuthProvider;
+}
+
+const authProvider = pickAuthProvider();
+
 IPProtectionActivator.addHelpers([
   IPPOnboardingMessage,
   IPPUsageHelper,
@@ -84,6 +112,9 @@ IPProtectionActivator.addHelpers([
   IPPOptOutHelper,
   IPProtectionAlertManager,
   IPProtectionInfobarManager,
+  ...authProvider.helpers,
 ]);
+
+IPProtectionActivator.setAuthProvider(authProvider);
 
 export { IPProtectionActivator };

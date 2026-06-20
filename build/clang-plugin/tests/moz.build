@@ -11,11 +11,14 @@ SOURCES += [
     "TestCanRunScript.cpp",
     "TestCustomHeap.cpp",
     "TestDanglingOnTemporary.cpp",
+    "TestEnumSerializer.cpp",
     "TestExplicitOperatorBool.cpp",
+    "TestFinalCycleCollectingIsupports.cpp",
     "TestGlobalClass.cpp",
     "TestGlobalVariableInitialization.cpp",
     "TestHeapClass.cpp",
     "TestInheritTypeAnnotationsFromTemplateArgs.cpp",
+    "TestIntToEnumCast.cpp",
     "TestJSHandleRootedTypedef.cpp",
     "TestKnownLive.cpp",
     "TestKungFuDeathGrip.cpp",
@@ -37,6 +40,7 @@ SOURCES += [
     "TestNonMemMovableStdAtomic.cpp",
     "TestNonParameterChecker.cpp",
     "TestNonTemporaryClass.cpp",
+    "TestNonTerminatedString.cpp",
     "TestNonTrivialTypeInFfi.cpp",
     "TestNoPrincipalGetUri.cpp",
     "TestNoRefcountedInsideLambdas.cpp",
@@ -56,8 +60,14 @@ SOURCES += [
 
 if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
+        "TestEmptyBases.cpp",
         "TestFopenUsage.cpp",
         "TestLoadLibraryUsage.cpp",
+    ]
+
+if CONFIG["MOZ_BUILD_APP"] != "js":
+    SOURCES += [
+        "TestSupportsWeakPtrCycleCollection.cpp",
     ]
 
 include("../external/tests/sources.mozbuild")

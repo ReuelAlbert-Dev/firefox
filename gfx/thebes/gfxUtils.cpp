@@ -228,8 +228,7 @@ already_AddRefed<DataSourceSurface> gfxUtils::CreatePremultipliedDataSurface(
   DataSourceSurface::MappedSurface destMap;
   if (!MapSrcAndCreateMappedDest(srcSurf, &destSurf, &srcMap, &destMap)) {
     MOZ_ASSERT(false, "MapSrcAndCreateMappedDest failed.");
-    RefPtr<DataSourceSurface> surface(srcSurf);
-    return surface.forget();
+    return nullptr;
   }
 
   PremultiplyData(srcMap.mData, srcMap.mStride, srcSurf->GetFormat(),
@@ -247,8 +246,7 @@ already_AddRefed<DataSourceSurface> gfxUtils::CreateUnpremultipliedDataSurface(
   DataSourceSurface::MappedSurface destMap;
   if (!MapSrcAndCreateMappedDest(srcSurf, &destSurf, &srcMap, &destMap)) {
     MOZ_ASSERT(false, "MapSrcAndCreateMappedDest failed.");
-    RefPtr<DataSourceSurface> surface(srcSurf);
-    return surface.forget();
+    return nullptr;
   }
 
   UnpremultiplyData(srcMap.mData, srcMap.mStride, srcSurf->GetFormat(),
@@ -1178,10 +1176,11 @@ nsresult gfxUtils::EncodeSourceSurface(SourceSurface* aSurface,
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aFile) {
+    nsPromiseFlatCString flatURI(dataURI);
 #ifdef ANDROID
     if (aFile == stdout || aFile == stderr) {
       // ADB logcat cuts off long strings so we will break it down
-      const char* cStr = dataURI.BeginReading();
+      const char* cStr = flatURI.get();
       size_t len = strlen(cStr);
       while (true) {
         printf_stderr("IMG: %.140s\n", cStr);
@@ -1191,7 +1190,7 @@ nsresult gfxUtils::EncodeSourceSurface(SourceSurface* aSurface,
       }
     }
 #endif
-    fprintf(aFile, "%s", dataURI.BeginReading());
+    fprintf(aFile, "%s", flatURI.get());
   } else if (!aStrOut) {
     nsCOMPtr<nsIClipboardHelper> clipboard(
         do_GetService("@mozilla.org/widget/clipboardhelper;1", &rv));
@@ -1517,17 +1516,28 @@ UniquePtr<uint8_t[]> gfxUtils::GetImageBuffer(gfx::DataSourceSurface* aSurface,
                                               int32_t* outFormat) {
   *outFormat = 0;
 
+  auto surfaceFormat = aSurface->GetFormat();
+  switch (surfaceFormat) {
+    case gfx::SurfaceFormat::B8G8R8A8:
+    case gfx::SurfaceFormat::B8G8R8X8:
+      break;
+    default:
+      MOZ_CRASH("Unexpected SurfaceFormat");
+  }
+  auto bpp = 4;
+
   DataSourceSurface::MappedSurface map;
   if (!aSurface->Map(DataSourceSurface::MapType::READ, &map)) return nullptr;
 
   uint32_t bufferSize =
-      aSurface->GetSize().width * aSurface->GetSize().height * 4;
+      aSurface->GetSize().width * aSurface->GetSize().height * bpp;
   auto imageBuffer = MakeUniqueFallible<uint8_t[]>(bufferSize);
   if (!imageBuffer) {
     aSurface->Unmap();
     return nullptr;
   }
-  memcpy(imageBuffer.get(), map.mData, bufferSize);
+  CopySurfaceDataToPackedArray(map.mData, imageBuffer.get(),
+                               aSurface->GetSize(), map.mStride, bpp);
 
   aSurface->Unmap();
 
@@ -1568,6 +1578,7 @@ nsresult gfxUtils::GetInputStream(gfx::DataSourceSurface* aSurface,
                                   bool aIsAlphaPremultiplied,
                                   const char* aMimeType,
                                   const nsAString& aEncoderOptions,
+                                  const nsACString& aRandomizationKey,
                                   nsIInputStream** outStream) {
   nsCString enccid("@mozilla.org/image/encoder;2?type=");
   enccid += aMimeType;
@@ -1581,7 +1592,7 @@ nsresult gfxUtils::GetInputStream(gfx::DataSourceSurface* aSurface,
 
   return dom::ImageEncoder::GetInputStream(
       aSurface->GetSize().width, aSurface->GetSize().height, imageBuffer.get(),
-      format, encoder, aEncoderOptions, VoidCString(), outStream);
+      format, encoder, aEncoderOptions, aRandomizationKey, outStream);
 }
 
 /* static */

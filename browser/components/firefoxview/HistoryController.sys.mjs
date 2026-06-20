@@ -11,17 +11,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
-let XPCOMUtils = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-).XPCOMUtils;
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "maxRowsPref",
-  "browser.firefox-view.max-history-rows",
-  -1
-);
-
 const HISTORY_MAP_L10N_IDS = {
   sidebar: {
     "history-date-today": "sidebar-history-date-today",
@@ -172,18 +161,15 @@ export class HistoryController {
     }
     for (const { items } of entries) {
       for (const item of items) {
-        switch (sortOption) {
-          case "datesite": {
-            // item is a [ domain, visit[] ] entry.
-            const [, visits] = item;
-            for (const visit of visits) {
-              this.#normalizeVisit(visit);
-            }
-            break;
+        if (sortOption === "datesite" && !searchQuery) {
+          // item is a [ domain, visit[] ] entry.
+          const [, visits] = item;
+          for (const visit of visits) {
+            this.#normalizeVisit(visit);
           }
-          default:
-            // item is a single visit.
-            this.#normalizeVisit(item);
+        } else {
+          // item is a single visit.
+          this.#normalizeVisit(item);
         }
       }
     }
@@ -199,6 +185,8 @@ export class HistoryController {
    */
   #normalizeVisit(visit) {
     visit.time = visit.date.getTime();
+    visit.pageGuid = visit.guid;
+    visit.guid = `${visit.guid}|${visit.time}`;
     visit.title = visit.title || visit.url;
     visit.icon = `page-icon:${visit.url}`;
     visit.primaryL10nId = "fxviewtabrow-tabs-list-tab";
@@ -523,7 +511,7 @@ export class HistoryController {
   async #fetchHistory() {
     return this.placesQuery.getHistory({
       daysOld: 60,
-      limit: lazy.maxRowsPref,
+      limit: -1,
       sortBy: this.sortOption,
     });
   }

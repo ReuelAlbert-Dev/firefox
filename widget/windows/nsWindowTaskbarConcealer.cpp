@@ -103,8 +103,7 @@ static mozilla::LazyLogModule sTaskbarConcealerLog("TaskbarConcealer");
 // Map of all relevant Gecko windows, along with the monitor on which each
 // window was last known to be located.
 /* static */
-MOZ_RUNINIT nsTHashMap<HWND, HMONITOR>
-    nsWindow::TaskbarConcealer::sKnownWindows;
+constinit nsTHashMap<HWND, HMONITOR> nsWindow::TaskbarConcealer::sKnownWindows;
 
 // Returns Nothing if the window in question is irrelevant (for any reason),
 // or Some(the window's current state) otherwise.
@@ -128,7 +127,7 @@ nsWindow::TaskbarConcealer::GetWindowState(HWND aWnd) {
 
   // nsWindows of other window-classes include tooltips and drop-shadow-bearing
   // menus.
-  if (pWin->mWindowType != WindowType::TopLevel) {
+  if (!pWin->IsTopLevelWidget()) {
     return Nothing();
   }
 

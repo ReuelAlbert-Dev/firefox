@@ -4,7 +4,6 @@
 
 package org.mozilla.fenix.tabstray.ui.tabitems
 
-import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,20 +37,23 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
-import androidx.compose.ui.tooling.preview.PreviewParameterProvider
 import androidx.compose.ui.unit.dp
 import mozilla.components.browser.state.state.TabSessionState
-import mozilla.components.compose.base.RadioCheckmarkColors
+import mozilla.components.compose.base.button.IconButton
 import mozilla.components.concept.engine.utils.ABOUT_HOME_URL
 import mozilla.components.support.base.utils.MAX_URI_LENGTH
 import org.mozilla.fenix.R
+import org.mozilla.fenix.compose.Favicon
 import org.mozilla.fenix.compose.SwipeToDismissBox2
 import org.mozilla.fenix.compose.SwipeToDismissState2
 import org.mozilla.fenix.compose.TabThumbnail
 import org.mozilla.fenix.tabstray.TabsTrayTestTag
+import org.mozilla.fenix.tabstray.browser.compose.TabItemInteractionState
 import org.mozilla.fenix.tabstray.data.TabsTrayItem
 import org.mozilla.fenix.tabstray.data.createTab
 import org.mozilla.fenix.theme.FirefoxTheme
+import org.mozilla.fenix.theme.ThemedValue
+import org.mozilla.fenix.theme.ThemedValueProvider
 import mozilla.components.ui.icons.R as iconsR
 
 private val TabHeaderFaviconSize = 12.dp
@@ -70,6 +71,7 @@ private val TabHeaderFaviconSize = 12.dp
  * @param onCloseClick Invoked when the close button is clicked.
  * @param onClick Invoked when the item is clicked.
  * @param onLongClick Invoked when the item is long clicked.
+ * @param interactionState The tab item's interaction state (hover, drag, etc)
  */
 @Composable
 fun TabGridTabItem(
@@ -86,6 +88,7 @@ fun TabGridTabItem(
     onCloseClick: (TabsTrayItem.Tab) -> Unit,
     onClick: (TabsTrayItem) -> Unit,
     onLongClick: ((TabsTrayItem) -> Unit)? = null,
+    interactionState: TabItemInteractionState,
 ) {
     SwipeToDismissBox2(
         modifier = modifier,
@@ -105,6 +108,7 @@ fun TabGridTabItem(
                 onLongClick = onLongClick,
             ),
             onCloseTabClick = onCloseClick,
+            interactionState = interactionState,
         )
     }
 }
@@ -117,6 +121,7 @@ fun TabGridTabItem(
  * @param selectionState: The tab's selection state - active, multi-selection, etc.
  * @param clickHandler: The tab's click handler,
  * @param onCloseTabClick: Invoked when a tab is closed.
+ * @param interactionState The tab item's interaction state (hover, drag, etc)
  */
 @Composable
 private fun TabContent(
@@ -130,16 +135,18 @@ private fun TabContent(
     ),
     clickHandler: TabsTrayItemClickHandler,
     onCloseTabClick: ((TabsTrayItem.Tab) -> Unit),
+    interactionState: TabItemInteractionState,
 ) {
     Box(
         modifier = modifier
             .wrapContentSize()
+            .tabItemGridInteractionAnimation(interactionState)
             .testTag(TabsTrayTestTag.TAB_ITEM_ROOT),
     ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(TabContentCardShape)
+                .clip(tabContentCardShape)
                 .tabItemClickable(
                     clickHandler = clickHandler,
                     clickedItem = tab,
@@ -147,18 +154,13 @@ private fun TabContent(
                 .semantics {
                     selected = selectionState.isFocused
                 },
-            shape = TabContentCardShape,
+            shape = tabContentCardShape,
+            border = tabItemConditionalBorder(selectionState),
             colors = CardDefaults.cardColors(
-                containerColor = if (selectionState.isFocused) {
-                    MaterialTheme.colorScheme.primary
-                } else if (selectionState.isSelected) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHighest
-                },
+                containerColor = tabGridItemContainerColor(selectionState),
             ),
         ) {
-            Column {
+            Column(modifier = Modifier.aspectRatio(gridItemAspectRatio)) {
                 Header(
                     tab = tab,
                     selectionState = selectionState,
@@ -169,9 +171,12 @@ private fun TabContent(
 
                 Card(
                     modifier = Modifier
-                        .aspectRatio(gridItemAspectRatio)
-                        .padding(horizontal = FirefoxTheme.layout.space.static50),
-                    shape = ThumbnailShape,
+                        .padding(
+                            start = FirefoxTheme.layout.space.static50,
+                            end = FirefoxTheme.layout.space.static50,
+                            bottom = FirefoxTheme.layout.space.static50,
+                        ),
+                    shape = thumbnailShape,
                 ) {
                     Thumbnail(
                         tab = tab,
@@ -199,21 +204,14 @@ private fun Header(
     ) {
         Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static100))
 
-        TabIcon(
-            tab = tab,
-            isSelected = selectionState.isFocused,
-        )
+        TabIcon(tab = tab)
 
         Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static50))
 
         Text(
             text = tab.title.take(MAX_URI_LENGTH),
             modifier = Modifier.weight(1f),
-            color = if (selectionState.isFocused) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = FirefoxTheme.typography.caption,
@@ -232,7 +230,6 @@ private fun Header(
 @Composable
 private fun TabIcon(
     tab: TabsTrayItem.Tab,
-    isSelected: Boolean,
 ) {
     val icon = tab.icon
     if (icon != null) {
@@ -249,15 +246,10 @@ private fun TabIcon(
             modifier = Modifier.size(TabHeaderFaviconSize),
         )
     } else {
-        Icon(
-            painter = painterResource(id = iconsR.drawable.mozac_ic_globe_24),
-            contentDescription = null,
-            modifier = Modifier.size(TabHeaderFaviconSize),
-            tint = if (isSelected) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+        Favicon(
+            url = tab.url,
+            size = TabHeaderFaviconSize,
+            isPrivate = tab.private,
         )
     }
 }
@@ -271,7 +263,6 @@ private fun UtilityIcon(
     if (!selectionState.multiSelectEnabled) {
         CloseButton(
             tab = tab,
-            isFocused = selectionState.isFocused,
             onCloseClick = onCloseClick,
         )
     } else {
@@ -281,12 +272,6 @@ private fun UtilityIcon(
         ) {
             MultiSelectTabButton(
                 isSelected = selectionState.isSelected,
-                isActive = selectionState.isFocused,
-                activeColors = RadioCheckmarkColors.default(
-                    backgroundColor = MaterialTheme.colorScheme.onPrimary,
-                    checkmarkColor = MaterialTheme.colorScheme.primary,
-                    borderColor = MaterialTheme.colorScheme.onPrimary,
-                ),
             )
         }
     }
@@ -295,28 +280,24 @@ private fun UtilityIcon(
 @Composable
 private fun CloseButton(
     tab: TabsTrayItem.Tab,
-    isFocused: Boolean,
     onCloseClick: (TabsTrayItem.Tab) -> Unit,
 ) {
     IconButton(
-        modifier = Modifier
-            .size(TabHeaderIconTouchTargetSize)
-            .testTag(TabsTrayTestTag.TAB_ITEM_CLOSE),
         onClick = {
             onCloseClick(tab)
         },
+        contentDescription = stringResource(
+            id = R.string.close_tab_title,
+            tab.title,
+        ),
+        modifier = Modifier
+            .size(TabHeaderIconTouchTargetSize)
+            .testTag(TabsTrayTestTag.TAB_ITEM_CLOSE),
     ) {
         Icon(
             painter = painterResource(id = iconsR.drawable.mozac_ic_cross_20),
-            contentDescription = stringResource(
-                id = R.string.close_tab_title,
-                tab.title,
-            ),
-            tint = if (isFocused) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
         )
     }
 }
@@ -327,7 +308,6 @@ private fun CloseButton(
  * @param tab Tab, containing the thumbnail to be displayed.
  * @param size Size of the thumbnail.
  */
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun Thumbnail(
     tab: TabsTrayItem.Tab,
@@ -341,7 +321,7 @@ private fun Thumbnail(
                 testTag = TabsTrayTestTag.TAB_ITEM_THUMBNAIL
             }
             .fillMaxSize(),
-        shape = ThumbnailShape,
+        shape = thumbnailShape,
     )
 }
 
@@ -351,97 +331,113 @@ private data class TabGridItemPreviewState(
     val multiSelectionSelected: Boolean,
     val url: String = "www.mozilla.org",
     val title: String = "Mozilla Domain",
+    val interactionState: TabItemInteractionState = TabItemInteractionState(),
 )
 
-private class TabGridItemParameterProvider : PreviewParameterProvider<TabGridItemPreviewState> {
-    val data = listOf(
-        Pair(
-            "No selection",
-            TabGridItemPreviewState(
-                isActive = false,
-                multiSelectionEnabled = false,
-                multiSelectionSelected = false,
-            ),
+private val tabGridItemPreviewStateData: List<Pair<String, TabGridItemPreviewState>> = listOf(
+    Pair(
+        "No selection",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = false,
+            multiSelectionSelected = false,
         ),
-        Pair(
-            "Active tab",
-            TabGridItemPreviewState(
-                isActive = true,
-                multiSelectionEnabled = false,
-                multiSelectionSelected = false,
-            ),
+    ),
+    Pair(
+        "Active tab",
+        TabGridItemPreviewState(
+            isActive = true,
+            multiSelectionEnabled = false,
+            multiSelectionSelected = false,
         ),
-        Pair(
-            "Selected tab with multi-select disabled",
-            TabGridItemPreviewState(
-                isActive = false,
-                multiSelectionEnabled = true,
-                multiSelectionSelected = false,
-            ),
+    ),
+    Pair(
+        "Selected tab with multi-select disabled",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = true,
+            multiSelectionSelected = false,
         ),
-        Pair(
-            "Active tab with multi-select enabled",
-            TabGridItemPreviewState(
-                isActive = true,
-                multiSelectionEnabled = true,
-                multiSelectionSelected = false,
-            ),
+    ),
+    Pair(
+        "Active tab with multi-select enabled",
+        TabGridItemPreviewState(
+            isActive = true,
+            multiSelectionEnabled = true,
+            multiSelectionSelected = false,
         ),
-        Pair(
-            "No selection, multi-select enabled",
-            TabGridItemPreviewState(
-                isActive = false,
-                multiSelectionEnabled = true,
-                multiSelectionSelected = true,
-            ),
+    ),
+    Pair(
+        "No selection, multi-select enabled",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = true,
+            multiSelectionSelected = true,
         ),
-        Pair(
-            "Active, selected, multi-select enabled",
-            TabGridItemPreviewState(
-                isActive = true,
-                multiSelectionEnabled = true,
-                multiSelectionSelected = true,
-            ),
+    ),
+    Pair(
+        "Active, selected, multi-select enabled",
+        TabGridItemPreviewState(
+            isActive = true,
+            multiSelectionEnabled = true,
+            multiSelectionSelected = true,
         ),
-        Pair(
-            "Very long title",
-            TabGridItemPreviewState(
-                isActive = false,
-                multiSelectionEnabled = false,
-                multiSelectionSelected = false,
-                url = "www.google.com/superlongurl",
-                title = "Super super super super super super super super long title",
-            ),
+    ),
+    Pair(
+        "Very long title",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = false,
+            multiSelectionSelected = false,
+            url = "www.google.com/superlongurl",
+            title = "Super super super super super super super super long title",
         ),
-    )
+    ),
+    Pair(
+        "Dragged tab item",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = false,
+            multiSelectionSelected = false,
+            interactionState = TabItemInteractionState(isDragged = true),
+        ),
+    ),
+    Pair(
+        "Hovered by item",
+        TabGridItemPreviewState(
+            isActive = false,
+            multiSelectionEnabled = false,
+            multiSelectionSelected = false,
+            interactionState = TabItemInteractionState(isHoveredByItem = true),
+        ),
+    ),
+)
 
-    override fun getDisplayName(index: Int): String? {
-        return data[index].first
-    }
-
-    override val values: Sequence<TabGridItemPreviewState>
-        get() = data.map { it.second }.asSequence()
-}
+private class TabGridItemParameterProvider : ThemedValueProvider<TabGridItemPreviewState>(
+    baseValues = tabGridItemPreviewStateData.map { it.second }.asSequence(),
+    getDisplayName = { index, _ -> tabGridItemPreviewStateData[index].first },
+)
 
 @Composable
 @PreviewLightDark
 private fun TabGridItemPreview(
-    @PreviewParameter(TabGridItemParameterProvider::class) tabGridItemState: TabGridItemPreviewState,
+    @PreviewParameter(TabGridItemParameterProvider::class) tabGridItemState: ThemedValue<TabGridItemPreviewState>,
 ) {
-    FirefoxTheme {
+    FirefoxTheme(theme = tabGridItemState.theme) {
         TabContent(
             tab = createTab(
-                url = tabGridItemState.url,
-                title = tabGridItemState.title,
+                url = tabGridItemState.value.url,
+                title = tabGridItemState.value.title,
             ),
             selectionState = TabsTrayItemSelectionState(
-                isSelected = tabGridItemState.multiSelectionSelected,
-                isFocused = tabGridItemState.isActive,
-                multiSelectEnabled = tabGridItemState.multiSelectionEnabled,
+                isSelected = tabGridItemState.value.multiSelectionSelected,
+                isFocused = tabGridItemState.value.isActive,
+                multiSelectEnabled = tabGridItemState.value.multiSelectionEnabled,
             ),
             thumbnailSize = 108,
             clickHandler = TabsTrayItemClickHandler(onClick = {}, onCloseClick = {}),
             onCloseTabClick = {},
+            interactionState = tabGridItemState.value.interactionState,
         )
     }
 }

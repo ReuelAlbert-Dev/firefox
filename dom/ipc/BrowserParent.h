@@ -47,6 +47,8 @@ class nsPIDOMWindowOuter;
 
 namespace mozilla {
 
+enum class NativeKeyBindingsType : uint8_t;
+
 namespace a11y {
 class DocAccessibleParent;
 }
@@ -96,7 +98,7 @@ class BrowserParent final : public PBrowserParent,
   struct AutoUseNewTab;
 
   NS_INLINE_DECL_STATIC_IID(DOM_BROWSERPARENT_IID)
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_NSIAUTHPROMPTPROVIDER
   // nsIDOMEventListener interfaces
   NS_DECL_NSIDOMEVENTLISTENER
@@ -157,7 +159,7 @@ class BrowserParent final : public PBrowserParent,
    */
   already_AddRefed<nsIWidget> GetTextInputHandlingWidget() const;
 
-  nsIXULBrowserWindow* GetXULBrowserWindow();
+  already_AddRefed<nsIXULBrowserWindow> GetXULBrowserWindow();
 
   static uint32_t GetMaxTouchPoints(Element* aElement);
   uint32_t GetMaxTouchPoints() { return GetMaxTouchPoints(mFrameElement); }
@@ -413,8 +415,8 @@ class BrowserParent final : public PBrowserParent,
       const mozilla::WidgetTouchEvent& aEvent);
 
   mozilla::ipc::IPCResult RecvScrollRectIntoView(
-      const nsRect& aRect, const ScrollAxis& aVertical,
-      const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
+      const nsRect& aRect, const AxisScrollParams& aVertical,
+      const AxisScrollParams& aHorizontal, const ScrollFlags& aScrollFlags,
       const int32_t& aAppUnitsPerDevPixel);
 
   already_AddRefed<PColorPickerParent> AllocPColorPickerParent(
@@ -494,19 +496,21 @@ class BrowserParent final : public PBrowserParent,
   LayoutDeviceToCSSScale GetLayoutDeviceToCSSScale();
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult
-  RecvRequestNativeKeyBindings(const uint32_t& aType,
+  RecvRequestNativeKeyBindings(const mozilla::NativeKeyBindingsType& aType,
                                const mozilla::WidgetKeyboardEvent& aEvent,
                                nsTArray<mozilla::CommandInt>* aCommands);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeKeyEvent(
       const int32_t& aNativeKeyboardLayout, const int32_t& aNativeKeyCode,
-      const uint32_t& aModifierFlags, const nsString& aCharacters,
-      const nsString& aUnmodifiedCharacters,
+      const nsIWidget::NativeModifiers& aModifierFlags,
+      const nsString& aCharacters, const nsString& aUnmodifiedCharacters,
       const Maybe<uint64_t>& aCallbackId);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeMouseEvent(
-      const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
-      const int16_t& aButton, const uint32_t& aModifierFlags,
+      const LayoutDeviceIntPoint& aPoint,
+      const nsIWidget::NativeMouseMessage& aNativeMessage,
+      const mozilla::MouseButton& aButton,
+      const nsIWidget::NativeModifiers& aModifierFlags,
       const Maybe<uint64_t>& aCallbackId);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeMouseMove(
@@ -515,8 +519,8 @@ class BrowserParent final : public PBrowserParent,
   mozilla::ipc::IPCResult RecvSynthesizeNativeMouseScrollEvent(
       const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
       const double& aDeltaX, const double& aDeltaY, const double& aDeltaZ,
-      const uint32_t& aModifierFlags, const uint32_t& aAdditionalFlags,
-      const Maybe<uint64_t>& aCallbackId);
+      const nsIWidget::NativeModifiers& aModifierFlags,
+      const uint32_t& aAdditionalFlags, const Maybe<uint64_t>& aCallbackId);
 
   mozilla::ipc::IPCResult RecvSynthesizeNativeTouchPoint(
       const uint32_t& aPointerId, const TouchPointerState& aPointerState,
@@ -546,16 +550,20 @@ class BrowserParent final : public PBrowserParent,
       const double& aDeltaY, const int32_t& aModifierFlags,
       const Maybe<uint64_t>& aCallbackId);
 
-  mozilla::ipc::IPCResult RecvLockNativePointer();
+  mozilla::ipc::IPCResult RecvLockNativePointer(
+      const nsIWidget::NativePointerLockMode& aNativePointerLockMode);
 
   mozilla::ipc::IPCResult RecvUnlockNativePointer();
 
+  mozilla::ipc::IPCResult RecvSetNativePointerLockMode(
+      const nsIWidget::NativePointerLockMode& aNativePointerLockMode);
+
   /**
-   * The following Send*Event() marks aEvent as posted to remote process if
-   * it succeeded.  So, you can check the result with
-   * aEvent.HasBeenPostedToRemoteProcess().
+   * The following Send*Event() marks aMouseOrPointerEvent as posted to remote
+   * process if it succeeded.  So, you can check the result with
+   * aMouseOrPointerEvent.HasBeenPostedToRemoteProcess().
    */
-  void SendRealMouseEvent(WidgetMouseEvent& aEvent);
+  void SendRealMouseEvent(WidgetMouseEvent& aMouseOrPointerEvent);
 
   void SendRealDragEvent(WidgetDragEvent& aEvent, uint32_t aDragAction,
                          uint32_t aDropEffect, nsIPrincipal* aPrincipal,
@@ -587,7 +595,7 @@ class BrowserParent final : public PBrowserParent,
 
   bool SendSelectionEvent(mozilla::WidgetSelectionEvent& aEvent);
 
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY bool SendHandleTap(
+  MOZ_CAN_RUN_SCRIPT bool SendHandleTap(
       TapType aType, const LayoutDevicePoint& aPoint, Modifiers aModifiers,
       const ScrollableLayerGuid& aGuid, uint64_t aInputBlockId,
       const Maybe<DoubleTapToZoomMetrics>& aDoubleTapToZoomMetrics);
@@ -796,8 +804,6 @@ class BrowserParent final : public PBrowserParent,
 
   void UnlockNativePointer();
 
-  void UpdateNativePointerLockCenter(nsIWidget* aWidget);
-
  private:
   // This is used when APZ needs to find the BrowserParent associated with a
   // layer to dispatch events.
@@ -922,6 +928,7 @@ class BrowserParent final : public PBrowserParent,
   float mDPI;
   int32_t mRounding;
   CSSToLayoutDeviceScale mDefaultScale;
+  DesktopToLayoutDeviceScale mDesktopToDeviceScale;
   bool mUpdatedDimensions;
   nsSizeMode mSizeMode;
   LayoutDeviceIntPoint mClientOffset;
@@ -960,12 +967,12 @@ class BrowserParent final : public PBrowserParent,
   nsTArray<nsString> mVerifyDropLinks;
 
 #ifdef DEBUG
-  int32_t mActiveSupressDisplayportCount = 0;
+  int32_t mActiveSuppressDisplayportCount = 0;
 #endif
 
-  // When true, we've initiated normal shutdown and notified our managing
-  // PContent.
-  bool mMarkedDestroying : 1;
+  // When true, we're holding a KeepAlive on mBrowsingContext->Group() which
+  // must be cleared in ActorDestroy.
+  bool mHoldingGroupKeepAlive : 1;
   // When true, the BrowserParent is invalid and we should not send IPC
   // messages anymore.
   bool mIsDestroyed : 1;

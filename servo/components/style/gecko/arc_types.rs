@@ -7,7 +7,6 @@
 
 #![allow(non_snake_case, missing_docs)]
 
-use crate::gecko::url::CssUrlData;
 use crate::media_queries::MediaList;
 use crate::properties::animated_properties::AnimationValue;
 use crate::properties::{ComputedValues, PropertyDeclarationBlock};
@@ -17,12 +16,13 @@ use crate::stylesheets::{
     AppearanceBaseRule, ContainerRule, CssRules, CustomMediaRule, DocumentRule,
     FontFeatureValuesRule, FontPaletteValuesRule, LayerBlockRule, LayerStatementRule, MarginRule,
     MediaRule, NamespaceRule, PropertyRule, ScopeRule, StartingStyleRule, StylesheetContents,
-    SupportsRule,
+    SupportsRule, ViewTransitionRule,
 };
 pub use crate::stylesheets::{
     LockedCounterStyleRule, LockedFontFaceRule, LockedImportRule, LockedKeyframesRule,
     LockedNestedDeclarationsRule, LockedPageRule, LockedPositionTryRule, LockedStyleRule,
 };
+use crate::url::gecko::CssUrlData;
 use servo_arc::Arc;
 
 macro_rules! impl_simple_arc_ffi {
@@ -199,4 +199,9 @@ impl_simple_arc_ffi!(
     LockedNestedDeclarationsRule,
     Servo_NestedDeclarationsRule_AddRef,
     Servo_NestedDeclarationsRule_Release
+);
+impl_simple_arc_ffi!(
+    ViewTransitionRule,
+    Servo_ViewTransitionRule_AddRef,
+    Servo_ViewTransitionRule_Release
 );

@@ -28,7 +28,7 @@ class Optional;
 
 class URL final : public URLSearchParamsObserver, public nsWrapperCache {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(URL)
 
   explicit URL(nsISupports* aParent, nsCOMPtr<nsIURI> aURI)
@@ -102,7 +102,7 @@ class URL final : public URLSearchParamsObserver, public nsWrapperCache {
   void GetSearch(nsACString& aSearch) const;
   void SetSearch(const nsACString& aSearch);
 
-  URLSearchParams* SearchParams();
+  already_AddRefed<URLSearchParams> SearchParams();
 
   void GetHash(nsACString& aHash) const;
   void SetHash(const nsACString& aHash);

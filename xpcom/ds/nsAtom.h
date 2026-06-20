@@ -9,6 +9,7 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/Char16.h"
+#include "mozilla/TextUtils.h"
 #include "mozilla/MemoryReporting.h"
 #include "nsISupports.h"
 #include "nsString.h"
@@ -34,6 +35,19 @@ class nsDynamicAtom;
 //
 class nsAtom {
  public:
+  // Returns true if ToLowercaseASCII would return the string unchanged.
+  static constexpr bool ComputeIsAsciiLowercase(const char16_t* aString,
+                                                const uint32_t aLength) {
+    return std::all_of(aString, aString + aLength, [](char16_t c) {
+      return !mozilla::IsAsciiUppercaseAlpha(c);
+    });
+  }
+
+  template <size_t N>
+  static constexpr bool ComputeIsAsciiLowercase(const char16_t (&aString)[N]) {
+    return ComputeIsAsciiLowercase(aString, N - 1);
+  }
+
   void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                               mozilla::AtomsSizes& aSizes) const;
 
@@ -43,7 +57,7 @@ class nsAtom {
   }
 
   bool Equals(const nsAString& aString) const {
-    return Equals(aString.BeginReading(), aString.Length());
+    return Equals(aString.Data(), aString.Length());
   }
 
   bool IsStatic() const { return mIsStatic; }
@@ -53,7 +67,7 @@ class nsAtom {
   inline const nsDynamicAtom* AsDynamic() const;
   inline nsDynamicAtom* AsDynamic();
 
-  char16ptr_t GetUTF16String() const;
+  inline char16ptr_t GetUTF16String() const;
 
   uint32_t GetLength() const { return mLength; }
 
@@ -225,6 +239,10 @@ MozExternalRefCountType nsAtom::Release() {
   return IsStatic() ? 1 : AsDynamic()->Release();
 }
 
+char16ptr_t nsAtom::GetUTF16String() const {
+  return IsStatic() ? AsStatic()->String() : AsDynamic()->String();
+}
+
 // The four forms of NS_Atomize (for use with |RefPtr<nsAtom>|) return the
 // atom for the string given. At any given time there will always be one atom
 // representing a given string. Atoms are intended to make string comparison
@@ -285,7 +303,9 @@ class nsAutoAtomCString : public nsAutoCString {
 class nsDependentAtomString : public nsDependentString {
  public:
   explicit nsDependentAtomString(const nsAtom* aAtom)
-      : nsDependentString(aAtom->GetUTF16String(), aAtom->GetLength()) {}
+      : nsDependentString(
+            aAtom->GetUTF16String(), aAtom->GetLength(),
+            aAtom->IsStatic() ? DataFlags::LITERAL : DataFlags::STRINGBUFFER) {}
 };
 
 // Checks if the ascii chars in a given atom are already lowercase.

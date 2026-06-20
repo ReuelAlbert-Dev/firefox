@@ -32,7 +32,7 @@
   {0x70db954d, 0xe452, 0x4be3, {0x82, 0xaa, 0xf5, 0x4a, 0x51, 0xcf, 0x78, 0x90}}
 
 nsresult NS_NewSVGElement(mozilla::dom::Element** aResult,
-                          already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+                          already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
 class mozAutoDocUpdate;
 
@@ -70,10 +70,10 @@ using SVGElementBase = nsStyledElement;
 class SVGElement : public SVGElementBase  // nsIContent
 {
  protected:
-  explicit SVGElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+  explicit SVGElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
   friend nsresult(
       ::NS_NewSVGElement(mozilla::dom::Element** aResult,
-                         already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo));
+                         already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo));
   nsresult Init();
   virtual ~SVGElement();
 
@@ -92,6 +92,7 @@ class SVGElement : public SVGElementBase  // nsIContent
 
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
 
+  void WillAnimateClass();
   void DidAnimateClass();
 
   void SetNonce(const nsAString& aNonce) {
@@ -310,9 +311,6 @@ class SVGElement : public SVGElementBase  // nsIContent
   virtual nsStaticAtom* GetPathDataAttrName() const { return nullptr; }
   virtual nsStaticAtom* GetTransformListAttrName() const { return nullptr; }
   const nsAttrValue* GetAnimatedClassName() const {
-    if (!mClassAttribute.IsAnimated()) {
-      return nullptr;
-    }
     return mClassAnimAttr.get();
   }
 
@@ -501,7 +499,7 @@ class SVGElement : public SVGElementBase  // nsIContent
 #define NS_IMPL_NS_NEW_SVG_ELEMENT(_elementName)                               \
   nsresult NS_NewSVG##_elementName##Element(                                   \
       nsIContent** aResult,                                                    \
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo) {                  \
+      already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo) {                    \
     RefPtr<mozilla::dom::NodeInfo> nodeInfo(aNodeInfo);                        \
     auto* nim = nodeInfo->NodeInfoManager();                                   \
     RefPtr<mozilla::dom::SVG##_elementName##Element> it =                      \
@@ -521,7 +519,7 @@ class SVGElement : public SVGElementBase  // nsIContent
 #define NS_IMPL_NS_NEW_SVG_ELEMENT_CHECK_PARSER(_elementName)                 \
   nsresult NS_NewSVG##_elementName##Element(                                  \
       nsIContent** aResult,                                                   \
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,                   \
+      already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo,                     \
       mozilla::dom::FromParser aFromParser) {                                 \
     RefPtr<mozilla::dom::NodeInfo> nodeInfo(aNodeInfo);                       \
     auto* nim = nodeInfo->NodeInfoManager();                                  \

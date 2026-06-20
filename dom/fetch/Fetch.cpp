@@ -48,6 +48,7 @@
 #include "nsIGlobalObject.h"
 #include "nsJSUtils.h"
 #include "nsNetUtil.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsProxyRelease.h"
 #include "nsReadableUtils.h"
 #include "nsStreamUtils.h"
@@ -61,28 +62,24 @@ namespace {
 // https://fetch.spec.whatwg.org/#concept-http-network-fetch
 // If stream is readable, then error stream with ...
 void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
-                 ErrorResult& aRv, JS::Handle<JS::Value> aReasonDetails) {
+                 AbortSignalImpl* aSignal, ErrorResult& aRv) {
+  MOZ_ASSERT(aSignal->Aborted());
+
   if (aReadableStream->State() != ReadableStream::ReaderState::Readable) {
     return;
   }
 
-  JS::Rooted<JS::Value> value(aCx, aReasonDetails);
+  JS::Rooted<JS::Value> reason(aCx);
+  aSignal->GetReason(aCx, &reason);
 
-  if (aReasonDetails.isUndefined()) {
-    RefPtr<DOMException> e = DOMException::Create(NS_ERROR_DOM_ABORT_ERR);
-    if (!GetOrCreateDOMReflector(aCx, e, &value)) {
-      return;
-    }
-  }
-
-  aReadableStream->ErrorNative(aCx, value, aRv);
+  aReadableStream->ErrorNative(aCx, reason, aRv);
 }
 
 }  // namespace
 
 class AbortSignalMainThread final : public AbortSignalImpl {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(AbortSignalMainThread)
 
   explicit AbortSignalMainThread(SignalAborted aAborted)
@@ -535,12 +532,8 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
 
   if (signalImpl && signalImpl->Aborted()) {
     // Already aborted signal rejects immediately.
-    JS::Rooted<JS::Value> reason(cx, signalImpl->RawReason());
-    if (reason.get().isUndefined()) {
-      aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-      return nullptr;
-    }
-
+    JS::Rooted<JS::Value> reason(cx);
+    signalImpl->GetReason(cx, &reason);
     p->MaybeReject(reason);
     return p.forget();
   }
@@ -1351,9 +1344,9 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(FetchBodyBase)
 NS_INTERFACE_MAP_END
 
 template <class Derived>
-FetchBody<Derived>::FetchBody(nsIGlobalObject* aOwner)
-    : mOwner(aOwner), mBodyUsed(false) {
-  MOZ_ASSERT(aOwner);
+FetchBody<Derived>::FetchBody(nsIGlobalObject* aGlobal)
+    : mGlobal(aGlobal), mBodyUsed(false) {
+  MOZ_ASSERT(aGlobal);
 
   if (!NS_IsMainThread()) {
     WorkerPrivate* wp = GetCurrentThreadWorkerPrivate();
@@ -1366,9 +1359,9 @@ FetchBody<Derived>::FetchBody(nsIGlobalObject* aOwner)
   MOZ_ASSERT(mMainThreadEventTarget);
 }
 
-template FetchBody<Request>::FetchBody(nsIGlobalObject* aOwner);
+template FetchBody<Request>::FetchBody(nsIGlobalObject* aGlobal);
 
-template FetchBody<Response>::FetchBody(nsIGlobalObject* aOwner);
+template FetchBody<Response>::FetchBody(nsIGlobalObject* aGlobal);
 
 template <class Derived>
 FetchBody<Derived>::~FetchBody() {
@@ -1400,7 +1393,7 @@ template bool FetchBody<Response>::BodyUsed() const;
 template <class Derived>
 void FetchBody<Derived>::SetBodyUsed(JSContext* aCx, ErrorResult& aRv) {
   MOZ_ASSERT(aCx);
-  MOZ_ASSERT(mOwner->SerialEventTarget()->IsOnCurrentThread());
+  MOZ_ASSERT(mGlobal->SerialEventTarget()->IsOnCurrentThread());
 
   MOZ_DIAGNOSTIC_ASSERT(!BodyUsed(), "Consuming already used body?");
   if (BodyUsed()) {
@@ -1441,16 +1434,15 @@ already_AddRefed<Promise> FetchBody<Derived>::ConsumeBody(
       DerivedClass()->GetSignalImplToConsumeBody();
 
   if (signalImpl && signalImpl->Aborted()) {
-    JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
+    JS::Rooted<JS::Value> abortReason(aCx);
+    signalImpl->GetReason(aCx, &abortReason);
 
-    if (abortReason.get().isUndefined()) {
-      aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
+    nsCOMPtr<nsIGlobalObject> global = DerivedClass()->GetParentObject();
+    RefPtr<Promise> promise = Promise::Create(global, aRv);
+    if (aRv.Failed()) {
       return nullptr;
     }
 
-    nsCOMPtr<nsIGlobalObject> go = DerivedClass()->GetParentObject();
-
-    RefPtr<Promise> promise = Promise::Create(go, aRv);
     promise->MaybeReject(abortReason);
     return promise.forget();
   }
@@ -1511,10 +1503,10 @@ already_AddRefed<Promise> FetchBody<Derived>::ConsumeBody(
     blobStorageType = MutableBlobStorage::eCouldBeInTemporaryFile;
   }
 
-  RefPtr<Promise> promise = BodyConsumer::Create(
-      global, mMainThreadEventTarget, bodyStream, signalImpl, aType,
-      BodyBlobURISpec(), BodyLocalPath(), mimeType, mixedCaseMimeType,
-      blobStorageType, aRv);
+  RefPtr<Promise> promise =
+      BodyConsumer::Create(global, mMainThreadEventTarget, bodyStream,
+                           signalImpl, aType, BodyBlobImpl(), BodyLocalPath(),
+                           mimeType, mixedCaseMimeType, blobStorageType, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -1601,15 +1593,15 @@ template void FetchBody<Response>::GetMimeType(nsACString& aMimeType,
                                                nsACString& aMixedCaseMimeType);
 
 template <class Derived>
-const nsACString& FetchBody<Derived>::BodyBlobURISpec() const {
-  return DerivedClass()->BodyBlobURISpec();
+BlobImpl* FetchBody<Derived>::BodyBlobImpl() const {
+  return DerivedClass()->BodyBlobImpl();
 }
 
-template const nsACString& FetchBody<Request>::BodyBlobURISpec() const;
+template BlobImpl* FetchBody<Request>::BodyBlobImpl() const;
 
-template const nsACString& FetchBody<Response>::BodyBlobURISpec() const;
+template BlobImpl* FetchBody<Response>::BodyBlobImpl() const;
 
-template const nsACString& FetchBody<EmptyBody>::BodyBlobURISpec() const;
+template BlobImpl* FetchBody<EmptyBody>::BodyBlobImpl() const;
 
 template <class Derived>
 const nsAString& FetchBody<Derived>::BodyLocalPath() const {
@@ -1634,11 +1626,9 @@ void FetchBody<Derived>::SetReadableStreamBody(JSContext* aCx,
     return;
   }
 
-  bool aborted = signalImpl->Aborted();
-  if (aborted) {
+  if (signalImpl->Aborted()) {
     IgnoredErrorResult result;
-    JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
-    AbortStream(aCx, mReadableStreamBody, result, abortReason);
+    AbortStream(aCx, mReadableStreamBody, signalImpl, result);
     if (NS_WARN_IF(result.Failed())) {
       return;
     }
@@ -1694,8 +1684,7 @@ already_AddRefed<ReadableStream> FetchBody<Derived>::GetBody(JSContext* aCx,
   RefPtr<AbortSignalImpl> signalImpl = DerivedClass()->GetSignalImpl();
   if (signalImpl) {
     if (signalImpl->Aborted()) {
-      JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
-      AbortStream(aCx, body, aRv, abortReason);
+      AbortStream(aCx, body, signalImpl, aRv);
       if (NS_WARN_IF(aRv.Failed())) {
         return nullptr;
       }
@@ -1765,7 +1754,7 @@ void FetchBody<Derived>::MaybeTeeReadableStreamBody(
   mReadableStreamBody = branches[0];
   branches[1].forget(aBodyOut);
 
-  aRv = FetchStreamReader::Create(aCx, mOwner, aStreamReader, aInputStream);
+  aRv = FetchStreamReader::Create(aCx, mGlobal, aStreamReader, aInputStream);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
@@ -1782,29 +1771,40 @@ template void FetchBody<Response>::MaybeTeeReadableStreamBody(
     ErrorResult& aRv);
 
 template <class Derived>
+void FetchBody<Derived>::MaybeRebindReadableStreamBody() {
+  if (!mReadableStreamBody) {
+    return;
+  }
+
+  // Only native streams hold an nsIInputStream that clone() may have replaced;
+  // SetInputStreamIfUnread() is a no-op for JS-backed streams. clone() rejects
+  // used bodies, so the stream is guaranteed to be non-disturbed here.
+  nsCOMPtr<nsIInputStream> currentBody;
+  DerivedClass()->GetBody(getter_AddRefs(currentBody));
+  if (currentBody) {
+    mReadableStreamBody->SetInputStreamIfUnread(currentBody);
+  }
+}
+
+template void FetchBody<Request>::MaybeRebindReadableStreamBody();
+
+template void FetchBody<Response>::MaybeRebindReadableStreamBody();
+
+template <class Derived>
 void FetchBody<Derived>::RunAbortAlgorithm() {
   if (!mReadableStreamBody) {
     return;
   }
 
   AutoJSAPI jsapi;
-  if (!jsapi.Init(mOwner)) {
+  if (!jsapi.Init(mGlobal)) {
     return;
   }
 
   JSContext* cx = jsapi.cx();
 
   RefPtr<ReadableStream> body(mReadableStreamBody);
-  IgnoredErrorResult result;
-
-  JS::Rooted<JS::Value> abortReason(cx);
-
-  AbortSignalImpl* signalImpl = Signal();
-  if (signalImpl) {
-    abortReason.set(signalImpl->RawReason());
-  }
-
-  AbortStream(cx, body, result, abortReason);
+  AbortStream(cx, body, Signal(), IgnoredErrorResult());
 }
 
 template void FetchBody<Request>::RunAbortAlgorithm();
@@ -1817,14 +1817,14 @@ NS_IMPL_RELEASE_INHERITED(EmptyBody, FetchBody<EmptyBody>)
 NS_IMPL_CYCLE_COLLECTION_CLASS(EmptyBody)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(EmptyBody, FetchBody<EmptyBody>)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mOwner)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFetchStreamReader)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(EmptyBody,
                                                   FetchBody<EmptyBody>)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOwner)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGlobal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFetchStreamReader)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END

@@ -41,6 +41,8 @@ class SandboxTarget {
     mTargetServices = aTargetServices;
   }
 
+  bool IsSandboxed() const { return mTargetServices != nullptr; }
+
   template <typename CallbackT>
   void RegisterSandboxStartCallback(CallbackT&& aCallback) {
     mStartObservers.push_back(std::forward<CallbackT>(aCallback));
@@ -51,9 +53,11 @@ class SandboxTarget {
    * more secure delayed / lockdown policy.
    */
   void StartSandbox();
-
-  bool GetComplexLineBreaks(const WCHAR* text, uint32_t length,
-                            uint8_t* break_before);
+  /**
+   * Called by content processes to lower the sandbox. This includes other
+   * processing like DLL pre-loading to prevent failures after lowering.
+   */
+  void LowerContentSandbox();
 
  protected:
   SandboxTarget() : mTargetServices(nullptr) {}

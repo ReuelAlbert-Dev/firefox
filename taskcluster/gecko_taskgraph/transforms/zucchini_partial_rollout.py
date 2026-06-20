@@ -13,8 +13,8 @@ transforms = TransformSequence()
 # TODO: Once we're ready to roll this out to production, we should decide if we want to
 # hold it in beta for a few cycles, or let it ride the train to release.
 # If holding in beta, we'll need to uplift a patch to remove the release entry.
+# TODO: update taskcluster/docs/partials.rst once we are fully rolled out
 LEGACY_PARTIALS_PROJECTS = {
-    "mozilla-beta",
     "mozilla-release",
     "mozilla-esr115",
     "mozilla-esr128",
@@ -39,7 +39,11 @@ def filter_partials_by_project(config, tasks):
         primary_dep = get_primary_dependency(config, task)
         assert primary_dep
 
-        if primary_dep.kind not in ("partials", "partials-zucchini"):
+        if primary_dep.kind not in (
+            "partials",
+            "partials-zucchini",
+            "partials-zucchini-l10n",
+        ):
             yield task
             continue
 
@@ -50,7 +54,7 @@ def filter_partials_by_project(config, tasks):
             continue
 
         if (
-            primary_dep.kind == "partials-zucchini"
+            primary_dep.kind in ("partials-zucchini", "partials-zucchini-l10n")
             and config.params["project"] in LEGACY_PARTIALS_PROJECTS
         ):
             continue

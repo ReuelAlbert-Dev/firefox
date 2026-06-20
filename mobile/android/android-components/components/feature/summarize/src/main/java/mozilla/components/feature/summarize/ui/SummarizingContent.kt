@@ -4,6 +4,8 @@
 
 package mozilla.components.feature.summarize.ui
 
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -22,7 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -49,8 +51,6 @@ import mozilla.components.feature.summarize.R
 import mozilla.components.feature.summarize.ui.gradient.summaryLoadingGradient
 import mozilla.components.ui.icons.R as iconsR
 
-private const val DRAG_HANDLE_CORNER_RATIO = 50
-
 /**
  * Content shown while a page summary is being generated.
  * Displays a Firefox logo icon and loading text over the animated gradient background.
@@ -59,8 +59,9 @@ private const val DRAG_HANDLE_CORNER_RATIO = 50
 internal fun SummarizingContent(
     modifier: Modifier = Modifier,
     title: String = stringResource(R.string.mozac_feature_summarize_loading_title),
+    useGradientColors: Boolean,
 ) {
-    val contentColor = if (isSystemInDarkTheme()) {
+    val contentColor = if (!useGradientColors || isSystemInDarkTheme()) {
         MaterialTheme.colorScheme.onSurface
     } else {
         MaterialTheme.colorScheme.onPrimary
@@ -82,10 +83,10 @@ internal fun SummarizingContent(
 
     val brush = Brush.linearGradient(
         colorStops = arrayOf(
-            0.0f to contentColor.copy(alpha = 0.5f),
+            0.0f to contentColor.copy(alpha = 0.8f),
             0.351f to Color.White,
             0.6298f to Color.White,
-            1.0f to contentColor.copy(alpha = 0.5f),
+            1.0f to contentColor.copy(alpha = 0.8f),
         ),
         start = Offset(progress - 300f, 0f),
         end = Offset(progress + 300f, 0f),
@@ -102,7 +103,11 @@ internal fun SummarizingContent(
             painter = painterResource(id = iconsR.drawable.mozac_ic_logo_firefox_24),
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = contentColor,
+            tint = if (useGradientColors) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
         )
 
         Text(
@@ -112,7 +117,7 @@ internal fun SummarizingContent(
                 }
             },
             textAlign = TextAlign.Center,
-            color = contentColor.copy(alpha = 0.5f),
+            color = contentColor.copy(alpha = 0.8f),
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             lineHeight = 21.sp,
@@ -121,6 +126,7 @@ internal fun SummarizingContent(
     }
 }
 
+@RequiresApi(Build.VERSION_CODES.Q)
 @FlexibleWindowLightDarkPreview
 @Composable
 private fun SummarizingContentPreview() {
@@ -135,7 +141,10 @@ private fun SummarizingContentPreview() {
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(336.dp),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                shape = MaterialTheme.shapes.extraLarge.copy(
+                    bottomStart = CornerSize(0.dp),
+                    bottomEnd = CornerSize(0.dp),
+                ),
             ) {
                 Box(modifier = Modifier.fillMaxSize().summaryLoadingGradient()) {
                     Column(modifier = Modifier.fillMaxWidth()) {
@@ -148,11 +157,11 @@ private fun SummarizingContentPreview() {
                                     .requiredSize(width = 32.dp, height = 4.dp)
                                     .background(
                                         color = MaterialTheme.colorScheme.outline,
-                                        shape = RoundedCornerShape(DRAG_HANDLE_CORNER_RATIO),
+                                        shape = MaterialTheme.shapes.extraLarge,
                                     ),
                             )
                         }
-                        SummarizingContent()
+                        SummarizingContent(useGradientColors = true)
                     }
                 }
             }

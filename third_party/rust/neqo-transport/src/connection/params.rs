@@ -8,7 +8,7 @@ use std::{cmp::max, time::Duration};
 
 pub use crate::recovery::FAST_PTO_SCALE;
 use crate::{
-    CongestionControl, DEFAULT_INITIAL_RTT, Res, SlowStart,
+    CongestionControl, DEFAULT_INITIAL_RTT, HyStartCssBaseline, Res, SlowStart,
     connection::{ConnectionIdManager, Role},
     rtt::GRANULARITY,
     stream_id::StreamType,
@@ -108,6 +108,7 @@ pub struct ConnectionParameters {
     versions: version::Config,
     congestion_control: CongestionControl,
     slow_start: SlowStart,
+    hystart_css_baseline: HyStartCssBaseline,
     /// Initial connection-level flow control limit.
     max_data: u64,
     /// Initial flow control limit for receiving data on bidirectional streams that the peer
@@ -153,6 +154,9 @@ pub struct ConnectionParameters {
     randomize_first_pn: bool,
     /// Whether to send the SCONE transport parameter.
     scone: bool,
+    /// Whether to recover from spurious congestion events by restoring prior Congestion Controller
+    /// state. Detection and metrics are always active regardless of this setting.
+    spurious_recovery: bool,
 }
 
 impl Default for ConnectionParameters {
@@ -161,6 +165,7 @@ impl Default for ConnectionParameters {
             versions: version::Config::default(),
             congestion_control: CongestionControl::Cubic,
             slow_start: SlowStart::Classic,
+            hystart_css_baseline: HyStartCssBaseline::CurrentRoundMinRtt,
             max_data: INITIAL_LOCAL_MAX_DATA,
             max_stream_data_bidi_remote: u64::try_from(INITIAL_LOCAL_MAX_STREAM_DATA)
                 .expect("usize fits in u64"),
@@ -187,6 +192,7 @@ impl Default for ConnectionParameters {
             mlkem: true,
             randomize_first_pn: true,
             scone: false,
+            spurious_recovery: true,
         }
     }
 }
@@ -238,6 +244,17 @@ impl ConnectionParameters {
     #[must_use]
     pub const fn slow_start(mut self, v: SlowStart) -> Self {
         self.slow_start = v;
+        self
+    }
+
+    #[must_use]
+    pub const fn get_hystart_css_baseline(&self) -> HyStartCssBaseline {
+        self.hystart_css_baseline
+    }
+
+    #[must_use]
+    pub const fn hystart_css_baseline(mut self, v: HyStartCssBaseline) -> Self {
+        self.hystart_css_baseline = v;
         self
     }
 
@@ -515,6 +532,17 @@ impl ConnectionParameters {
         self
     }
 
+    #[must_use]
+    pub const fn spurious_recovery_enabled(&self) -> bool {
+        self.spurious_recovery
+    }
+
+    #[must_use]
+    pub const fn spurious_recovery(mut self, spurious_recovery: bool) -> Self {
+        self.spurious_recovery = spurious_recovery;
+        self
+    }
+
     /// # Errors
     /// When a connection ID cannot be obtained.
     /// # Panics
@@ -605,5 +633,34 @@ mod tests {
         assert!(params.pmtud_iface_mtu_enabled());
         let params = params.pmtud_iface_mtu(false);
         assert!(!params.pmtud_iface_mtu_enabled());
+    }
+
+    #[test]
+    fn sni_slicing_enabled() {
+        // Default is true; verify builder can toggle it.
+        assert!(ConnectionParameters::default().sni_slicing_enabled());
+        assert!(
+            !ConnectionParameters::default()
+                .sni_slicing(false)
+                .sni_slicing_enabled()
+        );
+    }
+
+    #[test]
+    fn scone_enabled() {
+        // Default is false; verify builder can toggle it.
+        assert!(!ConnectionParameters::default().scone_enabled());
+        assert!(ConnectionParameters::default().scone(true).scone_enabled());
+    }
+
+    #[test]
+    fn spurious_recovery_enabled() {
+        // Default is true; verify builder can toggle it.
+        assert!(ConnectionParameters::default().spurious_recovery_enabled());
+        assert!(
+            !ConnectionParameters::default()
+                .spurious_recovery(false)
+                .spurious_recovery_enabled()
+        );
     }
 }

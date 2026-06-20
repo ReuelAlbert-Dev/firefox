@@ -4,35 +4,41 @@
 
 #include "GroupInfo.h"
 
+#include "GroupInfoPair.h"
 #include "OriginInfo.h"
 #include "mozilla/dom/quota/AssertionsImpl.h"
 
 namespace mozilla::dom::quota {
 
-already_AddRefed<OriginInfo> GroupInfo::LockedGetOriginInfo(
+SafeRefPtr<OriginInfo> GroupInfo::LockedGetOriginInfo(
     const nsACString& aOrigin) {
   AssertCurrentThreadOwnsQuotaMutex();
 
   for (const auto& originInfo : mOriginInfos) {
     if (originInfo->mOrigin == aOrigin) {
-      RefPtr<OriginInfo> result = originInfo;
-      return result.forget();
+      return originInfo.get().clonePtr();
     }
   }
 
   return nullptr;
 }
 
-void GroupInfo::LockedAddOriginInfo(NotNull<RefPtr<OriginInfo>>&& aOriginInfo) {
+const nsCString& GroupInfo::GetGroup() const {
+  MOZ_ASSERT(mGroupInfoPair);
+  return mGroupInfoPair->Group();
+}
+
+void GroupInfo::LockedAddOriginInfo(
+    NotNull<SafeRefPtr<OriginInfo>>&& aOriginInfo) {
   AssertCurrentThreadOwnsQuotaMutex();
 
   NS_ASSERTION(!mOriginInfos.Contains(aOriginInfo),
                "Replacing an existing entry!");
-  mOriginInfos.AppendElement(std::move(aOriginInfo));
+  const auto& back = *mOriginInfos.AppendElement(std::move(aOriginInfo));
 
-  uint64_t usage = aOriginInfo->LockedUsage();
+  uint64_t usage = back->LockedUsage();
 
-  if (!aOriginInfo->LockedPersisted()) {
+  if (!back->LockedPersisted()) {
     AssertNoOverflow(mUsage, usage);
     mUsage += usage;
   }

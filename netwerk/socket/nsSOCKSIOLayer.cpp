@@ -491,12 +491,9 @@ PRStatus nsSOCKSSocketInfo::ConnectToProxy(PRFileDesc* fd) {
         return PR_FAILURE;
       }
 
-      if (MOZ_LOG_TEST(gSOCKSLog, LogLevel::Debug)) {
-        char buf[kIPv6CStrBufSize];
-        mInternalProxyAddr.ToStringBuffer(buf, sizeof(buf));
-        LOGDEBUG(("socks: trying proxy server, %s:%hu", buf,
-                  ntohs(mInternalProxyAddr.inet.port)));
-      }
+      LOGDEBUG(("socks: trying proxy server, %s:%hu",
+                mInternalProxyAddr.ToString().get(),
+                ntohs(mInternalProxyAddr.inet.port)));
     }
 
     NetAddr proxy = mInternalProxyAddr;

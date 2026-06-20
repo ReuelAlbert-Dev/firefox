@@ -56,7 +56,7 @@ nsresult Probe::Trigger() {
 
   ULONG result = TraceEvent(mManager->mSessionHandle, &event);
 
-  LOG(("Probes: Triggered %s, %s, %ld", mName.Data(),
+  LOG(("Probes: Triggered %s, %s, %ld", mName.get(),
        result == ERROR_SUCCESS ? "success" : "failure", result));
 
   nsresult rv;
@@ -102,7 +102,7 @@ ProbeManager::ProbeManager(const nsCID& aApplicationUID,
 #if defined(MOZ_LOGGING)
   char cidStr[NSID_LENGTH];
   aApplicationUID.ToProvidedString(cidStr);
-  LOG(("ProbeManager::Init for application %s, %s", aApplicationName.Data(),
+  LOG(("ProbeManager::Init for application %s, %s", mApplicationName.get(),
        cidStr));
 #endif
 }

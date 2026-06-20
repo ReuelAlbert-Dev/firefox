@@ -52,6 +52,7 @@ pub enum NumberOrAuto<N> {
     ToTyped,
 )]
 #[repr(C)]
+#[typed(todo_derive_fields)]
 pub struct GenericHyphenateLimitChars<Integer> {
     /// Required minimum number of characters in a hyphenated word.
     pub total_word_length: NumberOrAuto<Integer>,
@@ -159,7 +160,6 @@ impl<N: ToCss + Zero, I: ToCss + Zero> ToCss for InitialLetter<N, I> {
     ToTyped,
 )]
 #[allow(missing_docs)]
-#[typed_value(derive_fields)]
 pub enum GenericTextDecorationLength<L> {
     LengthPercentage(L),
     Auto,

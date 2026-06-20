@@ -62,7 +62,7 @@ pub struct VisibleFrameInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibleFrameSeekTarget {
     /// File byte offset to start feeding input from.
-    pub decode_start_file_offset: usize,
+    pub decode_start_file_offset: u64,
     /// Remaining codestream bytes in the current container box at the seek
     /// point. Pass this to [`JxlDecoder::start_new_frame`].
     pub remaining_in_box: u64,
@@ -193,8 +193,11 @@ impl JxlDecoder<WithImageInfo> {
 
     /// Draws all the pixels we have data for. This is useful for i.e. previewing LF frames.
     ///
+    /// Returns `true` if any new pixels were written to `buffers` since the
+    /// previous call to `flush_pixels`; `false` if nothing new was rendered.
+    ///
     /// Note: see `process` for alignment requirements for the buffer data.
-    pub fn flush_pixels(&mut self, buffers: &mut [JxlOutputBuffer<'_>]) -> Result<()> {
+    pub fn flush_pixels(&mut self, buffers: &mut [JxlOutputBuffer<'_>]) -> Result<bool> {
         self.inner.flush_pixels(buffers)
     }
 
@@ -276,8 +279,11 @@ impl JxlDecoder<WithFrameInfo> {
 
     /// Draws all the pixels we have data for.
     ///
+    /// Returns `true` if any new pixels were written to `buffers` since the
+    /// previous call to `flush_pixels`; `false` if nothing new was rendered.
+    ///
     /// Note: see `process` for alignment requirements for the buffer data.
-    pub fn flush_pixels(&mut self, buffers: &mut [JxlOutputBuffer<'_>]) -> Result<()> {
+    pub fn flush_pixels(&mut self, buffers: &mut [JxlOutputBuffer<'_>]) -> Result<bool> {
         self.inner.flush_pixels(buffers)
     }
 
@@ -475,6 +481,20 @@ pub(crate) mod tests {
 
     for_each_test_file!(decode_test_file_chunks);
 
+    fn scan_test_file(path: &Path) -> Result<(), Error> {
+        scan_frames_with_decoder(&std::fs::read(path)?, usize::MAX);
+        Ok(())
+    }
+
+    for_each_test_file!(scan_test_file);
+
+    fn scan_test_file_chunks(path: &Path) -> Result<(), Error> {
+        scan_frames_with_decoder(&std::fs::read(path)?, 1);
+        Ok(())
+    }
+
+    for_each_test_file!(scan_test_file_chunks);
+
     fn compare_frames(
         path: &Path,
         fc: usize,
@@ -530,11 +550,7 @@ pub(crate) mod tests {
         let simple_frames = decode(&file, usize::MAX, true, false, None)?.1;
         let frames = decode(&file, usize::MAX, false, false, None)?.1;
         assert_eq!(frames.len(), simple_frames.len());
-        for (fc, (f, sf)) in frames
-            .into_iter()
-            .zip(simple_frames.into_iter())
-            .enumerate()
-        {
+        for (fc, (f, sf)) in frames.into_iter().zip(simple_frames).enumerate() {
             compare_frames(path, fc, &f, &sf)?;
         }
         Ok(())
@@ -551,11 +567,7 @@ pub(crate) mod tests {
 
         // Compare one_shot_frames and frames
         assert_eq!(one_shot_frames.len(), frames.len());
-        for (fc, (f, sf)) in frames
-            .into_iter()
-            .zip(one_shot_frames.into_iter())
-            .enumerate()
-        {
+        for (fc, (f, sf)) in frames.into_iter().zip(one_shot_frames).enumerate() {
             compare_frames(path, fc, &f, &sf)?;
         }
 
@@ -1663,134 +1675,128 @@ pub(crate) mod tests {
         decoder_with_image_info.scanned_frames().to_vec()
     }
 
-    fn assert_start_new_frame_matches_sequential(data: &[u8], expect_bare_codestream: bool) {
-        use crate::api::{JxlDataFormat, JxlPixelFormat};
+    fn assert_start_new_frame_matches_sequential(data: &[u8]) {
+        use crate::api::{JxlDataFormat, JxlDecoderInner, JxlPixelFormat};
         use crate::image::{Image, Rect};
 
         // 1. Scan frame info to get seek offsets.
         let scanned_frames = scan_frames_with_decoder(data, usize::MAX);
-        assert!(scanned_frames.len() > 1, "need multiple frames");
-
-        // Compare against second visible frame from regular sequential decode.
-        let target_visible_index = 1;
-        let seek_target = scanned_frames[target_visible_index].seek_target;
-
-        if expect_bare_codestream {
-            assert_eq!(seek_target.remaining_in_box, u64::MAX);
-        } else {
-            assert_ne!(seek_target.remaining_in_box, u64::MAX);
-        }
 
         // 2. Decode all frames sequentially and keep the reference frame.
         let (_n, sequential_frames) = decode(data, usize::MAX, false, false, None).unwrap();
-        let expected = &sequential_frames[target_visible_index];
 
-        // 3. Create decoder and parse image info.
-        let options = JxlDecoderOptions::default();
-        let decoder = JxlDecoder::<states::Initialized>::new(options);
-        let mut input = data;
+        arbtest::arbtest(|u| {
+            // 3. Pick a random initial offset to ensure we can seek from intermediate states
+            let initial_offset =
+                u.int_in_range(scanned_frames[0].file_offset as u64..=data.len() as u64)? as usize;
 
-        let ProcessingResult::Complete {
-            result: mut decoder,
-        } = decoder.process(&mut input).unwrap()
-        else {
-            panic!("expected Complete with full data");
-        };
+            let options = JxlDecoderOptions::default();
+            let mut decoder = JxlDecoderInner::new(options);
+            let mut input = &data[..initial_offset];
 
-        let basic_info = decoder.basic_info().clone();
-        let (width, height) = basic_info.size;
-
-        // Match the same requested output format as the sequential helper.
-        let default_format = decoder.current_pixel_format().clone();
-        let requested_format = JxlPixelFormat {
-            color_type: default_format.color_type,
-            color_data_format: Some(JxlDataFormat::f32()),
-            extra_channel_format: default_format
-                .extra_channel_format
-                .iter()
-                .map(|_| Some(JxlDataFormat::f32()))
-                .collect(),
-        };
-        decoder.set_pixel_format(requested_format.clone());
-
-        let channels = requested_format.color_type.samples_per_pixel();
-        let num_ec = requested_format.extra_channel_format.len();
-
-        // 4. Seek to decode-start and advance to the target visible frame.
-        decoder.start_new_frame(seek_target);
-        let mut input = &data[seek_target.decode_start_file_offset..];
-
-        for _ in 0..seek_target.visible_frames_to_skip {
-            let mut decoder_frame = loop {
-                match decoder.process(&mut input).unwrap() {
-                    ProcessingResult::Complete { result } => break result,
-                    ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                        decoder = fallback;
-                    }
-                }
-            };
-
-            decoder = loop {
-                match decoder_frame.skip_frame(&mut input).unwrap() {
-                    ProcessingResult::Complete { result } => break result,
-                    ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                        decoder_frame = fallback;
-                    }
-                }
-            };
-        }
-
-        let mut decoder_frame = loop {
-            match decoder.process(&mut input).unwrap() {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                    decoder = fallback;
+            // Advance decoder to initial state.
+            while let ProcessingResult::Complete { .. } = decoder.process(&mut input, None).unwrap()
+            {
+                if input.is_empty() {
+                    break;
                 }
             }
-        };
 
-        let mut color_buffer = Image::<f32>::new((width * channels, height)).unwrap();
-        let mut ec_buffers: Vec<Image<f32>> = (0..num_ec)
-            .map(|_| Image::<f32>::new((width, height)).unwrap())
-            .collect();
-        let mut buffers: Vec<JxlOutputBuffer> = vec![JxlOutputBuffer::from_image_rect_mut(
-            color_buffer
-                .get_rect_mut(Rect {
-                    origin: (0, 0),
-                    size: (width * channels, height),
-                })
-                .into_raw(),
-        )];
-        for ec in ec_buffers.iter_mut() {
-            buffers.push(JxlOutputBuffer::from_image_rect_mut(
-                ec.get_rect_mut(Rect {
-                    origin: (0, 0),
-                    size: (width, height),
-                })
-                .into_raw(),
-            ));
-        }
+            let num_seeks = u.int_in_range(1..=3)?;
+            for _ in 0..num_seeks {
+                let target_visible_index =
+                    u.int_in_range(0..=scanned_frames.len() as u64 - 1)? as usize;
+                let seek_target = scanned_frames[target_visible_index].seek_target;
 
-        let _decoder = loop {
-            match decoder_frame.process(&mut input, &mut buffers).unwrap() {
-                ProcessingResult::Complete { result } => break result,
-                ProcessingResult::NeedsMoreInput { fallback, .. } => {
-                    decoder_frame = fallback;
+                let expected = &sequential_frames[target_visible_index];
+
+                // 4. Seek to decode-start.
+                decoder.start_new_frame(seek_target);
+                let mut input = &data[seek_target.decode_start_file_offset as usize..];
+
+                // Advance to Frame Header
+                assert!(matches!(
+                    decoder.process(&mut input, None),
+                    Ok(ProcessingResult::Complete { .. })
+                ));
+
+                let basic_info = decoder.basic_info().unwrap().clone();
+                let (width, height) = basic_info.size;
+
+                // Match the same requested output format as the sequential helper.
+                let default_format = decoder.current_pixel_format().unwrap().clone();
+                let requested_format = JxlPixelFormat {
+                    color_type: default_format.color_type,
+                    color_data_format: Some(JxlDataFormat::f32()),
+                    extra_channel_format: default_format
+                        .extra_channel_format
+                        .iter()
+                        .map(|_| Some(JxlDataFormat::f32()))
+                        .collect(),
+                };
+                decoder.set_pixel_format(requested_format.clone());
+
+                let channels = requested_format.color_type.samples_per_pixel();
+                let num_ec = requested_format.extra_channel_format.len();
+
+                let mut color_buffer = Image::<f32>::new((width * channels, height)).unwrap();
+                let mut ec_buffers: Vec<Image<f32>> = (0..num_ec)
+                    .map(|_| Image::<f32>::new((width, height)).unwrap())
+                    .collect();
+                let mut buffers: Vec<JxlOutputBuffer> = vec![JxlOutputBuffer::from_image_rect_mut(
+                    color_buffer
+                        .get_rect_mut(Rect {
+                            origin: (0, 0),
+                            size: (width * channels, height),
+                        })
+                        .into_raw(),
+                )];
+                for ec in ec_buffers.iter_mut() {
+                    buffers.push(JxlOutputBuffer::from_image_rect_mut(
+                        ec.get_rect_mut(Rect {
+                            origin: (0, 0),
+                            size: (width, height),
+                        })
+                        .into_raw(),
+                    ));
+                }
+
+                // Decode frame
+                assert!(matches!(
+                    decoder.process(&mut input, Some(&mut buffers)),
+                    Ok(ProcessingResult::Complete { .. })
+                ));
+
+                // 5. Compare seek-decoded frame against sequential decode reference.
+                let mut seek_decoded = Vec::with_capacity(1 + num_ec);
+                seek_decoded.push(color_buffer);
+                seek_decoded.extend(ec_buffers);
+                compare_frames(
+                    Path::new("start_new_frame_seek"),
+                    target_visible_index,
+                    expected,
+                    &seek_decoded,
+                )
+                .unwrap();
+
+                // Test intermediate states
+                let available_bytes = input.len();
+                let extra_bytes = u.int_in_range(0..=available_bytes as u64)? as usize;
+                if extra_bytes == 0 {
+                    continue;
+                }
+                let mut extra_input = &input[..extra_bytes];
+
+                while let ProcessingResult::Complete { .. } =
+                    decoder.process(&mut extra_input, None).unwrap()
+                {
+                    if extra_input.is_empty() {
+                        break;
+                    }
                 }
             }
-        };
-
-        // 5. Compare seek-decoded frame against sequential decode reference.
-        let mut seek_decoded = Vec::with_capacity(1 + num_ec);
-        seek_decoded.push(color_buffer);
-        seek_decoded.extend(ec_buffers);
-        compare_frames(
-            Path::new("start_new_frame_seek"),
-            target_visible_index,
-            expected,
-            &seek_decoded,
-        )
-        .unwrap();
+            Ok(())
+        });
     }
 
     /// Test that `start_new_frame()` + scanner seek info decodes the same
@@ -1798,18 +1804,18 @@ pub(crate) mod tests {
     #[test]
     fn test_start_new_frame_bare_codestream() {
         let data =
-            std::fs::read("resources/test/conformance_test_images/animation_icos4d_5.jxl").unwrap();
-        assert_start_new_frame_matches_sequential(&data, true);
+            std::fs::read("resources/test/conformance_test_images/animation_icos4d.jxl").unwrap();
+        assert_start_new_frame_matches_sequential(&data);
     }
 
     /// Test that `start_new_frame()` + scanner seek info also works for boxed input.
     #[test]
     fn test_start_new_frame_boxed_codestream() {
         let codestream =
-            std::fs::read("resources/test/conformance_test_images/animation_icos4d_5.jxl").unwrap();
+            std::fs::read("resources/test/conformance_test_images/animation_icos4d.jxl").unwrap();
         let entries = vec![(0u64, 100u64, 1u64), (500, 100, 1), (600, 100, 1)];
         let container = wrap_with_frame_index(&codestream, 1, 1000, &entries);
-        assert_start_new_frame_matches_sequential(&container, false);
+        assert_start_new_frame_matches_sequential(&container);
     }
 
     /// Test seek/scanner behavior when codestream data is split across jxlp boxes,
@@ -1817,7 +1823,7 @@ pub(crate) mod tests {
     #[test]
     fn test_start_new_frame_boxed_jxlp_per_visible_frame() {
         let codestream =
-            std::fs::read("resources/test/conformance_test_images/animation_icos4d_5.jxl").unwrap();
+            std::fs::read("resources/test/conformance_test_images/animation_icos4d.jxl").unwrap();
 
         let scanned_frames = scan_frames_with_decoder(&codestream, usize::MAX);
         assert!(scanned_frames.len() > 1, "need multiple frames");
@@ -1835,7 +1841,13 @@ pub(crate) mod tests {
         assert_eq!(chunk_starts.len(), scanned_frames.len());
 
         let container = wrap_with_jxlp_chunks(&codestream, &chunk_starts);
-        assert_start_new_frame_matches_sequential(&container, false);
+        assert_start_new_frame_matches_sequential(&container);
+    }
+
+    #[test]
+    fn test_start_new_frame_cropped_traffic_light() {
+        let data = std::fs::read("resources/test/cropped_traffic_light.jxl").unwrap();
+        assert_start_new_frame_matches_sequential(&data);
     }
 
     #[test]
@@ -1867,7 +1879,7 @@ pub(crate) mod tests {
         assert!(frames[0].is_keyframe);
         assert_eq!(
             frames[0].seek_target.decode_start_file_offset,
-            frames[0].file_offset
+            frames[0].file_offset as u64
         );
     }
 
@@ -1907,7 +1919,7 @@ pub(crate) mod tests {
         assert_eq!(frames.len(), 1);
         let f = &frames[0];
         assert!(f.is_keyframe);
-        assert_eq!(f.seek_target.decode_start_file_offset, f.file_offset);
+        assert_eq!(f.seek_target.decode_start_file_offset, f.file_offset as u64);
         assert_eq!(f.seek_target.visible_frames_to_skip, 0);
     }
 
@@ -1920,7 +1932,7 @@ pub(crate) mod tests {
 
         for frame in &frames {
             assert!(
-                frame.seek_target.decode_start_file_offset <= frame.file_offset,
+                frame.seek_target.decode_start_file_offset <= frame.file_offset as u64,
                 "frame {}: decode_start_file_offset {} > file_offset {}",
                 frame.index,
                 frame.seek_target.decode_start_file_offset,
@@ -1971,7 +1983,7 @@ pub(crate) mod tests {
         ];
 
         let opts = JxlDecoderOptions {
-            pixel_limit: Some(1024 * 1024 * 1024),
+            sample_limit: Some(1024 * 1024 * 1024),
             ..Default::default()
         };
         let mut decoder = JxlDecoderInner::new(opts);
@@ -1981,6 +1993,114 @@ pub(crate) mod tests {
             && let Some(profile) = decoder.output_color_profile()
         {
             let _ = profile.try_as_icc();
+        }
+    }
+
+    /// Regression test for Chromium ClusterFuzz issue 502853162.
+    ///
+    /// Scan-only decoding may consume all external input in one `process()`
+    /// call while still having buffered frame data to finalize internally.
+    /// A subsequent empty-input `process()` call must not panic.
+    #[test]
+    fn test_scan_frames_only_empty_followup_no_panic_502853162() {
+        #[rustfmt::skip]
+        let data: &[u8] = &[
+            0xff, 0x0a, 0x31, 0xbd, 0xa2, 0xd0, 0x2a, 0x18,
+            0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x0f, 0xa0, 0x26, 0x00, 0xff,
+        ];
+
+        let opts = JxlDecoderOptions {
+            scan_frames_only: true,
+            sample_limit: Some(1024 * 1024 * 1024),
+            ..Default::default()
+        };
+        let mut decoder = JxlDecoderInner::new(opts);
+
+        let mut input = data;
+        while decoder.has_more_frames() {
+            let _ = decoder.process(&mut input, None).unwrap();
+        }
+    }
+
+    /// Small regression test for issue #728: squeeze transform boundary bug.
+    #[test]
+    fn test_squeeze_boundary_minimal() {
+        let (_, frames) = decode(
+            &std::fs::read("resources/test/issue728_minimal.jxl").unwrap(),
+            usize::MAX,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(frames.len(), 1);
+        let frame = &frames[0];
+        let buf = &frame[0];
+        let (xs, ys) = buf.size();
+        for y in 0..ys {
+            let row = buf.row(y);
+            for (x, &v) in row.iter().enumerate().take(xs) {
+                assert!(
+                    v == 0.0 || v == 1.0,
+                    "pixel ({}, {}) has value {v}, expected 0.0 or 1.0 \
+                     (issue #728 squeeze boundary bug - minimal test)",
+                    x / 3,
+                    y,
+                );
+            }
+        }
+    }
+
+    /// Regression test for grid boundary bug with odd-width images (issue #728 variant).
+    ///
+    /// This test image is 257x256 solid blue (RGB 0, 0, 255). The width has a tail pixel
+    /// which triggers a bug in grid-based decoding where hsqueeze is called with a
+    /// 0-width residual rectangle for the rightmost grid cell.
+    ///
+    /// The bug was in the w==0 shortcut in do_hsqueeze_step() which looped over in_res
+    /// height (0) instead of output height, so no pixels were copied. The fix ensures
+    /// we loop over output dimensions to copy all pixels from in_avg.
+    ///
+    /// Before the fix: 512 pixels corrupted (2 rightmost columns × 256 rows)
+    /// After the fix: All pixels decode correctly as blue (0.0, 0.0, 1.0)
+    #[test]
+    fn decode_test_strategic_solid_blue_grid_boundary() {
+        let (_, frames) = decode(
+            &std::fs::read("resources/test/strategic_solid_blue.jxl").unwrap(),
+            usize::MAX,
+            false,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(frames.len(), 1);
+        let frame = &frames[0];
+
+        // First buffer contains interleaved RGB channels (3 channels)
+        let buf = &frame[0];
+        let (xs, ys) = buf.size();
+
+        // Verify dimensions: 257 pixels × 3 channels = 771, height = 256
+        assert_eq!(xs, 257 * 3);
+        assert_eq!(ys, 256);
+
+        // Check all pixels are blue (0.0, 0.0, 1.0 in f32 format)
+        for y in 0..ys {
+            for x in 0..257 {
+                let row = buf.row(y);
+                let (r, g, b) = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2]);
+                assert_eq!(
+                    (r, g, b),
+                    (0.0, 0.0, 1.0),
+                    "pixel ({}, {}) has value ({}, {}, {}), expected (0.0, 0.0, 1.0)",
+                    x,
+                    y,
+                    r,
+                    g,
+                    b,
+                );
+            }
         }
     }
 }

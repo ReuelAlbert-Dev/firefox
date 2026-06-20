@@ -140,14 +140,6 @@ void nsIGlobalObject::UnlinkObjectsInGlobal() {
 
 void nsIGlobalObject::TraverseObjectsInGlobal(
     nsCycleCollectionTraversalCallback& cb) {
-  // Currently we only store BlobImpl objects off the the main-thread and they
-  // are not CCed.
-  if (!mHostObjectURIs.IsEmpty() && NS_IsMainThread()) {
-    for (uint32_t index = 0; index < mHostObjectURIs.Length(); ++index) {
-      BlobURLProtocolHandler::Traverse(mHostObjectURIs[index], cb);
-    }
-  }
-
   nsIGlobalObject* tmp = this;
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReportBuffer)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReportingObservers)
@@ -166,7 +158,7 @@ void nsIGlobalObject::RemoveGlobalTeardownObserver(
     GlobalTeardownObserver* aObject) {
   MOZ_DIAGNOSTIC_ASSERT(aObject);
   MOZ_ASSERT(aObject->isInList());
-  MOZ_ASSERT(aObject->GetOwnerGlobal() == this);
+  MOZ_ASSERT(aObject->GetRelevantGlobal() == this);
   aObject->remove();
 }
 
@@ -199,7 +191,7 @@ void nsIGlobalObject::ForEachGlobalTeardownObserver(
   for (auto& target : targetList) {
     // Check to see if a previous iteration's callback triggered the removal
     // of this target as a side-effect.  If it did, then just ignore it.
-    if (target->GetOwnerGlobal() != this) {
+    if (target->GetRelevantGlobal() != this) {
       continue;
     }
     aFunc(target, &done);
@@ -216,7 +208,7 @@ void nsIGlobalObject::DisconnectGlobalTeardownObservers() {
 
         // Calling DisconnectFromOwner() should result in
         // RemoveGlobalTeardownObserver() being called.
-        MOZ_DIAGNOSTIC_ASSERT(aTarget->GetOwnerGlobal() != this);
+        MOZ_DIAGNOSTIC_ASSERT(aTarget->GetRelevantGlobal() != this);
       });
 }
 
@@ -515,9 +507,8 @@ bool nsIGlobalObject::IsRFPTargetActive(const nsAString& aTargetName,
 }
 
 void nsIGlobalObject::ReportToConsole(
-    uint32_t aErrorFlags, const nsCString& aCategory,
-    nsContentUtils::PropertiesFile aFile, const nsCString& aMessageName,
-    const nsTArray<nsString>& aParams,
+    uint32_t aErrorFlags, const nsCString& aCategory, PropertiesFile aFile,
+    const nsCString& aMessageName, const nsTArray<nsString>& aParams,
     const mozilla::SourceLocation& aLocation) {
   // We pass nullptr for the document because nsGlobalWindowInner handles the
   // case where it should be non-null.  We also expect the worker impl to

@@ -85,8 +85,9 @@ RUN_ON_PROJECT_ALIASES = {
     "trunk-only": lambda params: params["project"] in TRUNK_PROJECTS,
     "autoland": lambda params: params["project"] in ("autoland", "toolchains"),
     "autoland-only": lambda params: params["project"] == "autoland",
-    "mozilla-central": lambda params: params["project"]
-    in ("mozilla-central", "toolchains"),
+    "mozilla-central": lambda params: (
+        params["project"] in ("mozilla-central", "toolchains")
+    ),
     "mozilla-central-only": lambda params: params["project"] == "mozilla-central",
 }
 
@@ -101,7 +102,6 @@ _COPYABLE_ATTRIBUTES = (
     "mar-channel-id",
     "maven_packages",
     "nightly",
-    "required_signoffs",
     "shippable",
     "shipping_phase",
     "shipping_product",
@@ -171,14 +171,6 @@ def release_level(params):
             return "production"
 
     return "staging"
-
-
-def is_try(params):
-    """
-    Determine whether this graph is being built on a try project or for
-    `mach try fuzzy`.
-    """
-    return "try" in params["project"] or params["try_mode"] == "try_select"
 
 
 def task_name(task):

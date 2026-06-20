@@ -88,6 +88,10 @@ class LocalAccessible : public nsISupports, public Accessible {
  public:
   LocalAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
+  LocalAccessible() = delete;
+  LocalAccessible(const LocalAccessible&) = delete;
+  LocalAccessible& operator=(const LocalAccessible&) = delete;
+
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS(LocalAccessible)
 
@@ -764,6 +768,8 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   virtual void DOMNodeClass(nsString& aClass) const override;
 
+  virtual int32_t HeadingLevel() const override;
+
   virtual void LiveRegionAttributes(nsAString* aLive, nsAString* aRelevant,
                                     Maybe<bool>* aAtomic,
                                     nsAString* aBusy) const override;
@@ -1026,10 +1032,6 @@ class LocalAccessible : public nsISupports, public Accessible {
   friend class AccGroupInfo;
 
  private:
-  LocalAccessible() = delete;
-  LocalAccessible(const LocalAccessible&) = delete;
-  LocalAccessible& operator=(const LocalAccessible&) = delete;
-
   /**
    * Traverses the accessible's parent chain in search of an accessible with
    * a frame. Returns the frame when found. Includes special handling for

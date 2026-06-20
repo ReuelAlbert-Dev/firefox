@@ -15,7 +15,7 @@ struct LogValueMatcher {
   void operator()(const DDLogObject& a) const { a.AppendPrintf(mString); }
   void operator()(const char* a) const { mString.AppendPrintf(R"("%s")", a); }
   void operator()(const nsCString& a) const {
-    mString.AppendPrintf(R"(nsCString("%s"))", a.Data());
+    mString.AppendPrintf(R"(nsCString("%s"))", a.get());
   }
   void operator()(bool a) const { mString.AppendPrintf(a ? "true" : "false"); }
   void operator()(int8_t a) const {

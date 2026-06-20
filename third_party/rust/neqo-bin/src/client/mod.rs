@@ -20,25 +20,35 @@ use std::{
 };
 
 use clap::Parser;
+
+#[derive(Clone, Debug)]
+struct EchConfig(Vec<u8>);
+
+impl std::str::FromStr for EchConfig {
+    type Err = hex::FromHexError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        hex::decode(s).map(EchConfig)
+    }
+}
 use futures::{
     FutureExt as _, TryFutureExt as _,
     future::{Either, select},
 };
 use http::Uri as Url;
 use neqo_common::{Datagram, Role, qdebug, qerror, qinfo, qlog::Qlog};
-use neqo_crypto::{
+use neqo_http3::Header;
+use neqo_transport::{AppError, CloseReason, ConnectionId, OutputBatch, Version};
+use neqo_udp::RecvBuf;
+use nss::{
     Cipher, ResumptionToken,
     constants::{TLS_AES_128_GCM_SHA256, TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256},
     init,
 };
-use neqo_http3::Header;
-use neqo_transport::{AppError, CloseReason, ConnectionId, OutputBatch, Version};
-use neqo_udp::RecvBuf;
 use rustc_hash::FxHashMap as HashMap;
 use thiserror::Error;
 use tokio::time::Sleep;
 
-use crate::SharedArgs;
+use crate::{SharedArgs, now};
 
 mod http09;
 mod http3;
@@ -60,7 +70,7 @@ pub enum Error {
     #[error("application error: {0}")]
     Application(AppError),
     #[error(transparent)]
-    Crypto(#[from] neqo_crypto::Error),
+    Crypto(#[from] nss::Error),
 }
 
 impl From<CloseReason> for Error {
@@ -117,14 +127,22 @@ pub struct Args {
     /// Use this for 0-RTT: the stack always attempts 0-RTT on resumption.
     resume: bool,
 
+    #[arg(long)]
+    /// Save the resumption token to a file after connecting.
+    save_token: Option<PathBuf>,
+
+    #[arg(long)]
+    /// Load a resumption token from a file and attempt 0-RTT.
+    load_token: Option<PathBuf>,
+
     #[arg(name = "key-update", long, hide = true)]
     /// Attempt to initiate a key update immediately after confirming the connection.
     key_update: bool,
 
-    #[arg(name = "ech", long, value_parser = |s: &str| hex::decode(s))]
+    #[arg(name = "ech", long)]
     /// Enable encrypted client hello (ECH).
     /// This takes an encoded ECH configuration in hexadecimal format.
-    ech: Option<Vec<u8>>,
+    ech: Option<EchConfig>,
 
     #[arg(name = "ipv4-only", short = '4', long)]
     /// Connect only over IPv4
@@ -185,6 +203,8 @@ impl Args {
             output_read_data: false,
             output_dir: Some("/dev/null".into()),
             resume: false,
+            save_token: None,
+            load_token: None,
             key_update: false,
             ech: None,
             ipv4_only: false,
@@ -425,7 +445,7 @@ impl<'a, H: Handler> Runner<'a, H> {
                 (true, CloseState::Closing) | (false, _) => {}
                 // no more work, closing connection
                 (true, CloseState::NotClosing) => {
-                    self.client.close(Instant::now(), 0, "kthxbye!");
+                    self.client.close(now(), 0, "kthxbye!");
                     continue;
                 }
                 // no more work, connection closed, terminating
@@ -456,10 +476,7 @@ impl<'a, H: Handler> Runner<'a, H> {
                 .inspect_err(|_| qerror!("Socket return GSO size of 0"))
                 .map_err(|_| io::Error::from(ErrorKind::Unsupported))?;
 
-            match self
-                .client
-                .process_multiple_output(Instant::now(), max_datagrams)
-            {
+            match self.client.process_multiple_output(now(), max_datagrams) {
                 OutputBatch::DatagramBatch(dgram) => loop {
                     // Optimistically attempt sending datagram. In case the OS
                     // buffer is full, wait till socket is writable then try
@@ -499,7 +516,7 @@ impl<'a, H: Handler> Runner<'a, H> {
 
     async fn process_multiple_input(&mut self) -> Res<()> {
         while let Some(dgrams) = self.socket.recv(self.local_addr, &mut self.recv_buf)? {
-            self.client.process_multiple_input(dgrams, Instant::now());
+            self.client.process_multiple_input(dgrams, now());
             self.process_output().await?;
         }
 
@@ -526,7 +543,7 @@ fn qlog_new(args: &Args, hostname: &str, cid: &ConnectionId) -> Res<Qlog> {
         Some("Neqo client qlog".to_string()),
         Some("Neqo client qlog".to_string()),
         format!("client-{hostname}-{cid}"),
-        Instant::now(),
+        now(),
     )
     .map_err(Error::Qlog)
 }
@@ -599,7 +616,18 @@ pub async fn client(mut args: Args) -> Res<()> {
             args.shared.alpn
         );
 
-        let mut token: Option<ResumptionToken> = None;
+        let mut token: Option<ResumptionToken> = args
+            .load_token
+            .as_ref()
+            .map(|path| -> Res<_> {
+                Ok(ResumptionToken::new(
+                    std::fs::read(path)?,
+                    // Expiry is a client-side hint only; the TLS ticket itself
+                    // carries its own lifetime enforced by the server.
+                    now() + std::time::Duration::from_secs(86400),
+                ))
+            })
+            .transpose()?;
         let mut first = true;
         while !urls.is_empty() {
             let to_request = if (args.resume && first) || args.download_in_series {
@@ -616,19 +644,23 @@ pub async fn client(mut args: Args) -> Res<()> {
 
                 let handler = http3::Handler::new(to_request, args.clone());
 
-                Runner::new(real_local, &mut socket, client, handler, &args)
-                    .run()
-                    .await?
+                Box::pin(Runner::new(real_local, &mut socket, client, handler, &args).run()).await?
             } else {
                 let client = http09::create_client(&args, real_local, remote_addr, &host, token)
                     .expect("failed to create client");
 
                 let handler = http09::Handler::new(to_request, &args);
 
-                Runner::new(real_local, &mut socket, client, handler, &args)
-                    .run()
-                    .await?
+                Box::pin(Runner::new(real_local, &mut socket, client, handler, &args).run()).await?
             };
+        }
+
+        if let (Some(path), Some(tok)) = (&args.save_token, &token) {
+            if let Err(e) = std::fs::write(path, tok.as_ref()) {
+                qerror!("Failed to save token to {}: {e}", path.display());
+            } else {
+                qinfo!("Resumption token saved to {}", path.display());
+            }
         }
     }
 

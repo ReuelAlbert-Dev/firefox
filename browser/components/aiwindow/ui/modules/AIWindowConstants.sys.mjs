@@ -6,7 +6,7 @@
 /**
  * The current SQLite database schema version
  */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 /**
  * The directory that the SQLite database lives in
@@ -22,16 +22,6 @@ export const DB_FILE_NAME = "chat-store.sqlite";
  * Preference branch for the Chat storage location
  */
 export const PREF_BRANCH = "browser.smartwindow.chatHistory";
-
-/**
- * Model names
- */
-export const MODELS = {
-  0: { modelName: "custom-model" },
-  1: { modelName: "gemini-flash-lite", ownerName: "Google" },
-  2: { modelName: "Qwen3-235B-A22B", ownerName: "Alibaba" },
-  3: { modelName: "gpt-oss-120B", ownerName: "OpenAI" },
-};
 
 export {
   CONVERSATION_STATUS,

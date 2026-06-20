@@ -227,22 +227,19 @@ class WindowManager {
       let posMatches = true;
 
       if (
-        width !== null &&
-        height !== null &&
-        (win.outerWidth !== width || win.outerHeight !== height)
+        (width !== null && win.outerWidth !== width) ||
+        (height !== null && win.outerHeight !== height)
       ) {
         sizeMatches = false;
       }
 
-      // Wayland doesn't support getting the window position.
       if (
-        x !== null &&
-        y !== null &&
-        (win.screenX !== x || win.screenY !== y)
+        (x !== null && win.screenX !== x) ||
+        (y !== null && win.screenY !== y)
       ) {
-        if (lazy.AppInfo.isWayland) {
+        if (lazy.AppInfo.isWayland && !lazy.AppInfo.isHeadless) {
           lazy.logger.info(
-            `Wayland doesn't support setting the window position`
+            `Wayland doesn't support setting the window position in headful mode`
           );
         } else {
           posMatches = false;
@@ -276,13 +273,16 @@ class WindowManager {
       };
       const promises = [];
 
-      const resize = width !== null && height !== null;
+      const resize = width !== null || height !== null;
       if (resize) {
         promises.push(new lazy.EventPromise(win, "resize", options));
       }
 
-      // Wayland doesn't support setting the window position.
-      const move = !lazy.AppInfo.isWayland && x !== null && y !== null;
+      // Wayland doesn't support setting the window position in headful mode.
+      const move =
+        !(lazy.AppInfo.isWayland && !lazy.AppInfo.isHeadless) &&
+        (x !== null || y !== null);
+
       if (move) {
         promises.push(
           new lazy.EventPromise(win.windowRoot, "MozUpdateWindowPos", options)
@@ -290,11 +290,16 @@ class WindowManager {
       }
 
       if (move && resize) {
-        win.moveResize(x, y, width, height);
+        win.moveResize(
+          x ?? win.screenX,
+          y ?? win.screenY,
+          width ?? win.outerWidth,
+          height ?? win.outerHeight
+        );
       } else if (move) {
-        win.moveTo(x, y);
+        win.moveTo(x ?? win.screenX, y ?? win.screenY);
       } else if (resize) {
-        win.resizeTo(width, height);
+        win.resizeTo(width ?? win.outerWidth, height ?? win.outerHeight);
       }
 
       try {
@@ -446,7 +451,7 @@ class WindowManager {
           await this.focusWindow(openerWindow);
         }
 
-        const chromeWindow = browser.ownerGlobal;
+        const chromeWindow = browser.documentGlobal;
         await this.waitForChromeWindowLoaded(chromeWindow);
 
         return chromeWindow;
@@ -609,7 +614,7 @@ class WindowManager {
   }
 
   #setChromeWindowForBrowsingContext(context) {
-    const chromeWindow = context.top.embedderElement?.ownerGlobal;
+    const chromeWindow = context.top.embedderElement?.documentGlobal;
     if (chromeWindow) {
       return this.#contextToWindowMap.getOrInsert(context.top, chromeWindow);
     }

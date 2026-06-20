@@ -25,7 +25,7 @@ class BrowserBridgeHost final : public RemoteBrowser {
 
   explicit BrowserBridgeHost(BrowserBridgeChild* aChild);
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_CLASS(BrowserBridgeHost)
 
   // Get the IPDL actor for the BrowserBridgeChild.
@@ -37,8 +37,7 @@ class BrowserBridgeHost final : public RemoteBrowser {
   TabId GetTabId() const override;
   LayersId GetLayersId() const override;
   BrowsingContext* GetBrowsingContext() const override;
-  nsILoadContext* GetLoadContext() const override;
-  bool CanRecv() const override;
+  bool CanSend() const override;
 
   void LoadURL(nsDocShellLoadState* aLoadState) override;
   void ResumeLoad(uint64_t aPendingSwitchId) override;

@@ -66,9 +66,6 @@ class SocketProcessChild final : public PSocketProcessChild {
 #endif
   mozilla::ipc::IPCResult RecvSocketProcessTelemetryPing();
 
-  PWebrtcTCPSocketChild* AllocPWebrtcTCPSocketChild(const Maybe<TabId>& tabId);
-  bool DeallocPWebrtcTCPSocketChild(PWebrtcTCPSocketChild* aActor);
-
   already_AddRefed<PHttpTransactionChild> AllocPHttpTransactionChild();
 
   void CleanUp();
@@ -145,6 +142,10 @@ class SocketProcessChild final : public PSocketProcessChild {
 
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
 
+  mozilla::ipc::IPCResult RecvLoadSSLTokensCache(ByteBuf&& aBuf);
+  mozilla::ipc::IPCResult RecvFlushSSLTokensCache(
+      FlushSSLTokensCacheResolver&& aResolver);
+
   mozilla::ipc::IPCResult RecvTestTriggerMetrics(
       TestTriggerMetricsResolver&& aResolve);
 
@@ -176,9 +177,9 @@ class SocketProcessChild final : public PSocketProcessChild {
   RefPtr<ChildProfilerController> mProfilerController;
 
   // Protect the table below.
-  Mutex mMutex MOZ_UNANNOTATED{"SocketProcessChild::mMutex"};
+  Mutex mMutex{"SocketProcessChild::mMutex"};
   nsTHashMap<uint64_t, RefPtr<BackgroundDataBridgeParent>>
-      mBackgroundDataBridgeMap;
+      mBackgroundDataBridgeMap MOZ_GUARDED_BY(mMutex);
 
   bool mShuttingDown MOZ_GUARDED_BY(mMutex) = false;
 

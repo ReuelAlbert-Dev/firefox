@@ -43,7 +43,9 @@ dependencies {
     implementation project(':components:concept-base')
     implementation project(':components:concept-engine')
     implementation project(':components:concept-fetch')
+    implementation project(':components:service-merino-manifest')
     implementation project(':components:support-ktx')
+    implementation project(':components:support-utils')
 
     implementation libs.androidsvg
     implementation libs.androidx.annotation
@@ -52,7 +54,6 @@ dependencies {
     implementation libs.androidx.compose.ui
     implementation libs.androidx.core.ktx
     implementation libs.androidx.palette
-    implementation libs.disklrucache
     implementation libs.kotlinx.coroutines
 
     testImplementation project(':components:lib-fetch-httpurlconnection')
@@ -62,6 +63,7 @@ dependencies {
     testImplementation libs.androidx.test.core
     testImplementation libs.androidx.test.junit
     testImplementation libs.kotlin.reflect
+    testImplementation libs.kotlin.test
     testImplementation libs.kotlinx.coroutines.test
     testImplementation libs.mockwebserver
     testImplementation libs.okhttp
@@ -71,6 +73,7 @@ dependencies {
     androidTestImplementation libs.androidx.test.core
     androidTestImplementation libs.androidx.test.rules
     androidTestImplementation libs.androidx.test.runner
+    androidTestImplementation libs.kotlin.test
     androidTestImplementation libs.kotlinx.coroutines.test
 }
 

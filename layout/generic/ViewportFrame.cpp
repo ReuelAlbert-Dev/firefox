@@ -14,8 +14,10 @@
 #include "mozilla/ComputedStyleInlines.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProfilerLabels.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/RestyleManager.h"
 #include "mozilla/ScrollContainerFrame.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/dom/ViewTransition.h"
 #include "nsCanvasFrame.h"
 #include "nsGkAtoms.h"
@@ -468,9 +470,11 @@ void ViewportFrame::Reflow(nsPresContext* aPresContext,
     // height actually changes.
     AbsPosReflowFlags flags{AbsPosReflowFlag::CBWidthChanged,
                             AbsPosReflowFlag::CBHeightChanged};
+    nsReflowStatus absposStatus;
     GetAbsoluteContainingBlock()->Reflow(this, aPresContext, reflowInput,
-                                         aStatus, cb, flags,
+                                         absposStatus, cb, flags,
                                          /* aOverflowAreas = */ nullptr);
+    aStatus.MergeCompletionStatusFrom(absposStatus);
   }
 
   if (mFrames.NotEmpty()) {
@@ -487,17 +491,6 @@ void ViewportFrame::Reflow(nsPresContext* aPresContext,
   FinishAndStoreOverflow(&aDesiredSize);
 
   NS_FRAME_TRACE_REFLOW_OUT("ViewportFrame::Reflow", aStatus);
-}
-
-void ViewportFrame::UpdateStyle(ServoRestyleState& aRestyleState) {
-  RefPtr<ComputedStyle> newStyle =
-      aRestyleState.StyleSet().ResolveInheritingAnonymousBoxStyle(
-          Style()->GetPseudoType(), nullptr);
-
-  MOZ_ASSERT(!GetNextContinuation(), "Viewport has continuations?");
-  SetComputedStyle(newStyle);
-
-  UpdateStyleOfOwnedAnonBoxes(aRestyleState);
 }
 
 void ViewportFrame::AppendDirectlyOwnedAnonBoxes(

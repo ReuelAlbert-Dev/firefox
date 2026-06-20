@@ -159,8 +159,8 @@ void nsCoreUtils::DispatchTouchEvent(EventMessage aMessage, int32_t aX,
   WidgetTouchEvent event(true, aMessage, aRootWidget);
 
   // XXX: Touch has an identifier of -1 to hint that it is synthesized.
-  RefPtr<dom::Touch> t = new dom::Touch(-1, LayoutDeviceIntPoint(aX, aY),
-                                        LayoutDeviceIntPoint(1, 1), 0.0f, 1.0f);
+  auto t = MakeRefPtr<dom::Touch>(-1, LayoutDeviceIntPoint(aX, aY),
+                                  LayoutDeviceIntPoint(1, 1), 0.0f, 1.0f);
   t->SetTouchTarget(aContent);
   event.mTouches.AppendElement(t);
   nsEventStatus status = nsEventStatus_eIgnore;
@@ -232,15 +232,15 @@ bool nsCoreUtils::IsAncestorOf(nsINode* aPossibleAncestorNode,
 
 nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
                                         uint32_t aScrollType) {
-  ScrollAxis vertical, horizontal;
+  AxisScrollParams vertical, horizontal;
   ConvertScrollTypeToPercents(aScrollType, &vertical, &horizontal);
 
   return ScrollSubstringTo(aFrame, aRange, vertical, horizontal);
 }
 
 nsresult nsCoreUtils::ScrollSubstringTo(nsIFrame* aFrame, nsRange* aRange,
-                                        ScrollAxis aVertical,
-                                        ScrollAxis aHorizontal) {
+                                        AxisScrollParams aVertical,
+                                        AxisScrollParams aHorizontal) {
   if (!aFrame || !aRange) {
     return NS_ERROR_FAILURE;
   }
@@ -288,8 +288,8 @@ void nsCoreUtils::ScrollFrameToPoint(nsIFrame* aScrollContainerFrame,
 }
 
 void nsCoreUtils::ConvertScrollTypeToPercents(uint32_t aScrollType,
-                                              ScrollAxis* aVertical,
-                                              ScrollAxis* aHorizontal) {
+                                              AxisScrollParams* aVertical,
+                                              AxisScrollParams* aHorizontal) {
   WhereToScroll whereY, whereX;
   WhenToScroll whenY, whenX;
   switch (aScrollType) {
@@ -335,8 +335,8 @@ void nsCoreUtils::ConvertScrollTypeToPercents(uint32_t aScrollType,
       whereX = WhereToScroll::Center;
       whenX = WhenToScroll::IfNotFullyVisible;
   }
-  *aVertical = ScrollAxis(whereY, whenY);
-  *aHorizontal = ScrollAxis(whereX, whenX);
+  *aVertical = AxisScrollParams(whereY, whenY);
+  *aHorizontal = AxisScrollParams(whereX, whenX);
 }
 
 already_AddRefed<nsIDocShell> nsCoreUtils::GetDocShellFor(nsINode* aNode) {
@@ -540,7 +540,7 @@ bool nsCoreUtils::IsColumnHidden(nsTreeColumn* aColumn) {
 
 void nsCoreUtils::ScrollTo(PresShell* aPresShell, nsIContent* aContent,
                            uint32_t aScrollType) {
-  ScrollAxis vertical, horizontal;
+  AxisScrollParams vertical, horizontal;
   ConvertScrollTypeToPercents(aScrollType, &vertical, &horizontal);
   aPresShell->ScrollContentIntoView(aContent, vertical, horizontal,
                                     ScrollFlags::ScrollOverflowHidden);
@@ -616,7 +616,8 @@ bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent) {
   }
 
   // Even if we're display: contents or optgroups, we might not be able to
-  // create an accessible if we're in a content-visibility: hidden subtree.
+  // create an accessible if we're in a content-visibility: hidden, visibility:
+  // hidden or inert subtree.
   //
   // To check that, find the closest ancestor element with a frame.
   for (nsIContent* c :
@@ -624,7 +625,8 @@ bool nsCoreUtils::CanCreateAccessibleWithoutFrame(nsIContent* aContent) {
     if (nsIFrame* f = c->GetPrimaryFrame()) {
       if (f->HidesContent(nsIFrame::IncludeContentVisibility::Hidden) ||
           f->IsHiddenByContentVisibilityOnAnyAncestor(
-              nsIFrame::IncludeContentVisibility::Hidden)) {
+              nsIFrame::IncludeContentVisibility::Hidden) ||
+          !f->StyleVisibility()->IsVisible() || f->StyleUI()->IsInert()) {
         return false;
       }
       break;

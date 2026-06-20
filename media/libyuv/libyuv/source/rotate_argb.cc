@@ -10,6 +10,8 @@
 
 #include "libyuv/rotate_argb.h"
 
+#include <limits.h>
+
 #include "libyuv/convert.h"
 #include "libyuv/cpu_id.h"
 #include "libyuv/planar_functions.h"
@@ -50,14 +52,6 @@ static int ARGBTranspose(const uint8_t* src_argb,
     ScaleARGBRowDownEven = ScaleARGBRowDownEven_Any_NEON;
     if (IS_ALIGNED(height, 4)) {  // Width of dest.
       ScaleARGBRowDownEven = ScaleARGBRowDownEven_NEON;
-    }
-  }
-#endif
-#if defined(HAS_SCALEARGBROWDOWNEVEN_MSA)
-  if (TestCpuFlag(kCpuHasMSA)) {
-    ScaleARGBRowDownEven = ScaleARGBRowDownEven_Any_MSA;
-    if (IS_ALIGNED(height, 4)) {  // Width of dest.
-      ScaleARGBRowDownEven = ScaleARGBRowDownEven_MSA;
     }
   }
 #endif
@@ -155,14 +149,6 @@ static int ARGBRotate180(const uint8_t* src_argb,
     }
   }
 #endif
-#if defined(HAS_ARGBMIRRORROW_MSA)
-  if (TestCpuFlag(kCpuHasMSA)) {
-    ARGBMirrorRow = ARGBMirrorRow_Any_MSA;
-    if (IS_ALIGNED(width, 16)) {
-      ARGBMirrorRow = ARGBMirrorRow_MSA;
-    }
-  }
-#endif
 #if defined(HAS_ARGBMIRRORROW_LSX)
   if (TestCpuFlag(kCpuHasLSX)) {
     ARGBMirrorRow = ARGBMirrorRow_Any_LSX;
@@ -238,14 +224,15 @@ int ARGBRotate(const uint8_t* src_argb,
                int width,
                int height,
                enum RotationMode mode) {
-  if (!src_argb || width <= 0 || height == 0 || !dst_argb) {
+  if (!src_argb || width <= 0 || height == 0 || height == INT_MIN ||
+      !dst_argb) {
     return -1;
   }
 
   // Negative height means invert the image.
   if (height < 0) {
     height = -height;
-    src_argb = src_argb + (height - 1) * src_stride_argb;
+    src_argb = src_argb + (ptrdiff_t)(height - 1) * src_stride_argb;
     src_stride_argb = -src_stride_argb;
   }
 

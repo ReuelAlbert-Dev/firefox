@@ -61,6 +61,12 @@ bool GetInstantiator(nsIFile** aOutInstantiator);
 #endif
 
 /**
+ * Return a string describing the platform a11y instantiators.
+ * Exposed through nsIXULRuntime.accessibilityInstantiator.
+ */
+void GetHumanReadableInstantiatorStr(nsAString& aResult);
+
+/**
  * Called to initialize platform specific accessibility support.
  * Note this is called after internal accessibility support is initialized.
  */
@@ -123,6 +129,10 @@ void PlatformTextSelectionChangeEvent(Accessible* aTarget,
 
 void PlatformRoleChangedEvent(Accessible* aTarget, const a11y::role& aRole,
                               uint8_t aRoleMapEntryIndex);
+
+void PlatformFocusedAccLocationChanged(Accessible* aFocusedAcc);
+
+bool PlatformShouldTrackFocusedAccLocation();
 #endif
 
 // Get the cache domains needed by any known clients interacting with Gecko. If

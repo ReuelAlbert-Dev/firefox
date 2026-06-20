@@ -11,8 +11,7 @@ Introduction
 
 The string classes are a library of C++ classes which are used to manage
 buffers of wide (16-bit) and narrow (8-bit) character strings. The headers
-and implementation are in the `xpcom/string
-<https://searchfox.org/mozilla-central/source/xpcom/string>`_ directory. All
+and implementation are in the :searchfox:`xpcom/string` directory. All
 strings are stored as a single contiguous buffer of characters.
 
 The 8-bit and 16-bit string classes have completely separate base classes,
@@ -88,8 +87,9 @@ them, see the appendix describing What Class to Use When.
   null-terminated storage. This allows for a method (``.get()``) to access the
   underlying character buffer.
 
-The remainder of the string classes inherit from either ``nsA[C]String`` or
-``ns[C]String``. Thus, every string class is compatible with ``nsA[C]String``.
+Most of the remaining string classes inherit from either ``nsA[C]String`` or
+``ns[C]String``, and the rest can be implicitly converted to ``nsA[C]String``.
+Thus, every string class is compatible with ``nsA[C]String``.
 
 .. note::
 
@@ -108,6 +108,15 @@ The remainder of the string classes inherit from either ``nsA[C]String`` or
     It can be implicitly coerced to ``const ns[C]String&`` (though can never
     be accessed mutably) and generally acts as-if it was a subclass of
     ``ns[C]String`` in most cases.
+
+.. note::
+
+    The type ``ns[C]SubstringTuple`` (created via string concatenation) does
+    not inherit from ``nsA[C]String``. When assigned or passed to a
+    ``const nsA[C]String&`` parameter, a temporary concrete string (such as
+    ``ns[C]String``) is implicitly constructed from it, flattening the
+    concatenation into a single contiguous buffer that the reference then
+    binds to.
 
 Since every string derives from ``nsAString`` (or ``nsACString``), they all
 share a simple API. Common read-only methods include:
@@ -152,7 +161,7 @@ and members in classes or structs.
     "nsA[C]String" -> "ns[C]String";
     "ns[C]String" -> "nsDependent[C]String";
     "nsA[C]String" -> "nsDependent[C]Substring";
-    "nsA[C]String" -> "ns[C]SubstringTuple";
+    "nsA[C]String" -> "ns[C]SubstringTuple" [style=dashed];
     "ns[C]String" -> "nsAuto[C]StringN";
     "ns[C]String" -> "nsLiteral[C]String" [style=dashed];
     "nsAuto[C]StringN" -> "nsPromiseFlat[C]String";
@@ -467,8 +476,7 @@ common encodings are:
 In addition, there exist multiple other (legacy) encodings. The Web-relevant
 ones are defined in the `Encoding Standard <https://encoding.spec.whatwg.org/>`_.
 Conversions from these encodings to
-UTF-8 and UTF-16 are provided by `mozilla::Encoding
-<https://searchfox.org/mozilla-central/source/intl/Encoding.h#109>`_.
+UTF-8 and UTF-16 are provided by :searchfox:`mozilla::Encoding <intl/Encoding.h#109>`.
 Additionally, on Windows the are some rare cases (e.g. drag&drop) where it's
 necessary to call a system API with data encoded in the Windows
 locale-dependent legacy encoding instead of UTF-16. In those rare cases, use

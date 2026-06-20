@@ -20,6 +20,7 @@
 #include "nsIScriptError.h"
 #include "nsIWebProgressListener.h"
 #include "nsIXULRuntime.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsRFPTargetSetIDL.h"
 #include "nsRefPtrHashtable.h"
 #include "nsContentUtils.h"
@@ -80,9 +81,8 @@ WindowContext::GetOverriddenFingerprintingSettingsWebIDL() const {
     return nullptr;
   }
 
-  nsCOMPtr<nsIRFPTargetSetIDL> protections =
-      new nsRFPTargetSetIDL(overriddenFingerprintingSettings.ref());
-  return protections.forget();
+  return MakeAndAddRef<nsRFPTargetSetIDL>(
+      overriddenFingerprintingSettings.ref());
 }
 
 nsGlobalWindowInner* WindowContext::GetInnerWindow() const {
@@ -355,6 +355,11 @@ void WindowContext::DidSet(FieldIndex<IDX_AllowJavascript>, bool aOldValue) {
 bool WindowContext::CanSet(FieldIndex<IDX_HasActivePeerConnections>, bool,
                            ContentParent*) {
   return XRE_IsParentProcess() && IsTop();
+}
+
+bool WindowContext::CanSet(FieldIndex<IDX_IsFramebustingAllowed>,
+                           const bool& aValue, ContentParent* aSource) {
+  return CheckOnlyOwningProcessCanSet(aSource);
 }
 
 void WindowContext::ProcessCloseRequest() {

@@ -4,9 +4,9 @@
 
 #include "mozilla/dom/HTMLMapElement.h"
 
+#include "mozilla/dom/ContentList.h"
 #include "mozilla/dom/HTMLMapElementBinding.h"
 #include "nsCOMPtr.h"
-#include "nsContentList.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 
@@ -15,7 +15,7 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Map)
 namespace mozilla::dom {
 
 HTMLMapElement::HTMLMapElement(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+    already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
     : nsGenericHTMLElement(std::move(aNodeInfo)) {}
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(HTMLMapElement, nsGenericHTMLElement, mAreas)
@@ -25,11 +25,11 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(HTMLMapElement,
 
 NS_IMPL_ELEMENT_CLONE(HTMLMapElement)
 
-nsIHTMLCollection* HTMLMapElement::Areas() {
+HTMLCollection* HTMLMapElement::Areas() {
   if (!mAreas) {
     // Not using NS_GetContentList because this should not be cached
-    mAreas = new nsContentList(this, kNameSpaceID_XHTML, nsGkAtoms::area,
-                               nsGkAtoms::area, false);
+    mAreas = new ContentList(this, kNameSpaceID_XHTML, nsGkAtoms::area,
+                             nsGkAtoms::area, false);
   }
 
   return mAreas;

@@ -53,7 +53,7 @@ void RemoteTextureOwnerClient::RegisterTextureOwner(
   RefPtr<RemoteTextureRecycleBin> recycleBin;
   if (aSharedRecycling) {
     if (!mSharedRecycleBin) {
-      mSharedRecycleBin = new RemoteTextureRecycleBin(true);
+      mSharedRecycleBin = MakeRefPtr<RemoteTextureRecycleBin>(true);
     }
     recycleBin = mSharedRecycleBin;
   }
@@ -197,7 +197,8 @@ void RemoteTextureOwnerClient::PushDummyTexture(
   auto flags = TextureFlags::DEALLOCATE_CLIENT | TextureFlags::REMOTE_TEXTURE |
                TextureFlags::DUMMY_TEXTURE;
   auto* rawData = BufferTextureData::Create(
-      gfx::IntSize(1, 1), gfx::SurfaceFormat::B8G8R8A8, gfx::BackendType::SKIA,
+      gfx::IntSize(1, 1), gfx::SurfaceFormat::B8G8R8A8, gfx::ColorSpace2::SRGB,
+      gfx::TransferFunction::SRGB, gfx::BackendType::SKIA,
       LayersBackend::LAYERS_WR, flags, ALLOC_DEFAULT, nullptr);
   if (!rawData) {
     MOZ_ASSERT_UNREACHABLE("unexpected to be called");
@@ -244,9 +245,10 @@ RemoteTextureOwnerClient::CreateOrRecycleBufferTextureData(
   }
 
   auto flags = TextureFlags::DEALLOCATE_CLIENT | TextureFlags::REMOTE_TEXTURE;
-  auto* data = BufferTextureData::Create(aSize, aFormat, gfx::BackendType::SKIA,
-                                         LayersBackend::LAYERS_WR, flags,
-                                         ALLOC_DEFAULT, nullptr);
+  auto* data = BufferTextureData::Create(
+      aSize, aFormat, gfx::ColorSpace2::SRGB, gfx::TransferFunction::SRGB,
+      gfx::BackendType::SKIA, LayersBackend::LAYERS_WR, flags, ALLOC_DEFAULT,
+      nullptr);
   return UniquePtr<TextureData>(data);
 }
 
@@ -592,7 +594,7 @@ void RemoteTextureMap::RegisterTextureOwner(
   if (aRecycleBin) {
     owner->mRecycleBin = aRecycleBin;
   } else {
-    owner->mRecycleBin = new RemoteTextureRecycleBin(false);
+    owner->mRecycleBin = MakeRefPtr<RemoteTextureRecycleBin>(false);
   }
 
   auto itWaiting = mWaitingTextureOwners.find(key);
@@ -1320,7 +1322,7 @@ bool RemoteTextureMap::WaitRemoteTextureReady(const RemoteTextureInfo& aInfo) {
       return false;
     }
 
-    auto* owner = GetTextureOwner(lock, aInfo.mOwnerId, aInfo.mForPid);
+    owner = GetTextureOwner(lock, aInfo.mOwnerId, aInfo.mForPid);
     // When owner is alreay unregistered, remote texture will not be pushed.
     if (!owner || owner->mIsContextLost) {
       // This could happen with IPC abnormal shutdown
@@ -1443,7 +1445,7 @@ RemoteTextureMap::TextureDataHolder::TextureDataHolder(
 RemoteTextureMap::RenderingReadyCallbackHolder::RenderingReadyCallbackHolder(
     const RemoteTextureId aTextureId,
     std::function<void(const RemoteTextureInfo&)>&& aCallback)
-    : mTextureId(aTextureId), mCallback(aCallback) {}
+    : mTextureId(aTextureId), mCallback(std::move(aCallback)) {}
 
 RemoteTextureMap::RemoteTextureHostWrapperHolder::
     RemoteTextureHostWrapperHolder(

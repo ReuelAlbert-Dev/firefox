@@ -13,6 +13,7 @@
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ServoCSSRuleList.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/SharedStyleSheetCache.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/css/ErrorReporter.h"
@@ -32,15 +33,14 @@ namespace mozilla {
 
 using namespace dom;
 
-StyleSheet::StyleSheet(css::SheetParsingMode aParsingMode, CORSMode aCORSMode,
+StyleSheet::StyleSheet(StyleOrigin aOrigin, CORSMode aCORSMode,
                        const dom::SRIMetadata& aIntegrity)
     : mParentSheet(nullptr),
       mConstructorDocument(nullptr),
       mDocumentOrShadowRoot(nullptr),
       mURLData{URLExtraData::Dummy()},
-      mParsingMode(aParsingMode),
       mState(static_cast<State>(0)),
-      mInner(new StyleSheetInfo(aCORSMode, aIntegrity, aParsingMode)) {
+      mInner(new StyleSheetInfo(aCORSMode, aIntegrity, aOrigin)) {
   mInner->AddSheet(this);
 }
 
@@ -53,7 +53,6 @@ StyleSheet::StyleSheet(const StyleSheet& aCopy, StyleSheet* aParentSheetToUse,
       mDocumentOrShadowRoot(aDocOrShadowRootToUse),
       mURLData(aCopy.mURLData),
       mOriginalSheetURI(aCopy.mOriginalSheetURI),
-      mParsingMode(aCopy.mParsingMode),
       mState(aCopy.mState),
       // Shallow copy, but concrete subclasses will fix up.
       mInner(aCopy.mInner) {
@@ -126,15 +125,6 @@ dom::DocumentOrShadowRoot* StyleSheet::GetAssociatedDocumentOrShadowRoot()
     return outer.mConstructorDocument;
   }
   return nullptr;
-}
-
-void StyleSheet::UpdateRelevantGlobal() {
-  if (mRelevantGlobal || !IsComplete()) {
-    return;
-  }
-  if (Document* doc = GetAssociatedDocument()) {
-    mRelevantGlobal = doc->GetScopeObject();
-  }
 }
 
 Document* StyleSheet::GetKeptAliveByDocument() const {
@@ -220,7 +210,6 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(StyleSheet)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(StyleSheet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMedia)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRuleList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRelevantGlobal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mConstructorDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReplacePromise)
   tmp->TraverseInner(cb);
@@ -230,26 +219,21 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(StyleSheet)
   tmp->DropMedia();
   tmp->UnlinkInner();
   tmp->DropRuleList();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRelevantGlobal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConstructorDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mReplacePromise)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 dom::CSSStyleSheetParsingMode StyleSheet::ParsingModeDOM() {
-#define CHECK_MODE(X, Y)                            \
-  static_assert(                                    \
-      static_cast<int>(X) == static_cast<int>(Y),   \
-      "mozilla::dom::CSSStyleSheetParsingMode and " \
-      "mozilla::css::SheetParsingMode should have identical values");
-
-  CHECK_MODE(dom::CSSStyleSheetParsingMode::Agent, css::eAgentSheetFeatures);
-  CHECK_MODE(dom::CSSStyleSheetParsingMode::User, css::eUserSheetFeatures);
-  CHECK_MODE(dom::CSSStyleSheetParsingMode::Author, css::eAuthorSheetFeatures);
-
-#undef CHECK_MODE
-
-  return static_cast<dom::CSSStyleSheetParsingMode>(mParsingMode);
+  switch (GetOrigin()) {
+    case StyleOrigin::UserAgent:
+      return dom::CSSStyleSheetParsingMode::Agent;
+    case StyleOrigin::User:
+      return dom::CSSStyleSheetParsingMode::User;
+    case StyleOrigin::Author:
+      break;
+  }
+  return dom::CSSStyleSheetParsingMode::Author;
 }
 
 void StyleSheet::SetComplete() {
@@ -260,8 +244,6 @@ void StyleSheet::SetComplete() {
              "Can't complete a sheet that's already been forced unique.");
   MOZ_ASSERT(!IsComplete(), "Already complete?");
   mState |= State::Complete;
-
-  UpdateRelevantGlobal();
 
   if (!Disabled()) {
     ApplicableStateChanged(true);
@@ -330,17 +312,12 @@ void StyleSheet::SetDisabled(bool aDisabled) {
   }
 }
 
-nsISupports* StyleSheet::GetRelevantGlobal() const {
-  const StyleSheet& outer = OutermostSheet();
-  return outer.mRelevantGlobal;
-}
-
 StyleSheetInfo::StyleSheetInfo(CORSMode aCORSMode,
                                const SRIMetadata& aIntegrity,
-                               css::SheetParsingMode aParsingMode)
+                               StyleOrigin aOrigin)
     : mCORSMode(aCORSMode),
       mIntegrity(aIntegrity),
-      mContents(Servo_StyleSheet_Empty(aParsingMode).Consume()) {
+      mContents(Servo_StyleSheet_Empty(aOrigin).Consume()) {
   MOZ_COUNT_CTOR(StyleSheetInfo);
 }
 
@@ -400,13 +377,20 @@ void StyleSheetInfo::RemoveSheet(StyleSheet* aSheet) {
     }
   }
 
-  if (1 == mSheets.Length()) {
+  if (mSheets.Length() == 1) {
     NS_ASSERTION(aSheet == mSheets.ElementAt(0), "bad parent");
     delete this;
     return;
   }
 
   mSheets.UnorderedRemoveElement(aSheet);
+  if (mSheets.Length() == 1 &&
+      !mSheets.ElementAt(0)->GetAssociatedDocumentOrShadowRoot()) {
+    // A stylesheet without an associated document just became unique (most
+    // likely from the stylesheet cache). Make sure the entry is evicted from
+    // the cache eventually.
+    SharedStyleSheetCache::ScheduleGC();
+  }
 }
 
 void StyleSheet::GetType(nsAString& aType) { aType.AssignLiteral("text/css"); }
@@ -634,35 +618,28 @@ void StyleSheet::MaybeRejectReplacePromise() {
 // https://drafts.csswg.org/cssom/#dom-cssstylesheet-replace
 already_AddRefed<dom::Promise> StyleSheet::Replace(const nsACString& aText,
                                                    ErrorResult& aRv) {
-  nsIGlobalObject* globalObject = nullptr;
-  const StyleSheet& outer = OutermostSheet();
-  if (outer.mRelevantGlobal) {
-    globalObject = outer.mRelevantGlobal;
-  } else if (Document* doc = outer.GetAssociatedDocument()) {
-    globalObject = doc->GetScopeObject();
-  }
-
-  RefPtr<dom::Promise> promise = dom::Promise::Create(globalObject, aRv);
-  if (!promise) {
-    return nullptr;
-  }
-
   // Step 1 and 4 are variable declarations
 
   // 2.1 Check if sheet is constructed, else reject promise.
   if (!IsConstructed()) {
-    promise->MaybeRejectWithNotAllowedError(
+    aRv.ThrowNotAllowedError(
         "This method can only be called on "
         "constructed style sheets");
-    return promise.forget();
+    return nullptr;
   }
 
   // 2.2 Check if sheet is modifiable, else throw.
   if (ModificationDisallowed()) {
-    promise->MaybeRejectWithNotAllowedError(
+    aRv.ThrowNotAllowedError(
         "This method can only be called on "
         "modifiable style sheets");
-    return promise.forget();
+    return nullptr;
+  }
+
+  RefPtr promise =
+      dom::Promise::Create(mConstructorDocument->GetScopeObject(), aRv);
+  if (!promise) {
+    return nullptr;
   }
 
   // 3. Disallow modifications until finished.
@@ -718,7 +695,7 @@ void StyleSheet::ReplaceSync(const nsACString& aText, ErrorResult& aRv) {
   RefPtr<const StyleStylesheetContents> rawContent =
       Servo_StyleSheet_FromUTF8Bytes(
           &mConstructorDocument->EnsureCSSLoader(), this,
-          /* load_data = */ nullptr, &aText, mParsingMode, mURLData,
+          /* load_data = */ nullptr, &aText, GetOrigin(), mURLData,
           mConstructorDocument->GetCompatibilityMode(),
           /* reusable_sheets = */ nullptr, StyleAllowImportRules::No,
           StyleSanitizationKind::None,
@@ -936,10 +913,8 @@ void StyleSheet::SetAssociatedDocumentOrShadowRoot(
   MOZ_ASSERT(!IsConstructed());
   MOZ_ASSERT(!mParentSheet || !aDocOrShadowRoot,
              "Shouldn't be set on child sheets");
-
   // not ref counted
   mDocumentOrShadowRoot = aDocOrShadowRoot;
-  UpdateRelevantGlobal();
 }
 
 void StyleSheet::AppendStyleSheet(StyleSheet& aSheet) {
@@ -1140,9 +1115,8 @@ already_AddRefed<StyleSheet> StyleSheet::CreateConstructedSheet(
     dom::Document& aConstructorDocument, nsIURI* aBaseURI,
     const dom::CSSStyleSheetInit& aOptions, ErrorResult& aRv) {
   // 1. Construct a sheet and set its properties (see spec).
-  auto sheet =
-      MakeRefPtr<StyleSheet>(css::SheetParsingMode::eAuthorSheetFeatures,
-                             CORSMode::CORS_NONE, dom::SRIMetadata());
+  auto sheet = MakeRefPtr<StyleSheet>(StyleOrigin::Author, CORSMode::CORS_NONE,
+                                      dom::SRIMetadata());
 
   // baseURL not yet in the spec. Implemented based on the following discussion:
   // https://github.com/WICG/construct-stylesheets/issues/95#issuecomment-594217180
@@ -1185,7 +1159,7 @@ already_AddRefed<StyleSheet> StyleSheet::CreateConstructedSheet(
 already_AddRefed<StyleSheet> StyleSheet::CreateEmptyChildSheet(
     already_AddRefed<dom::MediaList> aMediaList) const {
   auto child =
-      MakeRefPtr<StyleSheet>(ParsingMode(), CORSMode::CORS_NONE, SRIMetadata());
+      MakeRefPtr<StyleSheet>(GetOrigin(), CORSMode::CORS_NONE, SRIMetadata());
 
   child->mMedia = aMediaList;
   return child.forget();
@@ -1213,7 +1187,7 @@ RefPtr<StyleSheetParsePromise> StyleSheet::ParseSheet(
     MOZ_ASSERT(NS_IsMainThread());
     RefPtr<StyleStylesheetContents> contents =
         Servo_StyleSheet_FromUTF8Bytes(
-            &aLoader, this, aLoadData->get(), &aBytes, mParsingMode, mURLData,
+            &aLoader, this, aLoadData->get(), &aBytes, GetOrigin(), mURLData,
             aLoadData->get()->mCompatMode,
             /* reusable_sheets = */ nullptr, allowImportRules,
             StyleSanitizationKind::None,
@@ -1222,7 +1196,7 @@ RefPtr<StyleSheetParsePromise> StyleSheet::ParseSheet(
     FinishAsyncParse(contents.forget());
   } else {
     Servo_StyleSheet_FromUTF8BytesAsync(
-        aLoadData, mURLData, &aBytes, mParsingMode,
+        aLoadData, mURLData, &aBytes, GetOrigin(),
         aLoadData->get()->mCompatMode, allowImportRules);
   }
 
@@ -1306,7 +1280,7 @@ void StyleSheet::ParseSheetSync(
 
   Inner().mContents =
       Servo_StyleSheet_FromUTF8Bytes(
-          aLoader, this, aLoadData, &aBytes, mParsingMode, mURLData, compatMode,
+          aLoader, this, aLoadData, &aBytes, GetOrigin(), mURLData, compatMode,
           aReusableSheets, allowImportRules, StyleSanitizationKind::None,
           /* sanitized_output = */ nullptr)
           .Consume();
@@ -1415,11 +1389,10 @@ already_AddRefed<StyleSheet> StyleSheet::CloneAdoptedSheet(
              "Cannot create a constructed sheet from a non-constructed sheet");
   MOZ_ASSERT(aConstructorDocument.IsStaticDocument(),
              "Should never clone adopted sheets for a non-static document");
-  RefPtr<StyleSheet> clone = new StyleSheet(*this,
-                                            /* aParentSheetToUse */ nullptr,
-                                            /* aDocOrShadowRootToUse */ nullptr,
-                                            &aConstructorDocument);
-  return clone.forget();
+  return do_AddRef(new StyleSheet(*this,
+                                  /* aParentSheetToUse */ nullptr,
+                                  /* aDocOrShadowRootToUse */ nullptr,
+                                  &aConstructorDocument));
 }
 
 ServoCSSRuleList* StyleSheet::GetCssRulesInternal() {

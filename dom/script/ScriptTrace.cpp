@@ -43,8 +43,7 @@ class ScriptLoaderTestRunnable : public Runnable {
 
   NS_IMETHOD Run() override {
     nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
-    obsService->NotifyObservers(nullptr, "ScriptLoaderTest",
-                                mData.BeginReading());
+    obsService->NotifyObservers(nullptr, "ScriptLoaderTest", mData.get());
     return NS_OK;
   }
 

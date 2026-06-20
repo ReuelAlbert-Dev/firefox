@@ -50,6 +50,30 @@ void RenderTextureHostWrapper::Unlock() {
   }
 }
 
+wr::WrExternalImage RenderTextureHostWrapper::LockSWGL(
+    uint8_t aChannelIndex, void* aContext, RenderCompositor* aCompositor) {
+  if (!mTextureHost) {
+    return InvalidToWrExternalImage();
+  }
+
+  return mTextureHost->LockSWGL(aChannelIndex, aContext, aCompositor);
+}
+
+void RenderTextureHostWrapper::UnlockSWGL() {
+  if (mTextureHost) {
+    mTextureHost->UnlockSWGL();
+  }
+}
+
+bool RenderTextureHostWrapper::LockSWGLCompositeSurface(
+    void* aContext, wr::SWGLCompositeSurfaceInfo* aInfo) {
+  if (!mTextureHost) {
+    return false;
+  }
+
+  return mTextureHost->LockSWGLCompositeSurface(aContext, aInfo);
+}
+
 void RenderTextureHostWrapper::ClearCachedResources() {
   if (mTextureHost) {
     mTextureHost->ClearCachedResources();
@@ -140,6 +164,14 @@ RenderTextureHostWrapper::AsRenderAndroidHardwareBufferTextureHost() {
   return mTextureHost->AsRenderAndroidHardwareBufferTextureHost();
 }
 
+RenderAndroidImageReaderImageTextureHost*
+RenderTextureHostWrapper::AsRenderAndroidImageReaderImageTextureHost() {
+  if (!mTextureHost) {
+    return nullptr;
+  }
+  return mTextureHost->AsRenderAndroidImageReaderImageTextureHost();
+}
+
 RenderAndroidSurfaceTextureHost*
 RenderTextureHostWrapper::AsRenderAndroidSurfaceTextureHost() {
   if (!mTextureHost) {
@@ -223,6 +255,13 @@ gfx::YUVRangedColorSpace RenderTextureHostWrapper::GetYUVColorSpace() const {
     return swglHost->GetYUVColorSpace();
   }
   return gfx::YUVRangedColorSpace::Default;
+}
+
+gfx::TransferFunction RenderTextureHostWrapper::GetTransferFunction() const {
+  if (RenderTextureHostSWGL* swglHost = EnsureRenderTextureHostSWGL()) {
+    return swglHost->GetTransferFunction();
+  }
+  return gfx::TransferFunction::BT709;
 }
 
 bool RenderTextureHostWrapper::MapPlane(RenderCompositor* aCompositor,

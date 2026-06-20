@@ -122,7 +122,7 @@ class HTMLInputElement final : public TextControlElement,
 
   enum class FromClone { No, Yes };
 
-  HTMLInputElement(already_AddRefed<dom::NodeInfo>&& aNodeInfo,
+  HTMLInputElement(already_AddRefed<dom::NodeInfo> aNodeInfo,
                    FromParser aFromParser,
                    FromClone aFromClone = FromClone::No);
 
@@ -689,8 +689,8 @@ class HTMLInputElement final : public TextControlElement,
   // <input> element.
   bool StepsInputValue(const WidgetKeyboardEvent&) const;
 
-  already_AddRefed<nsINodeList> GetLabelsForBindings();
-  already_AddRefed<nsINodeList> GetLabelsInternal();
+  already_AddRefed<NodeList> GetLabelsForBindings();
+  already_AddRefed<NodeList> GetLabelsInternal();
 
   MOZ_CAN_RUN_SCRIPT void Select();
 
@@ -1550,6 +1550,12 @@ class HTMLInputElement final : public TextControlElement,
   bool mHasBeenTypePassword : 1;
   bool mHasPatternAttribute : 1;
   bool mUserChangedSinceFocus : 1;
+  // This flag is set when the user is interacting with the input even though
+  // it's not focused (needed for change event handling). Currently this can
+  // happen by clicking <input type=range> or clicking the step buttons in
+  // <input type=number>.
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=2026562
+  bool mIsUserInteracting : 1;
 
  private:
   Maybe<int32_t> GetNumberInputCols() const;

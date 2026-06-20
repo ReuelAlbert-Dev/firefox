@@ -110,10 +110,10 @@ def transform_platform(
         platform_id = "win"
     elif config_platform == "mac":
         # Bug 1920821
-        # If we are using mitmproxy 11 we need to ensure platform_id is configured
+        # If we are using mitmproxy 12 we need to ensure platform_id is configured
         # correctly for the folder structure. Having this check also keeps the ability to
         # playback on older versions which don't have ARM support
-        if config_processor == "arm" and mitmproxy_version == "11.0.0":
+        if config_processor == "arm" and mitmproxy_version == "12.2.1":
             platform_id = "osx-arm64"
         else:
             platform_id = "osx"
@@ -153,19 +153,19 @@ def view_gecko_profile_from_raptor():
         )
         return
 
-    LOG_GECKO.info("Profile saved locally to: %s" % profile_zip_path)
+    LOG_GECKO.info(f"Profile saved locally to: {profile_zip_path}")
     view_gecko_profile(profile_zip_path)
 
 
 def write_yml_file(yml_file, yml_data):
     # write provided data to specified local yaml file
-    LOG.info("writing %s to %s" % (yml_data, yml_file))
+    LOG.info(f"writing {yml_data} to {yml_file}")
 
     try:
         with open(yml_file, "w") as outfile:
             yaml.dump(yml_data, outfile, default_flow_style=False)
     except Exception as e:
-        LOG.critical("failed to write yaml file, exeption: %s" % e)
+        LOG.critical(f"failed to write yaml file, exeption: {e}")
 
 
 def bool_from_str(boolean_string):

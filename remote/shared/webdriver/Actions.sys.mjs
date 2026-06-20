@@ -13,6 +13,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   AppInfo: "chrome://remote/content/shared/AppInfo.sys.mjs",
   assert: "chrome://remote/content/shared/webdriver/Assert.sys.mjs",
   AsyncQueue: "chrome://remote/content/shared/AsyncQueue.sys.mjs",
+  dom: "chrome://remote/content/shared/DOM.sys.mjs",
   error: "chrome://remote/content/shared/webdriver/Errors.sys.mjs",
   event: "chrome://remote/content/shared/webdriver/Event.sys.mjs",
   keyData: "chrome://remote/content/shared/webdriver/KeyData.sys.mjs",
@@ -820,7 +821,14 @@ class ElementOrigin extends Origin {
       );
     }
 
-    return getInViewCentrePoint(clientRects[0], context);
+    /*
+     * Note: This diverges from the Webdriver spec. See more information in
+     * https://github.com/w3c/webdriver/issues/1961
+     * */
+    return getInViewCentrePoint(
+      lazy.dom.getFirstNonZeroRect(clientRects),
+      context
+    );
   }
 }
 
@@ -1316,7 +1324,7 @@ class PointerAction extends Action {
       lazy.assert.numberInRange(
         altitudeAngle,
         [0, Math.PI / 2],
-        'Expected "altitudeAngle" to be in range 0 to ${Math.PI / 2}, ' +
+        'Expected "altitudeAngle" to be in range 0 to π/2, ' +
           lazy.pprint`got ${altitudeAngle}`
       );
     }
@@ -1324,7 +1332,7 @@ class PointerAction extends Action {
       lazy.assert.numberInRange(
         azimuthAngle,
         [0, 2 * Math.PI],
-        'Expected "azimuthAngle" to be in range 0 to ${2 * Math.PI}, ' +
+        'Expected "azimuthAngle" to be in range 0 to 2*π, ' +
           lazy.pprint`got ${azimuthAngle}`
       );
     }
@@ -1435,13 +1443,13 @@ class PointerDownAction extends PointerAction {
    */
   static fromJSON(id, actionItem) {
     const { button } = actionItem;
-    const props = PointerAction.validateCommon(actionItem);
 
     lazy.assert.positiveInteger(
       button,
       lazy.pprint`Expected "button" to be a positive integer, got ${button}`
     );
 
+    const props = PointerAction.validateCommon(actionItem);
     props.button = button;
 
     return new this(id, props);
@@ -1537,13 +1545,13 @@ class PointerUpAction extends PointerAction {
    */
   static fromJSON(id, actionItem) {
     const { button } = actionItem;
-    const props = PointerAction.validateCommon(actionItem);
 
     lazy.assert.positiveInteger(
       button,
       lazy.pprint`Expected "button" to be a positive integer, got ${button}`
     );
 
+    const props = PointerAction.validateCommon(actionItem);
     props.button = button;
 
     return new this(id, props);
@@ -1876,20 +1884,38 @@ class WheelScrollAction extends WheelAction {
 
     await assertInViewPort(scrollCoordinates, context);
 
-    lazy.logger.trace(
-      `Dispatch ${this.constructor.name} with id: ${this.id} ` +
-        `pageX: ${scrollCoordinates[0]} pageY: ${scrollCoordinates[1]} ` +
-        `deltaX: ${this.deltaX} deltaY: ${this.deltaY} ` +
-        `async: ${actions.useAsyncWheelEvents}`
-    );
-
     // Only convert coordinates if those are for a content process
     if (context.isContent && actions.useAsyncWheelEvents) {
-      scrollCoordinates = await toBrowserWindowCoordinates(
+      const origin = await toBrowserWindowCoordinates(
         scrollCoordinates,
         context
       );
+
+      // The deltas are specified in CSS pixels by the WebDriver specification,
+      // but the synthesized wheel event is dispatched in the top-level widget's
+      // coordinate space, which has the visual viewport scale (resolution)
+      // applied. Convert the deltas through the same transform as the origin,
+      // so that a non-unit resolution doesn't make the resulting scroll offset
+      // wrong by that factor. The translation cancels in the difference, leaving
+      // only the scale.
+      const target = await toBrowserWindowCoordinates(
+        [
+          scrollCoordinates[0] + this.deltaX,
+          scrollCoordinates[1] + this.deltaY,
+        ],
+        context
+      );
+      this.deltaX = target[0] - origin[0];
+      this.deltaY = target[1] - origin[1];
+
+      scrollCoordinates = origin;
     }
+
+    lazy.logger.trace(
+      `Dispatch ${this.constructor.name} with id: ${this.id} ` +
+        `pageX: ${scrollCoordinates[0]} pageY: ${scrollCoordinates[1]} ` +
+        `deltaX: ${this.deltaX} deltaY: ${this.deltaY} async: ${actions.useAsyncWheelEvents}`
+    );
 
     const startX = 0;
     const startY = 0;
@@ -3089,6 +3115,9 @@ class MultiTouchEventData extends PointerEventData {
     this.tiltx = [];
     this.tilty = [];
     this.twist = [];
+    this.altitudeAngle = [];
+    this.azimuthAngle = [];
+
     this.#setGlobalState = false;
   }
 
@@ -3104,13 +3133,15 @@ class MultiTouchEventData extends PointerEventData {
     this.x.push(inputSource.x);
     this.y.push(inputSource.y);
     this.id.push(inputSource.pointer.id);
-    this.rx.push(action.width || 1);
-    this.ry.push(action.height || 1);
+    this.rx.push(action.width);
+    this.ry.push(action.height);
     this.angle.push(0);
-    this.force.push(action.pressure || (this.type === "touchend" ? 0 : 1));
-    this.tiltx.push(action.tiltX || 0);
-    this.tilty.push(action.tiltY || 0);
-    this.twist.push(action.twist || 0);
+    this.force.push(action.pressure);
+    this.tiltx.push(action.tiltX);
+    this.tilty.push(action.tiltY);
+    this.twist.push(action.twist);
+    this.altitudeAngle.push(action.altitudeAngle);
+    this.azimuthAngle.push(action.azimuthAngle);
   }
 
   update(state, inputSource) {

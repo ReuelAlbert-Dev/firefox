@@ -17,7 +17,7 @@ namespace mozilla::dom {
 class HTMLTemplateElement final : public nsGenericHTMLElement {
  public:
   explicit HTMLTemplateElement(
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+      already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -75,6 +75,11 @@ class HTMLTemplateElement final : public nsGenericHTMLElement {
   }
   void SetShadowRootReferenceTarget(const nsAString& aValue, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::shadowrootreferencetarget, aValue);
+  }
+
+  void GetShadowRootSlotAssignment(nsAString& aResult) const;
+  void SetShadowRootSlotAssignment(const nsAString& aValue) {
+    SetHTMLAttr(nsGkAtoms::shadowrootslotassignment, aValue);
   }
 
   void SetHTML(const nsAString& aInnerHTML, const SetHTMLOptions& aOptions,

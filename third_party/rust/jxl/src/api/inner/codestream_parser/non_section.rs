@@ -50,13 +50,13 @@ impl CodestreamParser {
             let xsize = file_header.size.xsize() as usize;
             let ysize = file_header.size.ysize() as usize;
             check_size_limit(
-                decode_options.pixel_limit,
+                decode_options.sample_limit,
                 (xsize, ysize),
                 file_header.image_metadata.extra_channel_info.len(),
             )?;
             if let Some(preview) = &file_header.image_metadata.preview {
                 check_size_limit(
-                    decode_options.pixel_limit,
+                    decode_options.sample_limit,
                     (preview.xsize() as usize, preview.ysize() as usize),
                     file_header.image_metadata.extra_channel_info.len(),
                 )?;
@@ -192,15 +192,18 @@ impl CodestreamParser {
             br.skip_bits(self.non_section_bit_offset as usize)?;
             br.jump_to_byte_boundary()?;
             self.non_section_buf.consume(br.total_bits_read() / 8);
-
-            // We now have image information.
-            let mut decoder_state = DecoderState::new(self.file_header.take().unwrap());
-            decoder_state.render_spotcolors = decode_options.render_spot_colors;
-            decoder_state.high_precision = decode_options.high_precision;
-            decoder_state.premultiply_output = decode_options.premultiply_output;
-            self.decoder_state = Some(decoder_state);
-            // Reset bit offset to 0 since we've consumed everything up to a byte boundary
             self.non_section_bit_offset = 0;
+        }
+
+        if self.decoder_state.is_none()
+            && self.embedded_color_profile.is_some()
+            && self.file_header.is_some()
+        {
+            // We now have image information.
+            self.decoder_state = Some(DecoderState::new(
+                self.file_header.clone().unwrap(),
+                decode_options,
+            ));
             return Ok(());
         }
 
@@ -224,7 +227,7 @@ impl CodestreamParser {
             let mut frame_header = FrameHeader::read_unconditional(&(), &mut br, &nonserialized)?;
             frame_header.postprocess(&nonserialized);
             check_size_limit(
-                decode_options.pixel_limit,
+                decode_options.sample_limit,
                 frame_header.size(),
                 frame_header.num_extra_channels as usize,
             )?;
@@ -275,9 +278,6 @@ impl CodestreamParser {
             self.non_section_bit_offset = (bits % 8) as u8;
             self.toc_parser.take().unwrap().finalize()
         };
-
-        // Save file_header before creating frame (for preview frame recovery)
-        self.saved_file_header = self.decoder_state.as_ref().map(|ds| ds.file_header.clone());
 
         let mut frame = Frame::from_header_and_toc(
             self.frame_header.take().unwrap(),

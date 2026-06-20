@@ -4,18 +4,22 @@
 
 package mozilla.components.feature.summarize.settings
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
 
 /**
  * Middleware for the summarize settings screen that persists preference changes.
  *
- * @param settings The [SummarizationFeatureSettings] to persist preference changes to.
+ * @param settings The [SummarizationSettings] to persist preference changes to.
  * @param onLearnMoreClicked Callback invoked when the learn more link is clicked.
  */
 class SummarizeSettingsMiddleware(
-    private val settings: SummarizationFeatureSettings,
+    private val settings: SummarizationSettings,
     private val onLearnMoreClicked: () -> Unit,
+    private val scope: CoroutineScope,
 ) : Middleware<SummarizeSettingsState, SummarizeSettingsAction> {
 
     override fun invoke(
@@ -28,17 +32,33 @@ class SummarizeSettingsMiddleware(
         next(action)
 
         when (action) {
-            SummarizePagesPreferenceToggled -> {
-                settings.summarizePagesEnabled = store.state.summarizePagesEnabled
+            ViewAppeared -> scope.launch {
+                store.dispatch(
+                    SettingsLoaded(
+                        isFeatureEnabled = settings.getFeatureEnabledUserStatus().first() == true,
+                        isGestureEnabled = settings.getGestureEnabledUserStatus().first(),
+                        shakeSensitivity = settings.getShakeSensitivity().first(),
+                    ),
+                )
             }
 
-            ShakeToSummarizePreferenceToggled -> {
-                settings.shakeToSummarizeEnabled = store.state.shakeToSummarizeEnabled
+            SummarizePagesPreferenceToggled -> scope.launch {
+                settings.setFeatureEnabledUserStatus(store.state.isFeatureEnabled)
+            }
+
+            is ShakeSensitivityChanged -> scope.launch {
+                settings.setShakeSensitivity(store.state.shakeSensitivity)
+            }
+
+            ShakeToSummarizePreferenceToggled -> scope.launch {
+                settings.setGestureEnabledUserStatus(store.state.isGestureEnabled)
             }
 
             LearnMoreClicked -> {
                 onLearnMoreClicked()
             }
+
+            is SettingsLoaded -> Unit
         }
     }
 }

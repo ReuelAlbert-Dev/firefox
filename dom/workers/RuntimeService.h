@@ -49,7 +49,7 @@ class RuntimeService final : public nsIObserver {
     }
   };
 
-  mozilla::Mutex mMutex;
+  mutable mozilla::Mutex mMutex;
 
   // Protected by mMutex.
   nsClassHashtable<nsCStringHashKey, WorkerDomainInfo> mDomainMap
@@ -72,12 +72,13 @@ class RuntimeService final : public nsIObserver {
   };
 
  private:
-  NavigatorProperties mNavigatorProperties;
+  NavigatorProperties mNavigatorProperties MOZ_GUARDED_BY(mMutex);
 
   // True when the observer service holds a reference to this object.
   bool mObserved;
   bool mShuttingDown;
   bool mNavigatorPropertiesLoaded;
+  bool mCleanedUp{false};
 
  public:
   NS_DECL_ISUPPORTS
@@ -110,7 +111,11 @@ class RuntimeService final : public nsIObserver {
   void PropagateStorageAccessPermissionGranted(
       const nsPIDOMWindowInner& aWindow);
 
-  const NavigatorProperties& GetNavigatorProperties() const {
+  void UpdateTimezoneOverrideForWorkers(const nsPIDOMWindowInner& aWindow,
+                                        const nsAString& aTimezone);
+
+  NavigatorProperties GetNavigatorProperties() const {
+    MutexAutoLock lock(mMutex);
     return mNavigatorProperties;
   }
 
@@ -173,6 +178,9 @@ class RuntimeService final : public nsIObserver {
 
   void UpdateWorkersPlaybackState(const nsPIDOMWindowInner& aWindow,
                                   bool aIsPlayingAudio);
+
+  void UpdateWorkersLanguageOverride(const nsPIDOMWindowInner& aWindow,
+                                     const nsCString& aLanguageOverride);
 
  private:
   RuntimeService();

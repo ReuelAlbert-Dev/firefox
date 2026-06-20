@@ -4,7 +4,6 @@
 
 #include "VsyncParent.h"
 
-#include "nsIThread.h"
 #include "nsThreadUtils.h"
 
 namespace mozilla::dom {

@@ -21,12 +21,14 @@ this.test = class extends ExtensionAPI {
           "resource://android/assets/web_extensions/test-support/TestSupportChild.sys.mjs",
       },
       allFrames: true,
+      safeForUntrustedWebProcess: true,
     });
     ChromeUtils.registerProcessActor("TestSupportProcess", {
       child: {
         esModuleURI:
           "resource://android/assets/web_extensions/test-support/TestSupportProcessChild.sys.mjs",
       },
+      safeForUntrustedWebProcess: true,
     });
   }
 
@@ -239,7 +241,7 @@ this.test = class extends ExtensionAPI {
 
         async triggerTranslationsOffer(tabId) {
           const browser = context.extension.tabManager.get(tabId).browser;
-          const { CustomEvent } = browser.ownerGlobal;
+          const { CustomEvent } = browser.documentGlobal;
           return browser.dispatchEvent(
             new CustomEvent("TranslationsParent:OfferTranslation", {
               bubbles: true,
@@ -249,7 +251,7 @@ this.test = class extends ExtensionAPI {
 
         async triggerLanguageStateChange(tabId, languageState) {
           const browser = context.extension.tabManager.get(tabId).browser;
-          const { CustomEvent } = browser.ownerGlobal;
+          const { CustomEvent } = browser.documentGlobal;
           return browser.dispatchEvent(
             new CustomEvent("TranslationsParent:LanguageState", {
               bubbles: true,
@@ -283,6 +285,43 @@ this.test = class extends ExtensionAPI {
           return getActorForTab(tabId, "TestSupport").sendQuery(
             "NotifyUserGestureActivation"
           );
+        },
+
+        /* Seeds the tracking protection database with the given content blocking log. */
+        async saveTrackingDBEvents(logJson) {
+          const trackingDBService = Cc[
+            "@mozilla.org/tracking-db-service;1"
+          ].getService(Ci.nsITrackingDBService);
+          await trackingDBService.saveEvents(logJson);
+        },
+
+        /* Removes all entries from the tracking protection database. */
+        async clearTrackingDB() {
+          const trackingDBService = Cc[
+            "@mozilla.org/tracking-db-service;1"
+          ].getService(Ci.nsITrackingDBService);
+          await trackingDBService.clearAll();
+        },
+
+        async addVirtualAuthenticator() {
+          const webauthnService = Cc[
+            "@mozilla.org/webauthn/service;1"
+          ].getService(Ci.nsIWebAuthnService);
+          return webauthnService.addVirtualAuthenticator(
+            "ctap2_1",
+            "internal",
+            true,
+            true,
+            true,
+            true
+          );
+        },
+
+        async removeVirtualAuthenticator(authenticatorId) {
+          const webauthnService = Cc[
+            "@mozilla.org/webauthn/service;1"
+          ].getService(Ci.nsIWebAuthnService);
+          webauthnService.removeVirtualAuthenticator(authenticatorId);
         },
       },
     };

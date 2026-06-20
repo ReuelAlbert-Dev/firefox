@@ -413,29 +413,31 @@ static void AddLLVMProfilePathDirectoryToPolicy(
 #undef WSTRING
 
 static void EnsureAppLockerAccess(sandbox::TargetConfig* aConfig) {
-  if (aConfig->GetLockdownTokenLevel() < sandbox::USER_LIMITED) {
-    // The following rules are to allow DLLs to be loaded when the token level
-    // blocks access to AppLocker. If the sandbox does not allow access to the
-    // DLL or the AppLocker rules specifically block it, then it will not load.
-    auto result = aConfig->AllowFileAccess(
-        sandbox::FileSemantics::kAllowReadonly, L"\\Device\\SrpDevice");
-    if (sandbox::SBOX_ALL_OK != result) {
-      NS_ERROR("Failed to add rule for SrpDevice.");
-      LOG_E("Failed (ResultCode %d) to add read access to SrpDevice", result);
-    }
-    result = aConfig->AllowRegistryRead(
-        L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Srp\\GP\\");
-    if (sandbox::SBOX_ALL_OK != result) {
-      NS_ERROR("Failed to add rule for Srp\\GP.");
-      LOG_E("Failed (ResultCode %d) to add read access to Srp\\GP", result);
-    }
-    // On certain Windows versions there is a double slash before GP.
-    result = aConfig->AllowRegistryRead(
-        L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Srp\\\\GP\\");
-    if (sandbox::SBOX_ALL_OK != result) {
-      NS_ERROR("Failed to add rule for Srp\\\\GP.");
-      LOG_E("Failed (ResultCode %d) to add read access to Srp\\\\GP", result);
-    }
+  // At USER_LIMITED and above AppLocker is not blocked.
+  if (aConfig->GetLockdownTokenLevel() >= sandbox::USER_LIMITED) {
+    return;
+  }
+
+  // The ntdll check SaferpIsV2PolicyPresent reads from this key.
+  auto result = aConfig->AllowRegistryRead(
+      LR"(HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Srp\GP\)");
+  if (sandbox::SBOX_ALL_OK != result) {
+    NS_ERROR(R"(Failed to add rule for Srp\GP.)");
+    LOG_E(R"(Failed (ResultCode %d) to add read access to Srp\GP)", result);
+  }
+
+  // When AppLocker is deployed via Mobile Device Management, without this
+  // rule SaferpIsV2PolicyPresent silently fails to detect AppLocker, causing
+  // the AppLocker check to be bypassed entirely.
+  AddCachedWindowsDirRule(aConfig, sandbox::FileSemantics::kAllowReadonly,
+                          FOLDERID_System, uR"(\AppLocker\MDM)"_ns);
+
+  // Read access to this device is required to make the AppLocker ioctl call.
+  result = aConfig->AllowFileAccess(sandbox::FileSemantics::kAllowReadonly,
+                                    LR"(\Device\SrpDevice)");
+  if (sandbox::SBOX_ALL_OK != result) {
+    NS_ERROR("Failed to add rule for SrpDevice.");
+    LOG_E("Failed (ResultCode %d) to add read access to SrpDevice", result);
   }
 }
 
@@ -540,9 +542,8 @@ Result<Ok, mozilla::ipc::LaunchError> SandboxBroker::LaunchApp(
 
   // Create the sandboxed process
   PROCESS_INFORMATION targetInfo = {0};
-  sandbox::ResultCode result;
   DWORD last_error = ERROR_SUCCESS;
-  result =
+  sandbox::ResultCode result =
       sBrokerService->SpawnTarget(aPath, aArguments, aEnvironment,
                                   std::move(mPolicy), &last_error, &targetInfo);
   if (sandbox::SBOX_ALL_OK != result) {
@@ -665,7 +666,7 @@ static sandbox::ResultCode AllowProxyLoadFromBinDir(
   // mozglue.dll, nss3.dll, etc.
   nsAutoString rulePath(*sBinDir);
   rulePath.Append(u"\\*"_ns);
-  return aConfig->AllowExtraDlls(rulePath.get());
+  return aConfig->AllowExtraDll(rulePath.get());
 }
 
 static sandbox::ResultCode AddCigToConfig(
@@ -692,7 +693,7 @@ static sandbox::ResultCode AddCigToConfig(
       }
 
       for (const wchar_t* path : exceptionModules.ref()) {
-        result = aConfig->AllowExtraDlls(path);
+        result = aConfig->AllowExtraDll(path);
         if (result != sandbox::SBOX_ALL_OK) {
           return result;
         }
@@ -933,19 +934,16 @@ static sandbox::ResultCode AddAndConfigureAppContainerProfile(
     return sandbox::SBOX_ERROR_CREATE_APPCONTAINER;
   }
 
-  // The bool parameter is called create_profile, but in fact it tries to create
-  // and then opens if it already exists. So always passing true is fine.
-  bool createOrOpenProfile = true;
   nsAutoString packageName = aPackagePrefix + uniquePackageStr;
   sandbox::ResultCode result =
-      aConfig->AddAppContainerProfile(packageName.get(), createOrOpenProfile);
+      aConfig->AddAppContainerProfile(packageName.get());
   if (result != sandbox::SBOX_ALL_OK) {
     return result;
   }
 
   // This looks odd, but unfortunately holding a scoped_refptr and
   // dereferencing has DCHECKs that cause a linking problem.
-  sandbox::AppContainer* appContainer = aConfig->GetAppContainer().get();
+  sandbox::AppContainer* appContainer = aConfig->GetAppContainer();
   appContainer->SetEnableLowPrivilegeAppContainer(true);
 
   for (auto wkCap : aWellKnownCapabilites) {
@@ -1124,10 +1122,8 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
 #else
     isTrellixDllLoaded = !!::GetModuleHandleW(L"fcagff.dll");
 #endif
-    if (isTrellixDllLoaded) {
-      result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
-      MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
-                         "AddKernelObjectToClose should never fail.");
+    if (!isTrellixDllLoaded) {
+      config->AddKernelObjectToClose(sandbox::HandleToClose::kKsecDD);
     }
   }
 
@@ -1209,12 +1205,6 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   // Add the policy for the client side of the crash server pipe.
   result = config->AllowFileAccess(sandbox::FileSemantics::kAllowAny,
                                    L"\\??\\pipe\\gecko-crash-server-pipe.*");
-  MOZ_RELEASE_ASSERT(
-      sandbox::SBOX_ALL_OK == result,
-      "With these static arguments AddRule should never fail, what happened?");
-
-  // Allow content processes to use complex line breaking brokering.
-  result = config->AllowLineBreaking();
   MOZ_RELEASE_ASSERT(
       sandbox::SBOX_ALL_OK == result,
       "With these static arguments AddRule should never fail, what happened?");
@@ -1349,17 +1339,13 @@ void SandboxBroker::SetSecurityLevelForGPUProcess(int32_t aSandboxLevel) {
   sandbox::MitigationFlags initialMitigations =
       sandbox::MITIGATION_BOTTOM_UP_ASLR | sandbox::MITIGATION_HEAP_TERMINATE |
       sandbox::MITIGATION_SEHOP | sandbox::MITIGATION_DEP_NO_ATL_THUNK |
+      sandbox::MITIGATION_EXTENSION_POINT_DISABLE |
       sandbox::MITIGATION_KTM_COMPONENT | sandbox::MITIGATION_FSCTL_DISABLED |
       sandbox::MITIGATION_IMAGE_LOAD_NO_REMOTE |
       sandbox::MITIGATION_IMAGE_LOAD_NO_LOW_LABEL | sandbox::MITIGATION_DEP;
 
   if (StaticPrefs::security_sandbox_gpu_shadow_stack_enabled()) {
     initialMitigations |= sandbox::MITIGATION_CET_COMPAT_MODE;
-  }
-
-  // Bug 2008960 tracks removing the pref if we have seen no issues.
-  if (StaticPrefs::security_sandbox_gpu_extension_point_disable()) {
-    initialMitigations |= sandbox::MITIGATION_EXTENSION_POINT_DISABLE;
   }
 
   sandbox::MitigationFlags delayedMitigations =
@@ -1858,8 +1844,26 @@ bool SandboxBroker::SetSecurityLevelForUtilityProcess(
     case mozilla::ipc::SandboxingKind::UTILITY_AUDIO_DECODING_WMF:
       return BuildUtilitySandbox(config, UtilityAudioDecodingWmfSandboxProps());
 #ifdef MOZ_WMF_MEDIA_ENGINE
-    case mozilla::ipc::SandboxingKind::MF_MEDIA_ENGINE_CDM:
-      return BuildUtilitySandbox(config, UtilityMfMediaEngineCdmSandboxProps());
+    case mozilla::ipc::SandboxingKind::MF_MEDIA_ENGINE_CDM: {
+      if (!BuildUtilitySandbox(config, UtilityMfMediaEngineCdmSandboxProps())) {
+        return false;
+      }
+      // Allow MFTEnumEx to enumerate registered MFT decoders/encoders.
+      auto result = config->AllowRegistryRead(
+          L"HKEY_LOCAL_MACHINE\\Software\\Classes\\MediaFoundation\\*");
+      if (sandbox::SBOX_ALL_OK != result) {
+        NS_WARNING("Failed to add MediaFoundation registry rule for MFCDM.");
+      }
+      // MFTEnumEx reads CLSID subkeys to enumerate registered Media Foundation
+      // Transforms. The exact CLSIDs vary per system and are not known at build
+      // time, so a wildcard covering the full CLSID hive is required.
+      result = config->AllowRegistryRead(
+          L"HKEY_LOCAL_MACHINE\\Software\\Classes\\CLSID\\*");
+      if (sandbox::SBOX_ALL_OK != result) {
+        NS_WARNING("Failed to add CLSID registry rule for MFCDM.");
+      }
+      return true;
+    }
 #endif
     case mozilla::ipc::SandboxingKind::WINDOWS_UTILS:
       return BuildUtilitySandbox(config, WindowsUtilitySandboxProps());
@@ -2052,9 +2056,6 @@ void SandboxBroker::ApplyLoggingConfig() {
 
   // Add dummy rules, so that we can log in the interception code.
   // We already have a file interception set up for the client side of pipes.
-  // Also, passing just "dummy" for file system policy causes win_utils.cc
-  // IsReparsePoint() to loop.
-  (void)config->AllowNamedPipes(L"dummy");
   (void)config->AllowRegistryRead(L"HKEY_CURRENT_USER\\dummy");
 }
 

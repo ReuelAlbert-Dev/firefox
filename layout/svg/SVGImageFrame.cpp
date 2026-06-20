@@ -831,13 +831,13 @@ void SVGImageFrame::NotifySVGChanged(ChangeFlags aFlags) {
 }
 
 SVGBBox SVGImageFrame::GetBBoxContribution(const Matrix& aToBBoxUserspace,
-                                           uint32_t aFlags) {
+                                           SVGBBoxFlags aFlags) {
   if (aToBBoxUserspace.IsSingular()) {
     // XXX ReportToConsole
     return {};
   }
 
-  if ((aFlags & SVGUtils::eForGetClientRects) &&
+  if (aFlags.contains(SVGBBoxFlag::ForGetClientRects) &&
       aToBBoxUserspace.PreservesAxisAlignedRectangles()) {
     if (!mRect.IsEmpty()) {
       Rect rect = NSRectToRect(mRect, AppUnitsPerCSSPixel());
@@ -848,7 +848,13 @@ SVGBBox SVGImageFrame::GetBBoxContribution(const Matrix& aToBBoxUserspace,
 
   auto* element = static_cast<SVGImageElement*>(GetContent());
 
-  return element->GeometryBounds(aToBBoxUserspace);
+  Rect rect = element->GeometryBounds(aToBBoxUserspace);
+
+  if (aFlags.contains(SVGBBoxFlag::DisregardCSSZoom)) {
+    rect.Scale(1 / Style()->EffectiveZoom().ToFloat());
+  }
+
+  return rect;
 }
 
 //----------------------------------------------------------------------

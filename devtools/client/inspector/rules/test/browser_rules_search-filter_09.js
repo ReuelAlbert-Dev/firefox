@@ -48,10 +48,10 @@ add_task(async function () {
 
   info("Test creating a new property");
 
-  info("Entering margin-left in the property name editor");
+  info("Entering padding-left in the property name editor");
   // Changing the value doesn't cause a rule-view refresh, no need to wait for
   // ruleview-changed here.
-  editor.input.value = "margin-left";
+  editor.input.value = "padding-left";
 
   info("Pressing return to commit and focus the new value field");
   let onRuleViewChanged = view.once("ruleview-changed");
@@ -63,10 +63,8 @@ add_task(async function () {
   const propEditor = ruleEditor.rule.textProps[2].editor;
 
   info("Entering a value and bluring the field to expect a rule change");
-  onRuleViewChanged = view.once("ruleview-changed");
   editor.input.value = "100%";
   view.debounce.flush();
-  await onRuleViewChanged;
 
   onRuleViewChanged = view.once("ruleview-changed");
   editor.input.blur();
@@ -74,6 +72,6 @@ add_task(async function () {
 
   ok(
     propEditor.container.classList.contains("ruleview-highlight"),
-    "margin-left text property is correctly highlighted."
+    "padding-left text property is correctly highlighted."
   );
 });

@@ -5,7 +5,10 @@
 import { MultilineEditor } from "chrome://browser/content/multilineeditor/multiline-editor.mjs";
 import { createMentionsPlugin } from "chrome://browser/content/multilineeditor/plugins/MentionsPlugin.mjs";
 
-/** @typedef {import("../../aiwindow/ui/components/smartwindow-panel-list/smartwindow-panel-list.mjs").SmartwindowPanelList} SmartwindowPanelList */
+/**
+ * @import {SmartbarInput} from "chrome://browser/content/urlbar/SmartbarInput.mjs"
+ * @typedef {import("../../aiwindow/ui/components/smartwindow-panel-list/smartwindow-panel-list.mjs").SmartwindowPanelList} SmartwindowPanelList
+ */
 
 const lazy = {};
 
@@ -39,6 +42,13 @@ ChromeUtils.defineLazyGetter(lazy, "log", function () {
 // Debounce delay for the mention suggestions query.
 const MENTION_QUERY_DEBOUNCE_MS = 150;
 
+const PLACEHOLDER_HINT_L10N_IDS = [
+  "smartbar-placeholder-hint-1",
+  "smartbar-placeholder-hint-2",
+  "smartbar-placeholder-hint-3",
+  "smartbar-placeholder-hint-4",
+];
+
 /**
  * @typedef {object} TabMention
  * @property {string} id - Mention ID
@@ -55,11 +65,17 @@ const MENTION_QUERY_DEBOUNCE_MS = 150;
  */
 
 /**
+ * @typedef {object} MentionSuggestionsResult
+ * @property {TabMentionGroup[]} groups - The grouped mention suggestions
+ * @property {number} totalCount - Total number of mention items across all groups
+ */
+
+/**
  * Get mention suggestions matching the search query.
  *
  * @param {import("../SmartbarMentionsPanelSearch.sys.mjs").SmartbarMentionsPanelSearch} mentionSearch - Search for mention suggestions
  * @param {string} searchString - Query to match against title and URL
- * @returns {Array<TabMentionGroup>}
+ * @returns {MentionSuggestionsResult}
  */
 function getMentionSuggestions(mentionSearch, searchString) {
   try {
@@ -89,15 +105,18 @@ function getMentionSuggestions(mentionSearch, searchString) {
         icon,
       }));
 
-    return [
-      {
-        headerL10nId: "smartbar-mentions-list-recent-tabs-label",
-        items: deduplicated,
-      },
-    ];
+    return {
+      groups: [
+        {
+          headerL10nId: "smartbar-mentions-list-recent-tabs-label",
+          items: deduplicated,
+        },
+      ],
+      totalCount: deduplicated.length,
+    };
   } catch (e) {
     lazy.log.error("Error querying tabs:", e);
-    return [];
+    return { groups: [], totalCount: 0 };
   }
 }
 
@@ -123,12 +142,21 @@ const getAnchorPos = (range, view) => {
 /**
  * Setup context button to show mentions panel.
  *
- * @param {HTMLElement} container - The urlbar input container
+ * @param {SmartbarInput} smartbarInput - The smartbar input element
  * @param {SmartwindowPanelList} panelList - The panel list component
  */
-function setupContextMentionsButton(container, panelList) {
-  const smartbarRoot = container.parentElement;
-  const contextButton = smartbarRoot.querySelector("context-icon-button");
+function setupContextMentionsButton(smartbarInput, panelList) {
+  const contextButton = smartbarInput.querySelector("context-icon-button");
+
+  panelList.addEventListener("shown", () => {
+    if (panelList.getAttribute("data-triggered-by") === "context-mention") {
+      contextButton.setAttribute("active", "");
+    }
+  });
+
+  panelList.addEventListener("hidden", () => {
+    contextButton.removeAttribute("active");
+  });
 
   contextButton.addEventListener("aiwindow-context-button:on-click", () => {
     const contextMentionSearch = new lazy.SmartbarMentionsPanelSearch(
@@ -136,9 +164,22 @@ function setupContextMentionsButton(container, panelList) {
       window.browsingContext.topChromeWindow
     );
     panelList.anchor = contextButton;
-    panelList.groups = getMentionSuggestions(contextMentionSearch, "");
+    const { groups, totalCount } = getMentionSuggestions(
+      contextMentionSearch,
+      ""
+    );
+    panelList.groups = groups;
     panelList.setAttribute("data-triggered-by", "context-mention");
     panelList.toggle();
+
+    const { chat_id, message_seq } = smartbarInput.conversationTelemetryInfo;
+    Glean.smartWindow.addTabsClick.record({
+      chat_id,
+      location: smartbarInput.sapLocation,
+      message_seq: String(message_seq),
+      tabs_available: String(totalCount),
+      tabs_preselected: String(smartbarInput.contextWebsitesCount),
+    });
   });
 }
 
@@ -155,6 +196,15 @@ function setupMentionsPlugin(editorElement, panelList) {
   let mentionSearch = null;
   let latestMentionData = null;
 
+  document.l10n
+    .formatValue("smartbar-mention-typing-placeholder")
+    .then(text => {
+      editorElement.style.setProperty(
+        "--multiline-editor-mention-placeholder",
+        `" ${text}"`
+      );
+    });
+
   const handleMentionsChange = () => {
     if (!latestMentionData || !mentionSearch) {
       return;
@@ -163,10 +213,14 @@ function setupMentionsPlugin(editorElement, panelList) {
     // Don't trim() the query - we need to preserve spaces to match tab titles
     // that contain spaces (e.g., "@my tab" should match "my tab title")
     const query = text.substring(1);
-    panelList.groups = getMentionSuggestions(mentionSearch, query);
+    const { groups } = getMentionSuggestions(mentionSearch, query);
+    panelList.groups = groups;
     mentionChangeTimer = null;
   };
 
+  const smartbarInput = /** @type {SmartbarInput} */ (
+    editorElement.closest("moz-smartbar")
+  );
   const plugin = createMentionsPlugin({
     triggerChar: "@",
     allowSpaces: true,
@@ -196,12 +250,27 @@ function setupMentionsPlugin(editorElement, panelList) {
         window.browsingContext.topChromeWindow
       );
       panelList.anchor = getAnchorPos(mentionData.range, mentionData.view);
-      panelList.groups = getMentionSuggestions(mentionSearch, "");
+      const { groups, totalCount } = getMentionSuggestions(mentionSearch, "");
+      panelList.groups = groups;
       panelList.setAttribute("data-triggered-by", "inline-mention");
       panelList.show();
+      editorElement.setAttribute("data-mention-placeholder", "");
+
+      const { chat_id, message_seq } = smartbarInput.conversationTelemetryInfo;
+      Glean.smartWindow.mentionStart.record({
+        chat_id,
+        location: smartbarInput.sapLocation,
+        mentions_available: String(totalCount),
+        message_seq: String(message_seq),
+      });
     },
     onChange: mentionData => {
       latestMentionData = mentionData;
+
+      editorElement.toggleAttribute(
+        "data-mention-placeholder",
+        mentionData.text.length <= 1
+      );
 
       if (!mentionChangeTimer) {
         mentionChangeTimer = new lazy.SkippableTimer({
@@ -214,6 +283,7 @@ function setupMentionsPlugin(editorElement, panelList) {
     onExit: () => {
       isHandlingMentions = false;
       panelList.hide();
+      editorElement.removeAttribute("data-mention-placeholder");
 
       // Cancel pending queries
       if (mentionChangeTimer) {
@@ -225,24 +295,59 @@ function setupMentionsPlugin(editorElement, panelList) {
     },
   });
 
+  const handleChipDisconnected = e => {
+    if (e.detail.type === "in-line") {
+      const { chat_id, message_seq } = smartbarInput.conversationTelemetryInfo;
+      Glean.smartWindow.mentionRemove.record({
+        chat_id,
+        location: smartbarInput.sapLocation,
+        mentions: String(plugin.mentions.getAll().length),
+        message_seq: String(message_seq),
+      });
+    }
+  };
+
   const handleItemSelected = e => {
     const { id, label, icon } = e.detail;
 
     const isContextButtonTrigger =
       panelList.getAttribute("data-triggered-by") === "context-mention";
+
+    const { chat_id, message_seq } = smartbarInput.conversationTelemetryInfo;
+
     // If the mention suggestions are triggered by the context “+”-button,
     // add the mention to the context header.
     if (isContextButtonTrigger) {
-      const smartbarInput = editorElement.closest("moz-smartbar");
-      // @ts-ignore - addContextMention method exists on SmartbarInput
+      const tabsPreselected = smartbarInput.contextWebsitesCount;
       smartbarInput.addContextMention({
         type: "tab",
         url: id,
         label,
         iconSrc: icon,
       });
+      Glean.smartWindow.addTabsSelection.record({
+        chat_id,
+        location: smartbarInput.sapLocation,
+        message_seq: String(message_seq),
+        tabs_available: String(
+          panelList.groups.reduce((sum, group) => sum + group.items.length, 0)
+        ),
+        tabs_preselected: String(tabsPreselected),
+        tabs_selected: String(smartbarInput.contextWebsitesCount),
+      });
     } else {
-      // Add inline mention when triggered by typing “@”
+      // Add inline mention when triggered by typing "@".
+      // Inline mentions are not added as context chips.
+      Glean.smartWindow.mentionSelect.record({
+        chat_id,
+        length: label.length,
+        location: smartbarInput.sapLocation,
+        mentions_available: panelList.groups.reduce(
+          (sum, group) => sum + group.items.length,
+          0
+        ),
+        message_seq: String(message_seq),
+      });
       plugin.mentions.insert(
         {
           type: "tab",
@@ -279,6 +384,10 @@ function setupMentionsPlugin(editorElement, panelList) {
   editorElement.addEventListener("keydown", handleEditorKeyDown, {
     capture: true,
   });
+  editorElement.addEventListener(
+    "ai-website-chip:disconnected",
+    handleChipDisconnected
+  );
 
   /**
    * Adds the following properties to `editorElement`:
@@ -292,6 +401,21 @@ function setupMentionsPlugin(editorElement, panelList) {
     },
     hasMention: {
       get: () => plugin.mentions.hasMention(),
+    },
+    getAllMentions: {
+      value: () => plugin.mentions.getAll(),
+    },
+    /**
+     * Inserts an inline mention at the specified text offset
+     *
+     * @param {Node} mention
+     * @param {number} textOffset
+     */
+    insertMention: {
+      value: (mention, textOffset) => {
+        const pos = editorElement.textOffsetToPos(textOffset);
+        plugin.mentions.insertNode(mention, pos);
+      },
     },
   });
 
@@ -338,6 +462,16 @@ export function createEditor(inputElement) {
   editorElement.id = inputElement.id;
   editorElement.value = inputElement.value ?? "";
 
+  const isSidebarMode =
+    window.browsingContext?.embedderElement?.id === lazy.AIWindowUI.BROWSER_ID;
+  document.l10n
+    .formatValues(PLACEHOLDER_HINT_L10N_IDS.map(id => ({ id })))
+    .then(hints => {
+      editorElement.placeholderHints = hints;
+      editorElement.showPlaceholderAnimation = !isSidebarMode;
+    })
+    .catch(console.error);
+
   inputElement.replaceWith(editorElement);
 
   const container = editorElement.closest(".urlbar-input-container");
@@ -345,13 +479,15 @@ export function createEditor(inputElement) {
     container.querySelector("smartwindow-panel-list")
   );
   panelList.placeholderL10nId = "smartbar-mentions-list-no-results-label";
-  panelList.sidebarMode =
-    window.browsingContext?.embedderElement?.id === lazy.AIWindowUI.BROWSER_ID;
+  panelList.sidebarMode = isSidebarMode;
 
   const mentionsPlugin = setupMentionsPlugin(editorElement, panelList);
   editorElement.plugins = [mentionsPlugin];
 
-  setupContextMentionsButton(/** @type {HTMLElement} */ (container), panelList);
+  const smartbarInput = /** @type {SmartbarInput} */ (
+    editorElement.closest("moz-smartbar")
+  );
+  setupContextMentionsButton(smartbarInput, panelList);
 
   return {
     input: editorElement,

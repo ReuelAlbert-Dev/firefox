@@ -458,7 +458,7 @@ nsHttpNegotiateAuth::GenerateCredentials(
   *flags = USING_INTERNAL_IDENTITY;
 
   LOG(("nsHttpNegotiateAuth::GenerateCredentials() [challenge=%s]\n",
-       aChallenge.BeginReading()));
+       PromiseFlatCString(aChallenge).get()));
 
 #ifdef DEBUG
   bool isGssapiAuth = StringBeginsWith(aChallenge, "Negotiate"_ns,

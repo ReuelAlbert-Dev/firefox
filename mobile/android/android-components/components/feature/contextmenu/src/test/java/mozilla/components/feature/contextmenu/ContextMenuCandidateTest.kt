@@ -38,7 +38,6 @@ import mozilla.components.support.test.robolectric.testContext
 import mozilla.components.ui.widgets.SnackbarDelegate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -51,6 +50,7 @@ import org.mockito.Mockito.doThrow
 import org.mockito.Mockito.spy
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import kotlin.test.assertNotNull
 
 @RunWith(AndroidJUnit4::class)
 class ContextMenuCandidateTest {
@@ -1880,7 +1880,7 @@ class ContextMenuCandidateTest {
             HitResult.UNKNOWN("https://www.otherexample.com"),
         )
 
-        verify(openAppLinkRedirectMock, times(2)).invoke(any(), anyBoolean(), any())
+        verify(openAppLinkRedirectMock, times(2)).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test

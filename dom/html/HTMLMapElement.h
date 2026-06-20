@@ -8,13 +8,13 @@
 #include "nsGenericHTMLElement.h"
 #include "nsGkAtoms.h"
 
-class nsContentList;
-
 namespace mozilla::dom {
+
+class ContentList;
 
 class HTMLMapElement final : public nsGenericHTMLElement {
  public:
-  explicit HTMLMapElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+  explicit HTMLMapElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -27,14 +27,14 @@ class HTMLMapElement final : public nsGenericHTMLElement {
   void SetName(const nsAString& aName, ErrorResult& aError) {
     SetHTMLAttr(nsGkAtoms::name, aName, aError);
   }
-  nsIHTMLCollection* Areas();
+  HTMLCollection* Areas();
 
   JSObject* WrapNode(JSContext*, JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
   ~HTMLMapElement() = default;
 
-  RefPtr<nsContentList> mAreas;
+  RefPtr<ContentList> mAreas;
 };
 
 }  // namespace mozilla::dom

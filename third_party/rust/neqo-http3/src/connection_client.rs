@@ -18,13 +18,13 @@ use neqo_common::{
     Datagram, Decoder, Encoder, Header, MessageType, Role, event::Provider as EventProvider, hex,
     hex_with_len, qdebug, qinfo, qlog::Qlog, qtrace, qwarn,
 };
-use neqo_crypto::{AuthenticationStatus, ResumptionToken, SecretAgentInfo, agent::CertificateInfo};
 use neqo_qpack::Stats as QpackStats;
 use neqo_transport::{
     AppError, Connection, ConnectionEvent, ConnectionId, ConnectionIdGenerator, DatagramTracking,
     Output, OutputBatch, Stats as TransportStats, StreamId, StreamType, Version, ZeroRttState,
     recv_stream, send_stream, streams::SendOrder,
 };
+use nss::{AuthenticationStatus, ResumptionToken, SecretAgentInfo, agent::CertificateInfo};
 
 use crate::{
     Error, Http3Parameters, Http3StreamType, NewStreamType, Priority, PriorityHandler, PushId,
@@ -448,6 +448,14 @@ impl Http3Client {
                 .maybe_send_max_push_id_frame(&mut self.base_handler);
         }
         Ok(())
+    }
+
+    /// Returns a resumption token if one is available, wrapped with the current
+    /// H3 settings. Use as a fallback when the `ResumptionToken` event has not
+    /// fired before the connection closes (e.g., `NEW_TOKEN` never arrived).
+    pub fn take_resumption_token(&mut self, now: Instant) -> Option<ResumptionToken> {
+        let transport_token = self.conn.take_resumption_token(now)?;
+        self.encode_resumption_token(&transport_token)
     }
 
     /// This is call to close a connection.
@@ -1161,7 +1169,9 @@ impl Http3Client {
                 }
                 ConnectionEvent::SendStreamComplete { .. }
                 | ConnectionEvent::OutgoingDatagramOutcome { .. }
-                | ConnectionEvent::IncomingDatagramDropped => {}
+                | ConnectionEvent::IncomingDatagramDropped
+                | ConnectionEvent::SconeUpdated(_)
+                | ConnectionEvent::PathMigrated { .. } => {}
             }
         }
         Ok(())
@@ -1380,12 +1390,12 @@ mod tests {
 
     use http::Uri;
     use neqo_common::{Datagram, Decoder, Encoder, event::Provider as _, qtrace};
-    use neqo_crypto::{AllowZeroRtt, AntiReplay, ResumptionToken};
     use neqo_qpack as qpack;
     use neqo_transport::{
         CloseReason, ConnectionEvent, ConnectionParameters, INITIAL_LOCAL_MAX_STREAM_DATA,
         MIN_INITIAL_PACKET_SIZE, Output, State, StreamId, StreamType, Version,
     };
+    use nss::{AllowZeroRtt, AntiReplay, ResumptionToken};
     use test_fixture::{
         CountingConnectionIdGenerator, DEFAULT_ADDR, DEFAULT_ALPN_H3, DEFAULT_KEYS,
         DEFAULT_SERVER_NAME, anti_replay, default_server_h3, fixture_init, new_server, now,
@@ -3626,7 +3636,7 @@ mod tests {
                     assert!(!fin);
                 }
                 Http3ClientEvent::DataReadable { stream_id } => {
-                    assert!(stream_id == request_stream_id_1);
+                    assert_eq!(stream_id, request_stream_id_1);
                     let mut buf = [0_u8; 100];
                     assert_eq!(
                         (EXPECTED_RESPONSE_DATA_1.len(), true),

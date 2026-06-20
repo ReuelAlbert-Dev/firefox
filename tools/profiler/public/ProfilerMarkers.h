@@ -296,14 +296,6 @@ struct SimplePayloadMarkerTemplate
 
   static constexpr MS::Location Locations[] = {MS::Location::MarkerChart,
                                                MS::Location::MarkerTable};
-
-  static void StreamJSONMarkerData(
-      mozilla::baseprofiler::SpliceableJSONWriter& aWriter,
-      const typename ArgTypes::type&... args) {
-    mozilla::BaseMarkerType<
-        SimplePayloadMarkerTemplate<ArgName, ArgTableLabel, ArgTypes...>>::
-        StreamJSONMarkerDataImpl(aWriter, args...);
-  }
 };
 }  // namespace geckoprofiler::markers
 
@@ -419,13 +411,14 @@ class MOZ_RAII AutoProfilerTextMarker {
                          const nsACString& aText)
       : mMarkerName(aMarkerName),
         mCategory(aCategory),
-        mOptions(std::move(aOptions)),
-        mText(aText) {
+        mOptions(std::move(aOptions)) {
     MOZ_ASSERT(mOptions.Timing().EndTime().IsNull(),
                "AutoProfilerTextMarker options shouldn't have an end time");
-    if (profiler_is_active_and_unpaused() &&
-        mOptions.Timing().StartTime().IsNull()) {
-      mOptions.Set(mozilla::MarkerTiming::InstantNow());
+    if (profiler_is_active_and_unpaused()) {
+      mText = aText;
+      if (mOptions.Timing().StartTime().IsNull()) {
+        mOptions.Set(mozilla::MarkerTiming::InstantNow());
+      }
     }
   }
 

@@ -62,12 +62,14 @@ void ConvolveHorizontally(const unsigned char* srcData,
 
     // Bring this value back in range. All of the filter scaling factors
     // are in fixed point with kShiftBits bits of fractional part.
-    accum[0] >>= SkConvolutionFilter1D::kShiftBits;
-    accum[1] >>= SkConvolutionFilter1D::kShiftBits;
-    accum[2] >>= SkConvolutionFilter1D::kShiftBits;
+    // Add rounding bias before truncating to avoid systematic darkening.
+    constexpr int kRound = 1 << (SkConvolutionFilter1D::kShiftBits - 1);
+    accum[0] = (accum[0] + kRound) >> SkConvolutionFilter1D::kShiftBits;
+    accum[1] = (accum[1] + kRound) >> SkConvolutionFilter1D::kShiftBits;
+    accum[2] = (accum[2] + kRound) >> SkConvolutionFilter1D::kShiftBits;
 
     if (hasAlpha) {
-      accum[3] >>= SkConvolutionFilter1D::kShiftBits;
+      accum[3] = (accum[3] + kRound) >> SkConvolutionFilter1D::kShiftBits;
     }
 
     // Store the new pixel.
@@ -112,11 +114,12 @@ void ConvolveVertically(
 
     // Bring this value back in range. All of the filter scaling factors
     // are in fixed point with kShiftBits bits of precision.
-    accum[0] >>= SkConvolutionFilter1D::kShiftBits;
-    accum[1] >>= SkConvolutionFilter1D::kShiftBits;
-    accum[2] >>= SkConvolutionFilter1D::kShiftBits;
+    constexpr int kRound = 1 << (SkConvolutionFilter1D::kShiftBits - 1);
+    accum[0] = (accum[0] + kRound) >> SkConvolutionFilter1D::kShiftBits;
+    accum[1] = (accum[1] + kRound) >> SkConvolutionFilter1D::kShiftBits;
+    accum[2] = (accum[2] + kRound) >> SkConvolutionFilter1D::kShiftBits;
     if (hasAlpha) {
-      accum[3] >>= SkConvolutionFilter1D::kShiftBits;
+      accum[3] = (accum[3] + kRound) >> SkConvolutionFilter1D::kShiftBits;
     }
 
     // Store the new pixel.
@@ -175,7 +178,8 @@ void ConvolveHorizontallyA8(const unsigned char* srcData,
 
     // Bring this value back in range. All of the filter scaling factors
     // are in fixed point with kShiftBits bits of fractional part.
-    accum >>= SkConvolutionFilter1D::kShiftBits;
+    constexpr int kRound = 1 << (SkConvolutionFilter1D::kShiftBits - 1);
+    accum = (accum + kRound) >> SkConvolutionFilter1D::kShiftBits;
 
     // Store the new pixel.
     outRow[outX] = ClampTo8(accum);
@@ -204,7 +208,8 @@ void ConvolveVerticallyA8(
 
     // Bring this value back in range. All of the filter scaling factors
     // are in fixed point with kShiftBits bits of precision.
-    accum >>= SkConvolutionFilter1D::kShiftBits;
+    constexpr int kRound = 1 << (SkConvolutionFilter1D::kShiftBits - 1);
+    accum = (accum + kRound) >> SkConvolutionFilter1D::kShiftBits;
 
     // Store the new pixel.
     outRow[outX] = ClampTo8(accum);
@@ -486,7 +491,7 @@ bool SkConvolutionFilter1D::ComputeFilterValues(
 
     // Compute the (inclusive) range of source pixels the filter covers.
     float srcBegin = std::max(0.0f, floorf(srcPixel - srcSupport));
-    float srcEnd = std::min(aSrcSize - 1.0f, ceilf(srcPixel + srcSupport));
+    float srcEnd = std::min(float(aSrcSize - 1), ceilf(srcPixel + srcSupport));
 
     // Compute the unnormalized filter value at each location of the source
     // it covers.

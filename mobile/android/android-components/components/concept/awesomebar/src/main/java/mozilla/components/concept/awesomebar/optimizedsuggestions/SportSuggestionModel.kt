@@ -4,10 +4,17 @@
 
 package mozilla.components.concept.awesomebar.optimizedsuggestions
 
+import android.graphics.Bitmap
+
 /**
  * Represents the sports status type used by the Sports Suggestion.
  */
 enum class SportSuggestionStatusType { PAST, LIVE, SCHEDULED, NONE }
+
+/**
+ * Represents the sports category used by the Sports Suggestion.
+ */
+enum class SportSuggestionCategory { BASEBALL, BASKETBALL, HOCKEY, SOCCER, FOOTBALL, GOLF, RACING, MISC }
 
 /**
  * Represents the sports date used by the Sports Suggestion.
@@ -34,8 +41,13 @@ sealed class SportSuggestionDate {
  *
  * @param name The name of the team.
  * @param score The score of the team.
+ * @param icon The icon of the team.
  */
-data class SportSuggestionTeam(val name: String, val score: Int?)
+data class SportSuggestionTeam(
+    val name: String,
+    val score: Int?,
+    val icon: Bitmap?,
+)
 
 /**
  * Represents the various statuses a sport's game can have.
@@ -77,16 +89,6 @@ sealed class SportSuggestionStatus {
     data object Final : SportSuggestionStatus()
 
     /**
-     * Represents the game status when the game has finished after over time.
-     */
-    data object FinalOverTime : SportSuggestionStatus()
-
-    /**
-     * Represents the game status when the game has finished after a shoot out.
-     */
-    data object FinalShootOut : SportSuggestionStatus()
-
-    /**
      * Represents the game status when the game has been forfeited.
      */
     data object Forfeit : SportSuggestionStatus()
@@ -101,3 +103,16 @@ sealed class SportSuggestionStatus {
      */
     data object Unknown : SportSuggestionStatus()
 }
+
+/**
+ * Represents the state of a sport suggestion.
+ */
+data class SportSuggestionState(
+    val sport: String,
+    val sportCategory: SportSuggestionCategory,
+    val status: SportSuggestionStatus,
+    val statusType: SportSuggestionStatusType,
+    val date: SportSuggestionDate,
+    val homeTeam: SportSuggestionTeam,
+    val awayTeam: SportSuggestionTeam,
+)

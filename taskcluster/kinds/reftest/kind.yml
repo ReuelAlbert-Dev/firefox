@@ -105,10 +105,6 @@ tasks:
             by-test-platform:
                 .*windows.*: win11-64-25h2
                 default: default
-        test-manifest-loader:
-            by-test-platform:
-                linux.*64-tsan(-qr)?/opt: default
-                default: null  # don't load tests in the taskgraph
         chunks:
             by-test-platform:
                 linux.*64-tsan(-qr)?/opt: dynamic
@@ -153,6 +149,11 @@ tasks:
                     by-test-platform:
                         android.*: []
                         .*-wayland/debug.*: []
+                        # Compositor shutdown assertion in DisconnectApzcTreeManager
+                        # on headless macOS aarch64 VM workers (Bug 2039987 family);
+                        # same pattern excludes jsreftest, marionette-unittest, and
+                        # mochitest-remote on this platform.
+                        macosx1500-aarch64-vms/debug: []
                         default: built-projects
         max-run-time: 3600
         mozharness:
@@ -216,6 +217,7 @@ tasks:
                 android-hw.*/opt: 6
                 windows.*-asan.*/opt: 6
                 windows.*-ccov.*/opt: 5
+                windows.*/debug: 4
                 windows.*/opt: 2
                 linux.*64-ccov.*/.*: 5
                 linux2404-64/opt: 4
@@ -244,6 +246,11 @@ tasks:
                 default:
                     by-test-platform:
                         android.*/.*: []
+                        # Compositor shutdown crash in DisconnectApzcTreeManager
+                        # on headless macOS aarch64 VM workers (Bug 2038639 family).
+                        # opt builds finish before the crash window; debug consistently
+                        # hits it after every test in the chunk has passed.
+                        macosx1500-aarch64-vms/debug: []
                         default: built-projects
         virtualization: virtual
         tier:
@@ -372,14 +379,9 @@ tasks:
         variants:
             - no-fission
             - no-gpu-process
-            - webrender-sw+no-fission
         run-without-variant: false
         run-on-projects:
             by-variant:
-                webrender-sw+no-fission:
-                    by-test-platform:
-                        android-hw-p5-13-0-android-aarch64(-qr)?/debug: built-projects
-                        default: []
                 no-fission: built-projects
                 no-gpu-process: built-projects
         max-run-time: 2400

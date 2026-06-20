@@ -12,7 +12,6 @@
 #include "mozilla/SyncRunnable.h"
 #include "nsIThread.h"
 #include "nsNSSComponent.h"
-#include "nsPK11TokenDB.h"
 #include "nsXULAppAPI.h"
 
 /* Implementing OSKeyStore when there is no platform specific one.
@@ -25,28 +24,14 @@ using mozilla::SyncRunnable;
 LazyLogModule gNSSKeyStoreLog("nsskeystore");
 
 NSSKeyStore::NSSKeyStore() {
-  MOZ_ASSERT(XRE_IsParentProcess());
-  if (!XRE_IsParentProcess()) {
-    // This shouldn't happen as this is only initialised when creating the
-    // OSKeyStore, which is ParentProcessOnly.
-    return;
-  }
-  (void)EnsureNSSInitializedChromeOrContent();
-  (void)InitToken();
-}
-NSSKeyStore::~NSSKeyStore() = default;
-
-nsresult NSSKeyStore::InitToken() {
+  mSlot = UniquePK11SlotInfo(PK11_GetInternalKeySlot());
   if (!mSlot) {
-    mSlot = UniquePK11SlotInfo(PK11_GetInternalKeySlot());
-    if (!mSlot) {
-      MOZ_LOG(gNSSKeyStoreLog, LogLevel::Debug,
-              ("Error getting internal key slot"));
-      return NS_ERROR_NOT_AVAILABLE;
-    }
+    MOZ_LOG(gNSSKeyStoreLog, LogLevel::Debug,
+            ("Error getting internal key slot"));
   }
-  return NS_OK;
 }
+
+NSSKeyStore::~NSSKeyStore() = default;
 
 nsresult NSSKeyStore::StoreSecret(const nsACString& aSecret,
                                   const nsACString& aLabel) {

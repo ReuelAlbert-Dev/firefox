@@ -37,7 +37,7 @@ static void* ThreadFunc(void* closure) {
   PlatformThread::Delegate* delegate =
       static_cast<PlatformThread::Delegate*>(closure);
   delegate->ThreadMain();
-  return NULL;
+  return nullptr;
 }
 
 // static
@@ -145,5 +145,5 @@ bool PlatformThread::CreateNonJoinable(size_t stack_size, Delegate* delegate) {
 
 // static
 void PlatformThread::Join(PlatformThreadHandle thread_handle) {
-  pthread_join(thread_handle, NULL);
+  pthread_join(thread_handle, nullptr);
 }

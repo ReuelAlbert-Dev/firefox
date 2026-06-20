@@ -20,8 +20,6 @@
 #include "mozilla/StickyTimeDuration.h"
 #include "nsThreadSyncDispatch.h"
 
-#include <mutex>
-
 using namespace mozilla;
 
 static LazyLogModule sThreadPoolLog("nsThreadPool");
@@ -453,6 +451,10 @@ nsThreadPool::Run() {
 
   MOZ_ASSERT(gCurrentThreadPool.get() == this);
   gCurrentThreadPool.set(nullptr);
+
+  // Clear the thread's back-pointer into this pool so that the profiler's
+  // SamplerThread stops using it for this thread.
+  static_cast<nsThread*>(current.get())->SetPoolThreadFreePtr(nullptr);
 
   if (shutdownThreadOnExit) {
     ShutdownThread(current);

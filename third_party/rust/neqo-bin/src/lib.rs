@@ -9,7 +9,7 @@
 use std::{
     net::{SocketAddr, ToSocketAddrs as _},
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use clap::{Parser, builder::TypedValueParser as _};
@@ -285,11 +285,17 @@ pub enum Error {
     Argument(&'static str),
 }
 
+/// Wrapper for [`Instant::now()`] to manage the `disallowed_methods` override.
+fn now() -> Instant {
+    #![expect(clippy::disallowed_methods, reason = "This program uses the time")]
+    Instant::now()
+}
+
 #[cfg(not(target_os = "netbsd"))] // FIXME: Test fails on NetBSD.
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use std::{fs, path::PathBuf, str::FromStr as _, time::SystemTime};
+    use std::{fs, path::PathBuf, time::SystemTime};
 
     use crate::{client, server};
 
@@ -325,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_qlog_file() {
-        neqo_crypto::init_db(PathBuf::from_str("../test-fixture/db").unwrap()).unwrap();
+        test_fixture::fixture_init();
 
         let temp_dir = TempDir::new();
 

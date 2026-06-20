@@ -18,7 +18,7 @@ use enum_map::EnumMap;
 use neqo_common::{Dscp, Ecn, qdebug};
 use strum::IntoEnumIterator as _;
 
-use crate::{cc::CongestionEvent, ecn, packet};
+use crate::{ecn, packet, version::Version};
 
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct FrameStats {
@@ -142,16 +142,35 @@ pub enum SlowStartExitReason {
     Heuristic,
 }
 
+/// Congestion event counters.
+///
+/// `loss` and `ecn` are mutually exclusive triggers (their sum equals the total number of
+/// congestion events). `spurious` is an orthogonal category that applies to a subset of
+/// loss-triggered congestion events.
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct CongestionEventStats {
+    /// Congestion events triggered by packet loss.
+    pub loss: usize,
+    /// Congestion events triggered by ECN-CE marks.
+    pub ecn: usize,
+    /// Congestion events later found to be spurious, due to packets which were initially
+    /// considered lost but later got acknowledged.
+    pub spurious: usize,
+}
+
+/// Tracks SEARCH reset occurrences: how many times SEARCH reset and the maximum number of bins
+/// skipped across all resets.
+#[derive(Default, Clone, PartialEq, Eq)]
+pub struct SearchResetStats {
+    pub count: usize,
+    pub max_passed_bins: Option<usize>,
+}
+
 /// Congestion Control stats
 #[derive(Default, Clone, PartialEq)]
 pub struct CongestionControlStats {
-    /// Total number of congestion events caused by packet loss, total number of
-    /// congestion events caused by ECN-CE marked packets, and number of
-    /// spurious congestion events, where congestion was incorrectly inferred
-    /// due to packets initially considered lost but subsequently acknowledged.
-    /// The latter indicates instances where the congestion control algorithm
-    /// overreacted to perceived losses.
-    pub congestion_events: EnumMap<CongestionEvent, usize>,
+    /// Congestion event counters. Includes trigger type and other qualifier flags.
+    pub congestion_events: CongestionEventStats,
     /// The congestion window size (in bytes) when we exited slow start.
     /// None if we haven't exited slow start or if we re-entered after spurious congestion.
     /// When exiting via congestion event, this is the cwnd AFTER the reduction.
@@ -166,6 +185,31 @@ pub struct CongestionControlStats {
     /// Number of CSS (Conservative Slow Start) rounds completed. Only meaningful when HyStart++ is
     /// enabled. Higher values indicate the heuristic spent more time throttling slow start growth.
     pub hystart_css_rounds_finished: usize,
+    /// Drain-phase target estimate for the BDP with empty buffers. None if we haven't exited slow
+    /// start through SEARCH. Is `u64` because Firefox uses it as such.
+    pub search_empty_buffer_target: Option<u64>,
+    /// Drain-phase target estimate for the BDP with full buffers. None if we haven't exited slow
+    /// start through SEARCH. Is `u64` because Firefox uses it as such.
+    pub search_full_buffer_target: Option<u64>,
+    /// Records the maximum value of lookback bins needed due to RTT inflation. Fires whenever
+    /// SEARCH can't run because there is not enough data for lookback. Is `None` if SEARCH never
+    /// ran into this issue.
+    pub search_lookback_bins_needed: Option<usize>,
+    /// Records the maximum non-exiting value that the normalized difference between sent and acked
+    /// bytes ever reached. Can be used to tune the exit threshold. `None` means that the SEARCH
+    /// check never ran.
+    pub search_max_norm_diff: Option<usize>,
+    /// Records SEARCH reset occurrences.
+    pub search_reset: SearchResetStats,
+    /// Records the number of times per connection that SEARCH calculated zero bytes sent in the
+    /// previous RTT. This exists to gain deeper understanding into app-limited behaviour.
+    pub search_zero_sent_bytes: usize,
+    /// The `latest_rtt` from the first ACK that initialized SEARCH. Used to evaluate whether the
+    /// initial RTT sample (which sets `bin_duration`) is inflated relative to `min_rtt`.
+    pub search_first_rtt: Option<Duration>,
+    /// The `latest_rtt` from the second ACK processed by SEARCH. Together with `search_first_rtt`,
+    /// allows evaluating whether `min(first, second)` would be a better initialization value.
+    pub search_second_rtt: Option<Duration>,
     /// Cubic's `w_max`: the congestion window (in bytes) just before the most recent
     /// congestion reduction (with fast convergence applied). `None` if no congestion event has
     /// occurred or Cubic is not in use. Recorded as a stat to approximate a connection's ideal
@@ -175,6 +219,7 @@ pub struct CongestionControlStats {
     /// lifetime.
     pub cwnd: Option<usize>,
 }
+
 /// ECN counts by QUIC [`packet::Type`].
 #[derive(Default, Clone, PartialEq, Eq)]
 pub struct EcnCount(EnumMap<packet::Type, ecn::Count>);
@@ -277,6 +322,10 @@ impl DerefMut for DscpCount {
 pub struct Stats {
     pub info: String,
 
+    /// The QUIC version in use. After the handshake completes this reflects the
+    /// version negotiated via compatible version negotiation (RFC 9368).
+    pub version: Version,
+
     /// Total packets received, including all the bad ones.
     pub packets_rx: usize,
     /// Duplicate packets received.
@@ -317,6 +366,8 @@ pub struct Stats {
     pub rtt: Duration,
     /// The current, estimated round-trip time variation on the primary path.
     pub rttvar: Duration,
+    /// The current minimum RTT observed on the primary path.
+    pub min_rtt: Duration,
     /// Whether the first RTT sample was guessed from a discarded packet.
     pub rtt_init_guess: bool,
 
@@ -402,6 +453,7 @@ impl Stats {
 impl Debug for Stats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "stats for {}", self.info)?;
+        writeln!(f, "  version: {:?}", self.version)?;
         writeln!(
             f,
             "  rx: {} drop {} dup {} saved {}",
@@ -416,9 +468,9 @@ impl Debug for Stats {
         writeln!(
             f,
             "    ce_loss {} ce_ecn {} ce_spurious {}",
-            self.cc.congestion_events[CongestionEvent::Loss],
-            self.cc.congestion_events[CongestionEvent::Ecn],
-            self.cc.congestion_events[CongestionEvent::Spurious],
+            self.cc.congestion_events.loss,
+            self.cc.congestion_events.ecn,
+            self.cc.congestion_events.spurious,
         )?;
         writeln!(
             f,
@@ -475,12 +527,59 @@ impl Debug for StatsCell {
     }
 }
 
+#[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use neqo_common::Ecn;
+
+    use super::{EcnCount, EcnTransitions, Stats, StatsCell};
+    use crate::packet;
+
+    #[test]
+    fn stats_init_sets_info() {
+        let mut stats = Stats::default();
+        stats.init("conn-1".into());
+        assert!(format!("{stats:?}").contains("conn-1"));
+    }
+
+    #[test]
+    fn stats_cell_debug() {
+        let cell = StatsCell::default();
+        cell.borrow_mut().init("cell-test".into());
+        assert!(format!("{cell:?}").contains("cell-test"));
+    }
+
+    #[test]
+    fn ecn_count_deref_mut_and_deref() {
+        let mut counts = EcnCount::default();
+        // Write through DerefMut, read through Deref.
+        counts[packet::Type::Short][Ecn::Ect0] = 7;
+        assert_eq!(counts[packet::Type::Short][Ecn::Ect0], 7);
+    }
+
+    #[test]
+    fn ecn_count_debug_nonempty() {
+        let mut counts = EcnCount::default();
+        counts[packet::Type::Short][Ecn::Ce] = 3;
+        let s = format!("{counts:?}");
+        assert!(s.contains("Short"));
+    }
+
+    #[test]
+    fn ecn_transitions_deref_mut_and_deref() {
+        let mut trans = EcnTransitions::default();
+        trans[Ecn::Ect0][Ecn::Ce] = Some((packet::Type::Short, 42));
+        assert_eq!(trans[Ecn::Ect0][Ecn::Ce], Some((packet::Type::Short, 42)));
+    }
+}
+
 #[test]
 fn debug() {
     let stats = Stats::default();
     assert_eq!(
         format!("{stats:?}"),
         "stats for\u{0020}
+  version: Version1
   rx: 0 drop 0 dup 0 saved 0
   tx: 0 lost 0 lateack 0 ptoack 0 unackdrop 0
   cc:

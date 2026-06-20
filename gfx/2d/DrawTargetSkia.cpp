@@ -20,7 +20,7 @@
 #include "skia/include/core/SkSurface.h"
 #include "skia/include/core/SkTextBlob.h"
 #include "skia/include/core/SkTypeface.h"
-#include "skia/include/effects/SkGradientShader.h"
+#include "skia/include/effects/SkGradient.h"
 #include "skia/include/core/SkColorFilter.h"
 #include "skia/include/core/SkRegion.h"
 #include "skia/include/effects/SkImageFilters.h"
@@ -91,23 +91,31 @@ class GradientStopsSkia : public GradientStops {
     mColors.resize(mCount);
     mPositions.resize(mCount);
     if (aStops[0].offset != 0) {
-      mColors[0] = ColorToSkColor(aStops[0].color, 1.0);
+      mColors[0] = ColorToSkColor4f(aStops[0].color);
       mPositions[0] = 0;
     }
     for (uint32_t i = 0; i < aNumStops; i++) {
-      mColors[i + shift] = ColorToSkColor(aStops[i].color, 1.0);
-      mPositions[i + shift] = SkFloatToScalar(aStops[i].offset);
+      mColors[i + shift] = ColorToSkColor4f(aStops[i].color);
+      mPositions[i + shift] = aStops[i].offset;
     }
     if (aStops[aNumStops - 1].offset != 1) {
-      mColors[mCount - 1] = ColorToSkColor(aStops[aNumStops - 1].color, 1.0);
-      mPositions[mCount - 1] = SK_Scalar1;
+      mColors[mCount - 1] = ColorToSkColor4f(aStops[aNumStops - 1].color);
+      mPositions[mCount - 1] = 1;
     }
   }
 
   BackendType GetBackendType() const override { return BackendType::SKIA; }
 
-  std::vector<SkColor> mColors;
-  std::vector<SkScalar> mPositions;
+  SkGradient GetSkGradient() const {
+    return SkGradient(
+        SkGradient::Colors(SkSpan(mColors.data(), mColors.size()),
+                           SkSpan(mPositions.data(), mPositions.size()),
+                           ExtendModeToTileMode(mExtendMode, Axis::BOTH)),
+        SkGradient::Interpolation());
+  }
+
+  std::vector<SkColor4f> mColors;
+  std::vector<float> mPositions;
   int mCount;
   ExtendMode mExtendMode;
 };
@@ -265,6 +273,14 @@ static sk_sp<SkImage> GetSkImageForSurface(SourceSurface* aSurface,
   if (!dataSurface) {
     gfxWarning() << "Failed getting DataSourceSurface for Skia image";
     return nullptr;
+  }
+
+  // Wrapper surfaces (e.g. SourceSurfaceOffset) can hand back the inner
+  // SourceSurfaceSkia here; route it through GetImage so copy-on-write
+  // snapshots are detached/locked rather than borrowing a raw pixel pointer
+  // that can outlive the originating SkSurface.
+  if (dataSurface->GetType() == SurfaceType::SKIA) {
+    return static_cast<SourceSurfaceSkia*>(dataSurface.get())->GetImage(aLock);
   }
 
   DataSourceSurface::MappedSurface map;
@@ -514,21 +530,16 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
           !pat.mEnd.IsFinite() || pat.mBegin == pat.mEnd) {
         aPaint.setColor(SK_ColorTRANSPARENT);
       } else {
-        SkTileMode mode = ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
-        SkPoint points[2];
-        points[0] = SkPoint::Make(SkFloatToScalar(pat.mBegin.x),
-                                  SkFloatToScalar(pat.mBegin.y));
-        points[1] = SkPoint::Make(SkFloatToScalar(pat.mEnd.x),
-                                  SkFloatToScalar(pat.mEnd.y));
+        SkPoint points[2] = {PointToSkPoint(pat.mBegin),
+                             PointToSkPoint(pat.mEnd)};
 
         SkMatrix mat;
         GfxMatrixToSkiaMatrix(pat.mMatrix, mat);
         if (aMatrix) {
           mat.postConcat(*aMatrix);
         }
-        sk_sp<SkShader> shader = SkGradientShader::MakeLinear(
-            points, &stops->mColors.front(), &stops->mPositions.front(),
-            stops->mCount, mode, 0, &mat);
+        sk_sp<SkShader> shader =
+            SkShaders::LinearGradient(points, stops->GetSkGradient(), &mat);
         if (shader) {
           aPaint.setShader(shader);
         } else {
@@ -550,22 +561,15 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
           (pat.mCenter1 == pat.mCenter2 && pat.mRadius1 == pat.mRadius2)) {
         aPaint.setColor(SK_ColorTRANSPARENT);
       } else {
-        SkTileMode mode = ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
-        SkPoint points[2];
-        points[0] = SkPoint::Make(SkFloatToScalar(pat.mCenter1.x),
-                                  SkFloatToScalar(pat.mCenter1.y));
-        points[1] = SkPoint::Make(SkFloatToScalar(pat.mCenter2.x),
-                                  SkFloatToScalar(pat.mCenter2.y));
-
         SkMatrix mat;
         GfxMatrixToSkiaMatrix(pat.mMatrix, mat);
         if (aMatrix) {
           mat.postConcat(*aMatrix);
         }
-        sk_sp<SkShader> shader = SkGradientShader::MakeTwoPointConical(
-            points[0], SkFloatToScalar(pat.mRadius1), points[1],
-            SkFloatToScalar(pat.mRadius2), &stops->mColors.front(),
-            &stops->mPositions.front(), stops->mCount, mode, 0, &mat);
+        sk_sp<SkShader> shader = SkShaders::TwoPointConicalGradient(
+            PointToSkPoint(pat.mCenter1), SkFloatToScalar(pat.mRadius1),
+            PointToSkPoint(pat.mCenter2), SkFloatToScalar(pat.mRadius2),
+            stops->GetSkGradient(), &mat);
         if (shader) {
           aPaint.setShader(shader);
         } else {
@@ -591,21 +595,18 @@ static void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern,
           mat.postConcat(*aMatrix);
         }
 
-        SkScalar cx = SkFloatToScalar(pat.mCenter.x);
-        SkScalar cy = SkFloatToScalar(pat.mCenter.y);
+        SkPoint center = PointToSkPoint(pat.mCenter);
 
         // Skia's sweep gradient angles are relative to the x-axis, not the
         // y-axis.
         Float angle = (pat.mAngle * 180.0 / M_PI) - 90.0;
         if (angle != 0.0) {
-          mat.preRotate(angle, cx, cy);
+          mat.preRotate(angle, center.x(), center.y());
         }
 
-        SkTileMode mode = ExtendModeToTileMode(stops->mExtendMode, Axis::BOTH);
-        sk_sp<SkShader> shader = SkGradientShader::MakeSweep(
-            cx, cy, &stops->mColors.front(), &stops->mPositions.front(),
-            stops->mCount, mode, 360 * pat.mStartOffset, 360 * pat.mEndOffset,
-            0, &mat);
+        sk_sp<SkShader> shader = SkShaders::SweepGradient(
+            center, 360 * pat.mStartOffset, 360 * pat.mEndOffset,
+            stops->GetSkGradient(), &mat);
 
         if (shader) {
           aPaint.setShader(shader);
@@ -1219,8 +1220,8 @@ CGContextRef DrawTargetSkia::BorrowCGContext(const DrawOptions& aOptions) {
 
   mCG = CGBitmapContextCreateWithData(
       mCanvasData, mCGSize.width, mCGSize.height, 8, /* bits per component */
-      stride, mColorSpace, bitmapInfo, NULL, /* Callback when released */
-      NULL);
+      stride, mColorSpace, bitmapInfo, nullptr, /* Callback when released */
+      nullptr);
   if (!mCG) {
     if (mNeedLayer) {
       mCanvas->restore();
@@ -1652,7 +1653,7 @@ bool DrawTargetSkia::Draw3DTransformedSurface(SourceSurface* aSurface,
 already_AddRefed<SourceSurface> DrawTargetSkia::CreateSourceSurfaceFromData(
     unsigned char* aData, const IntSize& aSize, int32_t aStride,
     SurfaceFormat aFormat) const {
-  RefPtr<SourceSurfaceSkia> newSurf = new SourceSurfaceSkia();
+  RefPtr newSurf = MakeRefPtr<SourceSurfaceSkia>();
 
   if (!newSurf->InitFromData(aData, aSize, aStride, aFormat)) {
     gfxDebug() << *this
@@ -1666,7 +1667,7 @@ already_AddRefed<SourceSurface> DrawTargetSkia::CreateSourceSurfaceFromData(
 
 already_AddRefed<DrawTarget> DrawTargetSkia::CreateSimilarDrawTarget(
     const IntSize& aSize, SurfaceFormat aFormat) const {
-  RefPtr<DrawTargetSkia> target = new DrawTargetSkia();
+  RefPtr target = MakeRefPtr<DrawTargetSkia>();
 #ifdef DEBUG
   if (!IsBackedByPixels(mCanvas)) {
     // If our canvas is backed by vector storage such as PDF then we want to
@@ -1687,7 +1688,12 @@ bool DrawTargetSkia::CanCreateSimilarDrawTarget(const IntSize& aSize,
                                                 SurfaceFormat aFormat) const {
   return aSize.width > 0 && aSize.height > 0 &&
          size_t(std::max(aSize.width, aSize.height)) <= GetMaxSurfaceSize() &&
-         size_t(aSize.width) * size_t(aSize.height) <= GetMaxSurfaceArea();
+         size_t(aSize.width) * size_t(aSize.height) <= GetMaxSurfaceArea() &&
+         // Skia requires that raster surface buffer size fits in an int32_t.
+         BufferSizeFromStrideAndHeight(
+             GetAlignedStride<4>(aSize.width, BytesPerPixel(aFormat))
+                 .valueOr(0),
+             aSize.height) > 0;
 }
 
 RefPtr<DrawTarget> DrawTargetSkia::CreateClippedDrawTarget(
@@ -1825,6 +1831,44 @@ static inline SkPixelGeometry GetSkPixelGeometry() {
   }
 }
 
+static Maybe<SkSurfaceProps> sSurfaceProps;
+
+static const SkSurfaceProps& GetSkSurfaceProps() {
+  if (!sSurfaceProps ||
+      sSurfaceProps->pixelGeometry() != GetSkPixelGeometry()) {
+    DrawTargetSkia::UpdateSurfaceProps();
+  }
+  return *sSurfaceProps;
+}
+
+void DrawTargetSkia::UpdateSurfaceProps() {
+  // Default to no enhanced contrast.
+  SkScalar contrast = 0;
+
+#ifdef XP_DARWIN
+  // Default to sRGB gamma.
+  SkScalar gamma = 0;
+#else
+  // Default to linear gamma.
+  SkScalar gamma = SK_Scalar1;
+#endif
+
+#if defined(MOZ_WIDGET_GTK) || defined(MOZ_WIDGET_ANDROID)
+  int32_t gammaVal = StaticPrefs::gfx_font_rendering_freetype_gamma();
+  int32_t contrastVal =
+      StaticPrefs::gfx_font_rendering_freetype_enhanced_contrast();
+  if (gammaVal >= 0) {
+    gamma = SkScalar(std::min(gammaVal, 400)) / 100;
+  }
+  if (contrastVal > 0) {
+    contrast = SkScalar(std::min(contrastVal, 100)) / 100;
+  }
+#endif
+
+  sSurfaceProps =
+      Some(SkSurfaceProps(0, GetSkPixelGeometry(), contrast, gamma));
+}
+
 template <typename T>
 [[nodiscard]] static already_AddRefed<T> AsRefPtr(sk_sp<T>&& aSkPtr) {
   return already_AddRefed<T>(aSkPtr.release());
@@ -1847,18 +1891,18 @@ bool DrawTargetSkia::Init(const IntSize& aSize, SurfaceFormat aFormat) {
   if (stride.isNothing() || size_t(stride.value()) < info.minRowBytes64()) {
     return false;
   }
-  SkSurfaceProps props(0, GetSkPixelGeometry());
+  const SkSurfaceProps& props = GetSkSurfaceProps();
+
+  size_t bufSize = BufferSizeFromStrideAndHeight(stride.value(), info.height());
+  if (!bufSize) {
+    return false;
+  }
 
   if (aFormat == SurfaceFormat::A8) {
     // Skia does not fully allocate the last row according to stride.
     // Since some of our algorithms (i.e. blur) depend on this, we must allocate
     // the bitmap pixels manually.
-    CheckedInt<size_t> size = stride.value();
-    size *= info.height();
-    if (!size.isValid()) {
-      return false;
-    }
-    void* buf = sk_malloc_flags(size.value(), SK_MALLOC_ZERO_INITIALIZE);
+    void* buf = sk_malloc_flags(bufSize, SK_MALLOC_ZERO_INITIALIZE);
     if (!buf) {
       return false;
     }
@@ -1918,7 +1962,7 @@ bool DrawTargetSkia::Init(unsigned char* aData, const IntSize& aSize,
     return false;
   }
 
-  SkSurfaceProps props(0, GetSkPixelGeometry());
+  const SkSurfaceProps& props = GetSkSurfaceProps();
   mSurface = AsRefPtr(SkSurfaces::WrapPixels(info, aData, aStride, &props));
   if (!mSurface) {
     return false;
@@ -1952,7 +1996,7 @@ bool DrawTargetSkia::Init(RefPtr<DataSourceSurface>&& aSurface) {
     return false;
   }
 
-  SkSurfaceProps props(0, GetSkPixelGeometry());
+  const SkSurfaceProps& props = GetSkSurfaceProps();
   mSurface = AsRefPtr(SkSurfaces::WrapPixels(
       MakeSkiaImageInfo(size, format), map->GetData(), map->GetStride(),
       DrawTargetSkia::ReleaseMappedSkSurface, map, &props));

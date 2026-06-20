@@ -208,7 +208,16 @@ def getVersionName() {
 
 // Mimic Python: open(os.path.join(buildconfig.topobjdir, 'buildid.h')).readline().split()[2]
 def getBuildId() {
-    return file("${topobjdir}/buildid.h").getText('utf-8').split()[2]
+    def buildidFile = file("${topobjdir}/buildid.h")
+    if (!buildidFile.exists()) {
+        throw new GradleException(
+            "A required build file is missing from the object directory:\n" +
+                "  - ${buildidFile}\n\n" +
+                "This file is produced by a full build, not by Gradle.\n" +
+                "Run `./mach build` from the source directory first, then retry your Gradle build."
+        )
+    }
+    return buildidFile.getText('utf-8').split()[2]
 }
 
 def getVersionNumber() {
@@ -255,7 +264,6 @@ afterEvaluate {
             def projectName = project.getName()
             if (projectName.startsWith('geckoview')
                 || projectName == 'annotations'
-                || projectName == 'exoplayer2'
                 || projectName == 'messaging_example'
                 || projectName == 'port_messaging_example'
                 || projectName == 'test_runner'
@@ -301,7 +309,6 @@ subprojects { project ->
     def projectName = project.getName()
     if (projectName.startsWith('geckoview')
             || projectName == 'annotations'
-            || projectName == 'exoplayer2'
             || projectName == 'messaging_example'
             || projectName == 'port_messaging_example'
             || projectName == 'test_runner'
@@ -338,9 +345,7 @@ subprojects { project ->
     }
 
     afterEvaluate {
-        // Our vendored copy of exoplayer2 hits build failures when targeting Java 17.
-        // Given our intent to remove it in the near future, just leave it alone here.
-        if (it.hasProperty('android') && projectName != 'exoplayer2') {
+        if (it.hasProperty('android')) {
             kotlin {
                 jvmToolchain(config.jvmTargetCompatibility)
             }
@@ -384,12 +389,12 @@ tasks.register("lint") {
     description = "Runs lint on all mobile projects."
     mobileProjects.each { dependsOn "${it}:lint" }
 }
-tasks.register("ktlint") {
+tasks.named("ktlint").configure {
     group = "verification"
     description = "Runs ktlint on all mobile projects."
     mobileProjects.each { dependsOn "${it}:ktlint" }
 }
-tasks.register("ktlintFormat") {
+tasks.named("ktlintFormat").configure {
     group = "formatting"
     description = "Runs ktlintFormat on all mobile projects."
     mobileProjects.each { dependsOn "${it}:ktlintFormat" }

@@ -124,6 +124,7 @@ class nsHttpConnectionInfo final : public ARefBase {
   already_AddRefed<nsHttpConnectionInfo> CreateConnectUDPFallbackConnInfo();
 
   [[nodiscard]] nsresult CreateWildCard(nsHttpConnectionInfo** outParam);
+  bool IsWildCard() const { return mIsWildCard; }
 
   const char* ProxyHost() const {
     return mProxyInfo ? mProxyInfo->Host().get() : nullptr;
@@ -253,6 +254,13 @@ class nsHttpConnectionInfo final : public ARefBase {
   void SetIPv6Disabled(bool aNoIPv6);
   bool GetIPv6Disabled() const { return mIPv6Disabled; }
 
+  // When set, this connection info uses a separate connection entry that never
+  // holds an HTTP/3 connection. Used for transactions that can't use HTTP/3
+  // (e.g. WebSocket upgrades) so they aren't blocked by, or coalesced onto, an
+  // HTTP/3 connection established for regular requests to the same host.
+  void SetHttp3Disabled(bool aHttp3Disabled);
+  bool GetHttp3Disabled() const { return mHttp3Disabled; }
+
   void SetWebTransport(bool aWebTransport);
   bool GetWebTransport() const { return mWebTransport; }
 
@@ -263,7 +271,9 @@ class nsHttpConnectionInfo final : public ARefBase {
   const nsCString& GetProxyNPNToken() const { return mProxyNPNToken; }
   const nsCString& GetUsername() { return mUsername; }
 
-  const OriginAttributes& GetOriginAttributes() { return mOriginAttributes; }
+  const OriginAttributes& GetOriginAttributes() const {
+    return mOriginAttributes;
+  }
 
   // Returns true for any kind of proxy (http, socks, https, etc..)
   bool UsingProxy();
@@ -342,6 +352,7 @@ class nsHttpConnectionInfo final : public ARefBase {
   uint16_t mIsTrrServiceChannel : 1;
   uint16_t mIPv4Disabled : 1;
   uint16_t mIPv6Disabled : 1;
+  uint16_t mHttp3Disabled : 1;
 
   bool mLessThanTls13;  // This will be set to true if we negotiate less than
                         // tls1.3. If the tls version is till not know or it
@@ -355,6 +366,7 @@ class nsHttpConnectionInfo final : public ARefBase {
 
   uint64_t mWebTransportId = 0;  // current dedicated Id only used for
                                  // Webtransport, zero means not dedicated
+  bool mIsWildCard = false;
 
   bool mHappyEyeballsEnabled = false;
 

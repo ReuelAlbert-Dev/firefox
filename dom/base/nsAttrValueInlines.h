@@ -188,11 +188,9 @@ inline bool nsAttrValue::IsSVGType(ValueType aType) const {
 }
 
 inline bool nsAttrValue::StoresOwnData() const {
-  if (BaseType() != eOtherBase) {
-    return true;
-  }
-  ValueType t = Type();
-  return t != eCSSDeclaration && !IsSVGType(t);
+  // Only SVG attributes don't store their own data.
+  // FIXME(emilio): This is a pretty terrible set-up.
+  return BaseType() != eOtherBase || !IsSVGType(Type());
 }
 
 inline void nsAttrValue::SetPtrValueAndType(void* aValue, ValueBaseType aType) {
@@ -256,7 +254,7 @@ inline void nsAttrValue::ToString(mozilla::dom::DOMString& aResult) const {
       break;
     }
     default: {
-      ToString(aResult.AsAString());
+      ToString(static_cast<nsAString&>(aResult));
     }
   }
 }

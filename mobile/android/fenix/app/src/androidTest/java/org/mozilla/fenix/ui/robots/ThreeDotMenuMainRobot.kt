@@ -9,18 +9,20 @@ package org.mozilla.fenix.ui.robots
 import android.util.Log
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeTestRule
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers
@@ -187,7 +189,7 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         composeTestRule.shareButton().assertIsDisplayed()
         Log.i(TAG, "verifyPageMainMenuItems: Verified that the \"Share\" button exists.")
         Log.i(TAG, "verifyPageMainMenuItems: Trying to verify that the \"Bookmark page\" button exists.")
-        composeTestRule.bookmarkPageButton().assertIsDisplayed()
+        assertUIObjectExists(itemWithDescription(getStringResource(R.string.browser_menu_bookmark_this_page_2)))
         Log.i(TAG, "verifyPageMainMenuItems: Verified that the \"Bookmark page\" button exists.")
         Log.i(TAG, "verifyPageMainMenuItems: Trying to verify that the \"Find in page\" button exists.")
         composeTestRule.findInPageButton().assertIsDisplayed()
@@ -216,10 +218,63 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "verifyPageMainMenuItems: Trying to verify that the \"Sign in\" button exists.")
         composeTestRule.signInButton().assertIsDisplayed()
         Log.i(TAG, "verifyPageMainMenuItems: Verified that the \"Sign in\" button exists.")
+        Log.i(TAG, "verifyHomeMainMenuItems: Trying to verify that the \"Change wallpaper\" button exists.")
+        composeTestRule.changeWallpaperButton().assertIsDisplayed()
+        Log.i(TAG, "verifyHomeMainMenuItems: Verified that the \"Change wallpaper\" button exists.")
         Log.i(TAG, "verifyPageMainMenuItems: Trying to verify that the \"Settings\" button exists.")
         composeTestRule.settingsButton().assertIsDisplayed()
         Log.i(TAG, "verifyPageMainMenuItems: Verified that the \"Settings\" button exists.")
         Log.i(TAG, "verifyPageMainMenuItems: Verified the main menu items on the web page.")
+    }
+
+    fun verifyPageMainMenuItemsInLandscapeMode() {
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify the main menu items on the web page in landscape mode.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Back\" button exists.")
+        composeTestRule.backButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Back\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Forward\" button exists.")
+        composeTestRule.forwardButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Forward\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Refresh\" button exists.")
+        composeTestRule.refreshButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Refresh\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Share\" button exists.")
+        composeTestRule.shareButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Share\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Bookmark page\" button exists.")
+        assertUIObjectExists(itemWithDescription(getStringResource(R.string.browser_menu_bookmark_this_page_2)))
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Bookmark page\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Find in page\" button exists.")
+        composeTestRule.findInPageButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Find in page\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Desktop site\" button exists.")
+        composeTestRule.desktopSiteButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Desktop site\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"Extensions\" button exists.")
+        composeTestRule.extensionsButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Extensions\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to verify that the \"More\" button exists.")
+        composeTestRule.moreButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"More\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"History\" button exists.")
+        composeTestRule.historyButton().performScrollTo().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"History\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"Bookmarks\" button exists.")
+        composeTestRule.bookmarksButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Bookmarks\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"Downloads\" button exists.")
+        composeTestRule.downloadsButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Downloads\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"Passwords\" button exists.")
+        composeTestRule.passwordsButton().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Passwords\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"Sign in\" button exists.")
+        composeTestRule.signInButton().performScrollTo().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Sign in\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Trying to scroll to and verify that the \"Settings\" button exists.")
+        composeTestRule.settingsButton().performScrollTo().assertIsDisplayed()
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified that the \"Settings\" button exists.")
+        Log.i(TAG, "verifyPageMainMenuItemsInLandscapeMode: Verified the main menu items on the web page in landscape mode.")
     }
 
     fun verifyHomeMainMenuItems() {
@@ -244,6 +299,9 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "verifyHomeMainMenuItems: Trying to verify that the \"Sign in\" button exists.")
         composeTestRule.signInButton().assertIsDisplayed()
         Log.i(TAG, "verifyHomeMainMenuItems: Verified that the \"Sign in\" button exists.")
+        Log.i(TAG, "verifyHomeMainMenuItems: Trying to verify that the \"Change wallpaper\" button exists.")
+        composeTestRule.changeWallpaperButton().assertIsDisplayed()
+        Log.i(TAG, "verifyHomeMainMenuItems: Verified that the \"Change wallpaper\" button exists.")
         Log.i(TAG, "verifyHomeMainMenuItems: Trying to verify that the \"Settings\" button exists.")
         composeTestRule.settingsButton().assertIsDisplayed()
         Log.i(TAG, "verifyHomeMainMenuItems: Verified that the \"Settings\" button exists.")
@@ -285,6 +343,9 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "verifyMoreMainMenuItems: Trying to verify that the \"Translate page\" button exists.")
         composeTestRule.translatePageButton().assertIsDisplayed()
         Log.i(TAG, "verifyMoreMainMenuItems: Verified that the \"Translate page\" button exists.")
+        Log.i(TAG, "verifyMoreMainMenuItems: Trying to verify that the \"Summarize page\" button exists.")
+        composeTestRule.summarizePageButton().assertIsDisplayed()
+        Log.i(TAG, "verifyMoreMainMenuItems: Verified that the \"Summarize page\" button exists.")
         Log.i(TAG, "verifyMoreMainMenuItems: Trying to verify that the \"Report broken site\" button exists.")
         composeTestRule.reportBrokenSiteButton().assertIsDisplayed()
         Log.i(TAG, "verifyMoreMainMenuItems: Verified that the \"Report broken site\" button exists.")
@@ -313,6 +374,8 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "clickTheMoreButton: Trying to click the \"More\" button from the new main menu design.")
         composeTestRule.moreButton().performClick()
         Log.i(TAG, "clickTheMoreButton: Clicked the \"More\" button from the new main menu design.")
+        composeTestRule.waitForIdle()
+        mDevice.waitForIdle()
         waitForAppWindowToBeUpdated()
     }
 
@@ -320,6 +383,8 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         Log.i(TAG, "clickMoreOptionChevron: Trying to click the \"More option chevron\" button from the new main menu design.")
         composeTestRule.moreChevronButton().performClick()
         Log.i(TAG, "clickMoreOptionChevron: Clicked the \"More option chevron\" button from the new main menu design.")
+        composeTestRule.waitForIdle()
+        mDevice.waitForIdle()
         waitForAppWindowToBeUpdated()
     }
 
@@ -377,22 +442,20 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
 
     @OptIn(ExperimentalTestApi::class)
     fun verifyExtensionsButtonWithInstalledExtension(extensionTitle: String) {
-        Log.i(TAG, "Waiting for $waitingTime until node with tag: $EXTENSIONS exists")
-        composeTestRule.waitUntil(waitingTime) {
-            composeTestRule.onAllNodesWithTag(EXTENSIONS)
-                .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        Log.i(TAG, "verifyExtensionsButtonWithInstalledExtension: Trying to verify the extensions button shows: $extensionTitle")
+        composeTestRule.waitUntil(waitingTimeLong) {
+            itemWithResIdAndDescription(EXTENSIONS, extensionTitle).exists()
         }
-        Log.i(TAG, "Waited for $waitingTime until node with tag: $EXTENSIONS exists")
-        assertUIObjectExists(itemWithResIdAndDescription("mainMenu.extensions", extensionTitle))
+        Log.i(TAG, "verifyExtensionsButtonWithInstalledExtension: Verified the extensions button shows: $extensionTitle")
     }
 
     @OptIn(ExperimentalTestApi::class)
     fun verifyTryRecommendedExtensionButton() {
-        Log.i(TAG, "verifyTryRecommendedExtensionButton: Waiting for $waitingTime for the \"Extensions - Try a recommended extension\" button to exists.")
-        composeTestRule.waitUntilAtLeastOneExists(hasContentDescription("Extensions Try a recommended extension", substring = true), waitingTime)
-        Log.i(TAG, "verifyTryRecommendedExtensionButton: Waited for $waitingTime for the \"Extensions - Try a recommended extension\" button to exists.")
         Log.i(TAG, "verifyTryRecommendedExtensionButton: Trying to verify that the \"Extensions - Try a recommended extension\" button exists.")
-        composeTestRule.tryRecommendedExtensionButton().assertExists()
+        composeTestRule.waitUntilAtLeastOneExists(
+            hasContentDescription("Extensions Try a recommended extension", substring = true),
+            waitingTimeLong,
+        )
         Log.i(TAG, "verifyTryRecommendedExtensionButton: Verified that the \"Extensions - Try a recommended extension\" button exists.")
     }
 
@@ -431,11 +494,20 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         }
     }
 
+    fun verifySummarizePageButton() {
+        Log.i(TAG, "verifySummarizePageButton: Trying to verify that the \"Summarize page\" button exists.")
+        composeTestRule.summarizePageButton().assertIsDisplayed()
+        Log.i(TAG, "verifySummarizePageButton: Verified that the \"Summarize page\" button exists.")
+    }
+
     class Transition(private val composeTestRule: ComposeTestRule) {
         fun clickSettingsButton(localizedText: String = getStringResource(R.string.browser_menu_settings), interact: SettingsRobot.() -> Unit): SettingsRobot.Transition {
             Log.i(TAG, "clickSettingsButton: Trying to click the Settings button from the new main menu design.")
             itemWithDescription(localizedText).click()
             Log.i(TAG, "clickSettingsButton: Clicked the Settings button from the new main menu design.")
+            composeTestRule.waitForIdle()
+            mDevice.waitForIdle()
+            waitForAppWindowToBeUpdated()
 
             SettingsRobot().interact()
             return SettingsRobot.Transition()
@@ -470,8 +542,9 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
 
         fun clickBookmarksButton(interact: BookmarksRobot.() -> Unit): BookmarksRobot.Transition {
             Log.i(TAG, "clickBookmarksButton: Trying to click the Bookmarks button from the new main menu design.")
-            composeTestRule.bookmarksButton().performClick()
+            itemWithDescription(getStringResource(R.string.library_bookmarks)).click()
             Log.i(TAG, "clickBookmarksButton: Clicked the Bookmarks button from the new main menu design.")
+            composeTestRule.waitForIdle()
 
             BookmarksRobot(composeTestRule).interact()
             return BookmarksRobot.Transition(composeTestRule)
@@ -643,10 +716,14 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
             return AddToHomeScreenRobot.Transition(composeTestRule)
         }
 
+        @OptIn(ExperimentalTestApi::class)
         fun clickAddAppToHomeScreenButton(interact: AddToHomeScreenRobot.() -> Unit): AddToHomeScreenRobot.Transition {
             Log.i(TAG, "clickAddToHomeScreenButton: Trying to click the \"Add app to Home screen…\" button from the new main menu design.")
             composeTestRule.addAppToHomeScreenButton().performClick()
             Log.i(TAG, "clickAddToHomeScreenButton: Clicked the \"Add app to Home screen…\" button from the new main menu design.")
+            Log.i(TAG, "clickAddToHomeScreenButton: Waiting for $waitingTime until the \"Add app to Home screen…\" button does not exist.")
+            composeTestRule.waitUntilDoesNotExist(hasContentDescription(getStringResource(R.string.browser_menu_add_app_to_homescreen)), waitingTime)
+            Log.i(TAG, "clickAddToHomeScreenButton: Waited for $waitingTime until the \"Add app to Home screen…\" button does not exist.")
 
             AddToHomeScreenRobot(composeTestRule).interact()
             return AddToHomeScreenRobot.Transition(composeTestRule)
@@ -694,8 +771,10 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
             return TranslationsRobot.Transition(composeTestRule)
         }
 
+        @OptIn(ExperimentalTestApi::class)
         fun clickTranslatedButton(interact: TranslationsRobot.() -> Unit): TranslationsRobot.Transition {
             Log.i(TAG, "clickTranslateButton: Trying to click the Translate button from the new main menu design.")
+            composeTestRule.waitUntilAtLeastOneExists(hasContentDescription(getStringResource(R.string.browser_menu_translated)), waitingTime)
             composeTestRule.translatedButton().assertIsDisplayed()
             composeTestRule.translatedButton().performClick()
             Log.i(TAG, "clickTranslateButton: Clicked the Translate button from the new main menu design.")
@@ -724,11 +803,27 @@ class ThreeDotMenuMainRobot(private val composeTestRule: ComposeTestRule) {
         @OptIn(ExperimentalTestApi::class)
         fun clickExtensionsChevronFromMainMenu(interact: SettingsSubMenuAddonsManagerRobot.() -> Unit): SettingsSubMenuAddonsManagerRobot.Transition {
             Log.i(TAG, "clickExtensionsChevronFromMainMenu: Trying to click the \"Extensions chevron\" button from the new main menu design.")
+            composeTestRule.waitUntil(waitingTimeLong) {
+                composeTestRule.onAllNodes(hasTestTag(EXTENSIONS_OPTION_CHEVRON), useUnmergedTree = true)
+                    .fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+            }
             composeTestRule.extensionsChevronButton().performClick()
             Log.i(TAG, "clickExtensionsChevronFromMainMenu: Clicked the \"Extensions chevron\" button from the new main menu design.")
 
             SettingsSubMenuAddonsManagerRobot(composeTestRule).interact()
             return SettingsSubMenuAddonsManagerRobot.Transition(composeTestRule)
+        }
+
+        fun clickSummarizePageButton(interact: SettingsSubMenuPageSummariesRobot.() -> Unit): SettingsSubMenuPageSummariesRobot.Transition {
+            Log.i(TAG, "clickSummarizePageButton: Trying to click the Summarize Page button from the new main menu design.")
+            composeTestRule.summarizePageButton().performClick()
+            Log.i(TAG, "clickSummarizePageButton: Clicked the Summarize Page button from the new main menu design.")
+            Log.i(TAG, "clickSummarizePageButton: Waiting for compose test rule to be idle")
+            composeTestRule.waitForIdle()
+            Log.i(TAG, "clickSummarizePageButton: Waited for compose test rule to be idle")
+
+            SettingsSubMenuPageSummariesRobot(composeTestRule).interact()
+            return SettingsSubMenuPageSummariesRobot.Transition(composeTestRule)
         }
     }
 }
@@ -857,3 +952,7 @@ private fun ComposeTestRule.defaultOpenInAppButton() = onNodeWithContentDescript
 private fun ComposeTestRule.openInAppNameButton(appName: String) = onNodeWithContentDescription(getStringResource(R.string.browser_menu_open_in_fenix, appName))
 
 private fun ComposeTestRule.extensionsChevronButton() = onNodeWithTag(EXTENSIONS_OPTION_CHEVRON, useUnmergedTree = true)
+
+private fun ComposeTestRule.summarizePageButton() = onNodeWithContentDescription(getStringResource(R.string.browser_menu_summarize_page))
+
+private fun ComposeTestRule.changeWallpaperButton() = onNodeWithContentDescription(getStringResource(R.string.browser_menu_change_wallpaper))

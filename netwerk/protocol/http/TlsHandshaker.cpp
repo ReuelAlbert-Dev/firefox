@@ -39,9 +39,20 @@ TlsHandshaker::CertVerificationDone() {
 }
 
 NS_IMETHODIMP
+TlsHandshaker::ClientAuthCertificateRequested() {
+  LOG(("TlsHandshaker::ClientAuthCertificateRequested mOwner=%p",
+       mOwner.get()));
+  if (mOwner) {
+    mOwner->OnClientAuthCertificateRequested();
+  }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 TlsHandshaker::ClientAuthCertificateSelected() {
   LOG(("TlsHandshaker::ClientAuthCertificateSelected mOwner=%p", mOwner.get()));
   if (mOwner) {
+    mOwner->OnClientAuthCertificateSelected();
     (void)mOwner->ResumeSend();
   }
   return NS_OK;
@@ -256,6 +267,20 @@ void TlsHandshaker::Check0RttEnabled(nsITLSSocketControl* ssl) {
   }
 
   m0RTTChecked = true;
+
+  // If a session token was loaded, a PSK was offered in the ClientHello.
+  // Notify the transaction so recovery (restart + token eviction) works if
+  // the server rejects the PSK. Do this before the proxy early-return below,
+  // since PSK resumption happens at the TLS layer regardless of proxying and
+  // its failure mode is the same.
+  bool resumptionTokenPresent = false;
+  if (NS_SUCCEEDED(ssl->GetResumptionTokenPresent(&resumptionTokenPresent)) &&
+      resumptionTokenPresent) {
+    RefPtr<nsAHttpTransaction> transaction = mOwner->Transaction();
+    if (transaction) {
+      (void)transaction->Do0RTT(/*aCanSendEarlyData=*/false);
+    }
+  }
 
   if (mConnInfo->UsingProxy()) {
     return;

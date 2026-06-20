@@ -7,14 +7,11 @@
 const { IPProtectionService, IPProtectionStates } = ChromeUtils.importESModule(
   "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs"
 );
-const { IPPProxyManager, IPPProxyStates } = ChromeUtils.importESModule(
+const { ERRORS, IPPProxyManager, IPPProxyStates } = ChromeUtils.importESModule(
   "moz-src:///toolkit/components/ipprotection/IPPProxyManager.sys.mjs"
 );
-const { IPPSignInWatcher } = ChromeUtils.importESModule(
-  "moz-src:///toolkit/components/ipprotection/IPPSignInWatcher.sys.mjs"
-);
 const { ProxyPass, ProxyUsage, Entitlement } = ChromeUtils.importESModule(
-  "moz-src:///toolkit/components/ipprotection/GuardianClient.sys.mjs"
+  "moz-src:///toolkit/components/ipprotection/GuardianTypes.sys.mjs"
 );
 const { RemoteSettings } = ChromeUtils.importESModule(
   "resource://services-settings/remote-settings.sys.mjs"
@@ -22,7 +19,12 @@ const { RemoteSettings } = ChromeUtils.importESModule(
 const { IPProtectionActivator } = ChromeUtils.importESModule(
   "moz-src:///toolkit/components/ipprotection/IPProtectionActivator.sys.mjs"
 );
+const { IPPDummyAuthProvider } = ChromeUtils.importESModule(
+  "resource://testing-common/ipprotection/IPPDummyAuthProvider.sys.mjs"
+);
+IPProtectionActivator.addHelpers(IPPDummyAuthProvider.helpers);
 IPProtectionActivator.setupHelpers();
+IPProtectionActivator.setAuthProvider(IPPDummyAuthProvider);
 
 const { sinon } = ChromeUtils.importESModule(
   "resource://testing-common/Sinon.sys.mjs"
@@ -69,7 +71,6 @@ async function putServerInRemoteSettings(
 
 const defaultStubOptions = {
   signedIn: true,
-  isLinkedToGuardian: true,
   validProxyPass: true,
   entitlement: createTestEntitlement(),
   proxyUsage: new ProxyUsage(
@@ -80,28 +81,21 @@ const defaultStubOptions = {
 };
 Object.freeze(defaultStubOptions);
 
-function setupStubs(
-  sandbox,
-  aOptions = {
-    ...defaultStubOptions,
-  }
-) {
+/**
+ * @param {object} [aOptions] - Overrides for defaultStubOptions.
+ */
+function setupStubs(aOptions = {}) {
   const options = { ...defaultStubOptions, ...aOptions };
-  sandbox.stub(IPPSignInWatcher, "isSignedIn").get(() => options.signedIn);
-  sandbox
-    .stub(IPProtectionService.guardian, "isLinkedToGuardian")
-    .resolves(options.isLinkedToGuardian);
-  sandbox.stub(IPProtectionService.guardian, "fetchUserInfo").resolves({
-    status: 200,
-    error: null,
+  IPPDummyAuthProvider.simulateSignIn(options.signedIn);
+  IPPDummyAuthProvider.setEntitlement(options.entitlement, { silent: true });
+  IPPDummyAuthProvider.setGetEntitlementResponse({
     entitlement: options.entitlement,
   });
-  sandbox.stub(IPProtectionService.guardian, "enroll").resolves({
-    status: 200,
-    error: null,
-    ok: true,
+  IPPDummyAuthProvider.setEnrollResponse({
+    isEnrolledAndEntitled: true,
+    entitlement: options.entitlement,
   });
-  sandbox.stub(IPProtectionService.guardian, "fetchProxyPass").resolves({
+  IPPDummyAuthProvider.setProxyPass({
     status: 200,
     error: undefined,
     pass: new ProxyPass(
@@ -111,9 +105,8 @@ function setupStubs(
     ),
     usage: options.proxyUsage,
   });
-  sandbox
-    .stub(IPProtectionService.guardian, "fetchProxyUsage")
-    .resolves(options.proxyUsage);
+  IPPDummyAuthProvider.setProxyUsage(options.proxyUsage);
+  IPPDummyAuthProvider.setProxyPassError(null);
 }
 
 /**
@@ -143,7 +136,7 @@ function createProxyPassToken(
   const encode = obj => btoa(JSON.stringify(obj));
   return [encode(header), encode(body), "signature"].join(".");
 }
-/* exported createExpiredProxyPassToken */
+/* exported createProxyPassToken */
 function createExpiredProxyPassToken() {
   return createProxyPassToken(
     Temporal.Now.instant().subtract({ hours: 2 }),

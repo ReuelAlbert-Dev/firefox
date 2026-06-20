@@ -25,12 +25,50 @@ ipprotection-title = VPN
 
 ## Feature introduction callout
 
+# Original strings
+
 ipprotection-feature-introduction-title = Introducing VPN, now right inside your browser
+ipprotection-feature-introduction-title-1 = Try { -brand-product-name }’s built-in VPN
 ipprotection-feature-introduction-link-text-2 = Use our new <a data-l10n-name="learn-more-vpn">built-in VPN</a> to hide your location and protect your data.
+
+# Used for callout for users who expressed interest in privacy in onboarding
+ipprotection-feature-introduction-title-privacy = Add another layer of privacy
+ipprotection-feature-introduction-link-text-privacy-1 = <a data-l10n-name="learn-more-vpn">{ -brand-product-name }’s built-in VPN</a> helps protect your browsing. Choose from several locations to keep where you browse more private.
+ipprotection-feature-introduction-link-text-privacy-2 = <a data-l10n-name="learn-more-vpn">{ -brand-product-name }’s built-in VPN</a> helps protect your browsing. Choose from multiple locations to keep where you browse more private.
+ipprotection-feature-introduction-link-text-privacy-3 = Get <a data-l10n-name="learn-more-vpn">extra privacy</a> by choosing from multiple locations to hide where you browse.
+
+# Unlimited bandwidth summer promotion
+
+ipprotection-feature-introduction-text-summer-promo-1 = Turn it on to keep your browsing more private. <a data-l10n-name="summer-promo-link">Get unlimited bandwidth</a> and more locations to browse from. Now until August 31.
+ipprotection-feature-introduction-title-summer-promo = Got travel plans? Take privacy with you.
+ipprotection-feature-introduction-description-summer-promo = Go farther with { -brand-product-name }’s built-in VPN: more locations, unlimited bandwidth. Now until August 31.
+
+# Original strings for private browsing callout
+
 ipprotection-feature-introduction-link-text-private-browsing-2 = Use our new <a data-l10n-name="learn-more-vpn">built-in VPN</a> to hide your location and protect your data, even when you’re in a Private Window.
+ipprotection-feature-introduction-description-private-browsing = Browse with extra protection by hiding your location, even when you’re in a Private Window.
+
+# Used for callout shown on login to public wi-fi through a captive portal
+ipprotection-feature-introduction-title-captive-portal = On public Wi-Fi? Try { -brand-product-name }’s built-in VPN.
+ipprotection-feature-introduction-description-captive-portal = Browse with extra protection by hiding your location, even on public Wi-Fi.
+
+# Used for discovery callouts for both captive portal login and private browsing
+ipprotection-feature-introduction-link-text-captive-portal-1 = Get <a data-l10n-name="learn-more-vpn">extra privacy</a> by choosing from several locations to hide where you browse.
+
+## Buttons used for all feature introduction callouts
+
 ipprotection-feature-introduction-button-primary = Next
 ipprotection-feature-introduction-button-secondary-not-now = Not now
+ipprotection-feature-introduction-button-secondary-not-now-menuitem =
+    .label = Not now
 ipprotection-feature-introduction-button-secondary-no-thanks = No thanks
+ipprotection-feature-introduction-button-secondary-no-thanks-menuitem =
+    .label = No thanks
+ipprotection-feature-introduction-button-secondary-remove = Remove VPN from toolbar
+ipprotection-feature-introduction-button-secondary-remove-1 =
+    .label = Remove VPN from toolbar
+ipprotection-feature-introduction-button-open-vpn = Open VPN
+ipprotection-feature-introduction-button-get-started = Get started
 
 ## Site settings callout
 
@@ -38,14 +76,23 @@ ipprotection-site-settings-callout-title = Choose where you use VPN
 ipprotection-site-settings-callout-subtitle = Turn VPN off for a specific site and we’ll remember it next time you visit.
 ipprotection-site-settings-callout-button = Got it
 
+## Location selection callout
+
+ipprotection-location-selection-callout-title = New: Switch up your location
+ipprotection-location-selection-callout-description-1 = <a data-l10n-name="learn-more-vpn">{ -brand-product-name }’s built-in VPN</a> lets you choose from several browsing locations, or let us pick the fastest one for you.
+ipprotection-location-selection-callout-primary-button = Try it
+ipprotection-location-selection-callout-secondary-button = Dismiss
+
 ## Panel
 
+# Also used for the callout shown in private browsing
 unauthenticated-vpn-title = Try { -brand-product-name }’s built-in VPN
-unauthenticated-hide-location-message-2 = Hide your location while browsing in { -brand-product-name }.
-# Variables
-#   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
-unauthenticated-bandwidth-limit-message = Get { $maxUsage } GB of free VPN data every month.
+
+unauthenticated-hide-location-message-3 = <a data-l10n-name="learn-more-vpn">Hide your location</a> while browsing in { -brand-product-name }.
+unauthenticated-private-location-message = Helps <a data-l10n-name="learn-more-vpn">keep your location private</a> in { -brand-product-name }.
+unauthenticated-choose-location-message-1 = Choose from several locations or let { -brand-product-name } pick the fastest one.
 unauthenticated-get-started = Get started
+unauthenticated-terms-of-service-privacy-notice = By proceeding, you agree to the <a data-l10n-name="vpn-terms-of-service">Terms of Service</a> and <a data-l10n-name="vpn-privacy-notice">Privacy Notice</a>.
 
 site-exclusion-toggle-enabled-1 =
   .label = Use VPN for this site
@@ -53,16 +100,21 @@ site-exclusion-toggle-enabled-1 =
 site-exclusion-toggle-disabled-1 =
   .label = Use VPN for this site
   .aria-label = VPN is off for this site
+site-exclusion-toggle-description = Site not working? Try turning VPN off.
 
 ipprotection-settings-link =
   .label = Settings
 
 ## Status card
 
-ipprotection-connection-status-connected = VPN is on
-ipprotection-connection-status-disconnected = VPN is off
-ipprotection-connection-status-excluded = VPN is off for this site
-ipprotection-connection-status-connecting = VPN is connecting…
+ipprotection-connection-status-connected-1 = VPN is on
+  .aria-label = VPN is on
+ipprotection-connection-status-disconnected-1 = VPN is off
+  .aria-label = VPN is off
+ipprotection-connection-status-excluded-1 = VPN is off for this site
+  .aria-label = VPN is off for this site
+ipprotection-connection-status-connecting-1 = VPN is connecting…
+  .aria-label = VPN is connecting…
 
 # Button to turn off the VPN
 ipprotection-button-turn-vpn-off = Turn off VPN
@@ -74,26 +126,61 @@ ipprotection-button-turn-vpn-on = Turn on VPN
 # Button while VPN is connecting
 ipprotection-button-connecting = Turning on…
 
+## Location controls
+
+# The button displays the selected VPN location.
+# This shows the default selection, "Recommended" which is the recommended location as determined by Firefox.
+ipprotection-recommended-location-button = Location: Recommended
+ipprotection-recommended-location-description = { -brand-product-name } finds the fastest location
+ipprotection-recommended-location-badge = NEW
+
+# Variables
+#   $country (string) - The country selected for the VPN server location
+ipprotection-location-country-button = Location: { $country }
+
+ipprotection-locations-subview =
+    .title = Choose location
+ipprotection-locations-subview-description = Choose a different location to browse from.
+
+ipprotecion-locations-subview-recommended-label = Recommended
+ipprotection-locations-subview-recommended-description = Finds the fastest location
+
+# Label shown next to a VPN location that the user cannot select.
+ipprotection-locations-unavailable-label = Unavailable
+
+ipprotection-locations-subview-promo =
+  .heading = Take protection further with { -mozilla-vpn-brand-name }
+  .message = Choose from 300+ locations and protect all your apps on up to 5 devices.
+ipprotection-locations-subview-promo-button = Get { -mozilla-vpn-brand-name }
+
 ## VPN paused state
 
-ipprotection-connection-status-paused-title = VPN paused
+ipprotection-connection-status-paused-title-2 = VPN is paused
+  .aria-label = VPN is paused
 # Variables
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
-ipprotection-connection-status-paused-description = You’ve used all { $maxUsage } GB of your VPN data. Access will reset next month.
+ipprotection-connection-status-paused-description-1 = You’ve used all { $maxUsage } GB of your VPN data. Access resets next month.
 upgrade-vpn-title = Get extra protection beyond the browser
 upgrade-vpn-description = Choose your VPN location, use VPN for all of your apps and up to 5 devices, and stay secure on any network — at home or on public Wi-Fi.
 upgrade-vpn-button = Try { -mozilla-vpn-brand-name }
 
 ## Messages and errors
 
-ipprotection-connection-status-generic-error-title = Couldn’t connect to VPN
+ipprotection-connection-status-generic-error-title-1 = Couldn’t connect to VPN
+  .aria-label = Couldn’t connect to VPN
 ipprotection-connection-status-generic-error-description = Try again in a few minutes.
+ipprotection-connection-status-generic-error-try-again = Please try again later.
 
-ipprotection-connection-status-network-error-title = Check your internet connection
+ipprotection-connection-status-network-error-title-1 = Check your internet connection
+  .aria-label = Check your internet connection
 ipprotection-connection-status-network-error-description = Connect to the internet, then try turning VPN on.
 
+ipprotection-connection-status-blocked-error-title-1 = VPN is unavailable
+  .aria-label = VPN is unavailable
+ipprotection-connection-status-blocked-error-description = Local laws prevent us from providing VPN service in this region. <a data-l10n-name="learn-more-link">Learn more</a>
+
 # Variables
-#   $usageLeft (number) - The amount of data a user has left in a month (in GB)
+#   $usageLeft (string) - The amount of data a user has left in a month (in GB)
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
 ipprotection-message-bandwidth-warning =
   .heading = Getting close to your VPN limit
@@ -112,6 +199,10 @@ ipprotection-message-continuous-onboarding-site-settings = { -brand-short-name }
 
 confirmation-hint-ipprotection-navigated-to-excluded-site = VPN is off for this site
 
+ipprotection-open-button = Open { -brand-product-name }
+ipprotection-come-back-title = Come back to try built-in VPN
+ipprotection-message-body-hide-location = Hide your location when you browse in { -brand-product-name } for more privacy and control.
+
 ## IP Protection bandwidth callouts
 
 ipprotection-bandwidth-upgrade-title = Like built-in VPN? Get even more protection outside { -brand-product-name } with { -mozilla-vpn-brand-name }.
@@ -120,11 +211,11 @@ ipprotection-bandwidth-upgrade-text = Choose a VPN location and add protection t
 ## IP Protection bandwidth warning infobar
 
 # Variables
-#   $usageLeft (number) - The amount of data a user has left in a month (in GB)
+#   $usageLeft (string) - The amount of data a user has left in a month (in GB)
 ip-protection-bandwidth-warning-infobar-message-75 = <strong>Getting close to your VPN limit.</strong> You have { $usageLeft } GB left. Your data will reset at the start of next month.
 
 # Variables
-#   $usageLeft (number) - The amount of data a user has left in a month (in GB)
+#   $usageLeft (string) - The amount of data a user has left in a month (in GB)
 ip-protection-bandwidth-warning-infobar-message-90 = <strong>You’re almost out of VPN data.</strong> You have { $usageLeft } GB left. Once you use it all, your VPN will pause until your data resets on the first of next month.
 
 # Variables
@@ -136,13 +227,16 @@ ip-protection-bandwidth-warning-infobar-message-90-mb = <strong>You’re almost 
 ip-protection-description =
   .label = VPN
   .description = Built-in VPN to enhance your privacy while browsing on { -brand-short-name }.
+ip-protection-description-1 =
+  .label = Built-in VPN
+  .description = Get extra privacy by hiding your location while browsing.
 ip-protection-learn-more = Learn more
 
-# Variables:
-#   $maxUsage (number) - The bandwidth limit of free VPN, in GB
-ip-protection-not-opted-in-2 =
+# Variables
+#   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
+ip-protection-not-opted-in-4 =
   .heading = Try { -brand-short-name }’s built-in VPN
-  .message = Hide your location while browsing in { -brand-short-name }. Get { $maxUsage } GB of free VPN data every month.
+  .message = Browse with extra protection by hiding your location.
 ip-protection-not-opted-in-button = Get started
 
 # Variables:
@@ -165,6 +259,9 @@ ip-protection-autostart-private-checkbox =
 ip-protection-vpn-upgrade-link =
   .label = Get even more protection outside { -brand-short-name } with { -mozilla-vpn-brand-name }
   .description = Choose custom VPN locations and add protection to all your apps on up to five devices, whether you’re at home or on public Wi-Fi.
+ip-protection-vpn-upgrade-link-1 =
+  .label = Take protection further with { -mozilla-vpn-brand-name }
+  .description = Choose from 300+ locations and protect all your apps on up to 5 devices.
 
 ## IP Protection dialogs
 
@@ -177,24 +274,26 @@ ip-protection-exclusions-desc = Use VPN for all websites except ones on this lis
 ip-protection-bandwidth-header-1 = Monthly data limit
 
 # Variables
-#   $usageLeft (number) - The amount of data a user has left in a month (in GB)
+#   $usageLeft (string) - The amount of data a user has left in a month (in GB)
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
 ip-protection-bandwidth-left-this-month-gb = { $usageLeft } GB of { $maxUsage } GB left this month
 
+# The text inside the <span> is emphasized to highlight the amount of data left.
 # Variables
-#   $usageLeft (number) - The amount of data a user has left in a month (in GB)
+#   $usageLeft (string) - The amount of data a user has left in a month (in GB)
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
-ip-protection-bandwidth-left-gb = { $usageLeft } GB of { $maxUsage } GB left
+ip-protection-bandwidth-left-gb-1 = <span data-l10n-name="usage">{ $usageLeft } GB</span> of { $maxUsage } GB left
 
 # Variables
 #   $usageLeft (number) - The amount of data a user has left in a month (in MB)
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
 ip-protection-bandwidth-left-this-month-mb = { $usageLeft } MB of { $maxUsage } GB left this month
 
+# The text inside the <span> is emphasized to highlight the amount of data left.
 # Variables
 #   $usageLeft (number) - The amount of data a user has left in a month (in MB)
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
-ip-protection-bandwidth-left-mb = { $usageLeft } MB of { $maxUsage } GB left
+ip-protection-bandwidth-left-mb-1 = <span data-l10n-name="usage">{ $usageLeft } MB</span> of { $maxUsage } GB left
 
 # Variables
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
@@ -224,6 +323,13 @@ vpn-paused-alert-title = VPN paused
 # Variables
 #   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
 vpn-paused-alert-body = You’ve used all { $maxUsage } GB of your VPN data. VPN access will reset next month.
+
+# Variables
+#   $maxUsage (number) - The maximum amount of data a user can use in a month (in GB)
+vpn-error-page-paused-description = You’ve used all { $maxUsage } GB of your VPN data. Access resets next month.
+vpn-error-page-continue-description = Choose how to continue without VPN
+vpn-error-page-keep-browsing = Keep browsing in this session
+vpn-error-page-new-session = Start a new session
 
 vpn-paused-alert-close-tabs-button = Close all tabs
 vpn-paused-alert-continue-wo-vpn-button = Continue without VPN

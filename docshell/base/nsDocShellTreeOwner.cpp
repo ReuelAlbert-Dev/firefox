@@ -808,7 +808,7 @@ nsDocShellTreeOwner::AddChromeListeners() {
         do_QueryInterface(webBrowserChrome));
     if (tooltipListener) {
       mChromeTooltipListener =
-          new ChromeTooltipListener(mWebBrowser, webBrowserChrome);
+          MakeRefPtr<ChromeTooltipListener>(mWebBrowser, webBrowserChrome);
       rv = mChromeTooltipListener->AddChromeListeners();
     }
   }
@@ -978,7 +978,7 @@ ChromeTooltipListener::ChromeTooltipListener(nsWebBrowser* aInBrowser,
       mShowingTooltip(false),
       mTooltipShownOnce(false) {}
 
-ChromeTooltipListener::~ChromeTooltipListener() {}
+ChromeTooltipListener::~ChromeTooltipListener() = default;
 
 nsITooltipTextProvider* ChromeTooltipListener::GetTooltipTextProvider() {
   if (!mTooltipTextProvider) {

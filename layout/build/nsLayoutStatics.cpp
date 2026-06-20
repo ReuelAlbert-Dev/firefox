@@ -42,7 +42,6 @@
 #include "nsFocusManager.h"
 #include "nsFrameState.h"
 #include "nsGenericHTMLFrameElement.h"
-#include "nsGkAtoms.h"
 #include "nsGlobalWindowInner.h"
 #include "nsGlobalWindowOuter.h"
 #include "nsHTMLTags.h"
@@ -97,6 +96,7 @@
 #include "mozilla/dom/PointerEventHandler.h"
 #include "mozilla/dom/RemoteWorkerService.h"
 #include "mozilla/dom/ReportingHeader.h"
+#include "mozilla/dom/SerialPlatformService.h"
 #include "mozilla/dom/WebIDLGlobalNameHash.h"
 #include "mozilla/dom/localstorage/ActorsParent.h"
 #include "mozilla/dom/quota/ActorsParent.h"
@@ -197,11 +197,7 @@ nsresult nsLayoutStatics::Initialize() {
     return rv;
   }
 
-  rv = nsXULPopupManager::Init();
-  if (NS_FAILED(rv)) {
-    NS_ERROR("Could not initialize nsXULPopupManager");
-    return rv;
-  }
+  nsXULPopupManager::Init();
 
   rv = nsFocusManager::Init();
   if (NS_FAILED(rv)) {

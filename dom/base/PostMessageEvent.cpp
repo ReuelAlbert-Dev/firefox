@@ -22,6 +22,7 @@
 #include "nsIConsoleService.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptError.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsPresContext.h"
 #include "nsQueryObject.h"
 #include "nsServiceManagerUtils.h"
@@ -135,7 +136,7 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
 
       nsAutoString errorText;
       nsContentUtils::FormatLocalizedString(
-          errorText, nsContentUtils::eDOM_PROPERTIES,
+          errorText, PropertiesFile::DOM_PROPERTIES,
           "TargetPrincipalDoesNotMatch", providedOrigin, targetOrigin);
 
       nsCOMPtr<nsIScriptError> errorObject =

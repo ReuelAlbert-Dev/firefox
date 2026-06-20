@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,7 +10,6 @@
 #include "mozilla/intl/Calendar.h"
 #include "mozilla/intl/Collator.h"
 #include "mozilla/intl/Currency.h"
-#include "mozilla/intl/MeasureUnitGenerated.h"
 #include "mozilla/intl/TimeZone.h"
 
 #include <algorithm>
@@ -24,9 +21,9 @@
 #include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
 #include "builtin/intl/LocaleNegotiation.h"
+#include "builtin/intl/MeasureUnitGenerated.h"
 #include "builtin/intl/NumberingSystemsGenerated.h"
 #include "builtin/intl/SharedIntlData.h"
-#include "ds/Sort.h"
 #include "js/Class.h"
 #include "js/experimental/Intl.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
@@ -222,50 +219,6 @@ bool JS::AddMozGetCalendarInfo(JSContext* cx, Handle<JSObject*> intl) {
 
 /******************** Intl ********************/
 
-using StringList = GCVector<JSLinearString*>;
-
-/**
- * Create a sorted array from a list of strings.
- */
-static ArrayObject* CreateArrayFromList(JSContext* cx,
-                                        MutableHandle<StringList> list) {
-  // Reserve scratch space for MergeSort().
-  size_t initialLength = list.length();
-  if (!list.growBy(initialLength)) {
-    return nullptr;
-  }
-
-  // Sort all strings in alphabetical order.
-  MOZ_ALWAYS_TRUE(
-      MergeSort(list.begin(), initialLength, list.begin() + initialLength,
-                [](const auto* a, const auto* b, bool* lessOrEqual) {
-                  *lessOrEqual = CompareStrings(a, b) <= 0;
-                  return true;
-                }));
-
-  // Ensure we don't add duplicate entries to the array.
-  auto* end = std::unique(
-      list.begin(), list.begin() + initialLength,
-      [](const auto* a, const auto* b) { return EqualStrings(a, b); });
-
-  // std::unique leaves the elements after |end| with an unspecified value, so
-  // remove them first. And also delete the elements in the scratch space.
-  list.shrinkBy(std::distance(end, list.end()));
-
-  // And finally copy the strings into the result array.
-  auto* array = NewDenseFullyAllocatedArray(cx, list.length());
-  if (!array) {
-    return nullptr;
-  }
-  array->setDenseInitializedLength(list.length());
-
-  for (size_t i = 0; i < list.length(); ++i) {
-    array->initDenseElement(i, StringValue(list[i]));
-  }
-
-  return array;
-}
-
 /**
  * Create an array from a sorted list of strings.
  */
@@ -381,7 +334,7 @@ static ArrayObject* AvailableCalendars(JSContext* cx) {
     }
   }
 
-  return CreateArrayFromList(cx, &list);
+  return CreateSortedArrayFromList(cx, &list);
 }
 
 /**
@@ -396,7 +349,7 @@ static ArrayObject* AvailableCollations(JSContext* cx) {
     return nullptr;
   }
 
-  return CreateArrayFromList(cx, &list);
+  return CreateSortedArrayFromList(cx, &list);
 }
 
 /**
@@ -436,7 +389,7 @@ static ArrayObject* AvailableCurrencies(JSContext* cx) {
     }
   }
 
-  return CreateArrayFromList(cx, &list);
+  return CreateSortedArrayFromList(cx, &list);
 }
 
 /**
@@ -478,12 +431,11 @@ static ArrayObject* AvailableTimeZones(JSContext* cx) {
     }
   }
 
-  return CreateArrayFromList(cx, &timeZones);
+  return CreateSortedArrayFromList(cx, &timeZones);
 }
 
 template <size_t N>
-constexpr auto MeasurementUnitNames(
-    const mozilla::intl::SimpleMeasureUnit (&units)[N]) {
+constexpr auto MeasurementUnitNames(const SimpleMeasureUnit (&units)[N]) {
   std::array<const char*, N> array = {};
   for (size_t i = 0; i < N; ++i) {
     array[i] = units[i].name;
@@ -496,7 +448,7 @@ constexpr auto MeasurementUnitNames(
  */
 static ArrayObject* AvailableUnits(JSContext* cx) {
   static constexpr auto simpleMeasureUnitNames =
-      MeasurementUnitNames(mozilla::intl::simpleMeasureUnits);
+      MeasurementUnitNames(simpleMeasureUnits);
 
   return CreateArrayFromSortedList(cx, simpleMeasureUnitNames);
 }

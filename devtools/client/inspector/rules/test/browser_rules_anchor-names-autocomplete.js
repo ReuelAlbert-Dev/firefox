@@ -8,6 +8,7 @@ const TEST_URL = URL_ROOT + "doc_anchor_names.html";
 add_task(async function () {
   const COMMON_ITEMS = [
     "auto",
+    "normal",
     "none",
     ...InspectorUtils.getCSSWideKeywords(),
   ].sort();
@@ -168,9 +169,9 @@ async function autocompletePositionAnchor({
   await onPopupClosed;
 
   info("Hit Escape to cancel the edit");
-  const onRuleViewChanged = view.once("ruleview-changed");
+  const onEditingCancelled = view.once("property-value-updated");
   EventUtils.synthesizeKey("KEY_Escape", {}, view.styleWindow);
-  await onRuleViewChanged;
+  await onEditingCancelled;
 }
 
 async function autocompleteInsetAnchorFunction({
@@ -213,7 +214,7 @@ async function autocompleteInsetAnchorFunction({
   await onPopupClosed;
 
   info("Hit Escape to cancel the edit");
-  const onRuleViewChanged = view.once("ruleview-changed");
+  const onEditingCancelled = view.once("property-value-updated");
   EventUtils.synthesizeKey("KEY_Escape", {}, view.styleWindow);
-  await onRuleViewChanged;
+  await onEditingCancelled;
 }

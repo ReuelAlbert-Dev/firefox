@@ -9,6 +9,7 @@
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/layers/LayersTypes.h"
 #include <set>
+#include <vector>
 
 namespace mozilla {
 namespace dom {
@@ -41,6 +42,8 @@ class CanvasShutdownManager final {
   CanvasShutdownManager();
   ~CanvasShutdownManager();
   void Destroy();
+
+  std::vector<RefPtr<dom::CanvasRenderingContext2D>> RefActiveCanvas() const;
 
   static void MaybeRestoreRemoteCanvas();
 

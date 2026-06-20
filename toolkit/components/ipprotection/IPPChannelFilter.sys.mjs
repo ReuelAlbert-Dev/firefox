@@ -7,6 +7,8 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 const lazy = XPCOMUtils.declareLazy({
   IPPExceptionsManager:
     "moz-src:///toolkit/components/ipprotection/IPPExceptionsManager.sys.mjs",
+  IPProtectionService:
+    "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   ProxyService: {
     service: "@mozilla.org/network/protocol-proxy-service;1",
     iid: Ci.nsIProtocolProxyService,
@@ -58,9 +60,6 @@ const TRACKING_FLAGS =
 
 const DEFAULT_EXCLUDED_URL_PREFS = [
   "browser.ipProtection.guardian.endpoint",
-  "identity.fxaccounts.remote.profile.uri",
-  "identity.fxaccounts.auth.uri",
-  "identity.fxaccounts.remote.profile.uri",
   "captivedetect.canonicalURL",
 ];
 
@@ -160,10 +159,15 @@ export class IPPChannelFilter {
    * @typedef {import("./IPProtectionServerlist.sys.mjs").Server} Server
    * @param {string} authToken - a bearer token for the proxy server.
    * @param {Server} server - the server to connect to.
+   * @param {string} [isolationKey] - the isolation key to bake into the
+   *   proxyInfo. When omitted a new random one is generated.
    * @returns {nsIProxyInfo}
    */
-  static serverToProxyInfo(authToken, server) {
-    const isolationKey = IPPChannelFilter.makeIsolationKey();
+  static serverToProxyInfo(
+    authToken,
+    server,
+    isolationKey = IPPChannelFilter.makeIsolationKey()
+  ) {
     // When running tests, we can’t set alwaysTunnel to true because our test
     // server doesn’t support tunneling.
     const alwaysTunnel = !(Cu.isInAutomation || isXpcshell);
@@ -183,27 +187,35 @@ export class IPPChannelFilter {
    * active, will process the new and the pending channels.
    *
    * @typedef {import("./IPProtectionServerlist.sys.mjs").Server} Server
-   * @param {string} authToken - a bearer token for the proxy server.
+   * @typedef {import("./GuardianTypes.sys.mjs").ProxyPass} ProxyPass
+   * @param {ProxyPass} pass - the proxy pass to authenticate with.
    * @param {Server} server - the server to connect to.
    */
-  initialize(authToken = "", server) {
+  initialize(pass, server) {
     if (this.proxyInfo) {
       throw new Error("Double initialization?!?");
     }
-    const proxyInfo = IPPChannelFilter.serverToProxyInfo(authToken, server);
-    Object.freeze(proxyInfo);
-    this.proxyInfo = proxyInfo;
-
+    this.#pass = pass;
     this.#server = server;
-    this.#processPendingChannels();
+    this.#setProxyInfo(IPPChannelFilter.makeIsolationKey());
   }
 
   /**
-   * Uninitializes the IPPChannelFilter, removing the proxyInfo and aborting any pending channels.
-   * After this step, the filter will pause channels that should be proxied until a new proxyInfo is set through initialize() again, or the filter is stopped.
+   * Builds the proxyInfo for the stored pass and server with the given isolation
+   * key, saves the key, and flushes any queued channels.
+   *
+   * @param {string} isolationKey
    */
-  uninitialize() {
-    this.proxyInfo = null;
+  #setProxyInfo(isolationKey) {
+    this.#isolationKey = isolationKey;
+    const proxyInfo = IPPChannelFilter.serverToProxyInfo(
+      this.#pass.asBearerToken(),
+      this.#server,
+      isolationKey
+    );
+    Object.freeze(proxyInfo);
+    this.proxyInfo = proxyInfo;
+    this.#processPendingChannels();
   }
 
   /**
@@ -224,12 +236,24 @@ export class IPPChannelFilter {
       }
     });
 
+    lazy.IPProtectionService.authProvider.excludedUrlPrefs.forEach(pref => {
+      const prefValue = Services.prefs.getStringPref(pref, "");
+      if (prefValue) {
+        this.addPageExclusion(prefValue);
+      }
+    });
+
     XPCOMUtils.defineLazyPreferenceGetter(
       this,
       "mode",
       MODE_PREF,
       IPPMode.MODE_FULL
     );
+
+    this.#inclusionPrefObserver = () => {
+      this.#inclusionSet = IPPChannelFilter.getInclusionList();
+    };
+    Services.prefs.addObserver(INCLUSION_PREF, this.#inclusionPrefObserver);
   }
 
   /**
@@ -338,15 +362,39 @@ export class IPPChannelFilter {
         return true;
       }
 
-      if (IPPChannelFilter.isLocal(uri)) {
+      // DoH traffic must bypass the proxy: in TRR_ONLY mode (Max Protection)
+      // sending DNS-over-HTTPS through the proxy creates a circular
+      // resolution dependency that breaks all DNS.
+      if (
+        channel instanceof Ci.nsIHttpChannelInternal &&
+        channel.isTRRServiceChannel
+      ) {
+        return true;
+      }
+
+      // Prefer a non-system loadingPrincipal, falling back to the channel URI
+      // principal. For downloads, use the triggeringPrincipal instead so the
+      // exclusion is attributed to the originating page.
+      let { loadingPrincipal, triggeringPrincipal } = channel.loadInfo ?? {};
+      let principal;
+      if (loadingPrincipal && !loadingPrincipal.isSystemPrincipal) {
+        principal = loadingPrincipal;
+      } else if (
+        channel.loadInfo?.isUserTriggeredSave &&
+        triggeringPrincipal &&
+        !triggeringPrincipal.isSystemPrincipal
+      ) {
+        principal = triggeringPrincipal;
+      } else {
+        principal =
+          Services.scriptSecurityManager.getChannelURIPrincipal(channel);
+      }
+
+      if (IPPChannelFilter.isLocal(principal)) {
         return true;
       }
 
       const origin = uri.prePath; // scheme://host[:port]
-
-      let principal =
-        channel.loadInfo?.loadingPrincipal ||
-        Services.scriptSecurityManager.getChannelURIPrincipal(channel);
 
       let hasExclusion = lazy.IPPExceptionsManager.hasExclusion(principal);
 
@@ -370,28 +418,12 @@ export class IPPChannelFilter {
     return new MatchPatternSet(patterns, MATCH_PATTERN_OPTIONS);
   }
 
-  static isLocal(uri) {
-    if (Services.io.hostnameIsLocalIPAddress(uri)) {
-      return true;
-    }
-
-    const hostname = uri.host;
-    return (
-      /^(.+\.)?localhost$/.test(hostname) ||
-      /^(.+\.)?localhost6$/.test(hostname) ||
-      /^(.+\.)?localhost.localdomain$/.test(hostname) ||
-      /^(.+\.)?localhost6.localdomain6$/.test(hostname) ||
-      // https://tools.ietf.org/html/rfc2606
-      /\.example$/.test(hostname) ||
-      /\.invalid$/.test(hostname) ||
-      /\.test$/.test(hostname) ||
-      // https://tools.ietf.org/html/rfc8375
-      /^(.+\.)?home\.arpa$/.test(hostname) ||
-      // https://tools.ietf.org/html/rfc6762
-      /\.local$/.test(hostname) ||
-      // Loopback
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
-    );
+  /**
+   *
+   * @param {nsIPrincipal} principal
+   */
+  static isLocal(principal) {
+    return principal.isLoopbackHost || principal.isLocalIpAddress;
   }
 
   /**
@@ -429,17 +461,26 @@ export class IPPChannelFilter {
       return;
     }
 
+    if (this.#inclusionPrefObserver) {
+      Services.prefs.removeObserver(
+        INCLUSION_PREF,
+        this.#inclusionPrefObserver
+      );
+      this.#inclusionPrefObserver = null;
+    }
+
     lazy.ProxyService.unregisterChannelFilter(this);
 
-    this.#abortPendingChannels();
+    this.abortPendingChannels();
 
     this.#active = false;
     this.#abort.abort();
   }
 
   /**
-   * Returns the isolation key of the proxy connection.
-   * All ProxyInfo objects related to this Connection will have the same isolation key.
+   * Returns the isolation key of the active proxy connection, or null when
+   * suspended. The key is also stored in #isolationKey so it survives a
+   * suspend() and can be re-used by resume().
    */
   get isolationKey() {
     if (!this.proxyInfo) {
@@ -453,18 +494,40 @@ export class IPPChannelFilter {
   }
 
   /**
-   * Replaces the authentication token used by the proxy connection.
-   * --> Important <--: This Changes the isolationKey of the Connection!
-   *
-   * @param {string} newToken - The new authentication token.
+   * Suspends the filter: new channels that should be proxied are queued until
+   * the filter is resumed.
    */
-  replaceAuthToken(newToken) {
-    const proxyInfo = IPPChannelFilter.serverToProxyInfo(
-      newToken,
-      this.#server
-    );
-    Object.freeze(proxyInfo);
-    this.proxyInfo = proxyInfo;
+  suspend() {
+    this.proxyInfo = null;
+  }
+
+  /**
+   * True if the stored pass is still valid and not yet due for rotation, meaning
+   * the connection can be resumed as-is (e.g. when waking from sleep).
+   */
+  get canResume() {
+    return !!this.#pass?.isValid() && !this.#pass.shouldRotate();
+  }
+
+  /**
+   * Rebuilds the connection from the stored pass, re-using the saved isolation
+   * key so the woken connection keeps the same identity (e.g. resuming after
+   * sleep). Flushes any queued channels.
+   */
+  resume() {
+    this.#setProxyInfo(this.#isolationKey);
+  }
+
+  /**
+   * Replaces the proxy pass and flushes any queued channels. This generates a
+   * new isolation key for the connection.
+   *
+   * @typedef {import("./GuardianTypes.sys.mjs").ProxyPass} ProxyPass
+   * @param {ProxyPass} pass - The new proxy pass.
+   */
+  replaceAuthTokenAndResume(pass) {
+    this.#pass = pass;
+    this.#setProxyInfo(IPPChannelFilter.makeIsolationKey());
   }
 
   /**
@@ -518,7 +581,7 @@ export class IPPChannelFilter {
     }
   }
 
-  #abortPendingChannels() {
+  abortPendingChannels() {
     if (this.#pendingChannels.length) {
       this.#pendingChannels.forEach(data =>
         data.channel.cancel(Cr.NS_BINDING_ABORTED)
@@ -533,7 +596,12 @@ export class IPPChannelFilter {
   #excludedOrigins = new Set();
   #pendingChannels = [];
   #inclusionSet = new MatchPatternSet([], MATCH_PATTERN_OPTIONS);
+  #inclusionPrefObserver = null;
   #server = null;
+  /** @type {import("./GuardianTypes.sys.mjs").ProxyPass | null} */
+  #pass = null;
+  /** @type {string | null} */
+  #isolationKey = null;
 
   static makeIsolationKey() {
     return Math.random().toString(36).slice(2, 18).padEnd(16, "0");

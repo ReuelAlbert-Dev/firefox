@@ -241,6 +241,10 @@ For jobs that operate on only one locale, we set the attribute ``locale`` to the
 specific locale involved. Currently this is only in l10n versions of the
 ``beetmover`` and ``balrog`` kinds.
 
+build_target
+============
+The build_target used in update requests for the platform. A list of these can be found in ``python/mozrelease/mozrelease/platforms.py``.
+
 signed
 ======
 Signals that the output of this task contains signed artifacts.
@@ -396,14 +400,6 @@ want to exist in the index before they even run/complete. Our current use is to 
 unfinished cached task in future pushes. This avoids extra overhead from multiple tasks running, and
 can allow us to have our results in just a bit earlier.
 
-required_signoffs
-=================
-A list of release signoffs that this kind requires, should the release also
-require these signoffs. For example, ``mar-signing`` signoffs may be required
-by some releases in the future; for any releases that require ``mar-signing``
-signoffs, the kinds that also require that signoff are marked with this
-attribute.
-
 update-channel
 ==============
 The update channel the build is configured to use.
@@ -418,9 +414,9 @@ The mar-channel-ids this build will accept updates to. It should usually be the 
 the value mar_channel_id.  If more than one ID is needed, then you should use a
 comma separated list of values.
 
-openh264_rev
-============
-Only used for openh264 plugin builds, used to signify the revision (and thus inform artifact name) of the given build.
+openh264_version
+================
+Only used for openh264 plugin builds, used to signify the version (and thus inform artifact name) of the given build.
 
 code-review
 ===========
@@ -605,3 +601,15 @@ dxc-crash-symbols
 =================
 
 Indicates that the job produces crash symbols for `dxcompiler.dll`.
+
+flatpak_name
+============
+
+name of the built flatpak app (e.g. `org.mozilla.firefox`)
+
+msi_display_name
+================
+
+The human-readable product name for the MSI installer (e.g. ``Firefox Nightly``,
+``Firefox Beta``, ``Firefox``). Used by downstream signing tasks to construct
+the Authenticode comment embedded in the installer signature.

@@ -157,13 +157,10 @@
       margin-block-end: unset;
       inset-inline-end: initial;
       min-height: 28px;
+      padding-inline-end: var(--space-xxlarge);
 
-      // .source-wrapper {
-      //   max-width: 285px;
-      // }
-
-      .source {
-        width: 217px;
+      .source-wrapper {
+        max-width: none;
       }
     }
 
@@ -198,13 +195,8 @@
   &:focus-within,
   &.active {
     .meta {
-      .source-wrapper {
-        max-width: 175px;
-      }
-
       .source-wrapper .source {
         display: block;
-        width: unset;
       }
     }
   }
@@ -216,7 +208,7 @@
     padding: 0;
   }
 
-  &:not(.placeholder) {
+  &:not(.placeholder, .ds-spoc-rectangle) {
     .img-wrapper>.ds-image.img>img {
       border-radius: var(--border-radius-large) var(--border-radius-large) 0 0;
     }
@@ -336,6 +328,7 @@
       }
     }
   }
+
 }
 
 .has-sections-grid .ds-outer-wrapper-breakpoint-override {
@@ -396,7 +389,7 @@
       width: auto;
 
       .body-wrapper {
-        width: 989px;
+        width: 975px;
       }
     }
 
@@ -406,7 +399,7 @@
       .body-wrapper {
         display: flex;
         flex-direction: column;
-        width: 1311px;
+        width: 1290px;
       }
 
       .ds-highlights .card-outer {
@@ -509,6 +502,14 @@
 // @nova-cleanup(remove-conditional): Remove .nova-enabled wrapper, make default
 .nova-enabled .ds-section-wrapper .ds-section .section-heading {
   grid-column: 1 / -1;
+
+  .section-title {
+    font-size: var(--font-size-heading-large);
+
+    @include at-content-cols(12) {
+      font-size: var(--font-size-heading-xlarge);
+    }
+  }
 }
 
 .ds-section-grid.ds-card-grid {
@@ -763,6 +764,12 @@
     // (assigned by JS for all breakpoints simultaneously) only activate one set of
     // mixin styles at a time, avoiding specificity conflicts between mixins.
     @include at-content-cols-range(0, 8) {
+      --sections-col-count: 1;
+
+      @for $i from 0 through 16 {
+        .col-1-position-#{$i} { order: $i; }
+      }
+
       .col-1-small {
         @include section-card-small;
       }
@@ -783,6 +790,12 @@
     }
 
     @include at-content-cols-range(8, 12) {
+      --sections-col-count: 2;
+
+      @for $i from 0 through 16 {
+        .col-2-position-#{$i} { order: $i; }
+      }
+
       .col-2-small {
         @include section-card-small;
       }
@@ -803,9 +816,18 @@
       .col-2-large {
         grid-column: span 2;
       }
+
+      .ds-image.image-1, .ds-image.image-3, .ds-image.image-4 { display: none; }
+      .ds-image.image-2 { display: block; }
     }
 
     @include at-content-cols-range(12, 16) {
+      --sections-col-count: 3;
+
+      @for $i from 0 through 16 {
+        .col-3-position-#{$i} { order: $i; }
+      }
+
       .col-3-small {
         @include section-card-small;
       }
@@ -826,9 +848,18 @@
       .col-3-large {
         grid-column: span 2;
       }
+
+      .ds-image.image-1, .ds-image.image-2, .ds-image.image-4 { display: none; }
+      .ds-image.image-3 { display: block; }
     }
 
     @include at-content-cols(16) {
+      --sections-col-count: 4;
+
+      @for $i from 0 through 16 {
+        .col-4-position-#{$i} { order: $i; }
+      }
+
       .col-4-small {
         @include section-card-small;
       }
@@ -849,6 +880,9 @@
       .col-4-large {
         grid-column: span 2;
       }
+
+      .ds-image.image-1, .ds-image.image-2, .ds-image.image-3 { display: none; }
+      .ds-image.image-4 { display: block; }
     }
   }
 

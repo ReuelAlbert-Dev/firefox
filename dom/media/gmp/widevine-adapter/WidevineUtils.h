@@ -16,7 +16,7 @@ namespace mozilla {
 #define ENSURE_TRUE(condition, rv)                                   \
   {                                                                  \
     if (!(condition)) {                                              \
-      GMP_LOG_DEBUG("ENSURE_TRUE FAILED %s:%d", __FILE__, __LINE__); \
+      GMP_LOG_DEBUG("ENSURE_TRUE FAILED {}:{}", __FILE__, __LINE__); \
       return rv;                                                     \
     }                                                                \
   }
@@ -24,7 +24,7 @@ namespace mozilla {
 #define ENSURE_GMP_SUCCESS(err, rv)                                         \
   {                                                                         \
     if (GMP_FAILED(err)) {                                                  \
-      GMP_LOG_DEBUG("ENSURE_GMP_SUCCESS FAILED %s:%d", __FILE__, __LINE__); \
+      GMP_LOG_DEBUG("ENSURE_GMP_SUCCESS FAILED {}:{}", __FILE__, __LINE__); \
       return rv;                                                            \
     }                                                                       \
   }
@@ -46,6 +46,10 @@ class WidevineBuffer : public CDMBuffer {
  public:
   explicit WidevineBuffer(size_t aSize);
   ~WidevineBuffer() override;
+
+  WidevineBuffer(const WidevineBuffer&) = delete;
+  void operator=(const WidevineBuffer&) = delete;
+
   void Destroy() override;
   uint32_t Capacity() const override;
   uint8_t* Data() override;
@@ -60,8 +64,6 @@ class WidevineBuffer : public CDMBuffer {
 
  private:
   nsTArray<uint8_t> mBuffer;
-  WidevineBuffer(const WidevineBuffer&);
-  void operator=(const WidevineBuffer&);
 };
 
 class WidevineDecryptedBlock : public cdm::DecryptedBlock {

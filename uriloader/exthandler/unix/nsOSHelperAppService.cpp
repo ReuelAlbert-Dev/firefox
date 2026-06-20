@@ -57,7 +57,7 @@ static nsresult ParseMIMEType(const nsAString::const_iterator& aStart_iter,
 
 inline bool IsNetscapeFormat(const nsACString& aBuffer);
 
-nsOSHelperAppService::~nsOSHelperAppService() {}
+nsOSHelperAppService::~nsOSHelperAppService() = default;
 
 /*
  * Take a command with all the mailcap escapes in it and unescape it
@@ -1250,7 +1250,7 @@ already_AddRefed<nsMIMEInfoBase> nsOSHelperAppService::GetFromExtension(
   }
 
   nsAutoCString mimeType(asciiMajorType + "/"_ns + asciiMinorType);
-  RefPtr<nsMIMEInfoUnix> mimeInfo = new nsMIMEInfoUnix(mimeType);
+  RefPtr mimeInfo = MakeRefPtr<nsMIMEInfoUnix>(mimeType);
 
   mimeInfo->AppendExtension(aFileExt);
   rv = LookUpHandlerAndDescription(majorType, minorType, handler,
@@ -1377,7 +1377,7 @@ already_AddRefed<nsMIMEInfoBase> nsOSHelperAppService::GetFromType(
     return nullptr;
   }
 
-  RefPtr<nsMIMEInfoUnix> mimeInfo = new nsMIMEInfoUnix(aMIMEType);
+  RefPtr mimeInfo = MakeRefPtr<nsMIMEInfoUnix>(aMIMEType);
 
   mimeInfo->SetFileExtensions(NS_ConvertUTF16toUTF8(extensions));
   if (!mime_types_description.IsEmpty()) {

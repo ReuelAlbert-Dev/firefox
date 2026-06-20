@@ -137,6 +137,7 @@ UNIFIED_SOURCES += [
     "NotifyUtilsCommon.cpp",
     "nsIndexedDBProtocolHandler.cpp",
     "NSSCipherStrategy.cpp",
+    "NSSRandomAccessCipherStrategy.cpp",
     "OpenClientDirectoryInfo.cpp",
     "OriginDirectoryLock.cpp",
     "OriginInfo.cpp",
@@ -180,7 +181,7 @@ IPDL_SOURCES += [
     "PRemoteQuotaObject.ipdl",
 ]
 
-EXTRA_JS_MODULES += [
+MOZ_SRC_FILES += [
     "QuotaUtilsService.sys.mjs",
 ]
 

@@ -20,7 +20,7 @@ void TestSplitAt(const char* aInput, const char* aDelims,
   for (size_t i = 0; i < tokens.Length(); i++) {
     EXPECT_TRUE(tokens[i].EqualsASCII(aExpectedTokens[i]))
         << "Tokenize fail; expected=" << aExpectedTokens[i]
-        << " got=" << tokens[i].BeginReading();
+        << " got=" << tokens[i].get();
   }
 }
 

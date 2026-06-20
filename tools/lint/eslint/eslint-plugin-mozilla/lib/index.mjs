@@ -125,6 +125,9 @@ let plugin = {
     "reject-multiple-getters-calls": (
       await import("./rules/reject-multiple-getters-calls.mjs")
     ).default,
+    "reject-import-preferences-module": (
+      await import("./rules/reject-import-preferences-module.mjs")
+    ).default,
     "reject-scriptableunicodeconverter": (
       await import("./rules/reject-scriptableunicodeconverter.mjs")
     ).default,
@@ -149,7 +152,8 @@ let plugin = {
     "use-default-preference-values": (
       await import("./rules/use-default-preference-values.mjs")
     ).default,
-    "use-ownerGlobal": (await import("./rules/use-ownerGlobal.mjs")).default,
+    "use-documentGlobal": (await import("./rules/use-documentGlobal.mjs"))
+      .default,
     "use-includes-instead-of-indexOf": (
       await import("./rules/use-includes-instead-of-indexOf.mjs")
     ).default,

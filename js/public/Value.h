@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -706,6 +704,16 @@ class Value {
     asBits_ = tmp;
   }
 
+#if JS_BITS_PER_WORD == 64
+  // Relaxed atomic load and store operations on a Value.
+  Value atomicGet() const {
+    return fromRawBits(__atomic_load_n(&asBits_, __ATOMIC_RELAXED));
+  }
+  void atomicSet(const Value& value) {
+    __atomic_store_n(&asBits_, value.asBits_, __ATOMIC_RELAXED);
+  }
+#endif
+
  private:
   JSValueTag toTag() const { return JSValueTag(asBits_ >> JSVAL_TAG_SHIFT); }
 
@@ -839,12 +847,13 @@ class Value {
   }
 
   // Like isMagic, but without the release assertion.
+  // Note that in release builds this will return *false* for
+  // non-matching magic values, because it is generally safer to
+  // ignore an unexpected magic value than to misinterpret it. See bug
+  // 2032226.
   bool isMagicNoReleaseCheck(JSWhyMagic why) const {
-    if (!isMagic()) {
-      return false;
-    }
-    MOZ_ASSERT(whyMagic() == why);
-    return true;
+    MOZ_ASSERT_IF(isMagic(), whyMagic() == why);
+    return asBits_ == bitsFromTagAndPayload(JSVAL_TAG_MAGIC, uint32_t(why));
   }
 
   JS::TraceKind traceKind() const {

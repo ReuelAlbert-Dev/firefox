@@ -136,9 +136,9 @@ bool CompositorManagerChild::CreateContentCompositorBridge(
 
   CompositorBridgeOptions options = ContentCompositorOptions();
 
-  RefPtr<CompositorBridgeChild> bridge = new CompositorBridgeChild(sInstance);
-  if (NS_WARN_IF(
-          !sInstance->SendPCompositorBridgeConstructor(bridge, options))) {
+  RefPtr bridge = MakeRefPtr<CompositorBridgeChild>(sInstance);
+  if (NS_WARN_IF(!sInstance->SendPCompositorBridgeConstructor(bridge, options,
+                                                              aNamespace))) {
     return false;
   }
 
@@ -149,8 +149,7 @@ bool CompositorManagerChild::CreateContentCompositorBridge(
 /* static */
 already_AddRefed<CompositorBridgeChild>
 CompositorManagerChild::CreateWidgetCompositorBridge(
-    uint64_t aProcessToken, WebRenderLayerManager* aLayerManager,
-    uint32_t aNamespace, CSSToLayoutDeviceScale aScale,
+    uint64_t aProcessToken, uint32_t aNamespace, CSSToLayoutDeviceScale aScale,
     const CompositorOptions& aOptions, bool aUseExternalSurfaceSize,
     const gfx::IntSize& aSurfaceSize, uint64_t aInnerWindowId) {
   MOZ_ASSERT(XRE_IsParentProcess());
@@ -166,20 +165,20 @@ CompositorManagerChild::CreateWidgetCompositorBridge(
       aScale, vsyncRate, aOptions, aUseExternalSurfaceSize, aSurfaceSize,
       aInnerWindowId);
 
-  RefPtr<CompositorBridgeChild> bridge = new CompositorBridgeChild(sInstance);
-  if (NS_WARN_IF(
-          !sInstance->SendPCompositorBridgeConstructor(bridge, options))) {
+  RefPtr bridge = MakeRefPtr<CompositorBridgeChild>(sInstance);
+  if (NS_WARN_IF(!sInstance->SendPCompositorBridgeConstructor(bridge, options,
+                                                              aNamespace))) {
     return nullptr;
   }
 
-  bridge->InitForWidget(aProcessToken, aLayerManager, aNamespace);
+  bridge->InitForWidget(aProcessToken, aNamespace);
   return bridge.forget();
 }
 
 /* static */
 already_AddRefed<CompositorBridgeChild>
 CompositorManagerChild::CreateSameProcessWidgetCompositorBridge(
-    WebRenderLayerManager* aLayerManager, uint32_t aNamespace) {
+    uint32_t aNamespace) {
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(NS_IsMainThread());
   if (NS_WARN_IF(!sInstance || !sInstance->CanSend())) {
@@ -188,13 +187,13 @@ CompositorManagerChild::CreateSameProcessWidgetCompositorBridge(
 
   CompositorBridgeOptions options = SameProcessWidgetCompositorOptions();
 
-  RefPtr<CompositorBridgeChild> bridge = new CompositorBridgeChild(sInstance);
-  if (NS_WARN_IF(
-          !sInstance->SendPCompositorBridgeConstructor(bridge, options))) {
+  RefPtr bridge = MakeRefPtr<CompositorBridgeChild>(sInstance);
+  if (NS_WARN_IF(!sInstance->SendPCompositorBridgeConstructor(bridge, options,
+                                                              aNamespace))) {
     return nullptr;
   }
 
-  bridge->InitForWidget(1, aLayerManager, aNamespace);
+  bridge->InitForWidget(1, aNamespace);
   return bridge.forget();
 }
 

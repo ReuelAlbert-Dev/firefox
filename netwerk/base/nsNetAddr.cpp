@@ -31,26 +31,8 @@ NS_IMETHODIMP nsNetAddr::GetFamily(uint16_t* aFamily) {
 }
 
 NS_IMETHODIMP nsNetAddr::GetAddress(nsACString& aAddress) {
-  switch (mAddr.raw.family) {
-    /* PR_NetAddrToString can handle INET and INET6, but not LOCAL. */
-    case AF_INET:
-      aAddress.SetLength(kIPv4CStrBufSize);
-      mAddr.ToStringBuffer(aAddress.BeginWriting(), kIPv4CStrBufSize);
-      aAddress.SetLength(strlen(aAddress.BeginReading()));
-      break;
-    case AF_INET6:
-      aAddress.SetLength(kIPv6CStrBufSize);
-      mAddr.ToStringBuffer(aAddress.BeginWriting(), kIPv6CStrBufSize);
-      aAddress.SetLength(strlen(aAddress.BeginReading()));
-      break;
-#if defined(XP_UNIX)
-    case AF_LOCAL:
-      aAddress.Assign(mAddr.local.path);
-      break;
-#endif
-    // PR_AF_LOCAL falls through to default when not XP_UNIX
-    default:
-      return NS_ERROR_UNEXPECTED;
+  if (!mAddr.ToString(aAddress)) {
+    return NS_ERROR_UNEXPECTED;
   }
 
   return NS_OK;

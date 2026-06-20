@@ -5,6 +5,11 @@
 #include "ReadableStreamTee.h"
 
 #include "ReadIntoRequest.h"
+#include "ReadableByteStreamControllerAbstract.h"
+#include "ReadableStreamAbstract.h"
+#include "ReadableStreamBYOBReaderAbstract.h"
+#include "ReadableStreamDefaultControllerAbstract.h"
+#include "ReadableStreamDefaultReaderAbstract.h"
 #include "TeeState.h"
 #include "js/Exception.h"
 #include "js/TypeDecls.h"
@@ -12,11 +17,6 @@
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/dom/ByteStreamHelpers.h"
 #include "mozilla/dom/Promise-inl.h"
-#include "mozilla/dom/ReadableByteStreamController.h"
-#include "mozilla/dom/ReadableStream.h"
-#include "mozilla/dom/ReadableStreamBYOBReader.h"
-#include "mozilla/dom/ReadableStreamDefaultController.h"
-#include "mozilla/dom/ReadableStreamDefaultReader.h"
 #include "mozilla/dom/ReadableStreamGenericReader.h"
 #include "mozilla/dom/UnderlyingSourceBinding.h"
 #include "mozilla/dom/UnderlyingSourceCallbackHelpers.h"
@@ -73,13 +73,13 @@ void ReadableStreamDefaultTeeReadRequest::ChunkSteps(
       : public MicroTaskRunnable {
     // Virtually const, but is cycle collected
     MOZ_KNOWN_LIVE RefPtr<TeeState> mTeeState;
-    JS::PersistentRooted<JS::Value> mChunk;
+    JS::Heap<JS::Value> mChunk;
 
    public:
     ReadableStreamDefaultTeeReadRequestChunkSteps(JSContext* aCx,
                                                   TeeState* aTeeState,
                                                   JS::Handle<JS::Value> aChunk)
-        : mTeeState(aTeeState), mChunk(aCx, aChunk) {}
+        : mTeeState(aTeeState), mChunk(aChunk) {}
 
     MOZ_CAN_RUN_SCRIPT
     void Run(AutoSlowOperation& aAso) override {
@@ -136,6 +136,10 @@ void ReadableStreamDefaultTeeReadRequest::ChunkSteps(
     bool Suppressed() override {
       nsIGlobalObject* global = mTeeState->GetStream()->GetParentObject();
       return global && global->IsInSyncOperation();
+    }
+
+    void TraceMicroTask(JSTracer* trc) override {
+      TraceEdge(trc, &mChunk, "ReadableStreamDefaultTeeReadRequest Chunk");
     }
   };
 
@@ -290,13 +294,21 @@ class ByteStreamTeeSourceAlgorithms final
         return nullptr;
       }
 
-      JS::Rooted<JS::Value> reason1(aCx, mTeeState->Reason1());
+      JS::Rooted<JS::Value> reason1(aCx);
+      mTeeState->GetReason1(aCx, &reason1, aRv);
+      if (aRv.Failed()) {
+        return nullptr;
+      }
       if (!JS_SetElement(aCx, compositeReason, 0, reason1)) {
         aRv.StealExceptionFromJSContext(aCx);
         return nullptr;
       }
 
-      JS::Rooted<JS::Value> reason2(aCx, mTeeState->Reason2());
+      JS::Rooted<JS::Value> reason2(aCx);
+      mTeeState->GetReason2(aCx, &reason2, aRv);
+      if (aRv.Failed()) {
+        return nullptr;
+      }
       if (!JS_SetElement(aCx, compositeReason, 1, reason2)) {
         aRv.StealExceptionFromJSContext(aCx);
         return nullptr;

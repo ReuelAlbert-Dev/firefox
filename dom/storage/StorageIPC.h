@@ -560,7 +560,7 @@ class SessionStorageManagerParent final
 
   mozilla::ipc::IPCResult RecvClearStorages(
       const OriginAttributesPattern& aPattern, const nsACString& aOriginScope,
-      const uint32_t& aMode) override;
+      const DomainMatchingMode& aMode) override;
 
  private:
   ~SessionStorageManagerParent();

@@ -5,8 +5,7 @@
 #ifndef mozilla_layers_NativeLayerWayland_h
 #define mozilla_layers_NativeLayerWayland_h
 
-#include <deque>
-
+#include "mozilla/Atomics.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/layers/NativeLayer.h"
 #include "mozilla/layers/SurfacePoolWayland.h"
@@ -41,6 +40,7 @@ struct LayerState {
   // mFrontBuffer was changed and we need to commit it to Wayland compositor
   // to show new content.
   bool mMutatedFrontBuffer : 1;
+
   // Was rendered in last cycle.
   bool mRenderedLastCycle : 1;
 
@@ -86,9 +86,12 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
     return mRootSurface;
   }
 
-  RefPtr<widget::DRMFormat> GetDRMFormat() { return mDRMFormat; }
+  already_AddRefed<widget::DRMFormat> GetDRMFormat() {
+    return do_AddRef(static_cast<widget::DRMFormat*>(mDRMFormat));
+  }
+  void SetDRMFormat(widget::DRMFormat* aFormat);
 
-  void FrameCallbackHandler(uint32_t aTime);
+  void VSyncCallbackHandler(uint32_t aTime, bool aEmulated);
 
   RefPtr<widget::WaylandBuffer> BorrowExternalBuffer(
       RefPtr<DMABufSurface> aDMABufSurface);
@@ -125,6 +128,9 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
   bool IsEmptyLocked(const widget::WaylandSurfaceLock& aProofOfLock);
   void ClearLayersLocked(const widget::WaylandSurfaceLock& aProofOfLock);
 
+  bool CommitToScreenLocked(widget::WaylandSurfaceLock& aLock);
+  void ConfigureScaleLocked(widget::WaylandSurfaceLock& aProofOfLock);
+
 #ifdef MOZ_LOGGING
   void LogStatsLocked(const widget::WaylandSurfaceLock& aProofOfLock);
 #endif
@@ -143,7 +149,7 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
   RefPtr<widget::WaylandSurface> mRootSurface;
 
   // Copy of DRM format we use to create DMABuf surfaces
-  RefPtr<widget::DRMFormat> mDRMFormat;
+  Atomic<widget::DRMFormat*> mDRMFormat{nullptr};
 
   // Empty buffer attached to mSurface. We need to have something
   // attached to make mSurface and all child visible.
@@ -180,6 +186,8 @@ class NativeLayerRootWayland final : public NativeLayerRoot {
   bool mRootAllLayersRendered = false;
   bool mMainThreadUpdateQueued = false;
   bool mIsFullscreen = false;
+  // We're missing commit to root surface
+  bool mMissingRootCommit = false;
 };
 
 class NativeLayerWayland : public NativeLayer {
@@ -223,7 +231,8 @@ class NativeLayerWayland : public NativeLayer {
   //
   // Also Unmap() needs to be finished on main thread.
   bool IsMapped();
-  bool Map(widget::WaylandSurfaceLock* aParentWaylandSurfaceLock);
+  bool IsVisible();
+  bool Map(widget::WaylandSurfaceLock& aParentWaylandSurfaceLock);
   void Unmap();
 
   void UpdateOnMainThread();
@@ -233,7 +242,7 @@ class NativeLayerWayland : public NativeLayer {
   void ForceCommit();
 
   void PlaceAbove(NativeLayerWayland* aLowerLayer);
-
+  void SetCoordinatesScale(uint32_t aCoordinatesScale);
 #ifdef MOZ_LOGGING
   nsAutoCString GetDebugTag() const;
 #endif

@@ -259,7 +259,9 @@ class nsSameProcessAsyncMessageBase {
  public:
   using StructuredCloneData = mozilla::dom::ipc::StructuredCloneData;
 
-  nsSameProcessAsyncMessageBase();
+  nsSameProcessAsyncMessageBase() = default;
+  nsSameProcessAsyncMessageBase(const nsSameProcessAsyncMessageBase&) = delete;
+
   nsresult Init(const nsAString& aMessage,
                 mozilla::NotNull<StructuredCloneData*> aData);
 
@@ -267,12 +269,10 @@ class nsSameProcessAsyncMessageBase {
                       nsFrameMessageManager* aManager);
 
  private:
-  nsSameProcessAsyncMessageBase(const nsSameProcessAsyncMessageBase&);
-
   nsString mMessage;
   RefPtr<StructuredCloneData> mData;
 #ifdef DEBUG
-  bool mCalledInit;
+  bool mCalledInit = false;
 #endif
 };
 

@@ -235,37 +235,20 @@ class D3DSharedTexturesReporter final : public nsIMemoryReporter {
 NS_IMPL_ISUPPORTS(D3DSharedTexturesReporter, nsIMemoryReporter)
 
 gfxWindowsPlatform::gfxWindowsPlatform() {
-  // If win32k is locked down then we can't use COM STA and shouldn't need it.
-  // Also, we won't be using any GPU memory in this process.
   if (!IsWin32kLockedDown()) {
-    /*
-     * Initialize COM
-     */
-    CoInitialize(nullptr);
-
-    RegisterStrongMemoryReporter(new GPUAdapterReporter());
-    RegisterStrongMemoryReporter(new D3DSharedTexturesReporter());
+    RegisterStrongMemoryReporter(MakeAndAddRef<GPUAdapterReporter>());
+    RegisterStrongMemoryReporter(MakeAndAddRef<D3DSharedTexturesReporter>());
   }
 }
 
-gfxWindowsPlatform::~gfxWindowsPlatform() {
-  DeviceManagerDx::Shutdown();
-
-  // We don't initialize COM when win32k is locked down.
-  if (!IsWin32kLockedDown()) {
-    /*
-     * Uninitialize COM
-     */
-    CoUninitialize();
-  }
-}
+gfxWindowsPlatform::~gfxWindowsPlatform() { DeviceManagerDx::Shutdown(); }
 
 /* static */
 void gfxWindowsPlatform::InitMemoryReportersForGPUProcess() {
   MOZ_RELEASE_ASSERT(XRE_IsGPUProcess());
 
-  RegisterStrongMemoryReporter(new GPUAdapterReporter());
-  RegisterStrongMemoryReporter(new D3DSharedTexturesReporter());
+  RegisterStrongMemoryReporter(MakeAndAddRef<GPUAdapterReporter>());
+  RegisterStrongMemoryReporter(MakeAndAddRef<D3DSharedTexturesReporter>());
 }
 
 /* static */
@@ -1850,16 +1833,39 @@ void gfxWindowsPlatform::GetPlatformDisplayInfo(
 
   ScaledResolutionSet scaled;
   GetScaledResolutions(scaled);
-  if (scaled.IsEmpty()) {
-    return;
+  if (!scaled.IsEmpty()) {
+    aObj.DefineProperty("ScaledResolutionCount", scaled.Length());
+    for (size_t i = 0; i < scaled.Length(); ++i) {
+      auto& s = scaled[i];
+      nsPrintfCString name("ScaledResolution%zu", i);
+      nsPrintfCString value("source %dx%d, target %dx%d", s.first.width,
+                            s.first.height, s.second.width, s.second.height);
+      aObj.DefineProperty(name.get(), value.get());
+    }
   }
 
-  aObj.DefineProperty("ScaledResolutionCount", scaled.Length());
-  for (size_t i = 0; i < scaled.Length(); ++i) {
-    auto& s = scaled[i];
-    nsPrintfCString name("ScaledResolution%zu", i);
-    nsPrintfCString value("source %dx%d, target %dx%d", s.first.width,
-                          s.first.height, s.second.width, s.second.height);
-    aObj.DefineProperty(name.get(), value.get());
+  nsTArray<DXGI_OUTPUT_DESC1> outputs =
+      DeviceManagerDx::Get()->EnumerateOutputs();
+  if (!outputs.IsEmpty()) {
+    nsAutoCString colorSpaces;
+    for (size_t i = 0; i < outputs.Length(); ++i) {
+      if (i > 0) {
+        colorSpaces.AppendLiteral(", ");
+      }
+      switch (outputs[i].ColorSpace) {
+        case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709:
+          colorSpaces.AppendLiteral("DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709");
+          break;
+        case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+          colorSpaces.AppendLiteral(
+              "DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020");
+          break;
+        default:
+          colorSpaces.AppendPrintf("DXGI_COLOR_SPACE_TYPE(%d)",
+                                   static_cast<int>(outputs[i].ColorSpace));
+          break;
+      }
+    }
+    aObj.DefineProperty("OutputColorSpaces", colorSpaces.get());
   }
 }

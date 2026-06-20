@@ -87,8 +87,8 @@ TEST_F(APZCBasicTester, ComplexTransform) {
   // CSS pixels). The displayport is 1 extra CSS pixel on all
   // sides.
 
-  RefPtr<TestAsyncPanZoomController> childApzc =
-      new TestAsyncPanZoomController(LayersId{0}, mcc, tm);
+  RefPtr childApzc =
+      mozilla::MakeRefPtr<TestAsyncPanZoomController>(LayersId{0}, mcc, tm);
 
   const char* treeShape = "x(x)";
   // LayerID                     0 1
@@ -267,7 +267,8 @@ TEST_F(APZCBasicTester, ResumeInterruptedTouchDrag_Bug1592435) {
   metadata.GetMetrics().SetVisualDestination(mainThreadOffset);
   metadata.GetMetrics().SetScrollGeneration(
       sGenerationCounter.NewMainThreadGeneration());
-  metadata.GetMetrics().SetVisualScrollUpdateType(FrameMetrics::eMainThread);
+  metadata.GetMetrics().SetVisualScrollUpdateType(
+      ScrollOffsetUpdateType::MainThread);
   scrollUpdates.Clear();
   metadata.SetScrollUpdates(scrollUpdates);
   apzc->NotifyMainThreadTransaction(
@@ -404,7 +405,7 @@ TEST_F(APZCBasicTester, MultipleSmoothScrollsSmooth) {
   }
 }
 
-TEST_F(APZCBasicTester, NotifyLayersUpdate_WithScrollUpdate) {
+TEST_F(APZCBasicTester, NotifyMainThreadTransaction_WithScrollUpdate) {
   // Set an empty metadata as if the APZC is now newly created.
   // This replicates when a document in a background tab now becomes forground.
   ScrollMetadata metadata;
@@ -445,7 +446,7 @@ TEST_F(APZCBasicTester, NotifyLayersUpdate_WithScrollUpdate) {
   ASSERT_EQ(apzc->GetFrameMetrics().GetVisualScrollOffset(), CSSPoint(15, 15));
 }
 
-TEST_F(APZCBasicTester, NotifyLayersUpdate_WithMultipleScrollUpdates) {
+TEST_F(APZCBasicTester, NotifyMainThreadTransaction_WithMultipleScrollUpdates) {
   // Set an empty metadata as if the APZC is now newly created.
   // This replicates when a document in a background tab now becomes foreground.
   ScrollMetadata metadata;

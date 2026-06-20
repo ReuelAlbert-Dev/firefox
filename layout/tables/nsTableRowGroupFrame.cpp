@@ -7,13 +7,13 @@
 
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "nsCOMPtr.h"
 #include "nsCSSFrameConstructor.h"
 #include "nsCSSRendering.h"
 #include "nsCellMap.h"  //table cell navigation
 #include "nsDisplayList.h"
-#include "nsGkAtoms.h"
 #include "nsHTMLParts.h"
 #include "nsIContent.h"
 #include "nsIFrame.h"

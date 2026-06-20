@@ -67,13 +67,11 @@ class nsCSSFrameConstructor final : public nsFrameManager {
                         PresShell* aPresShell);
   ~nsCSSFrameConstructor() { MOZ_ASSERT(mFCItemsInUse == 0); }
 
-  static void GetAlternateTextFor(const Element&, nsAString& aAltText);
-
- private:
   nsCSSFrameConstructor(const nsCSSFrameConstructor& aCopy) = delete;
   nsCSSFrameConstructor& operator=(const nsCSSFrameConstructor& aCopy) = delete;
 
- public:
+  static void GetAlternateTextFor(const Element&, nsAString& aAltText);
+
   /**
    * Whether insertion should be done synchronously or asynchronously.
    *
@@ -367,9 +365,12 @@ class nsCSSFrameConstructor final : public nsFrameManager {
                                        nsIFrame* aPrevPageFrame,
                                        nsCanvasFrame*& aCanvasFrame);
 
+  enum class AllowCounters : bool { No, Yes };
+
   void InitAndRestoreFrame(const nsFrameConstructorState& aState,
                            nsIContent* aContent, nsContainerFrame* aParentFrame,
-                           nsIFrame* aNewFrame, bool aAllowCounters = true);
+                           nsIFrame* aNewFrame,
+                           AllowCounters = AllowCounters::Yes);
 
   already_AddRefed<ComputedStyle> ResolveComputedStyle(nsIContent* aContent);
 
@@ -876,7 +877,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     // Also, the return value is always non-null, thanks to infallible 'new'.
     FrameConstructionItem* AppendItem(
         nsCSSFrameConstructor* aFCtor, const FrameConstructionData* aFCData,
-        nsIContent* aContent, already_AddRefed<ComputedStyle>&& aComputedStyle,
+        nsIContent* aContent, already_AddRefed<ComputedStyle> aComputedStyle,
         bool aSuppressWhiteSpaceOptimizations) {
       FrameConstructionItem* item = new (aFCtor)
           FrameConstructionItem(aFCData, aContent, std::move(aComputedStyle),
@@ -890,7 +891,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     // Arguments are the same as AppendItem().
     FrameConstructionItem* PrependItem(
         nsCSSFrameConstructor* aFCtor, const FrameConstructionData* aFCData,
-        nsIContent* aContent, already_AddRefed<ComputedStyle>&& aComputedStyle,
+        nsIContent* aContent, already_AddRefed<ComputedStyle> aComputedStyle,
         bool aSuppressWhiteSpaceOptimizations) {
       FrameConstructionItem* item = new (aFCtor)
           FrameConstructionItem(aFCData, aContent, std::move(aComputedStyle),
@@ -903,6 +904,19 @@ class nsCSSFrameConstructor final : public nsFrameManager {
 
     void InlineItemAdded() { ++mInlineCount; }
     void BlockItemAdded() { ++mBlockCount; }
+
+    // Not allocated from the heap!
+    void* operator new(size_t) = delete;
+    void* operator new[](size_t) = delete;
+#ifdef _MSC_VER /* Visual Studio */
+   private:
+    void operator delete(void*) { MOZ_CRASH("FrameConstructionItemList::del"); }
+
+   public:
+#else
+    void operator delete(void*) = delete;
+#endif
+    void operator delete[](void*) = delete;
 
     class Iterator {
      public:
@@ -1039,15 +1053,6 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     }
 
    private:
-    // Not allocated from the heap!
-    void* operator new(size_t) = delete;
-    void* operator new[](size_t) = delete;
-#ifdef _MSC_VER /* Visual Studio */
-    void operator delete(void*) { MOZ_CRASH("FrameConstructionItemList::del"); }
-#else
-    void operator delete(void*) = delete;
-#endif
-    void operator delete[](void*) = delete;
     // Placement new is used by Reset().
     void* operator new(size_t, void* aPtr) { return aPtr; }
 
@@ -1105,7 +1110,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
       : public mozilla::LinkedListElement<FrameConstructionItem> {
     FrameConstructionItem(const FrameConstructionData* aFCData,
                           nsIContent* aContent,
-                          already_AddRefed<ComputedStyle>&& aComputedStyle,
+                          already_AddRefed<ComputedStyle> aComputedStyle,
                           bool aSuppressWhiteSpaceOptimizations)
         : mFCData(aFCData),
           mContent(aContent),
@@ -1122,6 +1127,21 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     void* operator new(size_t, nsCSSFrameConstructor* aFCtor) {
       return aFCtor->AllocateFCItem();
     }
+
+    // Not allocated from the general heap - instead, use the new/Delete APIs
+    // that take a nsCSSFrameConstructor* (which manages our arena allocation).
+    void* operator new(size_t) = delete;
+    void* operator new[](size_t) = delete;
+#ifdef _MSC_VER /* Visual Studio */
+   private:
+    void operator delete(void*) { MOZ_CRASH("FrameConstructionItem::delete"); }
+
+   public:
+#else
+    void operator delete(void*) = delete;
+#endif
+    void operator delete[](void*) = delete;
+    FrameConstructionItem(const FrameConstructionItem& aOther) = delete;
 
     void Delete(nsCSSFrameConstructor* aFCtor) {
       mChildItems.Destroy(aFCtor);
@@ -1186,17 +1206,6 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     bool mIsRenderedLegend : 1;
 
    private:
-    // Not allocated from the general heap - instead, use the new/Delete APIs
-    // that take a nsCSSFrameConstructor* (which manages our arena allocation).
-    void* operator new(size_t) = delete;
-    void* operator new[](size_t) = delete;
-#ifdef _MSC_VER /* Visual Studio */
-    void operator delete(void*) { MOZ_CRASH("FrameConstructionItem::delete"); }
-#else
-    void operator delete(void*) = delete;
-#endif
-    void operator delete[](void*) = delete;
-    FrameConstructionItem(const FrameConstructionItem& aOther) = delete;
     // Not allocated from the stack!
     ~FrameConstructionItem() {
       MOZ_COUNT_DTOR(FrameConstructionItem);
@@ -1216,7 +1225,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
     explicit AutoFrameConstructionItem(nsCSSFrameConstructor* aFCtor,
                                        Args&&... args)
         : mFCtor(aFCtor),
-          mItem(new(aFCtor)
+          mItem(new (aFCtor)
                     FrameConstructionItem(std::forward<Args>(args)...)) {
       MOZ_ASSERT(mFCtor);
     }
@@ -1364,6 +1373,12 @@ class nsCSSFrameConstructor final : public nsFrameManager {
                                         nsContainerFrame* aParentFrame,
                                         const nsStyleDisplay* aStyleDisplay,
                                         nsFrameList& aFrameList);
+
+  nsIFrame* ConstructTextControl(nsFrameConstructorState& aState,
+                                 FrameConstructionItem& aItem,
+                                 nsContainerFrame* aParentFrame,
+                                 const nsStyleDisplay* aStyleDisplay,
+                                 nsFrameList& aFrameList);
 
   // Creates a block frame wrapping an anonymous ruby frame.
   nsIFrame* ConstructBlockRubyFrame(nsFrameConstructorState& aState,
@@ -1554,6 +1569,13 @@ class nsCSSFrameConstructor final : public nsFrameManager {
                                         const nsStyleDisplay* aDisplay,
                                         nsFrameList& aFrameList);
 
+  // Construct a scrollable block with an already created subclass of
+  // ScrollContainerFrame, or nullptr for a plain ScrollContainerFrame.
+  void ConstructScrollableBlockWithScrollContainer(
+      nsFrameConstructorState& aState, FrameConstructionItem& aItem,
+      nsContainerFrame* aParentFrame, const nsStyleDisplay* aDisplay,
+      nsFrameList& aFrameList, nsContainerFrame*&);
+
   /**
    * This adds FrameConstructionItem objects to aItemsToConstruct for the
    * anonymous content returned by an nsIAnonymousContentCreator::
@@ -1658,8 +1680,7 @@ class nsCSSFrameConstructor final : public nsFrameManager {
   already_AddRefed<ComputedStyle> BeginBuildingScrollContainerFrame(
       nsFrameConstructorState& aState, nsIContent* aContent,
       ComputedStyle* aContentStyle, nsContainerFrame* aParentFrame,
-      mozilla::PseudoStyleType aScrolledPseudo, bool aIsRoot,
-      nsContainerFrame*& aNewFrame);
+      bool aIsRoot, nsContainerFrame*& aNewFrame);
 
   // Completes the building of the scroll container frame.
   // Creates a view for the scrolledframe and makes it the child of the

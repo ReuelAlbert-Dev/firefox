@@ -17,4 +17,10 @@ fun interface PageMetadataExtractor {
 /**
  * Page metadata required for logical choices.
  */
-data class PageMetadata(val structuredDataTypes: List<String>, val language: String)
+data class PageMetadata(
+    val structuredDataTypes: List<String> = listOf(),
+    val wordCount: Int = 0,
+    val language: String = "en",
+    val isReaderable: Boolean = false,
+    val pageTitle: String = "",
+)

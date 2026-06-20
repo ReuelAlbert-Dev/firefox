@@ -1,5 +1,4 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -83,6 +82,32 @@ var BrowserCommands = {
     return true;
   },
 
+  addTabSplitView() {
+    if (
+      !gBrowser.selectedTab ||
+      gBrowser.selectedTab.hidden ||
+      gBrowser.selectedTab.pinned ||
+      gBrowser.selectedTab.splitview
+    ) {
+      return;
+    }
+
+    let newTab = gBrowser.addTrustedTab("about:opentabs");
+    gBrowser.addTabSplitView([gBrowser.selectedTab, newTab], {
+      insertBefore: gBrowser.selectedTab,
+      trigger: "keyboard_shortcut",
+    });
+    gBrowser.selectedTab = newTab;
+  },
+
+  separateTabSplitView() {
+    gBrowser.selectedTab?.splitview?.unsplitTabs("keyboard_shortcut");
+  },
+
+  duplicateTab() {
+    duplicateTabIn(gBrowser.selectedTab, "tab");
+  },
+
   reloadOrDuplicate(aEvent) {
     aEvent = BrowserUtils.getRootEvent(aEvent);
     const accelKeyPressed =
@@ -147,11 +172,7 @@ var BrowserCommands = {
         if (isInitialPage(homePage)) {
           gBrowser.selectedBrowser.initialPageLoadedFromUserAction = homePage;
         }
-        loadOneOrMoreURIs(
-          homePage,
-          Services.scriptSecurityManager.getSystemPrincipal(),
-          null
-        );
+        loadOneOrMoreURIs(homePage);
         if (isBlankPageURL(homePage)) {
           gURLBar.select();
         } else {
@@ -208,7 +229,9 @@ var BrowserCommands = {
     let werePassedURL = !!url;
     url ??= BROWSER_NEW_TAB_URL;
     let searchClipboard =
-      gMiddleClickNewTabUsesPasteboard && event?.button == 1;
+      event?.button == 1 &&
+      Services.prefs.getBoolPref("middlemouse.paste") &&
+      gMiddleClickNewTabUsesPasteboard;
 
     let relatedToCurrent = false;
     let where = "tab";
@@ -263,6 +286,38 @@ var BrowserCommands = {
   },
 
   openFileWindow() {
+    // The file picker is presented as a sheet attached to its parent
+    // browsingContext's window. When this command is dispatched from a
+    // non-browser chrome window (the macOS hidden menubar window when
+    // all browsers are closed, or auxiliary windows like Library /
+    // About when one of them holds the keyboard focus), we must
+    // redirect the call to a real browser window — otherwise the
+    // sheet either attaches off-screen (hidden window) or to the
+    // wrong window (Library/About). Mirrors openLocation()'s pattern.
+    if (window.location.href != AppConstants.BROWSER_CHROME_URL) {
+      let targetWin = URILoadingHelper.getTargetWindow(window);
+      if (targetWin) {
+        targetWin.focus();
+        targetWin.BrowserCommands.openFileWindow();
+        return;
+      }
+      let newWin = window.openDialog(
+        AppConstants.BROWSER_CHROME_URL,
+        "_blank",
+        "chrome,all,dialog=no",
+        "about:blank"
+      );
+      newWin.addEventListener(
+        "load",
+        () => {
+          newWin.focus();
+          newWin.BrowserCommands.openFileWindow();
+        },
+        { once: true }
+      );
+      return;
+    }
+
     // Get filepicker component.
     try {
       const nsIFilePicker = Ci.nsIFilePicker;
@@ -306,10 +361,14 @@ var BrowserCommands = {
     }
 
     // In a multi-select context, close all selected tabs
+    // pinned tabs excluded if closed using keyboard
     if (gBrowser.multiSelectedTabsCount) {
-      gBrowser.removeMultiSelectedTabs(
-        gBrowser.TabMetrics.userTriggeredContext()
-      );
+      let excludePinnedTabs =
+        event && (event.ctrlKey || event.metaKey || event.altKey);
+      gBrowser.removeMultiSelectedTabs({
+        ...gBrowser.TabMetrics.userTriggeredContext(),
+        excludePinnedTabs,
+      });
       return;
     }
 
@@ -350,7 +409,7 @@ var BrowserCommands = {
     // Switch to and focus the opener
     const openerBC = gBrowser.selectedBrowser.browsingContext.opener;
     const openerBrowser = openerBC.embedderElement;
-    const openerWindow = openerBrowser.ownerGlobal;
+    const openerWindow = openerBrowser.documentGlobal;
     const openerTab = openerWindow.gBrowser.getTabForBrowser(openerBrowser);
     openerWindow.gBrowser.selectedTab = openerTab;
     openerWindow.focus();
@@ -406,15 +465,9 @@ var BrowserCommands = {
       // source in tab expects the new view source browser's remoteness to match
       // that of the original URL, so disable remoteness if necessary for this
       // URL.
-      const oa = E10SUtils.predictOriginAttributes({ window });
-      preferredRemoteType = E10SUtils.getRemoteTypeForURI(
-        args.URL,
-        gMultiProcessBrowser,
-        gFissionBrowser,
-        E10SUtils.DEFAULT_REMOTE_TYPE,
-        null,
-        oa
-      );
+      preferredRemoteType = ChromeUtils.predictRemoteTypeForURI(args.URL, {
+        window,
+      });
     }
 
     // In the case of popups, we need to find a non-popup browser window.

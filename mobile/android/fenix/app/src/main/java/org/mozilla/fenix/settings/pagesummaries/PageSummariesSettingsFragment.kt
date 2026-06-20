@@ -10,9 +10,10 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
+import androidx.fragment.compose.content
+import androidx.lifecycle.lifecycleScope
 import mozilla.components.feature.summarize.settings.SummarizeSettingsContent
 import mozilla.components.feature.summarize.settings.SummarizeSettingsMiddleware
 import mozilla.components.feature.summarize.settings.SummarizeSettingsState
@@ -40,29 +41,30 @@ class PageSummariesSettingsFragment : Fragment(), SystemInsetsPaddedFragment {
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        return ComposeView(requireContext()).apply {
-            setContent {
-                FirefoxTheme {
-                    val summarizeSettings = requireComponents.core.summarizeFeatureSettings
-                    val store = SummarizeSettingsStore(
-                        initialState = SummarizeSettingsState(
-                            summarizePagesEnabled = summarizeSettings.summarizePagesEnabled,
-                            shakeToSummarizeEnabled = summarizeSettings.shakeToSummarizeEnabled,
-                        ),
-                        reducer = ::summarizeSettingsReducer,
-                        middleware = listOf(
-                            SummarizeSettingsMiddleware(
-                                settings = summarizeSettings,
-                                onLearnMoreClicked = { openLearnMoreLink() },
-                            ),
-                        ),
-                    )
+        val summarizeSettings = requireComponents.summarizationSettings
+        val cache = requireComponents.summarizationSettingsCache
+        val store = SummarizeSettingsStore(
+            initialState = SummarizeSettingsState(
+                isFeatureEnabled = cache.featureEnabled.value,
+                isGestureEnabled = cache.gestureEnabled.value,
+                shakeSensitivity = cache.shakeSensitivity.value,
+            ),
+            reducer = ::summarizeSettingsReducer,
+            middleware = listOf(
+                SummarizeSettingsMiddleware(
+                    settings = summarizeSettings,
+                    onLearnMoreClicked = { openLearnMoreLink() },
+                    scope = viewLifecycleOwner.lifecycleScope,
+                ),
+            ),
+        )
 
-                    SummarizeSettingsContent(
-                        store = store,
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                }
+        return content {
+            FirefoxTheme {
+                SummarizeSettingsContent(
+                    store = store,
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
             }
         }
     }

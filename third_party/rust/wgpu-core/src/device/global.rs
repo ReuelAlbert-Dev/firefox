@@ -322,11 +322,14 @@ impl Global {
     /// - `hal_texture` must be created from `device_id` corresponding raw handle.
     /// - `hal_texture` must be created respecting `desc`
     /// - `hal_texture` must be initialized
+    /// - The `initial_state` must match the actual driver-side state of
+    ///   the wrapped resource at the moment of wrap.
     pub unsafe fn create_texture_from_hal(
         &self,
         hal_texture: Box<dyn hal::DynTexture>,
         device_id: DeviceId,
         desc: &resource::TextureDescriptor,
+        initial_state: wgt::TextureUses,
         id_in: Option<id::TextureId>,
     ) -> (id::TextureId, Option<resource::CreateTextureError>) {
         profiling::scope!("Device::create_texture_from_hal");
@@ -338,7 +341,7 @@ impl Global {
         let error = 'error: {
             let device = self.hub.devices.get(device_id);
 
-            let texture = match device.create_texture_from_hal(hal_texture, desc) {
+            let texture = match device.create_texture_from_hal(hal_texture, desc, initial_state) {
                 Ok(texture) => texture,
                 Err(error) => break 'error error,
             };
@@ -885,6 +888,13 @@ impl Global {
                     BindingResource::AccelerationStructure(ref tlas) => {
                         ResolvedBindingResource::AccelerationStructure(resolve_tlas(tlas)?)
                     }
+                    BindingResource::AccelerationStructureArray(ref tlas_array) => {
+                        let tlas_array = tlas_array
+                            .iter()
+                            .map(resolve_tlas)
+                            .collect::<Result<Vec<_>, _>>()?;
+                        ResolvedBindingResource::AccelerationStructureArray(Cow::Owned(tlas_array))
+                    }
                     BindingResource::ExternalTexture(ref et) => {
                         ResolvedBindingResource::ExternalTexture(resolve_external_texture(et)?)
                     }
@@ -1111,7 +1121,7 @@ impl Global {
                     id: shader.to_trace(),
                     data: file_names,
                     label: desc.label.clone(),
-                    num_workgroups: desc.num_workgroups,
+                    entry_points: desc.entry_points.clone(),
                 });
             };
 
@@ -1189,21 +1199,23 @@ impl Global {
         device_id: DeviceId,
         desc: &command::RenderBundleEncoderDescriptor,
     ) -> (
-        *mut command::RenderBundleEncoder,
+        Box<command::RenderBundleEncoder>,
         Option<command::CreateRenderBundleError>,
     ) {
         profiling::scope!("Device::create_render_bundle_encoder");
         api_log!("Device::device_create_render_bundle_encoder");
-        let (encoder, error) = match command::RenderBundleEncoder::new(desc, device_id) {
-            Ok(encoder) => (encoder, None),
-            Err(e) => (command::RenderBundleEncoder::dummy(device_id), Some(e)),
-        };
-        (Box::into_raw(Box::new(encoder)), error)
+        let device = self.hub.devices.get(device_id);
+        let (encoder, error) =
+            match command::RenderBundleEncoder::new(desc, Some(&device), device_id) {
+                Ok(encoder) => (encoder, None),
+                Err(e) => (command::RenderBundleEncoder::dummy(device_id), Some(e)),
+            };
+        (Box::new(encoder), error)
     }
 
     pub fn render_bundle_encoder_finish(
         &self,
-        bundle_encoder: command::RenderBundleEncoder,
+        bundle_encoder: Box<command::RenderBundleEncoder>,
         desc: &command::RenderBundleDescriptor,
         id_in: Option<id::RenderBundleId>,
     ) -> (id::RenderBundleId, Option<command::RenderBundleError>) {
@@ -1405,7 +1417,7 @@ impl Global {
                         Ok(module) => module,
                         Err(e) => break 'error e,
                     };
-                    if module.interface.is_none() {
+                    if module.interface.interface().is_none() {
                         passthrough_stages |= wgt::ShaderStages::VERTEX;
                     }
                     let stage = ResolvedProgrammableStageDescriptor {
@@ -1435,7 +1447,7 @@ impl Global {
                             Ok(module) => module,
                             Err(e) => break 'error e,
                         };
-                        if module.interface.is_none() {
+                        if module.interface.interface().is_none() {
                             passthrough_stages |= wgt::ShaderStages::TASK;
                         }
                         let state = ResolvedProgrammableStageDescriptor {
@@ -1462,7 +1474,7 @@ impl Global {
                         Ok(module) => module,
                         Err(e) => break 'error e,
                     };
-                    if mesh_module.interface.is_none() {
+                    if mesh_module.interface.interface().is_none() {
                         passthrough_stages |= wgt::ShaderStages::VERTEX;
                     }
                     let mesh_stage = ResolvedProgrammableStageDescriptor {
@@ -1493,7 +1505,7 @@ impl Global {
                     Ok(module) => module,
                     Err(e) => break 'error e,
                 };
-                if module.interface.is_none() {
+                if module.interface.interface().is_none() {
                     passthrough_stages |= wgt::ShaderStages::FRAGMENT;
                 }
                 let stage = ResolvedProgrammableStageDescriptor {
@@ -1531,18 +1543,20 @@ impl Global {
             #[cfg(feature = "trace")]
             let trace_desc = desc.clone().into_trace();
 
-            let pipeline = match device.create_render_pipeline(desc) {
-                Ok(pair) => pair,
-                Err(e) => break 'error e,
-            };
+            let res = device.create_render_pipeline(desc);
 
             #[cfg(feature = "trace")]
             if let Some(ref mut trace) = *device.trace.lock() {
                 trace.add(trace::Action::CreateGeneralRenderPipeline {
-                    id: pipeline.to_trace(),
+                    id: res.as_ref().ok().map(IntoTrace::to_trace),
                     desc: trace_desc,
                 });
             }
+
+            let pipeline = match res {
+                Ok(pair) => pair,
+                Err(e) => break 'error e,
+            };
 
             let id = fid.assign(Fallible::Valid(pipeline));
             api_log!("Device::create_render_pipeline -> {id:?}");
@@ -1658,7 +1672,7 @@ impl Global {
                 Ok(module) => module,
                 Err(e) => break 'error e.into(),
             };
-            if module.interface.is_none() && layout.is_none() {
+            if module.interface.interface().is_none() && layout.is_none() {
                 break 'error pipeline::CreateComputePipelineError::Implicit(
                     pipeline::ImplicitLayoutError::Passthrough(wgt::ShaderStages::COMPUTE),
                 );
@@ -1680,18 +1694,20 @@ impl Global {
             #[cfg(feature = "trace")]
             let trace_desc = desc.clone().into_trace();
 
-            let pipeline = match device.create_compute_pipeline(desc) {
-                Ok(pair) => pair,
-                Err(e) => break 'error e,
-            };
+            let res = device.create_compute_pipeline(desc);
 
             #[cfg(feature = "trace")]
             if let Some(ref mut trace) = *device.trace.lock() {
                 trace.add(trace::Action::CreateComputePipeline {
-                    id: pipeline.to_trace(),
+                    id: res.as_ref().ok().map(IntoTrace::to_trace),
                     desc: trace_desc,
                 });
             }
+
+            let pipeline = match res {
+                Ok(pair) => pair,
+                Err(e) => break 'error e,
+            };
 
             let id = fid.assign(Fallible::Valid(pipeline));
             api_log!("Device::create_compute_pipeline -> {id:?}");
@@ -2051,7 +2067,7 @@ impl Global {
         self.hub.queues.remove(queue_id);
     }
 
-    /// `op.callback` is guaranteed to be called.
+    /// `op.callback` is always called, even in case of errors.
     pub fn buffer_map_async(
         &self,
         buffer_id: id::BufferId,
@@ -2064,20 +2080,17 @@ impl Global {
 
         let hub = &self.hub;
 
-        let map_result = match hub.buffers.get(buffer_id).get() {
-            Ok(buffer) => buffer.map_async(offset, size, op),
-            Err(e) => Err((op, e.into())),
+        let buffer = match hub.buffers.get(buffer_id).get() {
+            Ok(buffer) => buffer,
+            Err(err) => {
+                if let Some(callback) = op.callback {
+                    callback(Err(err.clone().into()));
+                }
+                return Err(err.into());
+            }
         };
 
-        match map_result {
-            Ok(submission_index) => Ok(submission_index),
-            Err((mut operation, err)) => {
-                if let Some(callback) = operation.callback.take() {
-                    callback(Err(err.clone()));
-                }
-                Err(err)
-            }
-        }
+        buffer.map_async(offset, size, op)
     }
 
     pub fn buffer_get_mapped_range(

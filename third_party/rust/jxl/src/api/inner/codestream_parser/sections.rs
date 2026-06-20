@@ -7,7 +7,7 @@ use crate::{
     api::{JxlDecoderOptions, JxlOutputBuffer},
     bit_reader::BitReader,
     error::Result,
-    frame::Section,
+    frame::{DecoderState, Section},
     headers::frame_header::{Encoding, FrameType},
 };
 
@@ -127,7 +127,7 @@ impl CodestreamParser {
                     frame.decode_lf_group(0, &mut br)?;
                     frame.decode_hf_global(&mut br)?;
                     frame.finalize_lf()?;
-                    frame.decode_and_render_hf_groups(
+                    self.pixels_dirty |= frame.decode_and_render_hf_groups(
                         output_buffers,
                         pixel_format,
                         vec![(0, vec![(0, br)])],
@@ -226,7 +226,7 @@ impl CodestreamParser {
                     self.candidate_hf_sections.clear();
                 }
 
-                frame.decode_and_render_hf_groups(
+                self.pixels_dirty |= frame.decode_and_render_hf_groups(
                     output_buffers,
                     pixel_format,
                     group_readers,
@@ -245,7 +245,7 @@ impl CodestreamParser {
         }
 
         if do_flush && !called_render_hf && frame.can_do_early_rendering() {
-            frame.decode_and_render_hf_groups(
+            self.pixels_dirty |= frame.decode_and_render_hf_groups(
                 output_buffers,
                 pixel_format,
                 vec![],
@@ -285,12 +285,10 @@ impl CodestreamParser {
             self.decoder_state = Some(state);
         } else if might_be_preview {
             // Preview frame has is_last=true but the main frame follows.
-            // Recreate decoder state from saved file header for the main frame.
-            if let Some(fh) = self.saved_file_header.take() {
-                let mut new_state = crate::frame::DecoderState::new(fh);
-                new_state.render_spotcolors = decode_options.render_spot_colors;
-                self.decoder_state = Some(new_state);
-            }
+            self.decoder_state = Some(DecoderState::new(
+                self.file_header.clone().unwrap(),
+                decode_options,
+            ));
         } else {
             self.has_more_frames = false;
         }

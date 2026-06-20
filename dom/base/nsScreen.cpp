@@ -16,14 +16,21 @@
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsLayoutUtils.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsPresContext.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 
 nsScreen::nsScreen(nsPIDOMWindowInner* aWindow)
-    : DOMEventTargetHelper(aWindow),
-      mScreenOrientation(new ScreenOrientation(aWindow, this)) {}
+    : DOMEventTargetHelper(aWindow) {}
+
+/* static */ already_AddRefed<nsScreen> nsScreen::Create(
+    nsPIDOMWindowInner* aWindow) {
+  RefPtr screen = new nsScreen(aWindow);
+  screen->mScreenOrientation = dom::ScreenOrientation::Create(aWindow, screen);
+  return screen.forget();
+}
 
 nsScreen::~nsScreen() = default;
 
@@ -175,7 +182,9 @@ hal::ScreenOrientation nsScreen::GetOrientationType() const {
   return s->GetOrientationType();
 }
 
-ScreenOrientation* nsScreen::Orientation() const { return mScreenOrientation; }
+dom::ScreenOrientation* nsScreen::Orientation() const {
+  return mScreenOrientation;
+}
 
 void nsScreen::GetMozOrientation(nsString& aOrientation,
                                  CallerType aCallerType) const {

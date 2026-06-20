@@ -436,7 +436,7 @@ std::pair<sRGBColor, sRGBColor> Theme::ComputeProgressColors(
     const Colors& aColors) {
   if (aColors.HighContrast()) {
     return aColors.SystemPair(StyleSystemColor::Selecteditem,
-                              StyleSystemColor::Buttontext);
+                              StyleSystemColor::Windowtext);
   }
   return std::make_pair(aColors.Accent().Get(), aColors.Accent().GetDark());
 }
@@ -444,8 +444,8 @@ std::pair<sRGBColor, sRGBColor> Theme::ComputeProgressColors(
 std::pair<sRGBColor, sRGBColor> Theme::ComputeProgressTrackColors(
     const Colors& aColors) {
   if (aColors.HighContrast()) {
-    return aColors.SystemPair(StyleSystemColor::Buttonface,
-                              StyleSystemColor::Buttontext);
+    return aColors.SystemPair(StyleSystemColor::Selecteditemtext,
+                              StyleSystemColor::Windowtext);
   }
   return std::make_pair(sColorGrey10, sColorGrey40);
 }
@@ -895,7 +895,7 @@ void Theme::PaintRange(nsIFrame* aFrame, PaintBackendData& aPaintData,
   tickMarkOrigin -=
       LayoutDevicePoint(tickMarkSize.width, tickMarkSize.height) / 2;
   auto tickMarkRect = LayoutDeviceRect(tickMarkOrigin, tickMarkSize);
-  for (auto tickMark : tickMarks) {
+  for (const auto& tickMark : tickMarks) {
     auto tickMarkOffset =
         tickMarkDirection *
         float(rangeFrame->GetDoubleAsFractionOfRange(tickMark));

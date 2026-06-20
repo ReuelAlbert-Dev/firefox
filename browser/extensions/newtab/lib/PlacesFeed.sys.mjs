@@ -262,7 +262,7 @@ export class PlacesFeed {
       lazy.PlacesUtils.history.markPageAsTyped(Services.io.newURI(urlToOpen));
     }
 
-    const win = action._target.browser.ownerGlobal;
+    const win = action._target.window;
     win.openTrustedLinkIn(
       urlToOpen,
       where || lazy.BrowserUtils.whereToOpenLink(event),
@@ -298,21 +298,15 @@ export class PlacesFeed {
   }
 
   async fillSearchTopSiteTerm({ _target, data }) {
-    // @backward-compat { version 149 }
-    // SearchService replaces Services.search in 149.
-    const searchEngine = await (Services.search ?? lazy.SearchService) // eslint-disable-line mozilla/valid-services
-      .getEngineByAlias(data.label);
-    _target.browser.ownerGlobal.gURLBar.search(data.label, {
+    const searchEngine = await lazy.SearchService.getEngineByAlias(data.label);
+    _target.window.gURLBar.search(data.label, {
       searchEngine,
       searchModeEntry: "topsites_newtab",
     });
   }
 
   _getDefaultSearchEngine(isPrivateWindow) {
-    // @backward-compat { version 149 }
-    // SearchService replaces Services.search in 149.
-    // eslint-disable-next-line mozilla/valid-services
-    return (Services.search ?? lazy.SearchService)[
+    return lazy.SearchService[
       isPrivateWindow ? "defaultPrivateEngine" : "defaultEngine"
     ];
   }
@@ -324,9 +318,14 @@ export class PlacesFeed {
    *   An array of the objects structured as `{ url }`
    */
   addToBlockedTopSitesSponsors(urls) {
-    const blockedPref = JSON.parse(
-      Services.prefs.getStringPref(TOP_SITES_BLOCKED_SPONSORS_PREF, "[]")
-    );
+    let blockedPref;
+    try {
+      blockedPref = JSON.parse(
+        Services.prefs.getStringPref(TOP_SITES_BLOCKED_SPONSORS_PREF, "[]")
+      );
+    } catch (e) {
+      blockedPref = [];
+    }
     const merged = new Set([
       ...blockedPref,
       ...urls.map(url => lazy.NewTabUtils.shortURL(url)),
@@ -392,7 +391,7 @@ export class PlacesFeed {
         const url = `${Services.urlFormatter.formatURLPref(
           "app.support.baseURL"
         )}sponsor-privacy`;
-        const win = action._target.browser.ownerGlobal;
+        const win = action._target.window;
         win.openTrustedLinkIn(url, "tab");
         break;
       }
@@ -425,17 +424,22 @@ export class PlacesFeed {
       case at.BOOKMARK_URL:
         lazy.NewTabUtils.activityStreamLinks.addBookmark(
           action.data,
-          action._target.browser.ownerGlobal
+          action._target.window
         );
         break;
       case at.DELETE_BOOKMARK_BY_ID:
         lazy.NewTabUtils.activityStreamLinks.deleteBookmark(action.data);
         break;
       case at.DELETE_HISTORY_URL: {
-        const { url, forceBlock, pocket_id } = action.data;
-        lazy.NewTabUtils.activityStreamLinks.deleteHistoryEntry(url);
+        const { url, forceBlock, pocket_id, original_url } = action.data;
+        lazy.NewTabUtils.activityStreamLinks.deleteHistoryEntry(
+          original_url || url
+        );
         if (forceBlock) {
-          lazy.NewTabUtils.activityStreamLinks.blockURL({ url, pocket_id });
+          lazy.NewTabUtils.activityStreamLinks.blockURL({
+            url: original_url || url,
+            pocket_id,
+          });
         }
         break;
       }
@@ -449,7 +453,7 @@ export class PlacesFeed {
         this.fillSearchTopSiteTerm(action);
         break;
       case at.OPEN_LINK: {
-        this.openLink(action);
+        this.openLink(action, action.data.where);
         break;
       }
       case at.PARTNER_LINK_ATTRIBUTION:

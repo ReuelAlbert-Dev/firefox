@@ -538,13 +538,10 @@ impl TxBuffer {
         self.ranges.mark_acked(offset, len);
 
         // Any newly-retired bytes can be dropped from the buffer.
-        let new_retirable = self.retired() - prev_retired;
-        debug_assert!(new_retirable <= self.buffered() as u64);
-        let keep = self.buffered() - usize::try_from(new_retirable).expect("u64 fits in usize");
-
-        // Truncate front
-        self.send_buf.rotate_left(self.buffered() - keep);
-        self.send_buf.truncate(keep);
+        let new_retirable =
+            usize::try_from(self.retired() - prev_retired).expect("u64 fits in usize");
+        debug_assert!(new_retirable <= self.buffered());
+        self.send_buf.drain(..new_retirable);
     }
 
     pub fn mark_as_lost(&mut self, offset: u64, len: usize) {
@@ -688,7 +685,8 @@ pub struct SendStream {
     state: State,
     conn_events: ConnectionEvents,
     priority: TransmissionPriority,
-    retransmission_priority: RetransmissionPriority,
+    /// Cached result of `priority + retransmission`, recomputed in `set_priority`.
+    effective_priority: TransmissionPriority,
     retransmission_offset: u64,
     sendorder: Option<SendOrder>,
     bytes_sent: u64,
@@ -711,7 +709,7 @@ impl SendStream {
             },
             conn_events,
             priority: TransmissionPriority::default(),
-            retransmission_priority: RetransmissionPriority::default(),
+            effective_priority: TransmissionPriority::default() + RetransmissionPriority::default(),
             retransmission_offset: 0,
             sendorder: None,
             bytes_sent: 0,
@@ -754,13 +752,13 @@ impl SendStream {
         self.fair
     }
 
-    pub const fn set_priority(
+    pub fn set_priority(
         &mut self,
         transmission: TransmissionPriority,
         retransmission: RetransmissionPriority,
     ) {
         self.priority = transmission;
-        self.retransmission_priority = retransmission;
+        self.effective_priority = transmission + retransmission;
     }
 
     #[must_use]
@@ -912,7 +910,7 @@ impl SendStream {
     ) {
         let retransmission = if priority == self.priority {
             false
-        } else if priority == self.priority + self.retransmission_priority {
+        } else if priority == self.effective_priority {
             true
         } else {
             return;
@@ -997,7 +995,7 @@ impl SendStream {
             State::ResetSent {
                 ref mut priority, ..
             } => {
-                *priority = Some(self.priority + self.retransmission_priority);
+                *priority = Some(self.effective_priority);
             }
             State::ResetRecvd { .. } => (),
             _ => unreachable!(),
@@ -1187,7 +1185,7 @@ impl SendStream {
     }
 
     #[must_use]
-    pub const fn is_terminal(&self) -> bool {
+    pub const fn is_ended(&self) -> bool {
         matches!(
             self.state,
             State::DataRecvd { .. } | State::ResetRecvd { .. }
@@ -1408,7 +1406,7 @@ impl OrderGroup {
     }
 
     #[must_use]
-    pub const fn stream_ids(&self) -> &Vec<StreamId> {
+    pub fn stream_ids(&self) -> &[StreamId] {
         &self.vec
     }
 
@@ -1500,6 +1498,8 @@ pub struct SendStreams {
     // Streams which are owned by the IndexMap.
     sendordered: BTreeMap<SendOrder, OrderGroup>,
     regular: OrderGroup, // streams with no SendOrder set, sorted in stream_id order
+    /// Set when any stream has ended; cleared by `remove_ended`.
+    has_ended: bool,
 }
 
 impl SendStreams {
@@ -1613,12 +1613,14 @@ impl SendStreams {
     pub fn acked(&mut self, token: &RecoveryToken) {
         if let Some(ss) = self.map.get_mut(&token.id) {
             ss.mark_as_acked(token.offset, token.length, token.fin);
+            self.has_ended |= ss.is_ended();
         }
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
         if let Some(ss) = self.map.get_mut(&id) {
             ss.reset_acked();
+            self.has_ended |= ss.is_ended();
         }
     }
 
@@ -1644,26 +1646,35 @@ impl SendStreams {
         self.map.clear();
         self.sendordered.clear();
         self.regular.clear();
+        self.has_ended = false;
     }
 
-    pub fn remove_terminal(&mut self) {
-        self.map.retain(|stream_id, stream| {
-            if stream.is_terminal() {
-                if stream.is_fair() {
-                    match stream.sendorder() {
-                        None => self.regular.remove(*stream_id),
-                        Some(sendorder) => {
-                            if let Some(group) = self.sendordered.get_mut(&sendorder) {
-                                group.remove(*stream_id);
-                            }
+    /// Remove ended streams. Returns `true` if any were removed.
+    #[must_use]
+    pub fn remove_ended(&mut self) -> bool {
+        if !self.has_ended {
+            return false;
+        }
+        self.has_ended = false;
+        let mut removed = false;
+        for (stream_id, stream) in self
+            .map
+            .extract_if(.., |_, stream: &mut SendStream| stream.is_ended())
+        {
+            removed = true;
+            if stream.is_fair() {
+                match stream.sendorder() {
+                    None => self.regular.remove(stream_id),
+                    Some(sendorder) => {
+                        if let Some(group) = self.sendordered.get_mut(&sendorder) {
+                            group.remove(stream_id);
                         }
                     }
                 }
-                // if unfair, we're done
-                return false;
             }
-            true
-        });
+            // if unfair, we're done
+        }
+        removed
     }
 
     pub(crate) fn write_frames<B: Buffer>(
@@ -2237,7 +2248,7 @@ mod tests {
         let res = rt.first_unmarked_range();
         assert_eq!(res, (0, Some(5)));
         assert_eq!(
-            rt.used.iter().next().unwrap(),
+            rt.used.first_key_value().unwrap(),
             (&5, &(5, RangeState::Acked))
         );
         assert_eq!(
@@ -2871,7 +2882,7 @@ mod tests {
         // Ack the fin, then the data.
         s.mark_as_acked(len_u64, 0, true);
         s.mark_as_acked(0, MESSAGE.len(), false);
-        assert!(s.is_terminal());
+        assert!(s.is_ended());
     }
 
     #[test]
@@ -3122,6 +3133,95 @@ mod tests {
         assert_eq!(stream_stats.bytes_acked(), expected_acked);
     }
 
+    /// The writable event fires when the low watermark equals the previous limit and
+    /// the current limit and available space now meet or exceed the watermark.
+    #[test]
+    fn writable_event_fires_at_watermark_equals_previous_limit() {
+        let mut conn_events = ConnectionEvents::default();
+        let id = StreamId::new(4);
+        let limit = 100u64;
+        let conn_fc = connection_fc(limit * 2);
+        let mut s = SendStream::new(id, 0, conn_fc, conn_events.clone());
+        s.set_max_stream_data(limit); // initial limit
+
+        // Set watermark == previous_limit (= avail() after setting limit).
+        s.set_writable_event_low_watermark(NonZeroUsize::new(s.avail()).unwrap());
+
+        // Increase limit so current_limit > watermark and avail() > watermark.
+        s.set_max_stream_data(limit * 2);
+
+        assert!(
+            conn_events
+                .events()
+                .any(|e| matches!(e, ConnectionEvent::SendStreamWritable { stream_id } if stream_id == id)),
+            "writable event must fire when watermark == previous_limit"
+        );
+    }
+
+    /// `TxBuffer::avail` equals `MAX_SIZE - buffered`.
+    #[test]
+    fn tx_buffer_avail_exact() {
+        let mut txb = TxBuffer::new();
+        assert_eq!(txb.avail(), TxBuffer::MAX_SIZE);
+        txb.send(&[0; 100]);
+        assert_eq!(txb.avail(), TxBuffer::MAX_SIZE - 100);
+    }
+
+    /// `TxBuffer::send` accepts at most `avail()` bytes; a full buffer rejects further data.
+    #[test]
+    fn tx_buffer_send_fills_exactly() {
+        let mut txb = TxBuffer::new();
+        // Fill to exactly MAX_SIZE.
+        let avail = txb.avail();
+        let sent = txb.send(&vec![0xab; avail]);
+        assert_eq!(sent, avail);
+        assert_eq!(txb.avail(), 0);
+        // No more room.
+        assert_eq!(txb.send(&[0x01]), 0);
+    }
+
+    fn make_send_stream(data: &[u8]) -> (SendStream, u64) {
+        let len = data.len() as u64;
+        let mut s = SendStream::new(
+            StreamId::new(100),
+            0,
+            connection_fc(len * 2),
+            ConnectionEvents::default(),
+        );
+        s.set_max_stream_data(len * 2);
+        (s, len)
+    }
+
+    #[test]
+    fn bytes_written_data_recvd() {
+        const DATA: &[u8] = b"hello world";
+        let (mut s, len) = make_send_stream(DATA);
+        s.send(DATA).unwrap();
+        s.close();
+        s.mark_as_sent(0, DATA.len(), true);
+        s.mark_as_acked(0, DATA.len(), true);
+        assert_eq!(s.bytes_written(), len);
+    }
+
+    #[test]
+    fn bytes_written_reset_sent() {
+        const DATA: &[u8] = b"hello";
+        let (mut s, len) = make_send_stream(DATA);
+        s.send(DATA).unwrap();
+        s.reset(0);
+        assert_eq!(s.bytes_written(), len);
+    }
+
+    /// `mark_acked` when newly acked range exactly extends a prior acked range.
+    #[test]
+    fn mark_acked_extends_exact_boundary() {
+        let mut rt = RangeTracker::default();
+        rt.mark_sent(0, 10);
+        rt.mark_acked(0, 5); // Ack first half.
+        rt.mark_acked(5, 5); // Ack exactly from where first ack ends.
+        assert_eq!(rt.acked_from_zero(), 10);
+    }
+
     #[test]
     fn send_stream_stats() {
         const MESSAGE: &[u8] = b"hello";
@@ -3152,6 +3252,75 @@ mod tests {
         check_stats(&s, len_u64, len_u64, len_u64);
 
         s.mark_as_acked(len_u64, 0, true);
-        assert!(s.is_terminal());
+        assert!(s.is_ended());
+    }
+
+    fn stream_with_priority(tx: TransmissionPriority, rx: RetransmissionPriority) -> SendStream {
+        let mut s = SendStream::new(
+            StreamId::from(0),
+            100,
+            connection_fc(100),
+            ConnectionEvents::default(),
+        );
+        s.set_priority(tx, rx);
+        s
+    }
+
+    fn stream_frames_written(s: &mut SendStream, priority: TransmissionPriority) -> usize {
+        let mut builder =
+            packet::Builder::short(Encoder::default(), false, None::<&[u8]>, packet::LIMIT);
+        let mut tokens = recovery::Tokens::new();
+        let mut stats = FrameStats::default();
+        s.write_stream_frame(priority, &mut builder, &mut tokens, &mut stats);
+        stats.stream
+    }
+
+    fn reset_frame_written(s: &mut SendStream, priority: TransmissionPriority) -> bool {
+        let mut builder =
+            packet::Builder::short(Encoder::default(), false, None::<&[u8]>, packet::LIMIT);
+        let mut tokens = recovery::Tokens::new();
+        let mut stats = FrameStats::default();
+        s.write_reset_frame(priority, &mut builder, &mut tokens, &mut stats)
+    }
+
+    #[test]
+    fn set_priority_updates_effective_priority() {
+        let mut s = stream_with_priority(
+            TransmissionPriority::Low,
+            RetransmissionPriority::MuchHigher,
+        );
+        s.send(&[0x42; 10]).unwrap();
+
+        assert_eq!(stream_frames_written(&mut s, TransmissionPriority::Low), 1);
+        s.mark_as_lost(0, 10, false);
+        assert_eq!(
+            stream_frames_written(&mut s, TransmissionPriority::Normal),
+            0
+        );
+        assert_eq!(
+            stream_frames_written(
+                &mut s,
+                TransmissionPriority::Low + RetransmissionPriority::MuchHigher,
+            ),
+            1,
+        );
+    }
+
+    #[test]
+    fn reset_lost_uses_effective_priority() {
+        let mut s = stream_with_priority(
+            TransmissionPriority::Normal,
+            RetransmissionPriority::MuchHigher,
+        );
+        s.send(b"hello").unwrap();
+        s.reset(0);
+
+        assert!(reset_frame_written(&mut s, TransmissionPriority::Normal));
+        s.reset_lost();
+        assert!(!reset_frame_written(&mut s, TransmissionPriority::Normal));
+        assert!(reset_frame_written(
+            &mut s,
+            TransmissionPriority::Normal + RetransmissionPriority::MuchHigher,
+        ));
     }
 }

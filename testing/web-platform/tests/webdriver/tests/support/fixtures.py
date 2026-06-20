@@ -7,7 +7,7 @@ import webdriver
 
 from urllib.parse import urlunsplit
 
-from tests.support.helpers import deep_update
+from tests.support.helpers import deep_update, is_wayland
 from tests.support.web_extension import EXTENSION_DATA
 from tests.support.inline import build_inline
 from tests.support.http_request import HTTPRequest
@@ -119,6 +119,11 @@ async def reset_current_session_if_necessary(caps):
 @pytest.fixture(scope="function")
 def current_session():
     return get_current_session()
+
+
+@pytest.fixture
+def is_wayland_headful(configuration):
+    return is_wayland() and not configuration.get("headless", False)
 
 
 @pytest.fixture
@@ -250,6 +255,12 @@ def get_test_page(iframe, inline):
                 """
 
         page_data = f"""
+            <!-- This is used for tests which check the event position synthesized via
+                TestDriver. Therefore, if the page is initially scaled to non-100%,
+                TestDriver needs to floor the specified position so that the event may be
+                fired at different position. Thus, we need to fix the scale here. -->
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+
             <style>
                 custom-element {{
                     display:block; width:20px; height:20px;

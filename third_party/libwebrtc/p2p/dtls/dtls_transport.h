@@ -16,21 +16,21 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
-#include "api/array_view.h"
 #include "api/crypto/crypto_options.h"
 #include "api/dtls_transport_interface.h"
 #include "api/environment/environment.h"
-#include "api/field_trials_view.h"
 #include "api/ice_transport_interface.h"
 #include "api/rtc_error.h"
 #include "api/scoped_refptr.h"
 #include "api/sequence_checker.h"
 #include "api/task_queue/pending_task_safety_flag.h"
+#include "api/units/timestamp.h"
 #include "p2p/base/ice_transport_internal.h"
 #include "p2p/base/packet_transport_internal.h"
 #include "p2p/dtls/dtls_stun_piggyback_controller.h"
@@ -53,6 +53,15 @@
 
 namespace webrtc {
 
+// Used by histograms. Values of entries should not be changed, except for kMax.
+enum class HistogramDtlsVersion {
+  kUnknown = 0,
+  kDtls10 = 1,
+  kDtls12 = 2,
+  kDtls13 = 3,
+  kMax = 4
+};
+
 // A bridge between a packet-oriented/transport-type interface on
 // the bottom and a StreamInterface on the top.
 class StreamInterfaceChannel : public StreamInterface {
@@ -66,7 +75,7 @@ class StreamInterfaceChannel : public StreamInterface {
   StreamInterfaceChannel& operator=(const StreamInterfaceChannel&) = delete;
 
   // Push in a packet; this gets pulled out from Read().
-  bool OnPacketReceived(ArrayView<const uint8_t> data);
+  bool OnPacketReceived(std::span<const uint8_t> data);
 
   // Sets the options for the next packet to be written to ice_transport,
   // corresponding to the next Write() call. Safe since BoringSSL guarantees
@@ -79,10 +88,10 @@ class StreamInterfaceChannel : public StreamInterface {
   // Implementations of StreamInterface
   StreamState GetState() const override;
   void Close() override;
-  StreamResult Read(ArrayView<uint8_t> buffer,
+  StreamResult Read(std::span<uint8_t> buffer,
                     size_t& read,
                     int& error) override;
-  StreamResult Write(ArrayView<const uint8_t> data,
+  StreamResult Write(std::span<const uint8_t> data,
                      size_t& written,
                      int& error) override;
   bool Flush() override;
@@ -127,11 +136,16 @@ class StreamInterfaceChannel : public StreamInterface {
 // as the constructor.
 class DtlsTransportInternalImpl : public DtlsTransportInternal {
  public:
+  // See https://datatracker.ietf.org/doc/html/rfc9147#section-5.8.2,
+  // the RFC specifies 400ms...but in ComputeRetransmissionTimeout
+  // the RTT estimate is multiplied by 2, so the first timeout will be 400 ms.
+  static constexpr int kDefaultHandshakeEstimateRttMs = 200;
+
   // For testing purposes only.
   using SslStreamFactory = std::function<std::unique_ptr<SSLStreamAdapter>(
+      const Environment&,
       std::unique_ptr<StreamInterface>,
-      absl::AnyInvocable<void(SSLHandshakeError)> handshake_error_callback,
-      const FieldTrialsView* field_trials)>;
+      absl::AnyInvocable<void(SSLHandshakeError)> handshake_error_callback)>;
 
   // `ice_transport` is the ICE transport this DTLS transport is wrapping.  It
   // must outlive this DTLS transport.
@@ -221,7 +235,9 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
   // Once DTLS has established (i.e., this ice_transport is writable), this
   // method extracts the keys negotiated during the DTLS handshake, for use in
   // external encryption. DTLS-SRTP uses this to extract the needed SRTP keys.
-  bool ExportSrtpKeyingMaterial(
+  [[deprecated]] bool ExportSrtpKeyingMaterial(
+      ZeroOnFreeBuffer<uint8_t>& keying_material) override;
+  bool AppendSrtpKeyingMaterial(
       ZeroOnFreeBuffer<uint8_t>& keying_material) override;
 
   IceTransportInternal* ice_transport() override;
@@ -259,6 +275,7 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
   // Two methods for testing.
   bool IsDtlsPiggybackSupportedByPeer();
   bool WasDtlsCompletedByPiggybacking();
+  void SetFakeIceLite() { fake_ice_lite_ = true; }
 
  private:
   void ConnectToIceTransport();
@@ -275,18 +292,21 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
   void OnNetworkRouteChanged(std::optional<NetworkRoute> network_route);
   bool SetupDtls();
   void MaybeStartDtls();
-  bool HandleDtlsPacket(ArrayView<const uint8_t> payload);
+  bool HandleDtlsPacket(std::span<const uint8_t> payload);
   void OnDtlsHandshakeError(SSLHandshakeError error);
   void ConfigureHandshakeTimeout();
+  void UpdateHandshakeTimeout();
 
   void set_receiving(bool receiving);
   void set_writable(bool writable);
   // Sets the DTLS state, signaling if necessary.
   void set_dtls_state(DtlsTransportState state);
+
+  void CompleteDtlsInStun(bool success);
   void SetPiggybackDtlsDataCallback(
       absl::AnyInvocable<void(PacketTransportInternal* transport,
                               const ReceivedIpPacket& packet)> callback);
-  void PeriodicRetransmitDtlsPacketUntilDtlsConnected();
+  void FlushPendingDtlsPacket();
 
   // SetRemoteFingerprint must be called after SetLocalCertificate, and any
   // other methods like SetDtlsRole. It's what triggers the actual DTLS setup.
@@ -301,6 +321,8 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
 
   const int component_;
   DtlsTransportState dtls_state_ = DtlsTransportState::kNew;
+  Timestamp connecting_state_timestamp_ = Timestamp::Micros(0);
+
   // Underlying ice_transport.
   const scoped_refptr<IceTransportInterface> ice_transport_;
   std::unique_ptr<SSLStreamAdapter> dtls_;  // The DTLS stream
@@ -334,6 +356,9 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
   // (so that we return PIGGYBACK_ACK to client if we get STUN_BINDING_REQUEST
   // directly). Maybe disabled in SetupDtls has been called.
   bool dtls_in_stun_ = false;
+  // Has DtlsInStun Complete been run?
+  // This variable is used to prevent reinitializing after dtls-restart.
+  bool dtls_in_stun_complete_ = false;
 
   // A controller for piggybacking DTLS in STUN.
   DtlsStunPiggybackController dtls_stun_piggyback_controller_;
@@ -341,12 +366,10 @@ class DtlsTransportInternalImpl : public DtlsTransportInternal {
   absl::AnyInvocable<void(PacketTransportInternal*, const ReceivedIpPacket&)>
       piggybacked_dtls_callback_;
 
-  // When ICE get writable during dtls piggybacked handshake
-  // there is currently no safe way of updating the timeout
-  // in boringssl (that is work in progress). Therefore
-  // DtlsTransportInternalImpl has a "hack" to periodically retransmit.
-  bool pending_periodic_retransmit_dtls_packet_ = false;
   ScopedTaskSafetyDetached safety_flag_;
+
+  // We reuse this class also in tests that pretend to be ice-lite.
+  bool fake_ice_lite_ = false;
 };
 
 }  // namespace webrtc

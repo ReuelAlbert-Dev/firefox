@@ -338,7 +338,7 @@ nsresult nsHttpChannelAuthProvider::GenCredsAndSetEntry(
 
   // don't log this in release build since it could contain sensitive info.
 #ifdef DEBUG
-  LOG(("generated creds: %s\n", result.BeginReading()));
+  LOG(("generated creds: %s\n", PromiseFlatCString(result).get()));
 #endif
 
   return UpdateCache(auth, scheme, host, port, directory, realm, challenge,
@@ -1390,10 +1390,11 @@ NS_IMETHODIMP nsHttpChannelAuthProvider::OnAuthAvailable(
   nsCOMPtr<nsISupports> sessionStateGrip;
   if (entry) sessionStateGrip = entry->mMetaData;
 
-  nsAuthInformationHolder* holder =
-      static_cast<nsAuthInformationHolder*>(aAuthInfo);
-  *ident =
-      nsHttpAuthIdentity(holder->Domain(), holder->User(), holder->Password());
+  nsString domain, user, password;
+  aAuthInfo->GetDomain(domain);
+  aAuthInfo->GetUsername(user);
+  aAuthInfo->GetPassword(password);
+  *ident = nsHttpAuthIdentity(domain, user, password);
 
   nsAutoCString unused;
   nsCOMPtr<nsIHttpAuthenticator> auth;

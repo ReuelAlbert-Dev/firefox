@@ -29,19 +29,22 @@
 #include "mozilla/dom/Attr.h"
 #include "mozilla/dom/CharacterDataBuffer.h"
 #include "mozilla/dom/CloseWatcher.h"
+#include "mozilla/dom/ContentList.h"
 #include "mozilla/dom/CustomElementRegistry.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
+#include "mozilla/dom/EditContext.h"
 #include "mozilla/dom/Event.h"
+#include "mozilla/dom/HTMLHeadingElement.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/RadioGroupContainer.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/StylePropertyMap.h"
 #include "mozilla/dom/StylePropertyMapReadOnly.h"
+#include "mozilla/dom/TreeIterator.h"
 #include "mozilla/dom/UnbindContext.h"
 #include "mozilla/mozInlineSpellChecker.h"
 #include "nsAtom.h"
-#include "nsContentList.h"
 #include "nsDOMAttributeMap.h"
 #include "nsDOMCSSAttrDeclaration.h"
 #include "nsDOMTokenList.h"
@@ -231,18 +234,23 @@ dom::Element* nsIContent::GetEditingHost() const {
     return nullptr;
   }
 
-  // If this is in designMode, we should return <body>
-  if (IsInDesignMode() && !IsInShadowTree()) {
-    // FIXME: There may be no <body>.  In such case and aLimitInBodyElement is
-    // "No", we should use root element instead.
-    return doc->GetBodyElement();
-  }
-
   dom::Element* editableParentElement = nullptr;
   for (dom::Element* parent = GetParentElement();
        parent && parent->HasFlag(NODE_IS_EDITABLE);
        parent = editableParentElement->GetParentElement()) {
     editableParentElement = parent;
+  }
+  // If this is in designMode, and we have reached the root <html> element (i.e.
+  // no contenteditable=false along the way), we should return the <body>
+  // instead. Otherwise, we return the outermost editable element.
+  if (IsInDesignMode() && editableParentElement &&
+      editableParentElement->IsHTMLElement(nsGkAtoms::html) &&
+      !IsInShadowTree()) {
+    // FIXME: There may be no <body> or it may not be editable.
+    // In such cases we should use root element instead.
+    auto* body = doc->GetBodyElement();
+    // return null if body has contenteditable=false
+    return body && body->IsEditable() ? body : nullptr;
   }
   return editableParentElement
              ? editableParentElement
@@ -279,6 +287,18 @@ nsresult nsIContent::LookupNamespaceURIInternal(
     }
   }
   return NS_ERROR_FAILURE;
+}
+
+nsIContent* nsIContent::GetInclusiveEditableAncestor() const {
+  if (IsEditable()) {
+    return const_cast<nsIContent*>(this);
+  }
+  for (auto* const content : AncestorsOfType<nsIContent>()) {
+    if (content->IsEditable()) {
+      return content;
+    }
+  }
+  return nullptr;
 }
 
 nsAtom* nsIContent::GetLang() const {
@@ -344,6 +364,15 @@ already_AddRefed<URLExtraData> nsIContent::GetURLDataForStyleAttr(
   return do_AddRef(doc->DefaultStyleAttrURLData());
 }
 
+void nsIContent::UpdateHeadingElementsOffsetChange() {
+  TreeIterator<FlattenedChildIterator> iter(*this);
+  for (; iter.GetCurrent(); iter.GetNext()) {
+    if (auto* heading = HTMLHeadingElement::FromNode(iter.GetCurrent())) {
+      heading->UpdateLevel(true);
+    }
+  }
+}
+
 void nsIContent::ConstructUbiNode(void* storage) {
   JS::ubi::Concrete<nsIContent>::construct(storage, this);
 }
@@ -388,8 +417,8 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 NS_INTERFACE_TABLE_HEAD(nsAttrChildContentList)
   NS_WRAPPERCACHE_INTERFACE_TABLE_ENTRY
-  NS_INTERFACE_TABLE(nsAttrChildContentList, nsINodeList)
   NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(nsAttrChildContentList)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
 JSObject* nsAttrChildContentList::WrapObject(
@@ -466,16 +495,23 @@ void nsParentNodeChildContentList::ValidateCache() {
 
 //----------------------------------------------------------------------
 
-nsIHTMLCollection* FragmentOrElement::Children() {
+HTMLCollection* FragmentOrElement::Children() {
   nsDOMSlots* slots = DOMSlots();
 
   if (!slots->mChildrenList) {
     slots->mChildrenList =
-        new nsContentList(this, kNameSpaceID_Wildcard, nsGkAtoms::_asterisk,
-                          nsGkAtoms::_asterisk, false);
+        new ContentList(this, kNameSpaceID_Wildcard, nsGkAtoms::_asterisk,
+                        nsGkAtoms::_asterisk, false);
   }
 
   return slots->mChildrenList;
+}
+
+uint32_t FragmentOrElement::ChildElementCount() {
+  if (!HasChildren()) {
+    return 0;
+  }
+  return Children()->Length();
 }
 
 //----------------------------------------------------------------------
@@ -570,7 +606,7 @@ void FragmentOrElement::nsDOMSlots::Traverse(
   aCb.NoteXPCOMChild(mAttributeMap.get());
 
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mSlots->mChildrenList");
-  aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsINodeList*, mChildrenList));
+  aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(NodeList*, mChildrenList));
 
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mSlots->mClassList");
   aCb.NoteXPCOMChild(mClassList.get());
@@ -700,7 +736,7 @@ void FragmentOrElement::nsExtendedDOMSlots::TraverseExtendedSlots(
   aCb.NoteXPCOMChild(mControllers);
 
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mExtendedSlots->mLabelsList");
-  aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsINodeList*, mLabelsList));
+  aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(NodeList*, mLabelsList));
 
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCb, "mExtendedSlots->mShadowRoot");
   aCb.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsIContent*, mShadowRoot));
@@ -768,7 +804,7 @@ size_t FragmentOrElement::nsExtendedDOMSlots::SizeOfExcludingThis(
 }
 
 FragmentOrElement::FragmentOrElement(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+    already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
     : nsIContent(std::move(aNodeInfo)) {}
 
 FragmentOrElement::~FragmentOrElement() {
@@ -1383,7 +1419,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(FragmentOrElement)
   }
 
   if (tmp->IsElement()) {
-    Element::UnlinkCustomElementRegistry(tmp->AsElement());
+    auto* element = tmp->AsElement();
+    if (MOZ_UNLIKELY(element->HasFlag(ELEMENT_HAS_EDIT_CONTEXT))) {
+      element->ClearEditContext();
+    }
+    Element::UnlinkCustomElementRegistry(element);
   }
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -1830,6 +1870,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(FragmentOrElement)
       }
     }
     Element::TraverseCustomElementRegistry(element, cb);
+    if (MOZ_UNLIKELY(element->HasFlag(ELEMENT_HAS_EDIT_CONTEXT))) {
+      auto* editContext = EditContext::GetForElement(*element);
+      cb.NoteXPCOMChild(NS_ISUPPORTS_CAST(EventTarget*, editContext));
+    }
   }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
@@ -1868,14 +1912,14 @@ static inline bool IsVoidTag(const nsAtom* aTag) {
   static bool sInitialized = false;
   if (!sInitialized) {
     sInitialized = true;
-    for (uint32_t i = 0; i < std::size(voidElements); ++i) {
-      sFilter.add(voidElements[i]);
+    for (auto& voidElement : voidElements) {
+      sFilter.add(voidElement);
     }
   }
 
   if (sFilter.mightContain(aTag)) {
-    for (uint32_t i = 0; i < std::size(voidElements); ++i) {
-      if (aTag == voidElements[i]) {
+    for (auto& voidElement : voidElements) {
+      if (aTag == voidElement) {
         return true;
       }
     }

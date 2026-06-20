@@ -175,7 +175,7 @@ int nr_ice_candidate_create(nr_ice_ctx *ctx,nr_ice_component *comp,nr_ice_socket
       }
     }
 
-    if(!(cand->label=r_strdup(label)))
+    if(!(cand->label=strdup(label)))
       ABORT(R_NO_MEMORY);
 
     if(r=nr_ice_get_foundation(ctx,cand))
@@ -223,7 +223,7 @@ int nr_ice_peer_peer_rflx_candidate_create(nr_ice_ctx *ctx, const char *label, n
 
     if(!(cand=R_NEW(nr_ice_candidate)))
       ABORT(R_NO_MEMORY);
-    if(!(cand->label=r_strdup(label)))
+    if(!(cand->label=strdup(label)))
       ABORT(R_NO_MEMORY);
 
     cand->state=NR_ICE_CAND_STATE_INITIALIZED;
@@ -242,7 +242,7 @@ int nr_ice_peer_peer_rflx_candidate_create(nr_ice_ctx *ctx, const char *label, n
     if(r=nr_transport_addr_copy(&cand->addr,addr))
       ABORT(r);
     /* Bogus foundation */
-    if(!(cand->foundation=r_strdup(cand->addr.as_string)))
+    if(!(cand->foundation=strdup(cand->addr.as_string)))
       ABORT(R_NO_MEMORY);
 
     nr_ice_candidate_compute_codeword(cand);
@@ -354,10 +354,10 @@ int nr_ice_candidate_destroy(nr_ice_candidate **candp)
         break;
     }
 
-    RFREE(cand->mdns_addr);
-    RFREE(cand->foundation);
-    RFREE(cand->label);
-    RFREE(cand);
+    free(cand->mdns_addr);
+    free(cand->foundation);
+    free(cand->label);
+    free(cand);
 
     return(0);
   }
@@ -404,7 +404,7 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
       }
 
       snprintf(fnd,sizeof(fnd),"%d",i);
-      if(!(cand->foundation=r_strdup(fnd)))
+      if(!(cand->foundation=strdup(fnd)))
         ABORT(R_NO_MEMORY);
       return(0);
 
@@ -423,7 +423,7 @@ static int nr_ice_get_foundation(nr_ice_ctx *ctx,nr_ice_candidate *cand)
     STAILQ_INSERT_TAIL(&ctx->foundations,foundation,entry);
 
     snprintf(fnd,sizeof(fnd),"%d",i);
-    if(!(cand->foundation=r_strdup(fnd)))
+    if(!(cand->foundation=strdup(fnd)))
       ABORT(R_NO_MEMORY);
 
     _status=0;
@@ -997,7 +997,7 @@ static void nr_ice_turn_allocated_cb(NR_SOCKET s, int how, void *cb_arg)
 
         r_log(LOG_ICE,LOG_DEBUG,"ICE(%s)/CAND(%s): new relay base=%s addr=%s", cand->ctx->label, cand->label, cand->base.as_string, cand->addr.as_string);
 
-        RFREE(cand->label);
+        free(cand->label);
         cand->label=label;
         nr_ice_candidate_mark_done(cand, NR_ICE_CAND_STATE_INITIALIZED);
         cand = 0;

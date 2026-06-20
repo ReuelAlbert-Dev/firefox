@@ -18,6 +18,7 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Result.h"
+#include "mozilla/ResultVariant.h"
 #include "mozilla/Span.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
@@ -36,6 +37,45 @@ class KnowsCompositor;
 
 class MediaByteBuffer;
 class TrackInfoSharedPtr;
+
+// Backing storage for AlignedBuffer which allows both malloc'd and js_malloc'd
+// data to be used.
+class BufferStorage {
+ public:
+  explicit BufferStorage(void* aBuffer, bool aUseJsFree = false)
+      : mBuffer(aBuffer), mUseJsFree(aUseJsFree) {}
+  BufferStorage(const BufferStorage&) = delete;
+  BufferStorage& operator=(const BufferStorage&) = delete;
+  BufferStorage(BufferStorage&& aOther)
+      : mBuffer(aOther.mBuffer), mUseJsFree(aOther.mUseJsFree) {
+    aOther.mBuffer = nullptr;
+  }
+  BufferStorage& operator=(BufferStorage&& aOther) {
+    if (&aOther == this) {
+      return *this;
+    }
+    Deallocate();
+    mBuffer = aOther.mBuffer;
+    mUseJsFree = aOther.mUseJsFree;
+    aOther.mBuffer = nullptr;
+    return *this;
+  }
+  ~BufferStorage() { Deallocate(); }
+  size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const {
+    return aMallocSizeOf(mBuffer);
+  }
+
+ private:
+  void Deallocate() {
+    if (mUseJsFree) {
+      js_free(mBuffer);
+    } else {
+      free(mBuffer);
+    }
+  }
+  void* mBuffer;
+  bool mUseJsFree;
+};
 
 // AlignedBuffer:
 // Memory allocations are fallibles. Methods return a boolean indicating if
@@ -85,6 +125,19 @@ class AlignedBuffer {
     PodCopy(mData, aData, aLength);
   }
 
+  // Construct AlignedBuffer, taking ownership of data
+  AlignedBuffer(Type* aBuffer, size_t aOffset, size_t aLength, bool aUseJsFree)
+      : mData(aBuffer + aOffset),
+        mLength(aLength),
+        mBuffer(aBuffer, aUseJsFree),
+        mCapacity(aLength) {
+    const uintptr_t alignmask = AlignmentOffset();
+    if ((reinterpret_cast<uintptr_t>(mData) & alignmask) != 0) {
+      // Create copy of data to ensure correct alignment
+      *this = AlignedBuffer(mData, mLength);
+    }
+  }
+
   AlignedBuffer(const AlignedBuffer& aOther)
       : AlignedBuffer(aOther.Data(), aOther.Length()) {}
 
@@ -125,7 +178,7 @@ class AlignedBuffer {
   }
   // Set length of buffer, allocating memory as required.
   // If memory is allocated, additional buffer area is filled with 0.
-  bool SetLength(size_t aLength) {
+  [[nodiscard]] bool SetLength(size_t aLength) {
     if (aLength > mLength && !EnsureCapacity(aLength)) {
       return false;
     }
@@ -176,14 +229,12 @@ class AlignedBuffer {
 
   // Methods for reporting memory.
   size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
-    size_t size = aMallocSizeOf(this);
-    size += aMallocSizeOf(mBuffer.get());
-    return size;
+    return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
   }
   // AlignedBuffer is typically allocated on the stack. As such, you likely
   // want to use SizeOfExcludingThis
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const {
-    return aMallocSizeOf(mBuffer.get());
+    return mBuffer.SizeOfExcludingThis(aMallocSizeOf);
   }
   size_t ComputedSizeOfExcludingThis() const { return mCapacity; }
 
@@ -247,7 +298,7 @@ class AlignedBuffer {
       PodCopy(newData, mData, mLength);
     }
 
-    mBuffer = std::move(newBuffer);
+    mBuffer = BufferStorage(newBuffer.release());
     mCapacity = sizeNeeded.value();
     mData = newData;
 
@@ -255,7 +306,7 @@ class AlignedBuffer {
   }
   Type* mData;
   size_t mLength{};  // number of elements
-  UniquePtr<uint8_t[]> mBuffer;
+  BufferStorage mBuffer;
   size_t mCapacity{};  // in bytes
 };
 
@@ -341,13 +392,13 @@ class MediaData {
 
   template <typename ReturnType>
   const ReturnType* As() const {
-    MOZ_ASSERT(this->mType == ReturnType::sType);
+    MOZ_RELEASE_ASSERT(this->mType == ReturnType::sType);
     return static_cast<const ReturnType*>(this);
   }
 
   template <typename ReturnType>
   ReturnType* As() {
-    MOZ_ASSERT(this->mType == ReturnType::sType);
+    MOZ_RELEASE_ASSERT(this->mType == ReturnType::sType);
     return static_cast<ReturnType*>(this);
   }
 
@@ -492,11 +543,11 @@ class VideoData : public MediaData {
     ~QuantizableBuffer();
 
    private:
-    void AllocateRecyclableData(size_t aLength);
+    void AllocateRecyclableData(uint32_t aLength);
 
     RefPtr<layers::BufferRecycleBin> mRecycleBin;
     UniquePtr<uint8_t[]> m8bpcPlanes;
-    size_t mAllocatedLength;
+    uint32_t mAllocatedLength;
   };
 
   // Constructs a VideoData object. If aImage is nullptr, creates a new Image
@@ -689,6 +740,8 @@ class MediaRawData final : public MediaData {
   explicit MediaRawData(AlignedByteBuffer&& aData);
   MediaRawData(AlignedByteBuffer&& aData, AlignedByteBuffer&& aAlphaData);
 
+  MediaRawData(const MediaRawData&) = delete;
+
   // Pointer to data or null if not-yet allocated
   const uint8_t* Data() const { return mBuffer.Data(); }
   // Pointer to alpha data or null if not-yet allocated
@@ -749,7 +802,6 @@ class MediaRawData final : public MediaData {
   AlignedByteBuffer mBuffer;
   AlignedByteBuffer mAlphaBuffer;
   CryptoSample mCryptoInternal;
-  MediaRawData(const MediaRawData&);  // Not implemented
 };
 
 // MediaByteBuffer is a ref counted infallible TArray.
@@ -769,6 +821,9 @@ class MediaAlignedByteBuffer final : public AlignedByteBuffer {
   MediaAlignedByteBuffer() = default;
   MediaAlignedByteBuffer(const uint8_t* aData, size_t aLength)
       : AlignedByteBuffer(aData, aLength) {}
+  MediaAlignedByteBuffer(uint8_t* aData, size_t aOffset, size_t aLength,
+                         bool aUseJsFree)
+      : AlignedByteBuffer(aData, aOffset, aLength, aUseJsFree) {}
 
  private:
   ~MediaAlignedByteBuffer() = default;

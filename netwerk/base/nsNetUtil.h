@@ -856,12 +856,6 @@ inline nsresult NS_GetInnermostURIHost(nsIURI* aURI, nsACString& aHost) {
  */
 nsresult NS_GetFinalChannelURI(nsIChannel* channel, nsIURI** uri);
 
-// NS_SecurityHashURI must return the same hash value for any two URIs that
-// compare equal according to NS_SecurityCompareURIs.  Unfortunately, in the
-// case of files, it's not clear we can do anything better than returning
-// the schemeHash, so hashing files degenerates to storing them in a list.
-uint32_t NS_SecurityHashURI(nsIURI* aURI);
-
 bool NS_SecurityCompareURIs(nsIURI* aSourceURI, nsIURI* aTargetURI,
                             bool aStrictFileOriginPolicy);
 
@@ -1150,7 +1144,8 @@ enum ASDestination : uint8_t {
   DESTINATION_WORKER,
   DESTINATION_XSLT,
   DESTINATION_FETCH,
-  DESTINATION_JSON
+  DESTINATION_JSON,
+  DESTINATION_TEXT
 };
 
 void ParseAsValue(const nsAString& aValue, nsAttrValue& aResult);

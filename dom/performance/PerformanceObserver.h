@@ -29,7 +29,7 @@ class WorkerPrivate;
 
 class PerformanceObserver final : public nsISupports, public nsWrapperCache {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(PerformanceObserver)
 
   static already_AddRefed<PerformanceObserver> Constructor(
@@ -45,7 +45,7 @@ class PerformanceObserver final : public nsISupports, public nsWrapperCache {
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aGivenProto) override;
 
-  nsISupports* GetParentObject() const { return mOwner; }
+  nsISupports* GetParentObject() const { return mGlobal; }
 
   void Observe(const PerformanceObserverInit& aOptions, ErrorResult& aRv);
   static void GetSupportedEntryTypes(const GlobalObject& aGlobal,
@@ -63,7 +63,7 @@ class PerformanceObserver final : public nsISupports, public nsWrapperCache {
  private:
   ~PerformanceObserver();
 
-  nsCOMPtr<nsIGlobalObject> mOwner;
+  nsCOMPtr<nsIGlobalObject> mGlobal;
   RefPtr<PerformanceObserverCallback> mCallback;
   RefPtr<Performance> mPerformance;
   nsTArray<nsString> mEntryTypes;

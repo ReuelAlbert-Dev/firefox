@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,7 +10,6 @@
 #include "WinRegistry.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Services.h"
-#include "mozilla/StaticPrefs_network.h"
 #include "nsINetworkLinkService.h"
 #include "nsIObserverService.h"
 #include "nsThreadUtils.h"
@@ -61,8 +59,10 @@ NS_IMETHODIMP NetworkLinkObserver::Observe(nsISupports* aSubject,
 
   if (!strcmp(aTopic, NS_NETWORK_LINK_TOPIC) && mWrapper) {
     LOG(("Network link changed, invalidating connection and proxy cache"));
+    MutexAutoLock lock(mWrapper->mMutex);
     mWrapper->mConnCacheValid = false;
     mWrapper->mCacheValid = false;
+    mWrapper->mAtomicFlags = UINT32_MAX;
   }
   return NS_OK;
 }
@@ -84,10 +84,6 @@ void WindowsInternetFunctionsWrapper::Init() {
   MOZ_ASSERT(NS_IsMainThread());
   LOG(("WindowsInternetFunctionsWrapper %p Init()", this));
 
-  if (!StaticPrefs::network_proxy_detect_system_proxy_changes()) {
-    return;
-  }
-
   using namespace mozilla::widget::WinRegistry;
   Key key(HKEY_CURRENT_USER,
           u"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"_ns,
@@ -99,7 +95,9 @@ void WindowsInternetFunctionsWrapper::Init() {
               ("WindowsInternetFunctionsWrapper %p: registry change, "
                "invalidating cache",
                self.get()));
+          MutexAutoLock lock(self->mMutex);
           self->mCacheValid = false;
+          self->mAtomicFlags = UINT32_MAX;
         });
   }
 
@@ -127,6 +125,10 @@ WindowsInternetFunctionsWrapper::~WindowsInternetFunctionsWrapper() {
 
 nsresult WindowsInternetFunctionsWrapper::ReadAllOptionsLocked(
     DWORD aConnFlags, const nsString& aConnName) {
+  mMutex.AssertCurrentThreadOwns();
+
+  nsAutoString connNameCopy(aConnName);
+
   INTERNET_PER_CONN_OPTIONW options[4];
   options[0].dwOption = INTERNET_PER_CONN_FLAGS_UI;
   options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
@@ -135,22 +137,27 @@ nsresult WindowsInternetFunctionsWrapper::ReadAllOptionsLocked(
 
   INTERNET_PER_CONN_OPTION_LISTW list;
   list.dwSize = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
-  list.pszConnection = aConnFlags & INTERNET_CONNECTION_MODEM
-                           ? const_cast<WCHAR*>(reinterpret_cast<const WCHAR*>(
-                                 static_cast<const char16_t*>(aConnName.get())))
-                           : nullptr;
+  list.pszConnection =
+      aConnFlags & INTERNET_CONNECTION_MODEM
+          ? const_cast<WCHAR*>(reinterpret_cast<const WCHAR*>(
+                static_cast<const char16_t*>(connNameCopy.get())))
+          : nullptr;
   list.dwOptionCount = std::size(options);
   list.dwOptionError = 0;
   list.pOptions = options;
 
   unsigned long size = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
-  if (!InternetQueryOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION,
-                            &list, &size)) {
-    LOG(("ReadAllOptionsLocked: InternetQueryOptionW failed"));
-    return NS_ERROR_FAILURE;
+  {
+    MutexAutoUnlock unlock(mMutex);
+    if (!InternetQueryOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION,
+                              &list, &size)) {
+      LOG(("ReadAllOptionsLocked: InternetQueryOptionW failed"));
+      return NS_ERROR_FAILURE;
+    }
   }
 
   mCachedFlags = options[0].Value.dwValue;
+  mAtomicFlags = mCachedFlags;
   LOG(("ReadAllOptionsLocked: flags=0x%x", mCachedFlags));
 
   auto assignAndFree = [](nsString& aDest, WCHAR* aSrc, const char* aName) {
@@ -176,10 +183,17 @@ nsresult WindowsInternetFunctionsWrapper::ReadInternetOption(
   // Bug 1366133: InternetGetConnectedStateExW() may cause hangs
   MOZ_ASSERT(!NS_IsMainThread());
 
+  MutexAutoLock lock(mMutex);
+
   if (!mConnCacheValid) {
     DWORD connFlags = 0;
     WCHAR connName[RAS_MaxEntryName + 1];
-    if (!GetConnectionState(connFlags, connName, std::size(connName))) {
+    bool res = true;
+    {
+      MutexAutoUnlock unlock(mMutex);
+      res = GetConnectionState(connFlags, connName, std::size(connName));
+    }
+    if (!res) {
       return NS_ERROR_FAILURE;
     }
 

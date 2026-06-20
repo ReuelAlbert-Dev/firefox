@@ -39,9 +39,6 @@ https_first_disabled = true
 support-files = ["openPromptOffTimeout.html"]
 
 ["browser_promptDelays.js"]
-skip-if = [
-  "os == 'win' && os_version == '11.26200' && asan", # Bug 2019745
-]
 
 ["browser_promptFocus.js"]
 
@@ -61,3 +58,6 @@ skip-if = [
 ["browser_switchTabPermissionPrompt.js"]
 
 ["browser_windowPrompt.js"]
+skip-if = [
+  "os == 'win' && os_version == '11.26200' && asan", # Bug 2019745
+]

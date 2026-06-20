@@ -18,6 +18,7 @@ include "mozilla/dom/NavigationAPIIPCUtils.h";
 include "mozilla/dom/PropertyBagUtils.h";
 include "mozilla/dom/ReferrerInfoUtils.h";
 include "mozilla/ipc/URIUtils.h";
+include "mozilla/dom/ConsoleReportIPCUtils.h";
 include "mozilla/net/CacheInfoIPCTypes.h";
 include "mozilla/AntiTrackingIPCUtils.h";
 include "mozilla/net/ClassOfService.h";
@@ -44,6 +45,8 @@ using nsILoadInfo::HTTPSUpgradeTelemetryType from "nsILoadInfo.h";
 using nsILoadInfo::SchemelessInputType from "nsILoadInfo.h";
 using mozilla::dom::UserNavigationInvolvement from "mozilla/dom/UserNavigationInvolvement.h";
 using mozilla::RFPTargetSet from "nsRFPService.h";
+using PropertiesFile from "nsContentUtils.h";
+[RefCounted] using mozilla::dom::ParentProcessChannelHandle from "mozilla/dom/ParentProcessChannelHandle.h";
 
 namespace mozilla {
 namespace net {
@@ -471,6 +474,7 @@ struct HttpConnectionInfoCloneArgs
   uint8_t trrMode;
   bool isIPv4Disabled;
   bool isIPv6Disabled;
+  bool isHttp3Disabled;
   nsCString topWindowOrigin;
   bool isHttp3;
   bool webTransport;
@@ -484,7 +488,7 @@ struct HttpConnectionInfoCloneArgs
 struct ConsoleReportCollected {
   uint32_t errorFlags;
   nsCString category;
-  uint32_t propertiesFile;
+  PropertiesFile propertiesFile;
   nsCString sourceFileURI;
   uint32_t lineNumber;
   uint32_t columnNumber;
@@ -575,6 +579,7 @@ struct RedirectToRealChannelArgs {
   EarlyHintConnectArgs[] earlyHints;
   uint32_t earlyHintLinkType;
   nullable nsIReferrerInfo referrerInfo;
+  nullable ParentProcessChannelHandle channelHandle;
 };
 
 struct TimingStructArgs {
@@ -586,6 +591,8 @@ struct TimingStructArgs {
   TimeStamp connectEnd;
   TimeStamp requestStart;
   TimeStamp responseStart;
+  TimeStamp firstInterimResponseStart;
+  TimeStamp finalResponseHeadersStart;
   TimeStamp responseEnd;
   TimeStamp transactionPending;
 };
@@ -599,6 +606,8 @@ struct ResourceTimingStructArgs {
   TimeStamp connectEnd;
   TimeStamp requestStart;
   TimeStamp responseStart;
+  TimeStamp firstInterimResponseStart;
+  TimeStamp finalResponseHeadersStart;
   TimeStamp responseEnd;
   TimeStamp fetchStart;
   TimeStamp redirectStart;

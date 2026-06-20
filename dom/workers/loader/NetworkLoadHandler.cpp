@@ -71,7 +71,7 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
   if (aStringLen > GetWorkerScriptMaxSizeInBytes()) {
     Document* parentDoc = mWorkerRef->Private()->GetDocument();
     nsContentUtils::ReportToConsole(nsIScriptError::errorFlag, "DOM"_ns,
-                                    parentDoc, nsContentUtils::eDOM_PROPERTIES,
+                                    parentDoc, PropertiesFile::DOM_PROPERTIES,
                                     "WorkerScriptTooLargeError");
     return NS_ERROR_DOM_ABORT_ERR;
   }
@@ -205,9 +205,9 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
     NS_ENSURE_SUCCESS(rv, rv);
 
     if (!loadContext->mRequest->ScriptTextLength()) {
-      nsContentUtils::ReportToConsole(
-          nsIScriptError::warningFlag, "DOM"_ns, parentDoc,
-          nsContentUtils::eDOM_PROPERTIES, "EmptyWorkerSourceWarning");
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
+                                      parentDoc, PropertiesFile::DOM_PROPERTIES,
+                                      "EmptyWorkerSourceWarning");
     }
   }
 
@@ -362,7 +362,12 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
                     javascript_options_experimental_wasm_esm_integration() &&
                 nsContentUtils::HasWasmMimeTypeEssence(mimeTypeUTF16))
 #endif
-                )) {
+            // Allow non-toplevel text modules
+            || (JS::Prefs::experimental_import_text() &&
+                !loadContext->IsTopLevel() &&
+                loadContext->mRequest->IsModuleRequest() &&
+                loadContext->mRequest->AsModuleRequest()->mModuleType ==
+                    JS::ModuleType::Text))) {
         const nsCString& scope = mWorkerRef->Private()
                                      ->GetServiceWorkerRegistrationDescriptor()
                                      .Scope();
@@ -413,7 +418,7 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   mozilla::dom::RequestOrUTF8String request;
 
   MOZ_ASSERT(!loadContext->mFullURL.IsEmpty());
-  request.SetAsUTF8String().ShareOrDependUpon(loadContext->mFullURL);
+  request.SetAsUTF8String() = loadContext->mFullURL;
 
   // This JSContext will not end up executing JS code because here there are
   // no ReadableStreams involved.

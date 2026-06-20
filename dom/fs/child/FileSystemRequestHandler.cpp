@@ -211,18 +211,17 @@ void ResolveCallback(
   HandleFailedStatus(aResponse.get_nsresult(), aPromise);
 }
 
-template <>
 void ResolveCallback(
     FileSystemMoveEntryResponse&& aResponse,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
-    FileSystemEntryMetadata* const& aEntry, const Name& aName) {
+    const RefPtr<FileSystemHandle>& aHandle, const Name& aName) {
   MOZ_ASSERT(aPromise);
+  MOZ_ASSERT(aHandle);
   QM_TRY(OkIf(Promise::PromiseState::Pending == aPromise->State()), QM_VOID);
 
   if (FileSystemMoveEntryResponse::TEntryId == aResponse.type()) {
-    if (aEntry) {
-      aEntry->entryId() = std::move(aResponse.get_EntryId());
-      aEntry->entryName() = aName;
+    if (aHandle) {
+      aHandle->UpdateMetadata(std::move(aResponse.get_EntryId()), aName);
     }
 
     aPromise->MaybeResolveWithUndefined();
@@ -257,7 +256,7 @@ void ResolveCallback(FileSystemResolveResponse&& aResponse,
 }
 
 template <class TResponse, class TReturns, class... Args,
-          std::enable_if_t<std::is_same<TReturns, void>::value, bool> = true>
+          std::enable_if_t<std::is_same_v<TReturns, void>, bool> = true>
 mozilla::ipc::ResolveCallback<TResponse> SelectResolveCallback(
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     Args&&... args) {
@@ -269,7 +268,7 @@ mozilla::ipc::ResolveCallback<TResponse> SelectResolveCallback(
 }
 
 template <class TResponse, class TReturns, class... Args,
-          std::enable_if_t<!std::is_same<TReturns, void>::value, bool> = true>
+          std::enable_if_t<!std::is_same_v<TReturns, void>, bool> = true>
 mozilla::ipc::ResolveCallback<TResponse> SelectResolveCallback(
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     Args&&... args) {
@@ -550,7 +549,7 @@ void FileSystemRequestHandler::RemoveEntry(
 }
 
 void FileSystemRequestHandler::MoveEntry(
-    RefPtr<FileSystemManager>& aManager, FileSystemHandle* aHandle,
+    RefPtr<FileSystemManager>& aManager, RefPtr<FileSystemHandle> aHandle,
     FileSystemEntryMetadata* const aEntry,
     const FileSystemChildMetadata& aNewEntry,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
@@ -571,10 +570,11 @@ void FileSystemRequestHandler::MoveEntry(
     return;
   }
 
+  const RefPtr<FileSystemHandle> handle(aHandle);
   aManager->BeginRequest(
       [request = FileSystemMoveEntryRequest(*aEntry, aNewEntry),
        onResolve = SelectResolveCallback<FileSystemMoveEntryResponse, void>(
-           aPromise, aEntry, aNewEntry.childName()),
+           aPromise, handle, aNewEntry.childName()),
        onReject = GetRejectCallback(aPromise)](const auto& actor) mutable {
         actor->SendMoveEntry(request, std::move(onResolve),
                              std::move(onReject));
@@ -583,7 +583,7 @@ void FileSystemRequestHandler::MoveEntry(
 }
 
 void FileSystemRequestHandler::RenameEntry(
-    RefPtr<FileSystemManager>& aManager, FileSystemHandle* aHandle,
+    RefPtr<FileSystemManager>& aManager, RefPtr<FileSystemHandle> aHandle,
     FileSystemEntryMetadata* const aEntry, const Name& aName,
     RefPtr<Promise> aPromise,  // NOLINT(performance-unnecessary-value-param)
     ErrorResult& aError) {
@@ -603,10 +603,11 @@ void FileSystemRequestHandler::RenameEntry(
     return;
   }
 
+  const RefPtr<FileSystemHandle> handle(aHandle);
   aManager->BeginRequest(
       [request = FileSystemRenameEntryRequest(*aEntry, aName),
        onResolve = SelectResolveCallback<FileSystemMoveEntryResponse, void>(
-           aPromise, aEntry, aName),
+           aPromise, handle, aName),
        onReject = GetRejectCallback(aPromise)](const auto& actor) mutable {
         actor->SendRenameEntry(request, std::move(onResolve),
                                std::move(onReject));

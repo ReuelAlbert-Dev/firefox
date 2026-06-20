@@ -143,7 +143,7 @@ class Components(
     val remoteSettingsSyncScheduler by lazy {
         DefaultRemoteSettingsSyncScheduler(
             context,
-            Frequency(24, TimeUnit.HOURS),
+            Frequency(2, TimeUnit.HOURS),
         )
     }
 
@@ -380,6 +380,9 @@ private fun createCrashReporter(context: Context): CrashReporter {
                 appChannel = org.mozilla.geckoview.BuildConfig.MOZ_UPDATE_CHANNEL,
                 appVersion = org.mozilla.geckoview.BuildConfig.MOZ_APP_VERSION,
                 appBuildId = org.mozilla.geckoview.BuildConfig.MOZ_APP_BUILDID,
+                // There's no need to call `CrashReporter.setTelemetryEnabled`: there's no path for the telemetry
+                // setting to change (it is always false).
+                isUploadEnabled = GleanMetricsService.isTelemetryEnabled(context),
             ),
         ),
         promptConfiguration = CrashReporter.PromptConfiguration(

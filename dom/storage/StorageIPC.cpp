@@ -729,6 +729,9 @@ void StorageDBParent::Init() {
   if (::mozilla::ipc::BackgroundParent::IsOtherProcessActor(actor)) {
     mObserverSink = new ObserverSink(this);
     mObserverSink->Start();
+    // Content processes are not trusted to supply a valid profile path; clear
+    // it so that StorageDBThread::Init derives the correct path itself.
+    mProfilePath.Truncate();
   }
 
   StorageDBThread* storageThread = StorageDBThread::Get(mPrivateBrowsingId);
@@ -1448,10 +1451,9 @@ BackgroundSessionStorageManager* SessionStorageManagerParent::GetManager()
 
 mozilla::ipc::IPCResult SessionStorageManagerParent::RecvClearStorages(
     const OriginAttributesPattern& aPattern, const nsACString& aOriginScope,
-    const uint32_t& aMode) {
+    const DomainMatchingMode& aMode) {
   ::mozilla::ipc::AssertIsOnBackgroundThread();
-  mBackgroundManager->ClearStorages(aPattern, aOriginScope,
-                                    static_cast<DomainMatchingMode>(aMode));
+  mBackgroundManager->ClearStorages(aPattern, aOriginScope, aMode);
   return IPC_OK();
 }
 

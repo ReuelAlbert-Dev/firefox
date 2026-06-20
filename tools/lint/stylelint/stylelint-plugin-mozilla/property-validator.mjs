@@ -140,7 +140,10 @@ export class PropertyValidator {
 
   isAllowedFunction(functionType, isAlias = false) {
     if (isAlias) {
-      return this.allowedAliasFunctions.has(functionType);
+      return (
+        this.allowedFunctions.has(functionType) ||
+        this.allowedAliasFunctions.has(functionType)
+      );
     }
 
     return this.allowedFunctions.has(functionType);
@@ -178,7 +181,7 @@ export class PropertyValidator {
 
   isUnit(word) {
     const parsed = valueParser.unit(word);
-    return parsed !== false && parsed.unit !== "";
+    return parsed !== false && parsed.number !== "" && parsed.unit !== "";
   }
 
   static isCalcOperand(node) {

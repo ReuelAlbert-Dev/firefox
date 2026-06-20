@@ -257,7 +257,7 @@ void WebGL2Context::ReadBuffer(GLenum mode) {
     ErrorInvalidOperation(
         "If READ_FRAMEBUFFER is null, `mode` must be BACK or"
         " NONE. Was %s.",
-        enumName.BeginReading());
+        enumName.get());
     return;
   }
 

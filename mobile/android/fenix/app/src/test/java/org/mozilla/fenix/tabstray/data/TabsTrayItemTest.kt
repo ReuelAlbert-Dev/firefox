@@ -7,7 +7,9 @@ package org.mozilla.fenix.tabstray.data
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import junit.framework.TestCase.assertEquals
-import org.junit.Assert.assertTrue
+import junit.framework.TestCase.assertFalse
+import junit.framework.TestCase.assertTrue
+import mozilla.components.compose.base.theme.layout.AcornWindowSize
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -18,7 +20,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(),
+            tabs = mutableListOf(),
         )
 
         val thumbnails = group.thumbnails
@@ -31,7 +33,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(
+            tabs = mutableListOf(
                 createTab(url = "www.mozilla.org"),
             ),
         )
@@ -46,7 +48,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(
+            tabs = mutableListOf(
                 createTab(url = "www.mozilla.org"),
                 createTab(url = "www.wikipedia.org"),
             ),
@@ -62,7 +64,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(
+            tabs = mutableListOf(
                 createTab(url = "www.mozilla.org"),
                 createTab(url = "www.wikipedia.org"),
                 createTab(url = "www.website.com"),
@@ -79,7 +81,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(
+            tabs = mutableListOf(
                 createTab(url = "www.mozilla.org"),
                 createTab(url = "www.wikipedia.org"),
                 createTab(url = "www.website.com"),
@@ -97,7 +99,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = List(100) { createTab(url = "www.mozilla.org") }.toHashSet(),
+            tabs = MutableList(100) { createTab(url = "www.mozilla.org") },
         )
 
         val thumbnails = group.thumbnails
@@ -110,7 +112,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = List(100) { createTab(url = "www.mozilla.org") }.toHashSet(),
+            tabs = MutableList(100) { createTab(url = "www.mozilla.org") },
         )
 
         val thumbnails = group.thumbnails
@@ -125,7 +127,7 @@ class TabsTrayItemTest {
         val group = TabsTrayItem.TabGroup(
             title = "Title",
             theme = TabGroupTheme.Yellow,
-            tabs = hashSetOf(tab),
+            tabs = mutableListOf(tab),
         )
 
         val thumbnails = group.thumbnails
@@ -135,5 +137,59 @@ class TabsTrayItemTest {
         assertEquals(tab.id, thumbnailImageData.tabId)
         assertEquals(tab.private, thumbnailImageData.isPrivate)
         assertEquals(tab.icon?.asImageBitmap(), thumbnailImageData.tabIcon)
+    }
+
+    @Test
+    fun `GIVEN the window is small and the group has 4 tabs WHEN expanding the group THEN fully expand the group`() {
+        val windowSize = AcornWindowSize.Small
+        val tabs = MutableList(size = 4) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertTrue(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
+    }
+
+    @Test
+    fun `GIVEN the window is small and the group has 3 tabs WHEN expanding the group THEN partially expand the group`() {
+        val windowSize = AcornWindowSize.Small
+        val tabs = MutableList(size = 3) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertFalse(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
+    }
+
+    @Test
+    fun `GIVEN the window is medium and the group has 3 tabs WHEN expanding the group THEN partially expand the group`() {
+        val windowSize = AcornWindowSize.Medium
+        val tabs = MutableList(size = 3) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertFalse(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
+    }
+
+    @Test
+    fun `GIVEN the window is large and the group has 3 tabs WHEN expanding the group THEN partially expand the group`() {
+        val windowSize = AcornWindowSize.Large
+        val tabs = MutableList(size = 3) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertFalse(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
+    }
+
+    @Test
+    fun `GIVEN the window is medium and the group has 8 tabs WHEN expanding the group THEN fully expand the group`() {
+        val windowSize = AcornWindowSize.Medium
+        val tabs = MutableList(size = 8) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertTrue(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
+    }
+
+    @Test
+    fun `GIVEN the window is large and the group has 8 tabs WHEN expanding the group THEN fully expand the group`() {
+        val windowSize = AcornWindowSize.Large
+        val tabs = MutableList(size = 8) { createTab(url = "") }
+        val group = createTabGroup(tabs = tabs)
+
+        assertTrue(group.shouldFullyExpandOnFirstOpen(windowSize = windowSize))
     }
 }

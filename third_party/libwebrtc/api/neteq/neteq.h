@@ -16,11 +16,10 @@
 
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "api/array_view.h"
-#include "api/audio_codecs/audio_codec_pair_id.h"
 #include "api/audio_codecs/audio_format.h"
 #include "api/rtp_headers.h"
 #include "api/rtp_packet_info.h"
@@ -32,28 +31,29 @@ namespace webrtc {
 class AudioFrame;
 
 struct NetEqNetworkStatistics {
-  uint16_t current_buffer_size_ms;    // Current jitter buffer size in ms.
-  uint16_t preferred_buffer_size_ms;  // Target buffer size in ms.
-  uint16_t jitter_peaks_found;        // 1 if adding extra delay due to peaky
-                                      // jitter; 0 otherwise.
-  uint16_t expand_rate;         // Fraction (of original stream) of synthesized
-                                // audio inserted through expansion (in Q14).
-  uint16_t speech_expand_rate;  // Fraction (of original stream) of synthesized
-                                // speech inserted through expansion (in Q14).
-  uint16_t preemptive_rate;     // Fraction of data inserted through pre-emptive
-                                // expansion (in Q14).
-  uint16_t accelerate_rate;     // Fraction of data removed through acceleration
-                                // (in Q14).
-  uint16_t secondary_decoded_rate;    // Fraction of data coming from FEC/RED
-                                      // decoding (in Q14).
-  uint16_t secondary_discarded_rate;  // Fraction of discarded FEC/RED data (in
-                                      // Q14).
+  uint16_t current_buffer_size_ms = 0;    // Current jitter buffer size in ms.
+  uint16_t preferred_buffer_size_ms = 0;  // Target buffer size in ms.
+  uint16_t jitter_peaks_found =
+      0;  // 1 if adding extra delay due to peaky jitter; 0 otherwise.
+  uint16_t expand_rate = 0;  // Fraction (of original stream) of synthesized
+                             // audio inserted through expansion (in Q14).
+  uint16_t speech_expand_rate =
+      0;  // Fraction (of original stream) of synthesized speech inserted
+          // through expansion (in Q14).
+  uint16_t preemptive_rate =
+      0;  // Fraction of data inserted through preemptive expansion (in Q14).
+  uint16_t accelerate_rate =
+      0;  // Fraction of data removed through acceleration (in Q14).
+  uint16_t secondary_decoded_rate =
+      0;  // Fraction of data coming from FEC/RED decoding (in Q14).
+  uint16_t secondary_discarded_rate =
+      0;  // Fraction of discarded FEC/RED data (in Q14).
   // Statistics for packet waiting times, i.e., the time between a packet
   // arrives until it is decoded.
-  int mean_waiting_time_ms;
-  int median_waiting_time_ms;
-  int min_waiting_time_ms;
-  int max_waiting_time_ms;
+  int mean_waiting_time_ms = 0;
+  int median_waiting_time_ms = 0;
+  int min_waiting_time_ms = 0;
+  int max_waiting_time_ms = 0;
 };
 
 // NetEq statistics that persist over the lifetime of the class.
@@ -138,7 +138,6 @@ class NetEq {
     bool enable_fast_accelerate = false;
     bool enable_muted_state = false;
     bool enable_rtx_handling = false;
-    std::optional<AudioCodecPairId> codec_pair_id;
     bool for_test_no_time_stretching = false;  // Use only for testing.
   };
 
@@ -187,14 +186,14 @@ class NetEq {
   virtual ~NetEq() {}
 
   virtual int InsertPacket(const RTPHeader& rtp_header,
-                           ArrayView<const uint8_t> payload) {
+                           std::span<const uint8_t> payload) {
     return InsertPacket(rtp_header, payload,
                         /*receive_time=*/Timestamp::MinusInfinity());
   }
 
   // TODO: webrtc:343501093 - removed unused method.
   virtual int InsertPacket(const RTPHeader& rtp_header,
-                           ArrayView<const uint8_t> payload,
+                           std::span<const uint8_t> payload,
                            Timestamp receive_time) {
     return InsertPacket(rtp_header, payload,
                         RtpPacketInfo(rtp_header, receive_time));
@@ -204,7 +203,7 @@ class NetEq {
   // Returns 0 on success, -1 on failure.
   // TODO: webrtc:343501093 - Make this method pure virtual.
   virtual int InsertPacket(const RTPHeader& rtp_header,
-                           ArrayView<const uint8_t> payload,
+                           std::span<const uint8_t> payload,
                            const RtpPacketInfo& /* rtp_packet_info */) {
     return InsertPacket(rtp_header, payload);
   }
@@ -248,6 +247,13 @@ class NetEq {
   // -1 on failure. Removing a payload type that is not registered is ok and
   // will not result in an error.
   virtual int RemovePayloadType(uint8_t rtp_payload_type) = 0;
+
+  // Set the maximum number of packets to hold in the IO packet buffer.
+  virtual void SetMaximumBufferPackets(size_t max_packets) = 0;
+
+  // Set if the FastAccelerate feature (accelerate based on arrival time) is
+  // enabled.
+  virtual void SetFastAccelerate(bool enable) = 0;
 
   // Removes all payload types from the codec database.
   virtual void RemoveAllPayloadTypes() = 0;

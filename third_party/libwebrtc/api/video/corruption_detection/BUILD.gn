@@ -32,10 +32,7 @@ rtc_library("frame_instrumentation_data") {
     "frame_instrumentation_data.h",
   ]
 
-  deps = [
-    "../../:array_view",
-    "../../../rtc_base:checks",
-  ]
+  deps = []
 }
 
 rtc_library("frame_instrumentation_data_reader") {
@@ -47,8 +44,6 @@ rtc_library("frame_instrumentation_data_reader") {
 
   deps = [
     ":frame_instrumentation_data",
-    "../../:array_view",
-    "../../../rtc_base:checks",
     "../../../rtc_base:logging",
     "../../transport/rtp:corruption_detection_message",
   ]
@@ -62,10 +57,8 @@ rtc_library("frame_instrumentation_evaluation") {
   ]
   deps = [
     ":frame_instrumentation_data",
-    "../:video_frame",
-    "../:video_rtp_headers",
-    "../../:array_view",
-    "../../:scoped_refptr",
+    "..:video_frame",
+    "..:video_rtp_headers",
     "../../../rtc_base:checks",
     "../../../rtc_base:logging",
     "../../../video/corruption_detection:corruption_classifier",
@@ -73,6 +66,33 @@ rtc_library("frame_instrumentation_evaluation") {
   ]
 }
 
+rtc_library("frame_instrumentation_generator_factory") {
+  visibility = [ "*" ]
+  sources = [
+    "frame_instrumentation_generator_factory.cc",
+    "frame_instrumentation_generator_factory.h",
+  ]
+  deps = [
+    ":frame_instrumentation_generator_header",  # keep
+    "..:video_frame",
+    "../../../video/corruption_detection:frame_instrumentation_generator_impl",
+    "../../environment",
+    "../../video_codecs:scalability_mode",
+  ]
+}
+
+rtc_library("frame_instrumentation_generator_header") {
+  visibility = [ "*" ]
+  sources = [ "frame_instrumentation_generator.h" ]
+  deps = [
+    ":frame_instrumentation_data",
+    "..:encoded_image",
+    "..:video_frame",
+  ]
+}
+
+# Legacy target including both header and implementation.
+# TODO: bugs.webrtc.org/358039777 - Remove once downstream usage is gone.
 rtc_library("frame_instrumentation_generator") {
   visibility = [ "*" ]
   sources = [
@@ -80,22 +100,10 @@ rtc_library("frame_instrumentation_generator") {
     "frame_instrumentation_generator.h",
   ]
   deps = [
-    ":filter_settings",
     ":frame_instrumentation_data",
-    "../:encoded_image",
-    "../:video_frame",
-    "../:video_frame_type",
-    "../../../modules:module_api_public",
-    "../../../modules/video_coding:video_coding_utility",
-    "../../../rtc_base:checks",
-    "../../../rtc_base:logging",
-    "../../../rtc_base:macromagic",
-    "../../../rtc_base/synchronization:mutex",
-    "../../../video/corruption_detection:generic_mapping_functions",
-    "../../../video/corruption_detection:halton_frame_sampler",
-    "../../../video/corruption_detection:utils",
-    "../../video_codecs:video_codecs_api",
-    "//third_party/abseil-cpp/absl/algorithm:container",
+    ":frame_instrumentation_generator_factory",
+    "..:encoded_image",
+    "..:video_frame",
   ]
 }
 
@@ -106,7 +114,6 @@ if (rtc_include_tests) {
     deps = [
       ":corruption_detection_settings_generator",
       ":filter_settings",
-      "../../:field_trials",
       "../../../test:test_support",
     ]
   }
@@ -139,28 +146,11 @@ if (rtc_include_tests) {
     deps = [
       ":frame_instrumentation_data",
       ":frame_instrumentation_evaluation",
-      "../:video_frame",
-      "../:video_rtp_headers",
-      "../../:scoped_refptr",
+      "..:video_frame",
+      "..:video_rtp_headers",
+      "../..:scoped_refptr",
       "../../../test:test_support",
-    ]
-  }
-
-  rtc_library("frame_instrumentation_generator_unittest") {
-    testonly = true
-    sources = [ "frame_instrumentation_generator_unittest.cc" ]
-    deps = [
-      ":filter_settings",
-      ":frame_instrumentation_data",
-      ":frame_instrumentation_generator",
-      "../:encoded_image",
-      "../:video_frame",
-      "../:video_frame_type",
-      "../../../api:make_ref_counted",
-      "../../../api:scoped_refptr",
-      "../../../rtc_base:refcount",
-      "../../../test:test_support",
-      "../../../video/corruption_detection:utils",
+      "../../../video/corruption_detection:halton_frame_sampler",
     ]
   }
 }

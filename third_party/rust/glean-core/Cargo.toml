@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.90"
 name = "glean-core"
-version = "67.1.0"
+version = "67.3.2"
 authors = [
     "Jan-Erik Rediger <jrediger@mozilla.com>",
     "The Glean Team <glean-team@mozilla.com>",
@@ -41,7 +41,7 @@ license = "MPL-2.0"
 repository = "https://github.com/mozilla/glean"
 
 [package.metadata.glean]
-glean-parser = "18.2.0"
+glean-parser = "19.0.0"
 
 [badges.circle-ci]
 branch = "main"

@@ -297,6 +297,11 @@ add_task(async function test_IPPStartupCache_usageInfo_store_read() {
     originalUsage.reset.toString(),
     "reset matches after store/read"
   );
+  Assert.equal(
+    retrievedUsage.unlimited,
+    originalUsage.unlimited,
+    "unlimited matches after store/read"
+  );
 
   cacheHandle.cache.storeUsageInfo(null);
   const clearedPref = Services.prefs.getCharPref(
@@ -309,6 +314,28 @@ add_task(async function test_IPPStartupCache_usageInfo_store_read() {
     null,
     "Reading cleared cache returns null"
   );
+
+  Services.prefs.clearUserPref("browser.ipProtection.usageCache");
+});
+
+add_task(async function test_IPPStartupCache_unlimited_usage_store_read() {
+  Services.prefs.setBoolPref("browser.ipProtection.cacheDisabled", false);
+
+  const originalUsage = new ProxyUsage(null, null, null, true);
+
+  using cacheHandle = makeCacheHandle();
+  cacheHandle.cache.storeUsageInfo(originalUsage);
+
+  const retrievedUsage = cacheHandle.cache.usageInfo;
+  Assert.notEqual(retrievedUsage, null, "Retrieved usageInfo is not null");
+  Assert.equal(retrievedUsage.unlimited, true, "unlimited round-trips");
+  Assert.equal(retrievedUsage.max, null, "max is null for unlimited");
+  Assert.equal(
+    retrievedUsage.remaining,
+    null,
+    "remaining is null for unlimited"
+  );
+  Assert.equal(retrievedUsage.reset, null, "reset is null for unlimited");
 
   Services.prefs.clearUserPref("browser.ipProtection.usageCache");
 });
@@ -347,6 +374,7 @@ add_task(async function test_IPPStartupCache_usageInfo_type_validation() {
 add_task(async function test_IPPStartupCache_usage_event_listener() {
   Services.prefs.setBoolPref("browser.ipProtection.cacheDisabled", false);
 
+  await IPProtectionService.init();
   using cacheHandle = makeCacheHandle();
 
   Services.obs.notifyObservers(null, "sessionstore-windows-restored");
@@ -413,4 +441,5 @@ add_task(async function test_IPPStartupCache_usage_event_listener() {
 
   Services.prefs.clearUserPref("browser.ipProtection.usageCache");
   Services.prefs.clearUserPref("browser.ipProtection.stateCache");
+  IPProtectionService.uninit();
 });

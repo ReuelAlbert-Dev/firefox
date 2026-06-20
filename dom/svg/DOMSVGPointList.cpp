@@ -252,9 +252,8 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
     return nullptr;
   }
 
-  aIndex = std::min(aIndex, LengthNoFlush());
-  if (aIndex >= DOMSVGPoint::MaxListIndex()) {
-    aRv.ThrowIndexSizeError("Index out of range");
+  if (LengthNoFlush() >= DOMSVGPoint::MaxListIndex()) {
+    aRv.ThrowIndexSizeError("List too long");
     return nullptr;
   }
 
@@ -279,11 +278,13 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::InsertItemBefore(
     }
   }
 
+  aIndex = std::min(aIndex, LengthNoFlush());
+
   AutoChangePointListNotifier notifier(this);
   // Now that we know we're inserting, keep animVal list in sync as necessary.
   MaybeInsertNullInAnimValListAt(aIndex);
 
-  InternalList().InsertItem(aIndex, domItem->ToSVGPoint());
+  InternalList().InsertItem(aIndex, domItem->ToPoint());
   MOZ_ALWAYS_TRUE(mItems.InsertElementAt(aIndex, domItem, fallible));
 
   // This MUST come after the insertion into InternalList(), or else under the
@@ -320,10 +321,10 @@ already_AddRefed<DOMSVGPoint> DOMSVGPointList::ReplaceItem(
     mItems[aIndex]->RemovingFromList();
   }
 
-  InternalList()[aIndex] = domItem->ToSVGPoint();
+  InternalList()[aIndex] = domItem->ToPoint();
   mItems[aIndex] = domItem;
 
-  // This MUST come after the ToSVGPoint() call, otherwise that call
+  // This MUST come after the ToPoint() call, otherwise that call
   // would end up reading bad data from InternalList()!
   domItem->InsertingIntoList(this, aIndex, IsAnimValList());
 

@@ -111,7 +111,7 @@ class ContentChild final : public PContentChild,
   void Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
             const char* aParentBuildID, bool aIsForBrowser);
 
-  void InitXPCOM(XPCOMInitData&& aXPCOMInit,
+  void InitXPCOM(XPCOMInitData& aXPCOMInit,
                  NotNull<StructuredCloneData*> aInitialData,
                  bool aIsReadyForBackgroundProcessing);
 
@@ -338,6 +338,15 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvRemoveAllPermissions();
 
+  mozilla::ipc::IPCResult RecvSetBrowserPermission(const nsCString& aOrigin,
+                                                   const nsCString& aType,
+                                                   const uint32_t& aAction,
+                                                   const uint64_t& aBrowserId,
+                                                   const bool& aIsRemoval);
+
+  mozilla::ipc::IPCResult RecvClearBrowserPermissions(
+      const uint64_t& aBrowserId, const uint32_t& aActionFilter);
+
  private:
   void NotifyMemoryPressure(const char* aTopic, const char16_t* aReason);
 
@@ -450,7 +459,8 @@ class ContentChild final : public PContentChild,
   PContentPermissionRequestChild* AllocPContentPermissionRequestChild(
       Span<const PermissionRequest> aRequests, nsIPrincipal* aPrincipal,
       nsIPrincipal* aTopLevelPrincipal, const bool& aIsHandlingUserInput,
-      const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId);
+      const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId,
+      const bool& aIgnoreAllowSitePermission);
   bool DeallocPContentPermissionRequestChild(
       PContentPermissionRequestChild* actor);
 
@@ -466,7 +476,7 @@ class ContentChild final : public PContentChild,
       const nsID& aUUID, const GetFilesResponseResult& aResult);
 
   mozilla::ipc::IPCResult RecvBlobURLRegistration(
-      const nsCString& aURI, const IPCBlob& aBlob, nsIPrincipal* aPrincipal,
+      const nsCString& aURI, nsIPrincipal* aPrincipal,
       const nsCString& aPartitionKey);
 
   mozilla::ipc::IPCResult RecvBlobURLUnregistration(
@@ -720,8 +730,7 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvLoadURI(
       const MaybeDiscarded<BrowsingContext>& aContext,
-      nsDocShellLoadState* aLoadState, bool aSetNavigating,
-      LoadURIResolver&& aResolve);
+      nsDocShellLoadState* aLoadState, bool aSetNavigating);
 
   mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState);
 
@@ -768,9 +777,11 @@ class ContentChild final : public PContentChild,
                                         ErrorResult& aRv) override;
   mozilla::ipc::IProtocol* AsNativeActor() override { return this; }
 
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvHistoryCommitIndexAndLength(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint32_t& aIndex,
-      const uint32_t& aLength, const nsID& aChangeID);
+      const uint32_t& aLength, const nsID& aChangeID,
+      nsTArray<NavigationEntriesTruncation>&& aTruncations);
 
   mozilla::ipc::IPCResult RecvConsumeHistoryActivation(
       const MaybeDiscarded<BrowsingContext>& aTop);
@@ -784,13 +795,14 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvDispatchBeforeUnloadToSubtree(
       const MaybeDiscarded<BrowsingContext>& aStartingAt,
-      const mozilla::Maybe<SessionHistoryInfo>& aInfo,
+      const mozilla::Maybe<mozilla::NotNull<RefPtr<nsDocShellLoadState>>>&
+          aLoadState,
       DispatchBeforeUnloadToSubtreeResolver&& aResolver);
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
   mozilla::ipc::IPCResult RecvDispatchNavigateToTraversable(
       const MaybeDiscarded<BrowsingContext>& aTraversable,
-      const mozilla::Maybe<SessionHistoryInfo>& aInfo,
+      const mozilla::NotNull<RefPtr<nsDocShellLoadState>>& aLoadState,
       DispatchNavigateToTraversableResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvInitNextGenLocalStorageEnabled(
@@ -799,7 +811,8 @@ class ContentChild final : public PContentChild,
  public:
   static void DispatchBeforeUnloadToSubtree(
       BrowsingContext* aStartingAt,
-      const mozilla::Maybe<SessionHistoryInfo>& aInfo,
+      const mozilla::Maybe<mozilla::NotNull<RefPtr<nsDocShellLoadState>>>&
+          aLoadState,
       const DispatchBeforeUnloadToSubtreeResolver& aResolver);
 
   hal::ProcessPriority GetProcessPriority() const { return mProcessPriority; }
@@ -819,6 +832,9 @@ class ContentChild final : public PContentChild,
  private:
   void AddProfileToProcessName(const nsACString& aProfile);
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvSystemPermissionChanged(PermissionName aName,
+                                                      PermissionState aState);
 
   mozilla::ipc::IPCResult RecvUpdateMediaCodecsSupported(
       RemoteMediaIn aLocation, const media::MediaCodecsSupported& aSupported);

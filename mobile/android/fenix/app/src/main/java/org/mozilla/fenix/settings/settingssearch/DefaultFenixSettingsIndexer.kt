@@ -19,10 +19,21 @@ import java.util.concurrent.atomic.AtomicReference
  * Indexes Settings preferences for the Settings Search screen.
  *
  * All the preference files that are parsed and indexed are listed in the companion object.
+ *
+ * @param context [Context] needed for various Android interactions.
+ * @param preferenceFileInformationList List of XML details backing preference screens which will
+ * be indexed for building the in-memory data for what settings can be searched through.
+ * @param additionalProviders List of additional providers of [SettingsSearchItem]s to be included
+ * in the in-memory data for what settings can be searched through.
+ * @param excludedPreferenceKeys Returns the set of preference keys to exclude from the search index,
+ * evaluated at index time. Used to keep runtime/Nimbus-gated preferences out of search when their
+ * feature is disabled.
  */
 class DefaultFenixSettingsIndexer(
     private val context: Context,
     private val preferenceFileInformationList: List<PreferenceFileInformation> = defaultPreferenceFileInformationList,
+    private val additionalProviders: List<SettingsSearchProvider> = emptyList(),
+    private val excludedPreferenceKeys: () -> Set<String> = { emptySet() },
 ) : SettingsIndexer {
     private val settings = AtomicReference<List<SettingsSearchItem>>(emptyList())
 
@@ -39,7 +50,18 @@ class DefaultFenixSettingsIndexer(
             }
         }
 
-        settings.set(newSettings)
+        for (provider in additionalProviders) {
+            newSettings.addAll(provider.getSearchItems(context))
+        }
+
+        val excluded = excludedPreferenceKeys()
+        settings.set(
+            if (excluded.isEmpty()) {
+                newSettings
+            } else {
+                newSettings.filterNot { it.preferenceKey in excluded }
+            },
+        )
     }
 
     /**
@@ -343,6 +365,9 @@ class DefaultFenixSettingsIndexer(
             PreferenceFileInformation.TabsPreferences,
             PreferenceFileInformation.TrackingProtectionPreferences,
             PreferenceFileInformation.SaveLoginsPreferences,
+            PreferenceFileInformation.DataChoicesPreferences,
+            PreferenceFileInformation.AIControlsPreferences,
+            PreferenceFileInformation.FirefoxLabsPreferences,
         )
 
         /**
@@ -351,7 +376,6 @@ class DefaultFenixSettingsIndexer(
          * All of them require the app name.
          */
         val stringsWithRequiredFormatting = listOf(
-            R.string.preferences_downloads_settings_clean_up_files_title,
             R.string.preferences_show_nonsponsored_suggestions,
             R.string.preferences_about,
         )

@@ -1,3 +1,6 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 Unicode true
 
 OutFile "setup-stub.exe"
@@ -194,6 +197,7 @@ Function .onUserAbort
       Call StartDownload
     ${EndIf}
   ${Else}
+    StrCpy $ExitCode "${ERR_USER_CANCELLED_BEFORE_DOWNLOAD}"
     Call SendPing
   ${EndIf}
 

@@ -74,9 +74,7 @@ add_task(async function test_click_ask_row_picks_result() {
 
   try {
     const fetchWithHistoryStub = sb.stub(Chat, "fetchWithHistory");
-    sb.stub(openAIEngine, "build").resolves({
-      loadPrompt: () => Promise.resolve("Mock system prompt"),
-    });
+    sb.stub(openAIEngine, "build").resolves({});
 
     const win = await openAIWindow();
     const browser = win.gBrowser.selectedBrowser;
@@ -116,13 +114,95 @@ add_task(async function test_click_ask_row_picks_result() {
       "fetchWithHistory should be called after picking the AI_CHAT row"
     );
 
-    const conversation = fetchWithHistoryStub.firstCall.args[0];
-    const messages = conversation.getMessagesInOpenAiFormat();
+    const conversation = fetchWithHistoryStub.firstCall.args[0].conversation;
+    const messages = conversation.getMessagesInChatCompletionsFormat();
     const userMessage = messages.findLast(m => m.role === "user");
     Assert.equal(
       userMessage.content,
       query,
       "Chat conversation should contain the picked query"
+    );
+
+    await BrowserTestUtils.closeWindow(win);
+  } finally {
+    sb.restore();
+  }
+});
+
+/**
+ * Pressing Enter on a non-heuristic “ask” row should pick the result and
+ * submit the query to the chat conversation.
+ */
+add_task(async function test_enter_non_heuristic_ask_row_picks_result() {
+  const sb = sinon.createSandbox();
+
+  // Return “search” intent so the “ask” row is not a heuristic result.
+  const fakeSearchIntentEngine = {
+    run() {
+      return [
+        { label: "search", score: 0.95 },
+        { label: "chat", score: 0.05 },
+      ];
+    },
+  };
+  gIntentEngineStub.resolves(fakeSearchIntentEngine);
+
+  try {
+    const { resolve, promise } = Promise.withResolvers();
+    const fetchWithHistoryStub = sb
+      .stub(Chat, "fetchWithHistory")
+      .callsFake(() => resolve());
+    sb.stub(openAIEngine, "build").resolves({});
+
+    const win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
+    const query = "test";
+
+    await promiseSmartbarSuggestionsOpen(browser, () =>
+      typeInSmartbar(browser, query)
+    );
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const aiWindowElement = content.document.querySelector("ai-window");
+      const smartbar = aiWindowElement.shadowRoot.querySelector(
+        "#ai-window-smartbar"
+      );
+      const view = smartbar.querySelector(".urlbarView-results");
+      const getSelectedResultType = () =>
+        smartbar
+          .querySelector(".urlbarView-row[selected]")
+          .getAttribute("type");
+
+      // Arrow down until we select the “ask” row
+      EventUtils.synthesizeKey("KEY_ArrowDown", {}, content);
+      await ContentTaskUtils.waitForMutationCondition(
+        view,
+        { attributes: true, subtree: true },
+        () => getSelectedResultType() === "ai_chat"
+      );
+      EventUtils.synthesizeKey("KEY_Enter", {}, content);
+
+      await ContentTaskUtils.waitForCondition(
+        () => !smartbar.view.isOpen,
+        "View should close after pressing Enter on the AI_CHAT row"
+      );
+
+      Assert.equal(
+        smartbar.value,
+        "",
+        "Smartbar should be cleared after pressing Enter on the AI_CHAT row"
+      );
+    });
+
+    await promise;
+
+    const conversation = fetchWithHistoryStub.firstCall.args[0].conversation;
+    const messages = conversation.getMessagesInChatCompletionsFormat();
+    const userMessage = messages.findLast(m => m.role === "user");
+    Assert.equal(
+      userMessage.content,
+      query,
+      "Chat conversation should contain the picked result query"
     );
 
     await BrowserTestUtils.closeWindow(win);

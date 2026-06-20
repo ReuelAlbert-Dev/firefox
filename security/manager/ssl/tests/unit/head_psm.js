@@ -565,8 +565,7 @@ function add_tls_server_setup(serverBinName, certsPath, addDefaultRoot = true) {
  *   output stream is ready.
  * @param {OriginAttributes} aOriginAttributes (optional)
  *   The origin attributes that the socket transport will have. This parameter
- *   affects OCSP because OCSP cache is double-keyed by origin attributes' first
- *   party domain.
+ *   affects OCSP because the OCSP cache partitioned by origin attributes.
  *
  * @param {OriginAttributes} aEchConfig (optional)
  *   A Base64-encoded ECHConfig. If non-empty, it will be configured to the client
@@ -899,11 +898,21 @@ function startOCSPResponder(
       info("got request for: " + aRequest.path);
       let basePath = aRequest.path.slice(1).split("/")[0];
       if (expectedBasePaths.length >= 1) {
-        Assert.equal(
-          basePath,
-          expectedBasePaths.shift(),
-          "Actual and expected base path should match"
-        );
+        if (basePath !== expectedBasePaths[0]) {
+          info(
+            "OCSP responder ignoring unexpected request for: " +
+              aRequest.path +
+              ", still expecting: " +
+              expectedBasePaths[0]
+          );
+          aResponse.setStatusLine(
+            aRequest.httpVersion,
+            500,
+            "Internal Server Error"
+          );
+          return;
+        }
+        expectedBasePaths.shift();
       }
       Assert.greaterOrEqual(
         expectedCertNames.length,

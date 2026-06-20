@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -9,14 +7,17 @@
 #include "CamerasParent.h"
 #include "VideoEngine.h"
 #include "api/video/i420_buffer.h"
+#include "fake_video_capture/device_info_empty.h"
 #include "fake_video_capture/device_info_fake.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "mozilla/SyncRunnable.h"
+#include "mozilla/gtest/WaitFor.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "video_engine/video_capture_factory.h"
 
 using testing::_;
+using testing::AtLeast;
 using testing::Eq;
 using testing::InSequence;
 using testing::Matcher;
@@ -25,18 +26,25 @@ using testing::Property;
 using testing::Return;
 using testing::Test;
 using webrtc::VideoCaptureModule;
+using webrtc::videocapturemodule::DeviceInfoEmpty;
 using webrtc::videocapturemodule::DeviceInfoFake;
 
 namespace mozilla::camera {
-static void WaitForBackgroundThread() {
+static void RunOnBackgroundThread(already_AddRefed<Runnable> aRunnable) {
   nsCOMPtr<nsISerialEventTarget> backgroundThread =
       ipc::BackgroundParent::GetBackgroundThread();
-  MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
-      backgroundThread,
-      NS_NewRunnableFunction("TestAggregateCapturer::TearDown", [] {})));
+  MOZ_ALWAYS_SUCCEEDS(
+      SyncRunnable::DispatchToThread(backgroundThread, std::move(aRunnable)));
+}
+
+static void WaitForBackgroundThread() {
+  RunOnBackgroundThread(NS_NewRunnableFunction(__func__, [] {}));
 }
 
 class MockCamerasParent : public CamerasParent {
+ private:
+  MockCamerasParent() = default;
+
  public:
   static already_AddRefed<MockCamerasParent> Create() {
     nsCOMPtr<nsISerialEventTarget> backgroundThread =
@@ -44,9 +52,9 @@ class MockCamerasParent : public CamerasParent {
 
     RefPtr<MockCamerasParent> parent;
     MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
-        backgroundThread,
-        NS_NewRunnableFunction("TestAggregateCapturer::SetUp",
-                               [&] { parent = new MockCamerasParent(); })));
+        backgroundThread, NS_NewRunnableFunction(__func__, [&] {
+          parent = new MockCamerasParent();
+        })));
     return parent.forget();
   }
 
@@ -86,6 +94,7 @@ class MockVideoCapturer : public webrtc::VideoCaptureModule {
   }
 };
 
+template <typename DeviceInfoType>
 class MockVideoCaptureFactory : public VideoCaptureFactory {
  public:
   MOCK_METHOD(std::shared_ptr<VideoCaptureModule::DeviceInfo>, CreateDeviceInfo,
@@ -93,7 +102,7 @@ class MockVideoCaptureFactory : public VideoCaptureFactory {
   MOCK_METHOD(VideoCaptureFactory::CreateVideoCaptureResult, CreateVideoCapture,
               (int32_t, const char*, CaptureDeviceType), (override));
 
-  MockVideoCaptureFactory() : mDeviceInfo(std::make_shared<DeviceInfoFake>()) {
+  MockVideoCaptureFactory() : mDeviceInfo(std::make_shared<DeviceInfoType>()) {
     ON_CALL(*this, CreateDeviceInfo)
         .WillByDefault([&](CaptureDeviceType aType)
                            -> std::shared_ptr<VideoCaptureModule::DeviceInfo> {
@@ -112,11 +121,114 @@ class MockVideoCaptureFactory : public VideoCaptureFactory {
             });
   }
 
-  const std::shared_ptr<DeviceInfoFake> mDeviceInfo;
+  const std::shared_ptr<VideoCaptureModule::DeviceInfo> mDeviceInfo;
   std::map<int32_t, webrtc::scoped_refptr<MockVideoCapturer>> mCapturers;
 };
 
-struct TestAggregateCapturer : public Test {
+class TestableCamerasParent : public CamerasParent {
+ private:
+  TestableCamerasParent() = default;
+
+ public:
+  static already_AddRefed<TestableCamerasParent> Create() {
+    nsCOMPtr<nsISerialEventTarget> backgroundThread =
+        ipc::BackgroundParent::GetBackgroundThread();
+
+    RefPtr<TestableCamerasParent> parent;
+    MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
+        backgroundThread, NS_NewRunnableFunction(__func__, [&] {
+          parent = new TestableCamerasParent();
+        })));
+    return parent.forget();
+  }
+
+  // Members made public for the test.
+  using CamerasParent::CloseEngines;
+  using CamerasParent::mAggregators;
+  using CamerasParent::mEngines;
+  using CamerasParent::mVideoCaptureThread;
+};
+
+struct TestCamerasParent : public Test {
+  RefPtr<TestableCamerasParent> mParent;
+
+  static void SetUpTestSuite() {
+    // Accessing static prefs off-main will dispatch sync to main to init
+    // once-prefs, if not already done.
+    // CamerasParent uses static prefs, so make sure they're set up on main
+    // before using CamerasParent on the IPDL background thread.
+    StaticPrefs::MaybeInitOncePrefs();
+  }
+
+  void SetUp() override { mParent = TestableCamerasParent::Create(); }
+
+  void TearDown() override {
+    RunOnBackgroundThread(
+        NS_NewRunnableFunction(__func__, [&] { mParent = nullptr; }));
+    NS_ProcessPendingEvents(nullptr);
+  }
+};
+
+TEST_F(TestCamerasParent, BasicLifecycle) {}
+
+TEST_F(TestCamerasParent, DestroyDuringAsyncAllocate) {
+  static constexpr auto kUniqueId = "unique-id-1"_ns;
+  static constexpr int64_t kWindowId = 1;
+  static constexpr CaptureEngine kCapEng = CaptureEngine::CameraEngine;
+  static VideoEngine* engine{};
+  std::decay_t<decltype(mParent->mAggregators)> aggregators;
+  std::decay_t<decltype(mParent->mEngines)> engines;
+  MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
+      mParent->mVideoCaptureThread->GetEventTarget(),
+      NS_NewRunnableFunction(__func__, [&] {
+        mParent->mVideoCaptureThread->AssertOnCurrentThread();
+        aggregators = mParent->mAggregators;
+        engines = mParent->mEngines;
+        engine = engines->ElementAt(kCapEng) = VideoEngine::Create(
+            CaptureDeviceType::Camera,
+            MakeRefPtr<NiceMock<MockVideoCaptureFactory<DeviceInfoFake>>>());
+      })));
+  RefPtr mockParent = TestableCamerasParent::Create();
+
+  // Prime an aggregate capturer as if created by another CamerasParent
+  // instance.
+  MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
+      mParent->mVideoCaptureThread->GetEventTarget(),
+      NS_NewRunnableFunction(__func__, [&] {
+        aggregators->AppendElement(AggregateCapturer::Create(
+            GetCurrentSerialEventTarget(), kCapEng, engine, kUniqueId,
+            kWindowId, nsTArray<webrtc::VideoCaptureCapability>(), mockParent));
+      })));
+  RunOnBackgroundThread(NS_NewRunnableFunction(__func__, [&] {
+    mParent->RecvAllocateCapture(CaptureEngine::CameraEngine, kUniqueId,
+                                 kWindowId);
+    mParent->ActorDestroy(CamerasParent::NormalShutdown);
+    mParent = nullptr;
+  }));
+  NS_ProcessPendingEvents(nullptr);
+  // mParent is destroyed, there must only be references to mockParent now.
+  ASSERT_EQ(aggregators->Length(), 1U);
+  {
+    auto streamsGuard = aggregators->ElementAt(0)->mStreams.Lock();
+    EXPECT_EQ(streamsGuard->Length(), 1U);
+    for (const auto& stream : *streamsGuard) {
+      EXPECT_EQ(stream->mParent, mockParent);
+    }
+  }
+
+  // Clean up mockParent and associated streams.
+  MOZ_ALWAYS_SUCCEEDS(SyncRunnable::DispatchToThread(
+      mockParent->mVideoCaptureThread->GetEventTarget(),
+      NS_NewRunnableFunction(__func__, [&] {
+        mockParent->mVideoCaptureThread->AssertOnCurrentThread();
+        mockParent->CloseEngines();
+      })));
+  RunOnBackgroundThread(
+      NS_NewRunnableFunction(__func__, [&] { mockParent = nullptr; }));
+}
+
+template <typename DeviceInfoType>
+struct TestAggregateCapturerWithDeviceInfo : public Test {
   static constexpr uint64_t kWindowId = 1;
   const CaptureEngine mCapEngine = CameraEngine;
   const CaptureDeviceType mDeviceType = ([&] {
@@ -134,8 +246,8 @@ struct TestAggregateCapturer : public Test {
     }
     return CaptureDeviceType::Camera;
   })();
-  RefPtr<MockVideoCaptureFactory> mFactory =
-      MakeRefPtr<NiceMock<MockVideoCaptureFactory>>();
+  RefPtr<MockVideoCaptureFactory<DeviceInfoType>> mFactory =
+      MakeRefPtr<NiceMock<MockVideoCaptureFactory<DeviceInfoType>>>();
   RefPtr<VideoEngine> mEngine = VideoEngine::Create(mDeviceType, mFactory);
   RefPtr<MockCamerasParent> mParent;
   std::unique_ptr<AggregateCapturer> mAggregator;
@@ -176,6 +288,11 @@ struct TestAggregateCapturer : public Test {
     NS_ProcessPendingEvents(nullptr);
   }
 };
+
+using TestAggregateCapturer =
+    TestAggregateCapturerWithDeviceInfo<DeviceInfoFake>;
+using TestAggregateCapturerNoCapabilities =
+    TestAggregateCapturerWithDeviceInfo<DeviceInfoEmpty>;
 
 TEST_F(TestAggregateCapturer, EmptyLifeCycle) {
   // Checks that lifecycle is OK with simple Create()/RemoveStreamsFor().
@@ -268,5 +385,94 @@ TEST_F(TestAggregateCapturer, FrameDelivery) {
   mAggregator->OnFrame(frame);
 
   WaitForBackgroundThread();
+}
+
+TEST_F(TestAggregateCapturer, CamerasParentRemovalDuringFrameDelivery) {
+  constexpr int width = 240, height = 160;
+  constexpr int64_t time = 123;
+  constexpr int numFrames = 100;
+  auto buffer = webrtc::I420Buffer::Create(width, height);
+  webrtc::I420Buffer::SetBlack(buffer.get());
+
+  RefPtr<MockCamerasParent> parent2 = MockCamerasParent::Create();
+  auto streamId2 = mEngine->GenerateId();
+  mAggregator->AddStream(parent2, streamId2, kWindowId + 1);
+
+  const NormalizedConstraints constraints;
+  const dom::VideoResizeModeEnum resizeMode = dom::VideoResizeModeEnum::None;
+  webrtc::VideoCaptureCapability cap;
+  mFactory->mDeviceInfo->GetCapability(DeviceInfoFake::kId, 0, cap);
+  mAggregator->StartStream(mAggregator->mCaptureId, cap, constraints,
+                           resizeMode);
+  mAggregator->StartStream(streamId2, cap, constraints, resizeMode);
+
+  EXPECT_CALL(*mParent, DeliverFrameOverIPC).Times(numFrames);
+  EXPECT_CALL(*parent2, DeliverFrameOverIPC).Times(AtLeast(1));
+
+  nsCOMPtr<nsISerialEventTarget> backgroundQueue;
+  MOZ_ALWAYS_SUCCEEDS(NS_CreateBackgroundTaskQueue(
+      "TestAggregateCapturer", getter_AddRefs(backgroundQueue)));
+  RefPtr<GenericPromise> primedPromise =
+      InvokeAsync(backgroundQueue, __func__, [&] {
+        auto frame = webrtc::VideoFrame::Builder()
+                         .set_video_frame_buffer(buffer)
+                         .set_timestamp_ms(time)
+                         .build();
+        mAggregator->OnFrame(frame);
+        return GenericPromise::CreateAndResolve(true, "TestAggregateCapturer");
+      });
+  auto deliverPromise = InvokeAsync(backgroundQueue, __func__, [&] {
+    for (int i = 1; i < numFrames; ++i) {
+      auto frame = webrtc::VideoFrame::Builder()
+                       .set_video_frame_buffer(buffer)
+                       .set_timestamp_ms(time + i * 100)
+                       .build();
+      mAggregator->OnFrame(frame);
+    }
+    return GenericPromise::CreateAndResolve(true, "TestAggregateCapturer");
+  });
+  // Wait for the background TaskQueue to have a thread available, and a frame
+  // delivered to both parents.
+  (void)WaitFor(primedPromise);
+  // Remove the 2nd CamerasParent during frame delivery as to provoke a race.
+  EXPECT_EQ(mAggregator->RemoveStreamsFor(parent2).mNumRemainingStreams, 1U);
+  parent2 = nullptr;
+  // Wait for all frames to be delivered.
+  (void)WaitFor(deliverPromise);
+
+  // Wait for PBackground to receive all frames.
+  WaitForBackgroundThread();
+}
+
+TEST_F(TestAggregateCapturerNoCapabilities, StartStream) {
+  webrtc::VideoCaptureCapability cap;
+  cap.width = 854;
+  cap.height = 480;
+  cap.maxFPS = 30;
+  cap.videoType = webrtc::VideoType::kI420;
+
+  auto capturer = mFactory->mCapturers[mAggregator->mCaptureId];
+  EXPECT_CALL(*capturer, StartCapture(Eq(cap))).WillOnce(Return(0));
+
+  mAggregator->StartStream(mAggregator->mCaptureId, cap,
+                           NormalizedConstraints{},
+                           dom::VideoResizeModeEnum::None);
+}
+
+TEST(TestVideoEngine, DeregistersInputFeedBackOnDestruction)
+{
+  Preferences::SetBool("media.getusermedia.camera.fake.force", true);
+
+  std::shared_ptr<webrtc::VideoCaptureModule::DeviceInfo> info;
+  {
+    RefPtr<VideoEngine> engine = VideoEngine::Create(
+        CaptureDeviceType::Camera, MakeRefPtr<VideoCaptureFactory>());
+    info = engine->GetOrCreateVideoCaptureDeviceInfo();
+    ASSERT_TRUE(info);
+  }
+
+  info->DeviceChange();
+
+  Preferences::ClearUser("media.getusermedia.camera.fake.force");
 }
 }  // namespace mozilla::camera

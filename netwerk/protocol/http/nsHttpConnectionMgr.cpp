@@ -103,6 +103,8 @@ nsHttpConnectionMgr::~nsHttpConnectionMgr() {
 }
 
 nsresult nsHttpConnectionMgr::EnsureSocketThreadTarget() {
+  if (mIsShuttingDown) return NS_OK;
+
   nsCOMPtr<nsIEventTarget> sts;
   nsCOMPtr<nsIIOService> ioService = components::IO::Service();
   if (ioService) {
@@ -111,12 +113,12 @@ nsresult nsHttpConnectionMgr::EnsureSocketThreadTarget() {
     sts = do_QueryInterface(realSTS);
   }
 
-  ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+  auto lock = mSocketThreadTarget.Lock();
 
   // do nothing if already initialized or if we've shut down
-  if (mSocketThreadTarget || mIsShuttingDown) return NS_OK;
+  if (*lock || mIsShuttingDown) return NS_OK;
 
-  mSocketThreadTarget = sts;
+  *lock = sts;
 
   return sts ? NS_OK : NS_ERROR_NOT_AVAILABLE;
 }
@@ -129,25 +131,21 @@ nsresult nsHttpConnectionMgr::Init(
     uint32_t throttleMaxTime, bool beConservativeForProxy) {
   LOG(("nsHttpConnectionMgr::Init\n"));
 
-  {
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+  mMaxUrgentExcessiveConns = maxUrgentExcessiveConns;
+  mMaxConns = maxConns;
+  mMaxPersistConnsPerHost = maxPersistConnsPerHost;
+  mMaxPersistConnsPerProxy = maxPersistConnsPerProxy;
+  mMaxRequestDelay = maxRequestDelay;
 
-    mMaxUrgentExcessiveConns = maxUrgentExcessiveConns;
-    mMaxConns = maxConns;
-    mMaxPersistConnsPerHost = maxPersistConnsPerHost;
-    mMaxPersistConnsPerProxy = maxPersistConnsPerProxy;
-    mMaxRequestDelay = maxRequestDelay;
+  mThrottleEnabled = throttleEnabled;
+  mThrottleSuspendFor = throttleSuspendFor;
+  mThrottleResumeFor = throttleResumeFor;
+  mThrottleHoldTime = throttleHoldTime;
+  mThrottleMaxTime = TimeDuration::FromMilliseconds(throttleMaxTime);
 
-    mThrottleEnabled = throttleEnabled;
-    mThrottleSuspendFor = throttleSuspendFor;
-    mThrottleResumeFor = throttleResumeFor;
-    mThrottleHoldTime = throttleHoldTime;
-    mThrottleMaxTime = TimeDuration::FromMilliseconds(throttleMaxTime);
+  mBeConservativeForProxy = beConservativeForProxy;
 
-    mBeConservativeForProxy = beConservativeForProxy;
-
-    mIsShuttingDown = false;
-  }
+  mIsShuttingDown = false;
 
   return EnsureSocketThreadTarget();
 }
@@ -163,38 +161,6 @@ class BoolWrapper : public ARefBase {
  private:
   virtual ~BoolWrapper() = default;
 };
-
-nsresult nsHttpConnectionMgr::Shutdown() {
-  LOG(("nsHttpConnectionMgr::Shutdown\n"));
-
-  RefPtr<BoolWrapper> shutdownWrapper = new BoolWrapper();
-  {
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-
-    // do nothing if already shutdown
-    if (!mSocketThreadTarget) return NS_OK;
-
-    nsresult rv =
-        PostEvent(&nsHttpConnectionMgr::OnMsgShutdown, 0, shutdownWrapper);
-
-    // release our reference to the STS to prevent further events
-    // from being posted.  this is how we indicate that we are
-    // shutting down.
-    mIsShuttingDown = true;
-    mSocketThreadTarget = nullptr;
-
-    if (NS_FAILED(rv)) {
-      NS_WARNING("unable to post SHUTDOWN message");
-      return rv;
-    }
-  }
-
-  // wait for shutdown event to complete
-  SpinEventLoopUntil("nsHttpConnectionMgr::Shutdown"_ns,
-                     [&, shutdownWrapper]() { return shutdownWrapper->mBool; });
-
-  return NS_OK;
-}
 
 class ConnEvent : public Runnable, public nsIRunnablePriority {
  public:
@@ -233,6 +199,41 @@ ConnEvent::GetPriority(uint32_t* aPriority) {
   return NS_OK;
 }
 
+nsresult nsHttpConnectionMgr::Shutdown() {
+  LOG(("nsHttpConnectionMgr::Shutdown\n"));
+
+  RefPtr<BoolWrapper> shutdownWrapper = new BoolWrapper();
+  nsCOMPtr<nsIEventTarget> target;
+  {
+    auto lock = mSocketThreadTarget.Lock();
+
+    // do nothing if already shutdown
+    if (!*lock) return NS_OK;
+
+    // Copy the target, then clear it to prevent further PostEvent calls from
+    // succeeding.  This is how we indicate that we are shutting down.
+    target = *lock;
+    mIsShuttingDown = true;
+    *lock = nullptr;
+  }
+
+  nsCOMPtr<nsIRunnable> event =
+      new ConnEvent(this, &nsHttpConnectionMgr::OnMsgShutdown, 0,
+                    shutdownWrapper, nsIRunnablePriority::PRIORITY_NORMAL);
+  nsresult rv = target->Dispatch(event, NS_DISPATCH_NORMAL);
+
+  if (NS_FAILED(rv)) {
+    NS_WARNING("unable to post SHUTDOWN message");
+    return rv;
+  }
+
+  // wait for shutdown event to complete
+  SpinEventLoopUntil("nsHttpConnectionMgr::Shutdown"_ns,
+                     [&, shutdownWrapper]() { return shutdownWrapper->mBool; });
+
+  return NS_OK;
+}
+
 nsresult nsHttpConnectionMgr::PostEvent(nsConnEventHandler handler,
                                         int32_t iparam, ARefBase* vparam,
                                         uint32_t priority) {
@@ -240,8 +241,8 @@ nsresult nsHttpConnectionMgr::PostEvent(nsConnEventHandler handler,
 
   nsCOMPtr<nsIEventTarget> target;
   {
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-    target = mSocketThreadTarget;
+    auto lock = mSocketThreadTarget.Lock();
+    target = *lock;
   }
 
   if (!target) {
@@ -425,8 +426,8 @@ void nsHttpConnectionMgr::UpdateClassOfServiceOnTransaction(
 
   nsCOMPtr<nsIEventTarget> target;
   {
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-    target = mSocketThreadTarget;
+    auto lock = mSocketThreadTarget.Lock();
+    target = *lock;
   }
 
   if (!target) {
@@ -570,8 +571,8 @@ nsresult nsHttpConnectionMgr::SpeculativeConnect(
 nsresult nsHttpConnectionMgr::GetSocketThreadTarget(nsIEventTarget** target) {
   (void)EnsureSocketThreadTarget();
 
-  ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-  nsCOMPtr<nsIEventTarget> temp(mSocketThreadTarget);
+  auto lock = mSocketThreadTarget.Lock();
+  nsCOMPtr<nsIEventTarget> temp(*lock);
   temp.forget(target);
   return NS_OK;
 }
@@ -583,8 +584,8 @@ nsresult nsHttpConnectionMgr::ReclaimConnection(HttpConnectionBase* conn) {
 
   nsCOMPtr<nsIEventTarget> target;
   {
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-    target = mSocketThreadTarget;
+    auto lock = mSocketThreadTarget.Lock();
+    target = *lock;
   }
 
   if (!target) {
@@ -647,15 +648,23 @@ nsresult nsHttpConnectionMgr::UpdateParam(nsParamName name, uint16_t value) {
 
 void nsHttpConnectionMgr::ProcessPendingQForEntry(ConnectionEntry* aEntry) {
   LOG(("nsHttpConnectionMgr::ProcessPendingQForEntry [aEntry=%p]\n", aEntry));
+
+  if (aEntry->mPendingQProcessingScheduled) {
+    return;
+  }
+  aEntry->mPendingQProcessingScheduled = true;
+
   RefPtr<ConnectionEntry> entry = aEntry;
   NS_DispatchToCurrentThread(NS_NewRunnableFunction(
       "nsHttpConnectionMgr::ProcessPendingQForEntry",
       [self = RefPtr{this}, entry]() {
+        entry->mPendingQProcessingScheduled = false;
         if (!self->ProcessPendingQForEntry(entry, false)) {
           // if we reach here, it means that we couldn't dispatch a transaction
           // for the specified connection info.  walk the connection table...
           for (const auto& ent : self->mCT.Values()) {
-            if (self->ProcessPendingQForEntry(ent.get(), false)) {
+            if (ent.get() != entry.get() &&
+                self->ProcessPendingQForEntry(ent.get(), false)) {
               break;
             }
           }
@@ -1280,15 +1289,23 @@ bool nsHttpConnectionMgr::ProcessPendingQForEntry(nsHttpConnectionInfo* ci) {
 //  (1) at max-connections
 //  (2) keep-alive enabled and at max-persistent-connections-per-server/proxy
 //  (3) keep-alive disabled and at max-connections-per-server
+// Note: forInnerConn is true only when we are about to create a new inner
+// connection.
 bool nsHttpConnectionMgr::AtActiveConnectionLimit(ConnectionEntry* ent,
-                                                  uint32_t caps) {
+                                                  uint32_t caps,
+                                                  bool forInnerConn) {
   nsHttpConnectionInfo* ci = ent->mConnInfo;
   if (ci->GetWebTransport()) {
     // TODO: implement this properly in bug 1815735.
     return false;
   }
-  if (ent->HasActiveH3Connection()) {
-    return true;
+
+  // Enforce a single active HTTP/3 connection per entry, except when we're
+  // dispatching a new inner connection through an HTTP/3 proxy.
+  if (!(ci->IsHttp3ProxyConnection() && forInnerConn)) {
+    if (ent->HasActiveH3Connection()) {
+      return true;
+    }
   }
 
   uint32_t totalCount = ent->TotalActiveConnections();
@@ -1461,46 +1478,58 @@ nsresult nsHttpConnectionMgr::TryDispatchTransaction(
   // look for existing spdy connection - that's always best because it is
   // essentially pipelining without head of line blocking
 
-  // For WebSocket/WebTransport through H3 proxy, we need to create a TCP
-  // tunnel through the H3 proxy first. But if there's already an H2 session
-  // available (from a previously established tunnel), we should use that
-  // instead of creating a new tunnel.
-  // The WebSocket transaction doesn't have a connection set (it was queued
-  // without one in DnsAndConnectSocket::SetupConn to avoid triggering reclaim
-  // when we clear it here).
-  if ((trans->IsWebsocketUpgrade() || trans->IsForWebTransport()) &&
-      ent->IsHttp3ProxyConnection()) {
-    // First check if there's an H2 session available (from existing tunnel)
-    // This handles the case where the tunnel was already established and the
-    // WebSocket transaction was reset to wait for H2 negotiation.
-    // We can't use GetH2orH3ActiveConn because it skips H3 proxy entries when
-    // looking for H2 connections. We use GetH2TunnelActiveConn to directly
-    // look for an H2 tunnel connection in the active connections.
+  if (ent->IsHttp3ProxyConnection()) {
     RefPtr<nsHttpConnection> h2Tunnel = ent->GetH2TunnelActiveConn();
-    if (h2Tunnel) {
-      LOG(
-          ("TryDispatchTransaction: WebSocket through H3 proxy - using "
-           "existing H2 tunnel"));
-      return TryDispatchExtendedCONNECTransaction(ent, trans, h2Tunnel);
-    }
+    // For WebSocket/WebTransport through H3 proxy, we need to create a TCP
+    // tunnel through the H3 proxy first. But if there's already an H2 session
+    // available (from a previously established tunnel), we should use that
+    // instead of creating a new tunnel.
+    // The WebSocket transaction doesn't have a connection set (it was queued
+    // without one in DnsAndConnectSocket::SetupConn to avoid triggering reclaim
+    // when we clear it here).
+    if (trans->IsWebsocketUpgrade() || trans->IsForWebTransport()) {
+      // First check if there's an H2 session available (from existing tunnel)
+      // This handles the case where the tunnel was already established and the
+      // WebSocket transaction was reset to wait for H2 negotiation.
+      // We can't use GetH2orH3ActiveConn because it skips H3 proxy entries when
+      // looking for H2 connections. We use GetH2TunnelActiveConn to directly
+      // look for an H2 tunnel connection in the active connections.
+      if (h2Tunnel) {
+        LOG(
+            ("TryDispatchTransaction: WebSocket through H3 proxy - using "
+             "existing H2 tunnel"));
+        return TryDispatchExtendedCONNECTransaction(ent, trans, h2Tunnel);
+      }
 
-    // No H2 session available yet - create a tunnel through the H3 proxy
-    RefPtr<HttpConnectionBase> conn = GetH2orH3ActiveConn(ent, true, false);
-    RefPtr<HttpConnectionUDP> connUDP = do_QueryObject(conn);
-    if (connUDP) {
-      LOG(("TryDispatchTransaction: WebSocket through HTTP/3 proxy"));
-      RefPtr<HttpConnectionBase> tunnelConn;
-      nsresult rv =
-          connUDP->CreateTunnelStream(trans, getter_AddRefs(tunnelConn), true);
-      if (NS_FAILED(rv)) {
-        return rv;
+      // No H2 session available yet - create a tunnel through the H3 proxy
+      RefPtr<HttpConnectionBase> conn = GetH2orH3ActiveConn(ent, true, false);
+      RefPtr<HttpConnectionUDP> connUDP = do_QueryObject(conn);
+      if (connUDP) {
+        LOG(("TryDispatchTransaction: WebSocket through HTTP/3 proxy"));
+        RefPtr<HttpConnectionBase> tunnelConn;
+        nsresult rv = connUDP->CreateTunnelStream(
+            trans, getter_AddRefs(tunnelConn), true);
+        if (NS_FAILED(rv)) {
+          return rv;
+        }
+        ent->InsertIntoActiveConns(tunnelConn);
+        tunnelConn->SetInTunnel();
+        if (trans->IsWebsocketUpgrade()) {
+          trans->SetIsHttp2Websocket(true);
+        }
+        return DispatchTransaction(ent, trans, tunnelConn);
       }
-      ent->InsertIntoActiveConns(tunnelConn);
-      tunnelConn->SetInTunnel();
-      if (trans->IsWebsocketUpgrade()) {
-        trans->SetIsHttp2Websocket(true);
+    } else {
+      // Handle the case where some transactions have NS_HTTP_DISALLOW_HTTP3 set
+      // while we’re using an HTTP/3 proxy. The flag applies to HTTP/3 to the
+      // *origin server*, not to an HTTP/3 proxy, so we can’t reuse
+      // GetH2orH3ActiveConn.
+      // TODO: This is a workaround and we should revisit this.
+      if (h2Tunnel) {
+        LOG(("   dispatch to spdy: [conn=%p]\n", h2Tunnel.get()));
+        trans->RemoveDispatchedAsBlocking(); /* just in case */
+        return DispatchTransaction(ent, trans, h2Tunnel);
       }
-      return DispatchTransaction(ent, trans, tunnelConn);
     }
   }
 
@@ -1956,8 +1985,9 @@ nsresult nsHttpConnectionMgr::ProcessNewTransaction(nsHttpTransaction* trans) {
       }
 
       ent = specificEnt;
-      bool atLimit = AtActiveConnectionLimit(ent, trans->Caps());
+      bool atLimit = AtActiveConnectionLimit(ent, trans->Caps(), true);
       if (atLimit) {
+        LOG(("hit limit in proxy conn"));
         rv = NS_ERROR_NOT_AVAILABLE;
       } else {
         RefPtr<HttpConnectionBase> newTunnel;
@@ -2570,7 +2600,11 @@ void nsHttpConnectionMgr::OnMsgDoShiftReloadConnectionCleanup(int32_t,
 
   nsHttpConnectionInfo* ci = static_cast<nsHttpConnectionInfo*>(param);
 
+  bool preserveTRR = StaticPrefs::network_trr_preserve_on_background();
   for (const auto& entry : mCT.Values()) {
+    if (preserveTRR && entry->mConnInfo->GetIsTrrServiceChannel()) {
+      continue;
+    }
     entry->ClosePersistentConnections();
   }
 
@@ -2865,12 +2899,16 @@ void nsHttpConnectionMgr::ActivateTimeoutTick() {
       NS_WARNING("failed to create timer for http timeout management");
       return;
     }
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-    if (!mSocketThreadTarget) {
+    nsCOMPtr<nsIEventTarget> target;
+    {
+      auto lock = mSocketThreadTarget.Lock();
+      target = *lock;
+    }
+    if (!target) {
       NS_WARNING("cannot activate timout if not initialized or shutdown");
       return;
     }
-    mTimeoutTick->SetTarget(mSocketThreadTarget);
+    mTimeoutTick->SetTarget(target);
   }
 
   if (mIsShuttingDown) {  // Atomic
@@ -3546,23 +3584,30 @@ ConnectionEntry* nsHttpConnectionMgr::GetOrCreateConnectionEntry(
   // step 1 repeated for an inverted anonymous flag; we return an entry
   // only when it has an h2 established connection that is not authenticated
   // with a client certificate.
-  nsAutoCString anonInvertedKey;
-  specificCI->AnonymousInvertedHashKey(anonInvertedKey);
-  ConnectionEntry* invertedEnt = mCT.GetWeak(anonInvertedKey);
-  if (invertedEnt) {
-    HttpConnectionBase* h2orh3conn =
-        GetH2orH3ActiveConn(invertedEnt, aNoHttp2, aNoHttp3);
-    if (h2orh3conn && h2orh3conn->IsExperienced() &&
-        h2orh3conn->NoClientCertAuth()) {
-      MOZ_ASSERT(h2orh3conn->UsingSpdy() || h2orh3conn->UsingHttp3());
-      LOG(
-          ("GetOrCreateConnectionEntry is coalescing h2/3 an/onymous "
-           "connections, ent=%p",
-           invertedEnt));
-      if (aAvailableForDispatchNow) {
-        *aAvailableForDispatchNow = true;
+  // When GetOrCreateConnectionEntry is called to create a wildcard entry, we
+  // should not allow coalescing onto an anonymous entry. Since the anonymous
+  // flag is specifically inherited from the origin info in
+  // nsHttpConnectionInfo::CreateWildCard, allowing coalescing onto an anonymous
+  // entry here results in inconsistency.
+  if (!specificCI->IsWildCard()) {
+    nsAutoCString anonInvertedKey;
+    specificCI->AnonymousInvertedHashKey(anonInvertedKey);
+    ConnectionEntry* invertedEnt = mCT.GetWeak(anonInvertedKey);
+    if (invertedEnt) {
+      HttpConnectionBase* h2orh3conn =
+          GetH2orH3ActiveConn(invertedEnt, aNoHttp2, aNoHttp3);
+      if (h2orh3conn && h2orh3conn->IsExperienced() &&
+          h2orh3conn->NoClientCertAuth()) {
+        MOZ_ASSERT(h2orh3conn->UsingSpdy() || h2orh3conn->UsingHttp3());
+        LOG(
+            ("GetOrCreateConnectionEntry is coalescing h2/3 an/onymous "
+             "connections, ent=%p",
+             invertedEnt));
+        if (aAvailableForDispatchNow) {
+          *aAvailableForDispatchNow = true;
+        }
+        return invertedEnt;
       }
-      return invertedEnt;
     }
   }
 
@@ -3628,12 +3673,13 @@ void nsHttpConnectionMgr::DoSpeculativeConnectionInternal(
     return;
   }
 
-  ProxyDNSStrategy strategy = GetProxyDNSStrategyHelper(
+  nsIHttpChannelInternal::ProxyDNSStrategy strategy = GetProxyDNSStrategyHelper(
       aEnt->mConnInfo->ProxyType(), aEnt->mConnInfo->ProxyFlag());
   // Speculative connections can be triggered by non-Necko consumers,
   // so add an extra check to ensure HTTPS RR isn't fetched when a proxy is
   // used.
-  if (aFetchHTTPSRR && strategy == ProxyDNSStrategy::ORIGIN &&
+  if (aFetchHTTPSRR &&
+      strategy == nsIHttpChannelInternal::PROXY_DNS_STRATEGY_ORIGIN &&
       NS_SUCCEEDED(aTrans->FetchHTTPSRR())) {
     // nsHttpConnectionMgr::DoSpeculativeConnection will be called again
     // when HTTPS RR is available.
@@ -3751,9 +3797,6 @@ void nsHttpConnectionMgr::RegisterOriginCoalescingKey(HttpConnectionBase* conn,
 
 bool nsHttpConnectionMgr::GetConnectionData(nsTArray<HttpRetParams>* aArg) {
   for (const RefPtr<ConnectionEntry>& ent : mCT.Values()) {
-    if (ent->mConnInfo->GetPrivate()) {
-      continue;
-    }
     aArg->AppendElement(ent->GetConnectionData());
   }
 
@@ -3782,7 +3825,7 @@ void nsHttpConnectionMgr::ResetIPFamilyPreference(nsHttpConnectionInfo* ci) {
 
 void nsHttpConnectionMgr::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
   LOG(("nsHttpConnectionMgr::ExcludeHttp2 excluding ci %s",
-       ci->HashKey().BeginReading()));
+       ci->HashKey().get()));
   ConnectionEntry* ent = mCT.GetWeak(ci->HashKey());
   if (!ent) {
     LOG(("nsHttpConnectionMgr::ExcludeHttp2 no entry found?!"));
@@ -3793,8 +3836,7 @@ void nsHttpConnectionMgr::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
 }
 
 void nsHttpConnectionMgr::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
-  LOG(("nsHttpConnectionMgr::ExcludeHttp3 exclude ci %s",
-       ci->HashKey().BeginReading()));
+  LOG(("nsHttpConnectionMgr::ExcludeHttp3 exclude ci %s", ci->HashKey().get()));
   ConnectionEntry* ent = mCT.GetWeak(ci->HashKey());
   if (!ent) {
     LOG(("nsHttpConnectionMgr::ExcludeHttp3 no entry found?!"));
@@ -3904,6 +3946,9 @@ nsHttpConnectionMgr::FindTransactionHelper(bool removeWhenFound,
     info = (*pendingQ)[index];
     if (removeWhenFound) {
       pendingQ->RemoveElementAt(index);
+      if (!(aTrans->Caps() & NS_HTTP_URGENT_START)) {
+        aEnt->OnPendingTransactionRemovedFromTable();
+      }
     }
   }
   return info.forget();
@@ -3994,7 +4039,6 @@ nsHttpConnectionMgr::GetServerCertHashes(nsHttpConnectionInfo* aConnInfo) {
 }
 
 void nsHttpConnectionMgr::CheckTransInPendingQueue(nsHttpTransaction* aTrans) {
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   // We only do this check on socket thread. When this function is called on
   // main thread, the transaction is newly created, so we can skip this check.
   if (!OnSocketThread()) {
@@ -4008,8 +4052,10 @@ void nsHttpConnectionMgr::CheckTransInPendingQueue(nsHttpTransaction* aTrans) {
   }
 
   bool foundInPendingQ = RemoveTransFromConnEntry(aTrans, hashKey);
-  MOZ_DIAGNOSTIC_ASSERT(!foundInPendingQ);
-#endif
+  if (foundInPendingQ) {
+    glean::networking::trans_found_in_pending_queue.Add(1);
+  }
+  MOZ_ASSERT(!foundInPendingQ);
 }
 
 bool nsHttpConnectionMgr::AllowToRetryDifferentIPFamilyForHttp3(

@@ -249,6 +249,12 @@ partial interface Navigator {
   readonly attribute XRSystem xr;
 };
 
+// https://wicg.github.io/serial/
+partial interface Navigator {
+  [SecureContext, Throws, SameObject, Pref="dom.webserial.enabled"]
+  readonly attribute Serial serial;
+};
+
 // http://webaudio.github.io/web-midi-api/#requestmidiaccess
 partial interface Navigator {
   [UseCounter, NewObject, Func="Navigator::HasMidiSupport"]
@@ -347,6 +353,13 @@ dictionary ShareData {
 partial interface Navigator {
   [SameObject]
   readonly attribute MediaSession mediaSession;
+};
+
+// https://w3c.github.io/audio-session/
+[Exposed=Window]
+partial interface Navigator {
+  [Pref="dom.audio_session.enabled", SameObject]
+  readonly attribute AudioSession audioSession;
 };
 
 // https://w3c.github.io/web-locks/#navigator-mixins

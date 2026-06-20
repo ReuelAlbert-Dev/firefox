@@ -338,10 +338,10 @@ mozilla::UniquePtr<uint8_t[]> CanvasContext::GetImageBuffer(
 
   nsRFPService::PotentiallyDumpImage(PrincipalOrNull(), dataSurface);
   if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
-    gfxUtils::GetImageBufferWithRandomNoise(dataSurface,
-                                            /* aIsAlphaPremultiplied */ true,
-                                            GetCookieJarSettings(),
-                                            PrincipalOrNull(), &*out_format);
+    return gfxUtils::GetImageBufferWithRandomNoise(
+        dataSurface,
+        /* aIsAlphaPremultiplied */ true, GetCookieJarSettings(),
+        PrincipalOrNull(), &*out_format);
   }
 
   return gfxUtils::GetImageBuffer(dataSurface, /* aIsAlphaPremultiplied */ true,
@@ -361,14 +361,15 @@ NS_IMETHODIMP CanvasContext::GetInputStream(
   RefPtr<gfx::DataSourceSurface> dataSurface = snapshot->GetDataSurface();
 
   nsRFPService::PotentiallyDumpImage(PrincipalOrNull(), dataSurface);
-  if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
+  if (aExtractionBehavior == CanvasUtils::ImageExtraction::Randomize) {
     return gfxUtils::GetInputStreamWithRandomNoise(
         dataSurface, /* aIsAlphaPremultiplied */ true, aMimeType,
         aEncoderOptions, GetCookieJarSettings(), PrincipalOrNull(), aStream);
   }
 
   return gfxUtils::GetInputStream(dataSurface, /* aIsAlphaPremultiplied */ true,
-                                  aMimeType, aEncoderOptions, aStream);
+                                  aMimeType, aEncoderOptions, aRandomizationKey,
+                                  aStream);
 }
 
 bool CanvasContext::GetIsOpaque() {

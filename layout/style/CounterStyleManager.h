@@ -5,7 +5,6 @@
 #define mozilla_CounterStyleManager_h_
 
 #include "mozilla/Attributes.h"
-#include "nsGkAtoms.h"
 #include "nsHashKeys.h"
 #include "nsStringFwd.h"
 #include "nsStyleConsts.h"
@@ -37,11 +36,10 @@ class CounterStyle {
  protected:
   explicit constexpr CounterStyle(ListStyle aStyle) : mStyle(aStyle) {}
 
- private:
+ public:
   CounterStyle(const CounterStyle& aOther) = delete;
   void operator=(const CounterStyle& other) = delete;
 
- public:
   constexpr ListStyle GetStyle() const { return mStyle; }
   bool IsNone() const { return mStyle == ListStyle::None; }
   bool IsCustomStyle() const { return mStyle == ListStyle::Custom; }

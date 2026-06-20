@@ -204,7 +204,7 @@ nsHttpDigestAuth::GenerateCredentials(
 
 {
   LOG(("nsHttpDigestAuth::GenerateCredentials [challenge=%s]\n",
-       aChallenge.BeginReading()));
+       PromiseFlatCString(aChallenge).get()));
 
   *aFlags = 0;
 

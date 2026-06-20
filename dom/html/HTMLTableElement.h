@@ -14,8 +14,7 @@ class TableRowsCollection;
 
 class HTMLTableElement final : public nsGenericHTMLElement {
  public:
-  explicit HTMLTableElement(
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+  explicit HTMLTableElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
   NS_IMPL_FROMNODE_HTML_WITH_TAG(HTMLTableElement, table)
 
@@ -83,11 +82,11 @@ class HTMLTableElement final : public nsGenericHTMLElement {
   }
   already_AddRefed<nsGenericHTMLElement> CreateTFoot();
 
-  nsIHTMLCollection* TBodies();
+  HTMLCollection* TBodies();
 
   already_AddRefed<nsGenericHTMLElement> CreateTBody();
 
-  nsIHTMLCollection* Rows();
+  HTMLCollection* Rows();
 
   already_AddRefed<nsGenericHTMLElement> InsertRow(int32_t aIndex,
                                                    ErrorResult& aError);
@@ -187,7 +186,7 @@ class HTMLTableElement final : public nsGenericHTMLElement {
     return nullptr;
   }
 
-  RefPtr<nsContentList> mTBodies;
+  RefPtr<ContentList> mTBodies;
   RefPtr<TableRowsCollection> mRows;
   RefPtr<StyleLockedDeclarationBlock> mTableInheritedAttributes;
   void BuildInheritedAttributes();

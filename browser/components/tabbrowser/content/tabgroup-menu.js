@@ -13,6 +13,9 @@
   const { TabStateFlusher } = ChromeUtils.importESModule(
     "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
   );
+  const { ContentSharingUtils } = ChromeUtils.importESModule(
+    "resource:///modules/contentsharing/ContentSharingUtils.sys.mjs"
+  );
 
   ChromeUtils.importESModule(
     "chrome://browser/content/genai/content/model-optin.mjs",
@@ -85,6 +88,11 @@
         </toolbarbutton>
         <toolbarbutton
           tabindex="0"
+          id="tabGroupEditor_copyAllLinks"
+          class="subviewbutton">
+        </toolbarbutton>
+        <toolbarbutton
+          tabindex="0"
           id="tabGroupEditor_saveAndCloseGroup"
           class="subviewbutton"
           data-l10n-id="tab-group-editor-action-save">
@@ -94,6 +102,15 @@
           id="tabGroupEditor_ungroupTabs"
           class="subviewbutton"
           data-l10n-id="tab-group-editor-action-ungroup">
+        </toolbarbutton>
+        <toolbarbutton
+          tabindex="0"
+          id="tabGroupEditor_shareTabGroup"
+          class="subviewbutton"
+          badged="true"
+          data-l10n-id="tab-group-editor-action-share-tab-group"
+          hidden="">
+          <html:moz-badge type="new" move-after-stack="true"></html:moz-badge>
         </toolbarbutton>
         <toolbarseparator class="tab-group-edit-mode-only" />
         <toolbarbutton
@@ -445,11 +462,13 @@
         moveGroupToNewWindow: document.getElementById(
           "tabGroupEditor_moveGroupToNewWindow"
         ),
+        copyAllLinks: document.getElementById("tabGroupEditor_copyAllLinks"),
         ungroupTabs: document.getElementById("tabGroupEditor_ungroupTabs"),
         saveAndCloseGroup: document.getElementById(
           "tabGroupEditor_saveAndCloseGroup"
         ),
         deleteGroup: document.getElementById("tabGroupEditor_deleteGroup"),
+        shareTabGroup: document.getElementById("tabGroupEditor_shareTabGroup"),
       };
 
       this.#commandButtons.addNewTabInGroup.addEventListener("command", () => {
@@ -462,6 +481,15 @@
           gBrowser.replaceGroupWithWindow(this.activeGroup);
         }
       );
+
+      this.#commandButtons.copyAllLinks.addEventListener("command", () => {
+        let links = this.#getGroupLinks(this.activeGroup);
+        if (links.length) {
+          BrowserUtils.copyLinks(links);
+        }
+        Glean.tabgroup.groupInteractions.copy_all_links.add(1);
+        this.close();
+      });
 
       this.#commandButtons.ungroupTabs.addEventListener("command", () => {
         this.activeGroup.ungroupTabs({
@@ -483,6 +511,11 @@
         );
       });
 
+      this.#commandButtons.shareTabGroup.addEventListener("command", () => {
+        ContentSharingUtils.handleShareTabGroup(this.activeGroup);
+        this.close();
+      });
+
       this.panel.addEventListener("popupshown", this);
       this.panel.addEventListener("popuphidden", this);
       this.panel.addEventListener("keypress", this);
@@ -495,7 +528,7 @@
         Services.locale.appLocaleAsBCP47.startsWith("en") &&
         this.smartTabGroupsUserEnabled &&
         this.smartTabGroupsFeatureConfigEnabled &&
-        !PrivateBrowsingUtils.isWindowPrivate(this.ownerGlobal) &&
+        !PrivateBrowsingUtils.isWindowPrivate(this.documentGlobal) &&
         this.mlEnabled
       );
     }
@@ -549,7 +582,6 @@
       this.#suggestionsOptin.addEventListener("MlModelOptinConfirm", () => {
         this.#handleMLOptinTelemetry("step1-optin-confirmed");
         Services.prefs.setBoolPref("browser.tabs.groups.smart.optin", true);
-        this.#suggestionsOptinContainer.hidden = true;
         this.#handleFirstDownloadAndSuggest();
       });
 
@@ -711,7 +743,9 @@
         label.htmlFor = input.id;
         label.style.setProperty(
           "--tabgroup-swatch-color",
-          `var(--tab-group-color-${colorCode})`
+          Services.prefs.getBoolPref("browser.nova.enabled")
+            ? `var(--tab-group-${colorCode})`
+            : `var(--tab-group-color-${colorCode})`
         );
         label.style.setProperty(
           "--tabgroup-swatch-color-invert",
@@ -742,6 +776,7 @@
           ? "tab-group-editor-title-create"
           : "tab-group-editor-title-edit"
       );
+      this.#commandButtons.copyAllLinks.hidden = enableCreateMode;
       this.#createMode = enableCreateMode;
     }
 
@@ -893,6 +928,13 @@
       });
       document.getElementById("tabGroupEditor_moveGroupToNewWindow").disabled =
         gBrowser.openTabs.length == this.activeGroup?.tabs.length;
+      let linkCount = this.#getGroupLinks(this.activeGroup).length;
+      document.l10n.setAttributes(
+        this.#commandButtons.copyAllLinks,
+        "tab-group-editor-action-copy-links",
+        { linkCount }
+      );
+      this.#commandButtons.copyAllLinks.disabled = !linkCount;
       this.#maybeDisableOrHideSaveButton();
     }
 
@@ -900,7 +942,7 @@
       const saveAndCloseGroup = document.getElementById(
         "tabGroupEditor_saveAndCloseGroup"
       );
-      if (PrivateBrowsingUtils.isWindowPrivate(this.ownerGlobal)) {
+      if (PrivateBrowsingUtils.isWindowPrivate(this.documentGlobal)) {
         saveAndCloseGroup.hidden = true;
         return;
       }
@@ -937,6 +979,9 @@
       for (const button of Object.values(this.#commandButtons)) {
         button.tooltipText = button.label;
       }
+
+      this.#commandButtons.shareTabGroup.hidden =
+        !ContentSharingUtils.isEnabled;
     }
 
     on_popuphidden() {
@@ -1013,7 +1058,32 @@
         window.removeEventListener("TabOpen", onTabOpened);
       };
       window.addEventListener("TabOpen", onTabOpened);
+      // The tab group menu can be invoked on a window that isn't the OS-level
+      // frontmost window (most reproducibly on macOS in a multi-monitor
+      // setup). Raise the window so the new tab's focusUrlBar request can
+      // actually land OS keyboard focus on the address bar. Bug 2039674
+      // tracks routing this through URILoadingHelper instead.
+      window.focus();
       gBrowser.addAdjacentNewTab(lastTab);
+    }
+
+    /**
+     * @param {MozTabbrowserTabGroup} group
+     * @returns {Array<{url: string, title: string}>}
+     */
+    #getGroupLinks(group) {
+      let links = [];
+      for (let tab of group.tabs) {
+        let browser = tab.linkedBrowser;
+        let shareableURL = BrowserUtils.getShareableURL(browser.currentURI);
+        if (shareableURL) {
+          links.push({
+            url: gURLBar.makeURIReadable(shareableURL).displaySpec,
+            title: browser.contentTitle,
+          });
+        }
+      }
+      return links;
     }
 
     /**

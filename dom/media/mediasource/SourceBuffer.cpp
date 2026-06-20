@@ -31,13 +31,13 @@ extern mozilla::LogModule* GetMediaSourceAPILog();
 
 #define MSE_DEBUG(arg, ...)                                                  \
   DDMOZ_LOG(GetMediaSourceLog(), mozilla::LogLevel::Debug, "(%s)::%s: " arg, \
-            mType.OriginalString().Data(), __func__, ##__VA_ARGS__)
+            mType.OriginalString().get(), __func__, ##__VA_ARGS__)
 #define MSE_DEBUGV(arg, ...)                                                   \
   DDMOZ_LOG(GetMediaSourceLog(), mozilla::LogLevel::Verbose, "(%s)::%s: " arg, \
-            mType.OriginalString().Data(), __func__, ##__VA_ARGS__)
-#define MSE_API(arg, ...)                                              \
-  DDMOZ_LOG(GetMediaSourceAPILog(), mozilla::LogLevel::Debug,          \
-            "(%s)::%s: " arg, mType.OriginalString().Data(), __func__, \
+            mType.OriginalString().get(), __func__, ##__VA_ARGS__)
+#define MSE_API(arg, ...)                                             \
+  DDMOZ_LOG(GetMediaSourceAPILog(), mozilla::LogLevel::Debug,         \
+            "(%s)::%s: " arg, mType.OriginalString().get(), __func__, \
             ##__VA_ARGS__)
 
 namespace mozilla {

@@ -112,6 +112,9 @@ interface Node : EventTarget {
   readonly attribute Node? flattenedTreeParentNode;
   [ChromeOnly, Pure, BinaryName="isInNativeAnonymousSubtree"]
   readonly attribute boolean isNativeAnonymous;
+  // Returns the global of the document the node currently lives in.
+  [ChromeOnly, Pure, BinaryName="documentGlobalForBindings"]
+  readonly attribute WindowProxy? documentGlobal;
 
   // Maybe this would be useful to authors? https://github.com/whatwg/dom/issues/826
   [Func="IsChromeOrUAWidget", Pure, BinaryName="containingShadow"]

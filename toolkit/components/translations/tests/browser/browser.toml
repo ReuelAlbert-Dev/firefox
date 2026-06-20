@@ -24,6 +24,10 @@ support-files = [
   "translations-text-cleaning.html",
 ]
 
+["browser_about_translations_accessible_invocation.js"]
+
+["browser_about_translations_app_menu.js"]
+
 ["browser_about_translations_copy_button_enabled_states.js"]
 
 ["browser_about_translations_copy_button_functionality.js"]
@@ -60,6 +64,8 @@ skip-if = [
 ["browser_about_translations_swap_languages_button_detected.js"]
 
 ["browser_about_translations_swap_languages_button_explicit.js"]
+
+["browser_about_translations_tab_focus_order.js"]
 
 ["browser_about_translations_telemetry_clear_source_text_button.js"]
 

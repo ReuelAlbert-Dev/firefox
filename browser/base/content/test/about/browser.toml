@@ -13,6 +13,8 @@ skip-if = [
 
 ["browser_aboutCertError_accesskey.js"]
 
+["browser_aboutCertError_caInvalid.js"]
+
 ["browser_aboutCertError_cca_telemetry.js"]
 
 ["browser_aboutCertError_clockSkew.js"]
@@ -64,6 +66,13 @@ support-files = [
   "blank_page.sjs",
 ]
 
+["browser_aboutNetError_connectionFailure.js"]
+
+["browser_aboutNetError_contentEncodingError.js"]
+support-files = [
+  "invalid_content_encoding.sjs",
+]
+
 ["browser_aboutNetError_csp_iframe.js"]
 https_first_disabled = true
 support-files = [
@@ -78,6 +87,8 @@ support-files = [
   "server_error.sjs",
 ]
 
+["browser_aboutNetError_fileNotFound.js"]
+
 ["browser_aboutNetError_httpAuthDisabled.js"]
 
 ["browser_aboutNetError_internet_connection_offline.js"]
@@ -89,10 +100,15 @@ support-files = [
   "invalid_header.sjs",
 ]
 
+["browser_aboutNetError_netInterrupt.js"]
+
 ["browser_aboutNetError_server_error.js"]
 support-files = [
+  "http_error.sjs",
   "server_error.sjs",
 ]
+
+["browser_aboutNetError_telemetry.js"]
 
 ["browser_aboutNetError_timeout.js"]
 skip-if = [
@@ -101,12 +117,8 @@ skip-if = [
 
 ["browser_aboutNetError_trr.js"]
 skip-if = [
-  "os == 'win' && os_version == '11.26100' && arch == 'x86_64' && asan", # Bug 1831977
-  "os == 'win' && os_version == '11.26200' && arch == 'x86_64' && asan", # Bug 1831977
   "socketprocess_networking",
 ]
-
-["browser_aboutNetError_neterror_telemetry.js"]
 
 ["browser_aboutNetError_xfo_iframe.js"]
 https_first_disabled = true
@@ -155,3 +167,5 @@ skip-if = [
 ["browser_bug633691.js"]
 
 ["browser_bug2008464.js"]
+
+["browser_releaseNotesURL.js"]

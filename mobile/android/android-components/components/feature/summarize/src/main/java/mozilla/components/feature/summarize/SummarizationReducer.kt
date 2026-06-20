@@ -4,7 +4,7 @@
 
 package mozilla.components.feature.summarize
 
-import mozilla.components.concept.llm.Llm
+import mozilla.components.ui.richtext.ir.RichDocument
 
 /**
  * Reduces the given [action] and current [state] into a new [SummarizationState].
@@ -16,30 +16,33 @@ import mozilla.components.concept.llm.Llm
 fun summarizationReducer(state: SummarizationState, action: SummarizationAction) = when (action) {
     is ShakeConsentRequested -> SummarizationState.ShakeConsentRequired
     OffDeviceSummarizationShakeConsentAction.CancelClicked -> SummarizationState.Finished.Cancelled
-    OffDeviceSummarizationShakeConsentAction.LearnMoreClicked -> SummarizationState.Finished.LearnMoreAboutShakeConsent
-    OnDeviceSummarizationShakeConsentAction.LearnMoreClicked -> SummarizationState.Finished.LearnMoreAboutShakeConsent
-    is LlmAction.SummarizationRequested -> SummarizationState.Summarizing(info = action.info)
-    is LlmAction.ReceivedResponse -> state.applyResponse(action.response)
+    OffDeviceSummarizationShakeConsentAction.LearnMoreClicked -> SummarizationState.LearnMoreAboutShakeConsent
+    OnDeviceSummarizationShakeConsentAction.LearnMoreClicked -> SummarizationState.LearnMoreAboutShakeConsent
+    ErrorAction.ErrorDismissed -> SummarizationState.Finished.ErrorDismissed
+    is SummarizationRequested -> SummarizationState.Loading(action.info)
+    is SummarizationCompleted -> state.complete()
+    is SummarizationFailed -> SummarizationState.Error(SummarizationError.SummarizationFailed(action.exception))
+    is ReceivedParsedDocument -> state.updateDocument(action.document)
     is SettingsClicked -> when (state) {
-        is SummarizationState.Summarized -> SummarizationState.Settings(info = state.info, summarizedText = state.text)
+        is SummarizationState.Summarized -> SummarizationState.Settings(info = state.info, document = state.document)
         else -> state
     }
     is SettingsBackClicked -> when (state) {
-        is SummarizationState.Settings -> SummarizationState.Summarized(info = state.info, text = state.summarizedText)
+        is SummarizationState.Settings -> SummarizationState.Summarized(info = state.info, document = state.document)
         else -> state
     }
-    is SummarizationFailed -> SummarizationState.Error(SummarizationError.SummarizationFailed(action.throwable))
     else -> state
 }
 
-internal fun SummarizationState.applyResponse(response: Llm.Response): SummarizationState {
-    return if (this is SummarizationState.Summarizing) {
-        when (response) {
-            is Llm.Response.Failure -> SummarizationState.Summarized(info = info, response.reason)
-            Llm.Response.Success.ReplyFinished -> SummarizationState.Summarized(info = info, parts.joinToString(""))
-            is Llm.Response.Success.ReplyPart -> copy(parts = parts + response.value)
-        }
-    } else {
-        this
+private fun SummarizationState.complete(): SummarizationState {
+    if (this !is SummarizationState.Summarizing) return this
+    return SummarizationState.Summarized(info, document)
+}
+
+internal fun SummarizationState.updateDocument(document: RichDocument): SummarizationState {
+    return when (this) {
+        is SummarizationState.Loading -> SummarizationState.Summarizing(info, document)
+        is SummarizationState.Summarizing -> copy(document = document)
+        else -> this
     }
 }

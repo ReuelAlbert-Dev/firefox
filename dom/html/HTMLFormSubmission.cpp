@@ -45,7 +45,7 @@ namespace {
 void SendJSWarning(Document* aDocument, const char* aWarningName,
                    const nsTArray<nsString>& aWarningArgs) {
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "HTML"_ns,
-                                  aDocument, nsContentUtils::eFORMS_PROPERTIES,
+                                  aDocument, PropertiesFile::FORMS_PROPERTIES,
                                   aWarningName, aWarningArgs);
 }
 
@@ -86,6 +86,7 @@ class FSURLEncoded : public EncodingFormSubmission {
       : EncodingFormSubmission(aActionURL, aTarget, aEncoding, aSubmitter),
         mMethod(aMethod),
         mDocument(aDocument),
+        mSubmitter(aSubmitter),
         mWarnedFileControl(false) {}
 
   virtual nsresult AddNameValuePair(const nsAString& aName,
@@ -100,6 +101,8 @@ class FSURLEncoded : public EncodingFormSubmission {
   virtual nsresult GetEncodedSubmission(nsIURI* aURI,
                                         nsIInputStream** aPostDataStream,
                                         nsCOMPtr<nsIURI>& aOutURI) override;
+
+  Element* GetSubmitterElement() const override { return mSubmitter; }
 
  protected:
   /**
@@ -124,6 +127,9 @@ class FSURLEncoded : public EncodingFormSubmission {
 
   /** The document whose URI to use when reporting errors */
   nsCOMPtr<Document> mDocument;
+
+  /** Submitter element. */
+  RefPtr<Element> mSubmitter;
 
   /** Whether or not we have warned about a file control not being submitted */
   bool mWarnedFileControl;
@@ -215,12 +221,12 @@ void HandleMailtoSubject(nsCString& aPath) {
     // Get the default subject
     nsAutoString brandName;
     nsresult rv = nsContentUtils::GetLocalizedString(
-        nsContentUtils::eBRAND_PROPERTIES, "brandShortName", brandName);
+        PropertiesFile::BRAND_PROPERTIES, "brandShortName", brandName);
     if (NS_FAILED(rv)) return;
     nsAutoString subjectStr;
-    rv = nsContentUtils::FormatLocalizedString(
-        subjectStr, nsContentUtils::eFORMS_PROPERTIES, "DefaultFormSubject",
-        brandName);
+    rv = nsContentUtils::FormatLocalizedString(subjectStr,
+                                               PropertiesFile::FORMS_PROPERTIES,
+                                               "DefaultFormSubject", brandName);
     if (NS_FAILED(rv)) return;
     aPath.AppendLiteral("subject=");
     nsCString subjectStrEscaped;
@@ -416,7 +422,7 @@ nsresult FSMultipartFormData::AddNameBlobPair(const nsAString& aName,
     file->GetRelativePath(relativePath);
     if (StaticPrefs::dom_webkitBlink_dirPicker_enabled() &&
         !relativePath.IsEmpty()) {
-      filename16 = relativePath;
+      filename16 = std::move(relativePath);
     }
 
     if (filename16.IsEmpty()) {
@@ -489,7 +495,7 @@ nsresult FSMultipartFormData::AddNameDirectoryPair(const nsAString& aName,
   if (NS_WARN_IF(error.Failed())) {
     error.SuppressException();
   } else {
-    dirname16 = path;
+    dirname16 = std::move(path);
   }
 
   if (dirname16.IsEmpty()) {
@@ -693,6 +699,10 @@ HTMLFormSubmission::HTMLFormSubmission(
       mEncoding(aEncoding),
       mInitiatedFromUserInput(UserActivation::IsHandlingUserInput()) {
   MOZ_COUNT_CTOR(HTMLFormSubmission);
+}
+
+Element* HTMLFormSubmission::GetSubmitterElement() const {
+  return mFormData ? mFormData->GetSubmitterElement() : nullptr;
 }
 
 EncodingFormSubmission::EncodingFormSubmission(

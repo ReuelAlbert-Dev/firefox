@@ -1,10 +1,7 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 //===- RISCVMatInt.cpp - Immediate materialisation -------------*- C++
-//-*--===//
 //
 //  Part of the LLVM Project, under the Apache License v2.0 with LLVM
 //  Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -15,6 +12,7 @@
 #include <bit>
 
 #include "jit/riscv64/Assembler-riscv64.h"
+#include "jit/riscv64/base/Integer.h"
 
 namespace js {
 namespace jit {
@@ -60,8 +58,7 @@ void Assembler::RecursiveLiImpl(Register rd, int64_t imm) {
     // v[0,12) != 0 && v[12,32) == 0 : ADDI
     // v[0,12) == 0 && v[12,32) != 0 : LUI
     // v[0,32) != 0                  : LUI+ADDI(W)
-    int64_t Hi20 = ((imm + 0x800) >> 12) & 0xFFFFF;
-    int64_t Lo12 = imm << 52 >> 52;
+    auto [Hi20, Lo12] = ToHigh20Low12(int32_t(imm));
 
     if (Hi20) {
       lui(rd, (int32_t)Hi20);
@@ -138,8 +135,7 @@ int Assembler::RecursiveLiImplCount(int64_t imm) {
     // v[0,12) != 0 && v[12,32) == 0 : ADDI
     // v[0,12) == 0 && v[12,32) != 0 : LUI
     // v[0,32) != 0                  : LUI+ADDI(W)
-    int64_t Hi20 = ((imm + 0x800) >> 12) & 0xFFFFF;
-    int64_t Lo12 = imm << 52 >> 52;
+    auto [Hi20, Lo12] = ToHigh20Low12(int32_t(imm));
 
     if (Hi20) {
       // lui(rd, (int32_t)Hi20);

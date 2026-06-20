@@ -28,14 +28,14 @@ class StringOrOpenPopupOptions;
 struct ActivateMenuItemOptions;
 
 nsXULElement* NS_NewXULPopupElement(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+    already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
 class XULPopupElement : public XULMenuParentElement {
  private:
   nsMenuPopupFrame* GetFrame(FlushType);
 
  public:
-  explicit XULPopupElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+  explicit XULPopupElement(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
       : XULMenuParentElement(std::move(aNodeInfo)) {}
 
   void GetLabel(DOMString& aValue) const { GetAttr(nsGkAtoms::label, aValue); }
@@ -93,6 +93,8 @@ class XULPopupElement : public XULMenuParentElement {
 
   bool IsWaylandDragSource() const;
   bool IsWaylandPopup() const;
+
+  bool IsNativeMenu() const;
 
   NS_IMPL_FROMNODE_HELPER(XULPopupElement,
                           IsAnyOfXULElements(nsGkAtoms::menupopup,

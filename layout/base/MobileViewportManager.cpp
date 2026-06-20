@@ -48,7 +48,7 @@ MobileViewportManager::MobileViewportManager(MVMContext* aContext,
   mContext->AddEventListener(FULLSCREEN_CHANGED, this, false);
   mContext->AddEventListener(LOAD, this, true);
 
-  mContext->AddObserver(this, BEFORE_FIRST_PAINT.Data(), false);
+  mContext->AddObserver(this, BEFORE_FIRST_PAINT.get(), false);
 
   // We need to initialize the display size and the CSS viewport size before
   // the initial reflow happens.
@@ -65,7 +65,7 @@ void MobileViewportManager::Destroy() {
   mContext->RemoveEventListener(FULLSCREEN_CHANGED, this, false);
   mContext->RemoveEventListener(LOAD, this, true);
 
-  mContext->RemoveObserver(this, BEFORE_FIRST_PAINT.Data());
+  mContext->RemoveObserver(this, BEFORE_FIRST_PAINT.get());
 
   mContext->Destroy();
   mContext = nullptr;

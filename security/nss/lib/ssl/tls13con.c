@@ -3177,6 +3177,7 @@ tls13_HandleHelloRetryRequest(sslSocket *ss, const PRUint8 *savedMsg,
     rv = ssl3_HandleParsedExtensions(ss, ssl_hs_hello_retry_request);
     ssl3_DestroyRemoteExtensions(&ss->ssl3.hs.remoteExtensions);
     if (rv != SECSuccess) {
+        SECITEM_FreeItem(&ss->ssl3.hs.cookie, PR_FALSE);
         return SECFailure; /* Error code set below */
     }
     rv = tls13_MaybeHandleEchSignal(ss, savedMsg, savedLength, PR_TRUE);
@@ -3210,10 +3211,12 @@ tls13_HandleHelloRetryRequest(sslSocket *ss, const PRUint8 *savedMsg,
     }
 
     ssl_ReleaseXmitBufLock(ss);
+    SECITEM_FreeItem(&ss->ssl3.hs.cookie, PR_FALSE);
     return SECSuccess;
 
 loser:
     ssl_ReleaseXmitBufLock(ss);
+    SECITEM_FreeItem(&ss->ssl3.hs.cookie, PR_FALSE);
     return SECFailure;
 }
 
@@ -3261,6 +3264,12 @@ tls13_HandleCertificateRequest(sslSocket *ss, PRUint8 *b, PRUint32 length)
 
     PORT_Assert(ss->opt.noLocks || ssl_HaveRecvBufLock(ss));
     PORT_Assert(ss->opt.noLocks || ssl_HaveSSL3HandshakeLock(ss));
+
+    /* CertificateRequest is sent by servers; a server must never receive one. */
+    if (ss->sec.isServer) {
+        FATAL_ERROR(ss, SSL_ERROR_RX_UNEXPECTED_CERT_REQUEST, unexpected_message);
+        return SECFailure;
+    }
 
     /* Client */
     if (ss->opt.enablePostHandshakeAuth) {
@@ -4208,6 +4217,20 @@ tls13_HandleCertificateDecode(sslSocket *ss, PRUint8 *b, PRUint32 length)
         return SECFailure;
     }
 
+    /* Cap the decompressed size to prevent memory exhaustion. The wire field
+     * is a uint24 (max 16MB) but the CompressedCertificate path bypasses the
+     * 128KB cap applied to regular handshake messages. 100KB matches the limit
+     * enforced by OpenSSL and BoringSSL. */
+#define MAX_CERT_UNCOMPRESSED_LEN (100 * 1024)
+    if (decodedCertLen > MAX_CERT_UNCOMPRESSED_LEN) {
+        SSL_TRC(50, ("%d: TLS13[%d]: %s uncompressed_length %u exceeds limit %u",
+                     SSL_GETPID(), ss->fd, SSL_ROLE(ss),
+                     decodedCertLen, MAX_CERT_UNCOMPRESSED_LEN));
+        FATAL_ERROR(ss, SSL_ERROR_RX_MALFORMED_CERTIFICATE, bad_certificate);
+        return SECFailure;
+    }
+#undef MAX_CERT_UNCOMPRESSED_LEN
+
     /* opaque compressed_certificate_message<1..2^24-1>; */
     PRUint32 compressedCertLen = 0;
     rv = ssl3_ConsumeHandshakeNumber(ss, &compressedCertLen, 3, &b, &length);
@@ -4506,7 +4529,7 @@ tls13_SignOrVerifyHashWithContext(sslSocket *ss, const SSL3Hashes *hashes,
     return SECSuccess;
 
 loser:
-    tls_DestroySignOrVerifyContext(ctx);
+    tls_DestroySignOrVerifyContext(&ctx);
     ssl_MapLowLevelError(SSL_ERROR_SIGN_HASHES_FAILURE);
     return SECFailure;
 }
@@ -5189,6 +5212,13 @@ tls13_HandleEncryptedExtensions(sslSocket *ss, PRUint8 *b, PRUint32 length)
 
     SSL_TRC(3, ("%d: TLS13[%d]: handle encrypted extensions",
                 SSL_GETPID(), ss->fd));
+
+    /* EncryptedExtensions is sent by servers; a server must never receive one. */
+    if (ss->sec.isServer) {
+        FATAL_ERROR(ss, SSL_ERROR_RX_UNEXPECTED_ENCRYPTED_EXTENSIONS,
+                    unexpected_message);
+        return SECFailure;
+    }
 
     rv = TLS13_CHECK_HS_STATE(ss, SSL_ERROR_RX_UNEXPECTED_ENCRYPTED_EXTENSIONS,
                               wait_encrypted_extensions);
@@ -7150,6 +7180,13 @@ tls13_HandleEndOfEarlyData(sslSocket *ss, const PRUint8 *b, PRUint32 length)
     SECStatus rv;
 
     PORT_Assert(ss->version >= SSL_LIBRARY_VERSION_TLS_1_3);
+
+    /* EndOfEarlyData is sent by clients; a client must never receive one. */
+    if (!ss->sec.isServer) {
+        FATAL_ERROR(ss, SSL_ERROR_RX_UNEXPECTED_END_OF_EARLY_DATA,
+                    unexpected_message);
+        return SECFailure;
+    }
 
     rv = TLS13_CHECK_HS_STATE(ss, SSL_ERROR_RX_UNEXPECTED_END_OF_EARLY_DATA,
                               wait_end_of_early_data);

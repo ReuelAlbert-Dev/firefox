@@ -333,7 +333,8 @@ void DataChannelConnection::SetSignals(const std::string& aTransportId) {
 }
 
 void DataChannelConnection::TransportStateChange(
-    const std::string& aTransportId, TransportLayer::State aState) {
+    const std::string& aTransportId, TransportLayer::State aState,
+    const nsTArray<nsTArray<uint8_t>>&) {
   MOZ_ASSERT(mSTS->IsOnCurrentThread());
   if (aTransportId == mTransportId) {
     if (aState == TransportLayer::TS_OPEN) {
@@ -1141,6 +1142,14 @@ void DataChannel::EndOfStream() {
   if (mConnection) {
     mConnection->EndOfStream(this);
   }
+}
+
+RefPtr<dom::RTCDataChannel> DataChannel::GetDomDataChannel() const {
+  MOZ_ASSERT(mDomEventTarget->IsOnCurrentThread());
+  if (NS_IsMainThread()) {
+    return mMainthreadDomDataChannel;
+  }
+  return mWorkerDomDataChannel;
 }
 
 void DataChannelConnection::FinishClose_s(const RefPtr<DataChannel>& aChannel) {

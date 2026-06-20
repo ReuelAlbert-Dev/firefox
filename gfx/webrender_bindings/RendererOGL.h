@@ -171,8 +171,6 @@ class RendererOGL {
   wr::WindowId mWindowId;
   TimeStamp mFrameStartTime;
 
-  bool mDisableNativeCompositor;
-
 #ifdef MOZ_WIDGET_ANDROID
   struct ScreenPixelsRequest {
     gfx::IntRect mSourceRect;
@@ -187,7 +185,7 @@ class RendererOGL {
   // The id of the root WebRender pipeline.
   //
   // All other pipelines are considered content.
-  wr::PipelineId mRootPipelineId;
+  wr::PipelineId mRootPipelineId{};
 
   // A mapping of wr::PipelineId to the epochs when last they updated.
   //

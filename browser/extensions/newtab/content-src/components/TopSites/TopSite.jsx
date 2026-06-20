@@ -22,6 +22,7 @@ import { TopSiteImpressionWrapper } from "./TopSiteImpressionWrapper";
 import { connect } from "react-redux";
 import { MessageWrapper } from "../MessageWrapper/MessageWrapper";
 import { ShortcutFeatureHighlight } from "../DiscoveryStreamComponents/FeatureHighlight/ShortcutFeatureHighlight";
+import { shouldShowOMCHighlight } from "../../lib/asrouter-message-utils.mjs";
 
 const SPOC_TYPE = "SPOC";
 const NEWTAB_SOURCE = "newtab";
@@ -41,7 +42,6 @@ export class TopSiteLink extends React.PureComponent {
     this.state = { screenshotImage: null };
     this.onDragEvent = this.onDragEvent.bind(this);
     this.onKeyPress = this.onKeyPress.bind(this);
-    this.shouldShowOMCHighlight = this.shouldShowOMCHighlight.bind(this);
   }
 
   /*
@@ -220,14 +220,6 @@ export class TopSiteLink extends React.PureComponent {
       imageClassName,
       selectedColor,
     };
-  }
-
-  shouldShowOMCHighlight(componentId) {
-    const messageData = this.props.Messages?.messageData;
-    if (!messageData || Object.keys(messageData).length === 0) {
-      return false;
-    }
-    return messageData?.content?.messageType === componentId;
   }
 
   render() {
@@ -410,19 +402,23 @@ export class TopSiteLink extends React.PureComponent {
               />
             </div>
           </a>
-          {isAddButton && this.shouldShowOMCHighlight("ShortcutHighlight") && (
-            <MessageWrapper
-              dispatch={this.props.dispatch}
-              onClick={e => e.stopPropagation()}
-            >
-              <ShortcutFeatureHighlight
+          {isAddButton &&
+            shouldShowOMCHighlight(
+              this.props.Messages,
+              "ShortcutHighlight"
+            ) && (
+              <MessageWrapper
                 dispatch={this.props.dispatch}
-                feature="FEATURE_SHORTCUT_HIGHLIGHT"
-                position="inset-block-end inset-inline-start"
-                messageData={this.props.Messages?.messageData}
-              />
-            </MessageWrapper>
-          )}
+                onClick={e => e.stopPropagation()}
+              >
+                <ShortcutFeatureHighlight
+                  dispatch={this.props.dispatch}
+                  feature="FEATURE_SHORTCUT_HIGHLIGHT"
+                  position="inset-block-end inset-inline-start"
+                  messageData={this.props.Messages?.messageData}
+                />
+              </MessageWrapper>
+            )}
           {children}
           {impressionStats}
         </div>
@@ -822,14 +818,17 @@ export class _TopSiteList extends React.PureComponent {
     // Make a copy of the sites to truncate or extend to desired length
     let topSites = this.props.TopSites.rows.slice();
     topSites.length =
-      this.props.TopSitesRows *
+      (this.props.TopSitesRows ?? 0) *
       (this.props.topSitesMaxSitesPerRow ?? TOP_SITES_MAX_SITES_PER_ROW);
     // if topSites do not fill an entire row add 'Add shortcut' button to array of topSites
     // (there should only be one of these)
     const addButtonIndex = topSites.findIndex(site => site?.isAddButton);
 
-    // Find the position right after the last regular shortcut
-    let targetPosition = topSites.length - 1;
+    // Find the position right after the last regular shortcut. Defaults to the
+    // first slot so that with no shortcuts the Add button sits at the front
+    // (a length-1 default would place it in the last slot, and adding the first
+    // shortcut there would push the button out of bounds and hide it).
+    let targetPosition = 0;
     for (let i = topSites.length - 1; i >= 0; i--) {
       if (topSites[i] && !topSites[i].isAddButton) {
         targetPosition = i + 1;
@@ -996,6 +995,7 @@ export class _TopSiteList extends React.PureComponent {
       } else if (i >= maxNarrowVisibleIndex) {
         slotProps.className = "hide-for-narrow";
       }
+      const { key: slotKey, ...restSlotProps } = slotProps;
 
       let topSiteLink = null;
       // Use a placeholder if the link is empty or it's rendering a sponsored
@@ -1005,12 +1005,19 @@ export class _TopSiteList extends React.PureComponent {
         (props.App.isForStartupCache.TopSites && isSponsored(link))
       ) {
         if (link) {
-          topSiteLink = <TopSitePlaceholder {...slotProps} {...commonProps} />;
+          topSiteLink = (
+            <TopSitePlaceholder
+              key={slotKey}
+              {...restSlotProps}
+              {...commonProps}
+            />
+          );
         }
       } else if (topSites[i]?.isAddButton) {
         topSiteLink = (
           <TopSiteAddButton
-            {...slotProps}
+            key={slotKey}
+            {...restSlotProps}
             {...commonProps}
             setRef={
               i === this.state.focusedIndex
@@ -1030,10 +1037,11 @@ export class _TopSiteList extends React.PureComponent {
       } else {
         topSiteLink = (
           <TopSite
+            key={slotKey}
             link={link}
             activeIndex={this.state.activeIndex}
             onActivate={this.onActivate}
-            {...slotProps}
+            {...restSlotProps}
             {...commonProps}
             colors={props.colors}
             setRef={

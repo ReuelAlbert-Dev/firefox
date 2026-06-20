@@ -36,6 +36,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"  // mozilla::Mutex
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -54,16 +55,18 @@
 #ifdef NIGHTLY_BUILD
 #  include "mozilla/dom/IntegrityPolicyWAICT.h"
 #endif
+#include "mozilla/FlowMarkers.h"
 #include "mozilla/dom/JSExecutionUtils.h"  // mozilla::dom::Compile, mozilla::dom::InstantiateStencil, mozilla::dom::EvaluationExceptionToNSResult
 #include "mozilla/dom/PolicyContainer.h"
 #include "mozilla/dom/RequestBinding.h"
 #include "mozilla/dom/SRILogHelper.h"
 #include "mozilla/dom/ScriptDecoding.h"  // mozilla::dom::ScriptDecoding
 #include "mozilla/dom/ScriptSettings.h"
+#include "mozilla/dom/SpeculationRules.h"
 #include "mozilla/dom/WindowContext.h"
 #include "mozilla/glean/DomMetrics.h"
+#include "mozilla/net/ChannelClassifierUtils.h"
 #include "mozilla/net/HttpBaseChannel.h"
-#include "mozilla/net/UrlClassifierFeatureFactory.h"
 #include "nsAboutProtocolUtils.h"
 #include "nsCRT.h"
 #include "nsContentCreatorFunctions.h"
@@ -122,29 +125,50 @@ LazyLogModule ScriptLoader::gScriptLoaderLog("ScriptLoader");
 static constexpr auto kNullMimeType = "javascript/null"_ns;
 
 /////////////////////////////////////////////////////////////
-// AsyncCompileShutdownObserver
+// ShutdownAndMemoryPressureObserver
 /////////////////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS(AsyncCompileShutdownObserver, nsIObserver)
+NS_IMPL_ISUPPORTS(ShutdownAndMemoryPressureObserver, nsIObserver)
 
-void AsyncCompileShutdownObserver::OnShutdown() {
+void ShutdownAndMemoryPressureObserver::OnShutdown() {
   if (mScriptLoader) {
     mScriptLoader->Destroy();
     MOZ_ASSERT(!mScriptLoader);
   }
 }
 
-void AsyncCompileShutdownObserver::Unregister() {
+void ShutdownAndMemoryPressureObserver::OnMemoryPressure() {
+  if (mScriptLoader) {
+    mScriptLoader->OnMemoryPressure();
+  }
+}
+
+void ShutdownAndMemoryPressureObserver::Unregister() {
   if (mScriptLoader) {
     mScriptLoader = nullptr;
     nsContentUtils::UnregisterShutdownObserver(this);
+
+    nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
+    if (obsService) {
+      obsService->RemoveObserver(this, "memory-pressure");
+    }
   }
 }
 
 NS_IMETHODIMP
-AsyncCompileShutdownObserver::Observe(nsISupports* aSubject, const char* aTopic,
-                                      const char16_t* aData) {
-  OnShutdown();
+ShutdownAndMemoryPressureObserver::Observe(nsISupports* aSubject,
+                                           const char* aTopic,
+                                           const char16_t* aData) {
+  if (strcmp(aTopic, "xpcom-shutdown") == 0) {
+    OnShutdown();
+    return NS_OK;
+  }
+
+  if (strcmp(aTopic, "memory-pressure") == 0) {
+    OnMemoryPressure();
+    return NS_OK;
+  }
+
   return NS_OK;
 }
 
@@ -192,6 +216,17 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ScriptLoader)
       mPendingChildLoaders, mModuleLoader, mWebExtModuleLoaders)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
+NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(ScriptLoader)
+  for (size_t i = 0; i < tmp->mDelazificationCollectingScripts.Length(); ++i) {
+    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(
+        mDelazificationCollectingScripts[i])
+  }
+  for (size_t i = 0; i < tmp->mDelazificationCollectingModules.Length(); ++i) {
+    NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(
+        mDelazificationCollectingModules[i])
+  }
+NS_IMPL_CYCLE_COLLECTION_TRACE_END
+
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ScriptLoader)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(ScriptLoader)
 
@@ -202,7 +237,6 @@ ScriptLoader::ScriptLoader(Document* aDocument)
   mSpeculativeOMTParsingEnabled = StaticPrefs::
       dom_script_loader_external_scripts_speculative_omt_parse_enabled();
 
-#ifdef NIGHTLY_BUILD
   // NOTE: The loader for the system principal aren't supposed to
   //       load remote contents, and it doesn't have to use the in-memory cache.
   //       A non-system-principal document can also load internal resources,
@@ -214,14 +248,26 @@ ScriptLoader::ScriptLoader(Document* aDocument)
     RegisterToCache();
     LOG(("ScriptLoader (%p): Using in-memory cache.", this));
   }
-#endif
 
-  mShutdownObserver = new AsyncCompileShutdownObserver(this);
-  nsContentUtils::RegisterShutdownObserver(mShutdownObserver);
+  mObserver = new ShutdownAndMemoryPressureObserver(this);
+  nsContentUtils::RegisterShutdownObserver(mObserver);
+
+  nsCOMPtr<nsIObserverService> obsService = services::GetObserverService();
+  if (obsService) {
+    obsService->AddObserver(mObserver, "memory-pressure", false);
+  }
 }
 
 ScriptLoader::~ScriptLoader() {
   LOG(("ScriptLoader::~ScriptLoader %p", this));
+
+  if (!mDelazificationCollectingScripts.IsEmpty() ||
+      !mDelazificationCollectingModules.IsEmpty()) {
+    mDelazificationCollectingScripts.Clear();
+    mDelazificationCollectingModules.Clear();
+
+    mozilla::DropJSObjects(this);
+  }
 
   mObservers.Clear();
 
@@ -261,9 +307,9 @@ ScriptLoader::~ScriptLoader() {
     mPendingChildLoaders[j]->RemoveParserBlockingScriptExecutionBlocker();
   }
 
-  if (mShutdownObserver) {
-    mShutdownObserver->Unregister();
-    mShutdownObserver = nullptr;
+  if (mObserver) {
+    mObserver->Unregister();
+    mObserver = nullptr;
   }
 
   mModuleLoader = nullptr;
@@ -359,20 +405,25 @@ static void CollectScriptTelemetry(ScriptLoadRequest* aRequest) {
     return;
   }
 
+  if (aRequest->IsRetrievedFromMemoryCache()) {
+    // This is revived from the cache.
+    return;
+  }
+
   // Report the type of source. This is used to monitor the status of the
   // JavaScript Start-up Bytecode Cache, with the expectation of an almost zero
   // source-fallback and alternate-data being roughtly equal to source loads.
   if (aRequest->mFetchSourceOnly) {
     if (aRequest->GetScriptLoadContext()->mIsInline) {
       script_loading_source.EnumGet(ScriptLoadingSourceLabel::eInline).Add();
-    } else if (aRequest->IsTextSource()) {
+    } else if (aRequest->IsFetchedAsTextSource()) {
       script_loading_source.EnumGet(ScriptLoadingSourceLabel::eSourcefallback)
           .Add();
     }
   } else {
-    if (aRequest->IsTextSource()) {
+    if (aRequest->IsFetchedAsTextSource()) {
       script_loading_source.EnumGet(ScriptLoadingSourceLabel::eSource).Add();
-    } else if (aRequest->IsSerializedStencil()) {
+    } else if (aRequest->IsRetrievedAsSerializedStencil()) {
       script_loading_source.EnumGet(ScriptLoadingSourceLabel::eAltdata).Add();
     }
   }
@@ -445,6 +496,8 @@ nsContentPolicyType ScriptLoadRequestToContentPolicyType(
           return nsIContentPolicy::TYPE_INTERNAL_JSON_PRELOAD;
         case JS::ModuleType::CSS:
           return nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD;
+        case JS::ModuleType::Text:
+          return nsIContentPolicy::TYPE_INTERNAL_TEXT_PRELOAD;
         case JS::ModuleType::Bytes:
         case JS::ModuleType::Unknown:
           MOZ_ASSERT_UNREACHABLE("Unknown module type");
@@ -465,6 +518,8 @@ nsContentPolicyType ScriptLoadRequestToContentPolicyType(
         return nsIContentPolicy::TYPE_JSON;
       case JS::ModuleType::CSS:
         return nsIContentPolicy::TYPE_STYLESHEET;
+      case JS::ModuleType::Text:
+        return nsIContentPolicy::TYPE_TEXT;
     }
   }
 
@@ -600,7 +655,7 @@ void ScriptLoader::RunScriptWhenSafe(ScriptLoadRequest* aRequest) {
 }
 
 nsresult ScriptLoader::RestartLoad(ScriptLoadRequest* aRequest) {
-  aRequest->DropSRIOrSRIAndSerializedStencil();
+  aRequest->getLoadedScript()->DropSRIOrSRIAndSerializedStencil();
   TRACE_FOR_TEST(aRequest, "load:fallback");
 
   // Notify preload restart so that we can register this preload request again.
@@ -648,7 +703,7 @@ static nsSecurityFlags CORSModeToSecurityFlags(CORSMode aCORSMode) {
 nsresult ScriptLoader::StartClassicLoad(
     ScriptLoadRequest* aRequest,
     const Maybe<nsAutoString>& aCharsetForPreload) {
-  if (aRequest->IsCachedStencil()) {
+  if (aRequest->IsRetrievedFromMemoryCache()) {
     EmulateNetworkEvents(aRequest, aCharsetForPreload);
     return NS_OK;
   }
@@ -1006,7 +1061,7 @@ nsresult ScriptLoader::StartLoadInternal(
 
   LOG(("ScriptLoadRequest (%p): mode=%u tracking=%d", aRequest,
        unsigned(aRequest->GetScriptLoadContext()->mScriptMode),
-       net::UrlClassifierCommon::IsTrackingClassificationFlag(
+       net::ChannelClassifierUtils::IsTrackingClassificationFlag(
            aRequest->GetScriptLoadContext()
                ->GetClassificationFlags()
                .thirdPartyFlags,
@@ -1145,7 +1200,9 @@ void ScriptLoader::NotifyObserversForCachedScript(
     return;
   }
 
-  ScriptHashKey key(this, aRequest, aRequest->getLoadedScript());
+  ScriptHashKey key(this, aRequest, aRequest->ReferrerPolicy(),
+                    aRequest->FetchOptions(),
+                    aRequest->getLoadedScript()->GetURI());
   nsAutoCString keyStr;
   key.ToStringForLookup(keyStr);
 
@@ -1175,7 +1232,9 @@ already_AddRefed<ScriptLoadRequest> ScriptLoader::CreateLoadRequest(
     return request.forget();
   }
 
-  MOZ_ASSERT(aKind == ScriptKind::eClassic || aKind == ScriptKind::eImportMap);
+  MOZ_ASSERT(aKind == ScriptKind::eClassic || aKind == ScriptKind::eImportMap ||
+             (StaticPrefs::dom_speculation_rules_enabled() &&
+              aKind == ScriptKind::eSpeculationRules));
 
   RefPtr<ScriptLoadRequest> request =
       new ScriptLoadRequest(aKind, aIntegrity, referrer, context);
@@ -1214,12 +1273,17 @@ void ScriptLoader::TryUseCache(ReferrerPolicy aReferrerPolicy,
 
   // NOTE: Some ScriptLoadRequest fields aren't yet accessible until
   //       either NoCacheEntryFound or CacheEntryFound is called,
-  //       which constructs LoadedScript.
-  //       aRequest->FetchOptions() and aRequest->URI() are backed by
+  //       which constructs ScriptFetchInfo and LoadedScript.
+  //       aRequest->FetchOptions() and aRequest->ReferrerPolicy() are
+  //       backed by ScriptFetchInfo, and aRequest->URI() is backed by
   //       LoadedScript, and we cannot use them here.
   ScriptHashKey key(this, aRequest, aReferrerPolicy, aFetchOptions, aURI);
   auto cacheResult = mCache->Lookup(*this, key, /* aSyncLoad = */ true);
-  if (cacheResult.mState != CachedSubResourceState::Complete) {
+  MOZ_ASSERT_IF(cacheResult.mState == CachedSubResourceState::Complete,
+                cacheResult.mCompleteValue->IsCachedStencil() ||
+                    cacheResult.mCompleteValue->IsInvalidatedCachedStencil());
+  if (cacheResult.mState != CachedSubResourceState::Complete ||
+      !cacheResult.mCompleteValue->IsCachedStencil()) {
     aRequest->NoCacheEntryFound(aReferrerPolicy, aFetchOptions, aURI);
     LOG(
         ("ScriptLoader (%p): Created LoadedScript (%p) for "
@@ -1272,7 +1336,8 @@ void ScriptLoader::TryUseCache(ReferrerPolicy aReferrerPolicy,
 
   aRequest->mNetworkMetadata = cacheResult.mNetworkMetadata;
 
-  MOZ_ASSERT(cacheResult.mCompleteValue->ReferrerPolicy() == aReferrerPolicy);
+  MOZ_ASSERT(cacheResult.mCompleteValue->CachedReferrerPolicy() ==
+             aReferrerPolicy);
 
   mMemoryCacheUsed++;
   if (!cacheResult.mCompleteValue->IsEverHitFromMemoryCache()) {
@@ -1296,7 +1361,7 @@ void ScriptLoader::TryUseCache(ReferrerPolicy aReferrerPolicy,
 void ScriptLoader::EmulateNetworkEvents(
     ScriptLoadRequest* aRequest,
     const Maybe<nsAutoString>& aCharsetForPreload) {
-  MOZ_ASSERT(aRequest->IsCachedStencil());
+  MOZ_ASSERT(aRequest->IsRetrievedFromMemoryCache());
   MOZ_ASSERT(aRequest->mNetworkMetadata);
   MOZ_ASSERT(!aRequest->IsWasmBytes());
 
@@ -1335,6 +1400,8 @@ bool ScriptLoader::ProcessScriptElement(nsIScriptElement* aElement,
     scriptKind = ScriptKind::eModule;
   } else if (aElement->GetScriptIsImportMap()) {
     scriptKind = ScriptKind::eImportMap;
+  } else if (aElement->GetScriptIsSpeculationRules()) {
+    scriptKind = ScriptKind::eSpeculationRules;
   } else {
     scriptKind = ScriptKind::eClassic;
   }
@@ -1374,16 +1441,20 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
        aElement));
 
   // https://html.spec.whatwg.org/multipage/scripting.html#prepare-the-script-element
-  // Step 30.1. If el's type is "importmap", then queue an element task on the
-  // DOM manipulation task source given el to fire an event named error at el,
-  // and return.
-  if (aScriptKind == ScriptKind::eImportMap) {
+  // Step 33.1. If el's type is "importmap" or "speculationrules", then queue an
+  // element task on the DOM manipulation task source given el to fire an event
+  // named error at el, and return.
+  if (aScriptKind == ScriptKind::eImportMap ||
+      aScriptKind == ScriptKind::eSpeculationRules) {
     NS_DispatchToCurrentThread(
         NewRunnableMethod("nsIScriptElement::FireErrorEvent", aElement,
                           &nsIScriptElement::FireErrorEvent));
     nsContentUtils::ReportToConsole(
         nsIScriptError::warningFlag, "Script Loader"_ns, mDocument,
-        nsContentUtils::eDOM_PROPERTIES, "ImportMapExternalNotSupported");
+        PropertiesFile::DOM_PROPERTIES,
+        aScriptKind == ScriptKind::eImportMap
+            ? "ImportMapExternalNotSupported"
+            : "SpeculationRulesExternalNotSupported");
     return false;
   }
 
@@ -1418,6 +1489,10 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
   RefPtr<ScriptLoadRequest> request =
       LookupPreloadRequest(aElement, aScriptKind, sriMetadata);
   if (request) {
+    PROFILER_MARKER("ScriptLoader::ProcessExternalScript PreloadRequest", JS,
+                    {mozilla::MarkerStack::Capture()}, FlowMarker,
+                    Flow::FromPointer(request.get()));
+
     if (NS_FAILED(CheckContentPolicy(aElement, nonce, request,
                                      request->FetchOptions(),
                                      request->URI()))) {
@@ -1471,6 +1546,11 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
         aScriptKind, scriptURI, aElement, VoidString(), principal, ourCORSMode,
         nonce, FetchPriorityToRequestPriority(fetchPriority), sriMetadata,
         referrerPolicy, parserMetadata, ScriptLoadRequestType::External);
+
+    PROFILER_MARKER("ScriptLoader::ProcessExternalScript CreateLoadRequest", JS,
+                    {mozilla::MarkerStack::Capture()}, FlowMarker,
+                    Flow::FromPointer(request.get()));
+
     request->GetScriptLoadContext()->mIsInline = false;
     request->GetScriptLoadContext()->SetScriptMode(
         aElement->GetScriptDeferred(), aElement->GetScriptAsync(), false);
@@ -1513,7 +1593,7 @@ bool ScriptLoader::ProcessExternalScript(nsIScriptElement* aElement,
       return block;
     }
 
-    if (request->IsCachedStencil()) {
+    if (request->IsRetrievedFromMemoryCache()) {
       // https://html.spec.whatwg.org/#prepare-the-script-element
       //
       // Step 33. If el's type is "classic" and el has a src attribute, or el's
@@ -1679,7 +1759,7 @@ bool ScriptLoader::ProcessInlineScript(nsIScriptElement* aElement,
                             : "ImportMapNotAllowedAfterModuleLoad";
       nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                       "Script Loader"_ns, mDocument,
-                                      nsContentUtils::eDOM_PROPERTIES, msg);
+                                      PropertiesFile::DOM_PROPERTIES, msg);
       NS_DispatchToCurrentThread(
           NewRunnableMethod("nsIScriptElement::FireErrorEvent", aElement,
                             &nsIScriptElement::FireErrorEvent));
@@ -1807,6 +1887,46 @@ bool ScriptLoader::ProcessInlineScript(nsIScriptElement* aElement,
     // 'preparation-time document check' will never fail for import maps.
     // So we simply call 'register an import map' here.
     mModuleLoader->RegisterImportMap(std::move(importMap), request);
+    return false;
+  }
+
+  if (request->IsSpeculationRulesRequest()) {
+    MOZ_ASSERT(StaticPrefs::dom_speculation_rules_enabled());
+
+    // https://html.spec.whatwg.org/#prepare-the-script-element
+    // Step 34.2. Switch on el's type:
+    //  ...
+    //  "speculationrules":
+    //    1. Let result be the result of creating a speculation rules parse
+    //    result given source text and el's node document.
+    nsAutoString source;
+    aElement->GetScriptText(source);
+    auto speculationRulesResult = SpeculationRules::Parse(
+        NS_ConvertUTF16toUTF8(source), request->BaseURL(), request->BaseURL());
+
+    // Like in the import map case above, we register the speculation rules here
+    // instead of later in EvaluateScriptElement.
+
+    // https://html.spec.whatwg.org/#execute-the-script-element
+    // Step 6. Switch on el's type:
+    //  ...
+    //  "speculationrules":
+    //    1. Register speculation rules given el's relevant global object and
+    //    el's result.
+    if (speculationRulesResult.isErr()) {
+      // https://html.spec.whatwg.org/#register-speculation-rules
+      // Step 1.2.
+      nsCOMPtr<nsIScriptGlobalObject> global = GetScriptGlobalObject();
+      if (!global) {
+        return false;
+      }
+      SpeculationRules::ReportParseError(global,
+                                         speculationRulesResult.unwrapErr());
+      return false;
+    }
+
+    mDocument->RegisterSpeculationRulesFromScript(
+        aElement, speculationRulesResult.unwrap());
     return false;
   }
 
@@ -1989,7 +2109,7 @@ nsresult ScriptLoader::CompileOffThreadOrProcessRequest(
   NS_ASSERTION(nsContentUtils::IsSafeToRunScript(),
                "Processing requests when running scripts is unsafe.");
 
-  if (!aRequest->IsCachedStencil() &&
+  if (!aRequest->IsRetrievedFromMemoryCache() &&
       !aRequest->GetScriptLoadContext()->mCompileOrDecodeTask &&
       !aRequest->GetScriptLoadContext()->CompileStarted()) {
     bool couldCompile = false;
@@ -2043,10 +2163,10 @@ class OffThreadCompilationCompleteTask : public Task {
 
     if (profiler_is_active()) {
       ProfilerString8View scriptSourceString;
-      if (mRequest->IsTextSource()) {
+      if (mRequest->IsFetchedAsTextSource()) {
         scriptSourceString = "ScriptCompileOffThread";
       } else {
-        MOZ_ASSERT(mRequest->IsSerializedStencil());
+        MOZ_ASSERT(mRequest->IsRetrievedAsSerializedStencil());
         scriptSourceString = "DecodeStencilOffThread";
       }
 
@@ -2105,7 +2225,7 @@ nsresult ScriptLoader::AttemptOffThreadScriptCompile(
     return NS_OK;
   }
 
-  if (aRequest->IsCachedStencil()) {
+  if (aRequest->IsRetrievedFromMemoryCache()) {
     // This is a revived cache.
     return NS_OK;
   }
@@ -2141,7 +2261,7 @@ nsresult ScriptLoader::AttemptOffThreadScriptCompile(
     return rv;
   }
 
-  if (aRequest->IsTextSource()) {
+  if (aRequest->IsFetchedAsTextSource()) {
     if (!StaticPrefs::javascript_options_parallel_parsing() ||
         aRequest->ScriptTextLength() < OffThreadMinimumTextLength) {
       TRACE_FOR_TEST(aRequest, "compile:main thread");
@@ -2152,7 +2272,7 @@ nsresult ScriptLoader::AttemptOffThreadScriptCompile(
     // not yet implemented.
     return NS_OK;
   } else {
-    MOZ_ASSERT(aRequest->IsSerializedStencil());
+    MOZ_ASSERT(aRequest->IsRetrievedAsSerializedStencil());
 
     JS::TranscodeRange range = aRequest->SerializedStencil();
     if (!StaticPrefs::javascript_options_parallel_parsing() ||
@@ -2302,7 +2422,6 @@ class ScriptOrModuleCompileTask final : public CompileOrDecodeTask {
     if (IsCancelled(lock)) {
       return TaskResult::Complete;
     }
-
     RefPtr<JS::Stencil> stencil = Compile();
 
     DidRunTask(lock, std::move(stencil));
@@ -2408,7 +2527,7 @@ class ScriptDecodeTask final : public CompileOrDecodeTask {
 nsresult ScriptLoader::CreateOffThreadTask(
     JSContext* aCx, ScriptLoadRequest* aRequest, JS::CompileOptions& aOptions,
     CompileOrDecodeTask** aCompileOrDecodeTask) {
-  if (aRequest->IsSerializedStencil()) {
+  if (aRequest->IsRetrievedAsSerializedStencil()) {
     JS::TranscodeRange range = aRequest->SerializedStencil();
     JS::DecodeOptions decodeOptions(aOptions);
     RefPtr<ScriptDecodeTask> decodeTask = new ScriptDecodeTask(range);
@@ -2477,6 +2596,10 @@ nsresult ScriptLoader::ProcessOffThreadRequest(ScriptLoadRequest* aRequest) {
   MOZ_ASSERT(aRequest->IsCompiling());
   MOZ_ASSERT(!aRequest->GetScriptLoadContext()->mWasCompiledOMT);
 
+  PROFILER_MARKER("ScriptLoader::ProcessOffThreadRequest", JS,
+                  {mozilla::MarkerStack::Capture()}, FlowMarker,
+                  Flow::FromPointer(aRequest));
+
   if (aRequest->IsCanceled()) {
     return NS_OK;
   }
@@ -2524,6 +2647,11 @@ nsresult ScriptLoader::ProcessOffThreadRequest(ScriptLoadRequest* aRequest) {
           "request should not run synchronously but added to some queue.");
       return ProcessRequest(aRequest);
     }
+  } else if (aRequest->GetScriptLoadContext()->mInAsyncList) {
+    // This async request may already be in mLoadingAsyncRequests while its
+    // off-thread compilation finishes. Now that it is ready, move it to
+    // mLoadedAsyncRequests so ProcessPendingRequests can execute it.
+    MaybeMoveToLoadedList(aRequest);
   }
 
   // Process other scripts in the proper order.
@@ -2604,15 +2732,22 @@ nsresult ScriptLoader::ProcessRequest(ScriptLoadRequest* aRequest) {
     aRequest->GetScriptLoadContext()->MaybeCancelOffThreadScript();
   }
 
-  if (aRequest->IsTextSource()) {
-    // Free text source, but keep the serialized Stencil as we might have to
-    // save it later.
-    aRequest->ClearScriptText();
-  } else if (aRequest->IsSerializedStencil()) {
-    // We received serialized Stencil as input, thus we were decoding, and we
-    // will not be encoding it once more. We can safely clear the content of
-    // this buffer.
-    aRequest->DropSRIOrSRIAndSerializedStencil();
+  // If the script is in-memory cached, it should already be converted to
+  // CachedStencil in ScriptLoader::TryCacheRequest.
+  //
+  // If the navigation cache is not enabled and the script is going to be
+  // saved to disk, it's also converted to CachedStencil in
+  // ScriptLoader::RegisterForDiskCache.
+  //
+  // If the LoadedScript is still eTextSource or eSerializedStencil at this
+  // point, they're not going to be cached, and the received data is
+  // no longer necessary.
+  if (aRequest->getLoadedScript()->IsTextSource()) {
+    aRequest->getLoadedScript()->ClearScriptText();
+    aRequest->getLoadedScript()->DropSRI();
+  } else if (aRequest->getLoadedScript()->IsSerializedStencil()) {
+    MOZ_ASSERT(!aRequest->HasStencil());
+    aRequest->getLoadedScript()->DropSRIOrSRIAndSerializedStencil();
   }
 
   return rv;
@@ -2771,7 +2906,9 @@ nsresult ScriptLoader::FillCompileOptionsForRequest(
 
   aOptions->setDeferDebugMetadata(true);
 
-  aOptions->borrowBuffer = true;
+  if (!mCache) {
+    aOptions->borrowBuffer = true;
+  }
 
   ApplyEagerBaselineStrategy(aOptions);
 
@@ -2878,7 +3015,7 @@ void ScriptLoader::CalculateCacheFlag(ScriptLoadRequest* aRequest) {
            aRequest));
       aRequest->MarkNotCacheable();
       MOZ_ASSERT(!aRequest->getLoadedScript()->HasDiskCacheReference());
-      MOZ_ASSERT_IF(aRequest->IsTextSource(),
+      MOZ_ASSERT_IF(aRequest->IsFetchedAsTextSource(),
                     aRequest->HasNoSRIOrSRIAndSerializedStencil());
       return;
     }
@@ -2886,7 +3023,8 @@ void ScriptLoader::CalculateCacheFlag(ScriptLoadRequest* aRequest) {
 
   MOZ_ASSERT(!aRequest->IsWasmBytes());
 
-  if (!aRequest->IsCachedStencil() && aRequest->ExpirationTime().IsExpired()) {
+  if (!aRequest->IsRetrievedFromMemoryCache() &&
+      aRequest->ExpirationTime().IsExpired()) {
     LOG(("ScriptLoadRequest (%p): Bytecode-cache: Skip all: Expired",
          aRequest));
     // NOTE: The expiration for in-memory-cached case should be handled by
@@ -2925,10 +3063,10 @@ void ScriptLoader::CalculateCacheFlag(ScriptLoadRequest* aRequest) {
 
   // The following conditions apply only to the disk cache.
 
-  if (aRequest->IsSerializedStencil()) {
+  if (aRequest->IsRetrievedAsSerializedStencil()) {
     LOG(
         ("ScriptLoadRequest (%p): Bytecode-cache: Skip disk: "
-         "IsSerializedStencil",
+         "IsRetrievedAsSerializedStencil",
          aRequest));
     aRequest->MarkSkippedDiskCaching();
     MOZ_ASSERT(!aRequest->getLoadedScript()->HasDiskCacheReference());
@@ -2943,7 +3081,7 @@ void ScriptLoader::CalculateCacheFlag(ScriptLoadRequest* aRequest) {
          "!LoadedScript::HasDiskCacheReference",
          aRequest));
     aRequest->MarkSkippedDiskCaching();
-    MOZ_ASSERT_IF(aRequest->IsTextSource(),
+    MOZ_ASSERT_IF(aRequest->IsFetchedAsTextSource(),
                   aRequest->HasNoSRIOrSRIAndSerializedStencil());
     return;
   }
@@ -2966,10 +3104,10 @@ void ScriptLoader::CalculateCacheFlag(ScriptLoadRequest* aRequest) {
   // cache for this script, as the overhead of parsing it might not be worth the
   // effort.
   size_t sourceLength;
-  if (aRequest->IsCachedStencil()) {
+  if (aRequest->IsRetrievedFromMemoryCache()) {
     sourceLength = JS::GetScriptSourceLength(aRequest->GetStencil());
   } else {
-    MOZ_ASSERT(aRequest->IsTextSource());
+    MOZ_ASSERT(aRequest->IsFetchedAsTextSource());
     sourceLength = aRequest->ReceivedScriptTextLength();
   }
   if (strategy.mHasSourceLengthMin) {
@@ -3069,17 +3207,12 @@ class MOZ_RAII AutoSetProcessingScriptTag {
   ~AutoSetProcessingScriptTag() { mContext->SetProcessingScriptTag(mOldTag); }
 };
 
-static void ExecuteCompiledScript(JSContext* aCx, ClassicScript* aLoaderScript,
-                                  JS::Handle<JSScript*> aScript,
+static void ExecuteCompiledScript(JSContext* aCx, JS::Handle<JSScript*> aScript,
                                   ErrorResult& aRv) {
   if (!aScript) {
     // Compilation succeeds without producing a script if scripting is
     // disabled for the global.
     return;
-  }
-
-  if (JS::GetScriptPrivate(aScript).isUndefined()) {
-    aLoaderScript->AssociateWithScript(aScript);
   }
 
   if (!JS_ExecuteScript(aCx, aScript)) {
@@ -3135,7 +3268,9 @@ nsresult ScriptLoader::EvaluateScriptElement(ScriptLoadRequest* aRequest) {
       !aRequest->GetScriptLoadContext()->mIsInline ||
       aRequest->IsModuleRequest();
   if (ignoreDestructiveWrites) {
-    ownerDoc->IncrementIgnoreDestructiveWritesCounter();
+    if (mDocument) {
+      mDocument->IncrementIgnoreDestructiveWritesCounter();
+    }
   }
 
   auto afterScript = MakeScopeExit([&] {
@@ -3156,7 +3291,9 @@ nsresult ScriptLoader::EvaluateScriptElement(ScriptLoadRequest* aRequest) {
     // 7. Decrement the ignore-destructive-writes counter of document, if it was
     // incremented in the earlier step.
     if (ignoreDestructiveWrites) {
-      ownerDoc->DecrementIgnoreDestructiveWritesCounter();
+      if (mDocument) {
+        mDocument->DecrementIgnoreDestructiveWritesCounter();
+      }
     }
   });
 
@@ -3202,11 +3339,13 @@ nsresult ScriptLoader::EvaluateScriptElement(ScriptLoadRequest* aRequest) {
 }
 
 // Decode a script contained in a buffer.
-static void Decode(JSContext* aCx, JS::CompileOptions& aCompileOptions,
-                   const JS::TranscodeRange& aRange,
-                   RefPtr<JS::Stencil>& aStencil, ErrorResult& aRv) {
+void ScriptLoader::Decode(JSContext* aCx, JS::CompileOptions& aCompileOptions,
+                          const JS::TranscodeRange& aRange,
+                          RefPtr<JS::Stencil>& aStencil, ErrorResult& aRv) {
   JS::DecodeOptions decodeOptions(aCompileOptions);
-  decodeOptions.borrowBuffer = true;
+  if (!mCache) {
+    decodeOptions.borrowBuffer = true;
+  }
 
   MOZ_ASSERT(aCompileOptions.noScriptRval);
   JS::TranscodeResult tr =
@@ -3221,20 +3360,60 @@ static void Decode(JSContext* aCx, JS::CompileOptions& aCompileOptions,
   }
 }
 
-enum class CollectDelazifications : bool { No, Yes };
-enum class IsAlreadyCollecting : bool { No, Yes };
+bool ScriptLoader::StartCollectingDelazifications(JSContext* aCx,
+                                                  JS::Handle<JSScript*> aScript,
+                                                  JS::Stencil* aStencil) {
+  JS::CollectDelazificationsResult result;
+  if (!JS::StartCollectingDelazifications(aCx, aScript, aStencil, result)) {
+    return false;
+  }
+  if (result == JS::CollectDelazificationsResult::NewlyStarted) {
+    AppendDelazificationCollection(aScript);
+  }
+  return true;
+}
+
+bool ScriptLoader::StartCollectingDelazifications(JSContext* aCx,
+                                                  JS::Handle<JSObject*> aModule,
+                                                  JS::Stencil* aStencil) {
+  JS::CollectDelazificationsResult result;
+  if (!JS::StartCollectingDelazifications(aCx, aModule, aStencil, result)) {
+    return false;
+  }
+  if (result == JS::CollectDelazificationsResult::NewlyStarted) {
+    AppendDelazificationCollection(aModule);
+  }
+  return true;
+}
+
+void ScriptLoader::AppendDelazificationCollection(
+    JS::Handle<JSScript*> aScript) {
+  if (mDelazificationCollectingScripts.IsEmpty() &&
+      mDelazificationCollectingModules.IsEmpty()) {
+    mozilla::HoldJSObjects(this);
+  }
+  mDelazificationCollectingScripts.AppendElement(aScript);
+}
+
+void ScriptLoader::AppendDelazificationCollection(
+    JS::Handle<JSObject*> aModule) {
+  if (mDelazificationCollectingScripts.IsEmpty() &&
+      mDelazificationCollectingModules.IsEmpty()) {
+    mozilla::HoldJSObjects(this);
+  }
+  mDelazificationCollectingModules.AppendElement(aModule);
+}
 
 // Instantiate (on main-thread) a JS::Stencil generated by off-thread or
 // main-thread parsing or decoding.
-static void InstantiateStencil(
+void ScriptLoader::InstantiateStencil(
     JSContext* aCx, JS::CompileOptions& aCompileOptions, JS::Stencil* aStencil,
     JS::MutableHandle<JSScript*> aScript,
-    JS::Handle<JS::Value> aDebuggerPrivateValue,
     JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv,
     const nsAutoCString& aProfilerLabelString,
-    JS::InstantiationStorage* aStorage = nullptr,
-    CollectDelazifications aCollectDelazifications =
-        CollectDelazifications::No) {
+    JS::InstantiationStorage* aStorage /* = nullptr */,
+    CollectDelazifications aCollectDelazifications
+    /* = CollectDelazifications::No */) {
   AUTO_PROFILER_MARKER_TEXT("ScriptInstantiation", JS,
                             MarkerInnerWindowIdFromJSContext(aCx),
                             aProfilerLabelString);
@@ -3249,8 +3428,7 @@ static void InstantiateStencil(
   }
 
   if (aCollectDelazifications == CollectDelazifications::Yes) {
-    bool ignored;
-    if (!JS::StartCollectingDelazifications(aCx, script, aStencil, ignored)) {
+    if (!StartCollectingDelazifications(aCx, script, aStencil)) {
       aRv.NoteJSContextException(aCx);
       return;
     }
@@ -3259,9 +3437,13 @@ static void InstantiateStencil(
   aScript.set(script);
 
   if (instantiateOptions.deferDebugMetadata) {
-    if (!JS::UpdateDebugMetadata(aCx, aScript, instantiateOptions,
-                                 aDebuggerPrivateValue, nullptr,
-                                 aDebuggerIntroductionScript, nullptr)) {
+    // The private value is updated by the
+    // ScriptFetchInfo::AssociateWithScript call done after
+    // InstantiateClassicScriptFromAny in ScriptLoader::EvaluateScript.
+    JS::Rooted<JS::Value> unused(aCx);
+    if (!JS::UpdateDebugMetadata(aCx, aScript, instantiateOptions, unused,
+                                 nullptr, aDebuggerIntroductionScript,
+                                 nullptr)) {
       aRv = NS_ERROR_OUT_OF_MEMORY;
     }
   }
@@ -3270,7 +3452,6 @@ static void InstantiateStencil(
 void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
     JSContext* aCx, JS::CompileOptions& aCompileOptions,
     ScriptLoadRequest* aRequest, JS::MutableHandle<JSScript*> aScript,
-    JS::Handle<JS::Value> aDebuggerPrivateValue,
     JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv) {
   MOZ_ASSERT(!aRequest->IsWasmBytes());
   nsAutoCString profilerLabelString;
@@ -3278,7 +3459,7 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
 
   CalculateCacheFlag(aRequest);
 
-  if (aRequest->IsSerializedStencil()) {
+  if (aRequest->IsRetrievedAsSerializedStencil()) {
     if (aRequest->GetScriptLoadContext()->mCompileOrDecodeTask) {
       LOG(("ScriptLoadRequest (%p): Decode & instantiate and Execute",
            aRequest));
@@ -3295,8 +3476,8 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
       aRequest->SetStencil(stencil);
 
       InstantiateStencil(aCx, aCompileOptions, stencil, aScript,
-                         aDebuggerPrivateValue, aDebuggerIntroductionScript,
-                         aRv, profilerLabelString, &storage);
+                         aDebuggerIntroductionScript, aRv, profilerLabelString,
+                         &storage);
     } else {
       LOG(("ScriptLoadRequest (%p): Decode and Execute", aRequest));
 
@@ -3313,8 +3494,8 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
         aRequest->SetStencil(stencil);
 
         InstantiateStencil(aCx, aCompileOptions, stencil, aScript,
-                           aDebuggerPrivateValue, aDebuggerIntroductionScript,
-                           aRv, profilerLabelString);
+                           aDebuggerIntroductionScript, aRv,
+                           profilerLabelString);
       }
     }
 
@@ -3324,7 +3505,7 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
     return;
   }
 
-  MOZ_ASSERT(aRequest->IsTextSource());
+  MOZ_ASSERT(aRequest->IsFetchedAsTextSource());
   CollectDelazifications collectDelazifications =
       aRequest->PassedConditionForEitherCache() ? CollectDelazifications::Yes
                                                 : CollectDelazifications::No;
@@ -3335,7 +3516,7 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
         ("ScriptLoadRequest (%p): instantiate off-thread result and "
          "Execute",
          aRequest));
-    MOZ_ASSERT(aRequest->IsTextSource());
+    MOZ_ASSERT(aRequest->IsFetchedAsTextSource());
     RefPtr<JS::Stencil> stencil;
     JS::InstantiationStorage storage;
     MOZ_ASSERT(aCompileOptions.noScriptRval);
@@ -3349,12 +3530,12 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
     aRequest->SetStencil(stencil);
 
     InstantiateStencil(aCx, aCompileOptions, stencil, aScript,
-                       aDebuggerPrivateValue, aDebuggerIntroductionScript, aRv,
-                       profilerLabelString, &storage, collectDelazifications);
+                       aDebuggerIntroductionScript, aRv, profilerLabelString,
+                       &storage, collectDelazifications);
   } else {
     // Main thread parsing (inline and small scripts)
     LOG(("ScriptLoadRequest (%p): Compile And Exec", aRequest));
-    MOZ_ASSERT(aRequest->IsTextSource());
+    MOZ_ASSERT(aRequest->IsFetchedAsTextSource());
     MaybeSourceText maybeSource;
     aRv = aRequest->GetScriptSource(aCx, &maybeSource,
                                     aRequest->mLoadContext.get());
@@ -3379,8 +3560,8 @@ void ScriptLoader::InstantiateClassicScriptFromMaybeEncodedSource(
         aRequest->SetStencil(stencil);
 
         InstantiateStencil(aCx, aCompileOptions, stencil, aScript,
-                           aDebuggerPrivateValue, aDebuggerIntroductionScript,
-                           erv, profilerLabelString, /* aStorage = */ nullptr,
+                           aDebuggerIntroductionScript, erv,
+                           profilerLabelString, /* aStorage = */ nullptr,
                            collectDelazifications);
       }
 
@@ -3393,7 +3574,6 @@ void ScriptLoader::InstantiateClassicScriptFromCachedStencil(
     JSContext* aCx, JS::CompileOptions& aCompileOptions,
     ScriptLoadRequest* aRequest, JS::Stencil* aStencil,
     JS::MutableHandle<JSScript*> aScript,
-    JS::Handle<JS::Value> aDebuggerPrivateValue,
     JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv) {
   MOZ_ASSERT(!aRequest->IsWasmBytes());
   nsAutoCString profilerLabelString;
@@ -3413,28 +3593,26 @@ void ScriptLoader::InstantiateClassicScriptFromCachedStencil(
   // HasDiskCacheReference condition, and that filters out any loaded scripts
   // queued multiple times.
   InstantiateStencil(aCx, aCompileOptions, aStencil, aScript,
-                     aDebuggerPrivateValue, aDebuggerIntroductionScript, aRv,
-                     profilerLabelString,
+                     aDebuggerIntroductionScript, aRv, profilerLabelString,
                      /* aStorage = */ nullptr, CollectDelazifications::Yes);
 }
 
 void ScriptLoader::InstantiateClassicScriptFromAny(
     JSContext* aCx, JS::CompileOptions& aCompileOptions,
     ScriptLoadRequest* aRequest, JS::MutableHandle<JSScript*> aScript,
-    JS::Handle<JS::Value> aDebuggerPrivateValue,
     JS::Handle<JSScript*> aDebuggerIntroductionScript, ErrorResult& aRv) {
   MOZ_ASSERT(!aRequest->IsWasmBytes());
-  if (aRequest->IsCachedStencil()) {
+  if (aRequest->IsRetrievedFromMemoryCache()) {
     RefPtr<JS::Stencil> stencil = aRequest->GetStencil();
-    InstantiateClassicScriptFromCachedStencil(
-        aCx, aCompileOptions, aRequest, stencil, aScript, aDebuggerPrivateValue,
-        aDebuggerIntroductionScript, aRv);
+    InstantiateClassicScriptFromCachedStencil(aCx, aCompileOptions, aRequest,
+                                              stencil, aScript,
+                                              aDebuggerIntroductionScript, aRv);
     return;
   }
 
   InstantiateClassicScriptFromMaybeEncodedSource(
-      aCx, aCompileOptions, aRequest, aScript, aDebuggerPrivateValue,
-      aDebuggerIntroductionScript, aRv);
+      aCx, aCompileOptions, aRequest, aScript, aDebuggerIntroductionScript,
+      aRv);
   if (aRv.Failed()) {
     return;
   }
@@ -3445,7 +3623,7 @@ void ScriptLoader::InstantiateClassicScriptFromAny(
 ScriptLoader::CacheBehavior ScriptLoader::GetCacheBehavior(
     ScriptLoadRequest* aRequest) {
   if (!mCache) {
-    return CacheBehavior::DoNothing;
+    return CacheBehavior::DoNothingDisabled;
   }
 
   if (aRequest->ExpirationTime().IsExpired()) {
@@ -3465,17 +3643,23 @@ ScriptLoader::CacheBehavior ScriptLoader::GetCacheBehavior(
     return CacheBehavior::Insert;
   }
 
-  ScriptHashKey key(this, aRequest, aRequest->getLoadedScript());
+  ScriptHashKey key(this, aRequest, aRequest->ReferrerPolicy(),
+                    aRequest->FetchOptions(),
+                    aRequest->getLoadedScript()->GetURI());
   auto cacheResult = mCache->Lookup(*this, key,
                                     /* aSyncLoad = */ true);
-  if (cacheResult.mState == CachedSubResourceState::Complete) {
+  MOZ_ASSERT_IF(cacheResult.mState == CachedSubResourceState::Complete,
+                cacheResult.mCompleteValue->IsCachedStencil() ||
+                    cacheResult.mCompleteValue->IsInvalidatedCachedStencil());
+  if (cacheResult.mState == CachedSubResourceState::Complete &&
+      cacheResult.mCompleteValue->IsCachedStencil()) {
     if (!cacheResult.mCompleteValue->IsSRIMetadataReusableBy(
             aRequest->mIntegrity)) {
       mCache->Evict(key);
       return CacheBehavior::Insert;
     }
 
-    return CacheBehavior::DoNothing;
+    return CacheBehavior::DoNothingExisting;
   }
 
   return CacheBehavior::Insert;
@@ -3483,7 +3667,6 @@ ScriptLoader::CacheBehavior ScriptLoader::GetCacheBehavior(
 
 void ScriptLoader::TryCacheRequest(ScriptLoadRequest* aRequest) {
   MOZ_ASSERT(aRequest->HasStencil());
-  MOZ_ASSERT(!aRequest->IsCachedStencil());
   MOZ_ASSERT(!aRequest->IsWasmBytes());
 
   if (aRequest->IsMarkedNotCacheable()) {
@@ -3493,17 +3676,28 @@ void ScriptLoader::TryCacheRequest(ScriptLoadRequest* aRequest) {
 
   CacheBehavior cacheBehavior = GetCacheBehavior(aRequest);
 
-  if (cacheBehavior == CacheBehavior::DoNothing) {
-    if (!aRequest->PassedConditionForEitherCache()) {
+  if (cacheBehavior == CacheBehavior::DoNothingDisabled) {
+    // If the in-memory cache is not enabled, the disk cache is handled by
+    // ScriptLoader, and it needs the stencil if this script is going to be
+    // saved to the disk cache.
+    if (!aRequest->PassedConditionForDiskCache()) {
       aRequest->ClearStencil();
     }
+    return;
+  }
+
+  if (cacheBehavior == CacheBehavior::DoNothingExisting) {
+    // If there's a compatible cache entry, we'll keep the existing entry.
+    aRequest->ClearStencil();
     return;
   }
 
   MOZ_ASSERT(mCache);
 
   if (mCache->IsLowMemory()) {
+    // If we're in the low-memory situation, do not create new cache entries.
     TRACE_FOR_TEST(aRequest, "memorycache:memorypressure");
+    aRequest->ClearStencil();
     return;
   }
 
@@ -3513,31 +3707,38 @@ void ScriptLoader::TryCacheRequest(ScriptLoadRequest* aRequest) {
     cacheBehavior = CacheBehavior::Evict;
   }
 
-  LoadedScript* loadedScript = aRequest->getLoadedScript();
   if (cacheBehavior == CacheBehavior::Insert) {
-    loadedScript->SetSRIMetadata(aRequest->mIntegrity);
-    auto loadData = MakeRefPtr<ScriptLoadData>(this, aRequest, loadedScript);
-    loadedScript->ConvertToCachedStencil();
+    LoadedScript* loadedScript = aRequest->getLoadedScript();
+    CacheExpirationTime expirationTime = aRequest->ExpirationTime();
+    loadedScript->ConvertToCachedStencil(aRequest->GetStencil(),
+                                         aRequest->ReferrerPolicy(),
+                                         aRequest->BaseURL());
     if (loadedScript->mFetchCount == 0) {
       loadedScript->mFetchCount = 1;
     }
+    loadedScript->SetSRIMetadata(aRequest->mIntegrity);
+    auto loadData = MakeRefPtr<ScriptLoadData>(this, aRequest, expirationTime,
+                                               loadedScript);
     mCache->Insert(*loadData);
     mCache->OnEntryInserted();
     LOG(("ScriptLoader (%p): Inserting in-memory cache for %s.", this,
          aRequest->URI()->GetSpecOrDefault().get()));
     TRACE_FOR_TEST(aRequest, "memorycache:saved");
   } else {
+    // The server response is not cacheable.
+    // Evict any existing cache.
+
     MOZ_ASSERT(cacheBehavior == CacheBehavior::Evict);
-    ScriptHashKey key(this, aRequest, loadedScript);
+    ScriptHashKey key(this, aRequest, aRequest->ReferrerPolicy(),
+                      aRequest->FetchOptions(), aRequest->URI());
     mCache->Evict(key);
     LOG(("ScriptLoader (%p): Evicting in-memory cache for %s.", this,
          aRequest->URI()->GetSpecOrDefault().get()));
 
-    if (!aRequest->PassedConditionForEitherCache()) {
-      aRequest->ClearStencil();
-    }
     TRACE_FOR_TEST(aRequest, "memorycache:evict");
   }
+
+  aRequest->ClearStencil();
 }
 
 /* static */
@@ -3639,10 +3840,6 @@ nsresult ScriptLoader::EvaluateScript(nsIGlobalObject* aGlobalObject,
   // Create a ClassicScript object and associate it with the JSScript.
   MOZ_ASSERT(aRequest->mLoadedScript->IsClassicScript());
 
-  RefPtr<ClassicScript> classicScript =
-      aRequest->mLoadedScript->AsClassicScript();
-  JS::Rooted<JS::Value> classicScriptValue(cx, JS::PrivateValue(classicScript));
-
   JS::CompileOptions options(cx);
   JS::Rooted<JSScript*> introductionScript(cx);
   nsresult rv =
@@ -3653,7 +3850,8 @@ nsresult ScriptLoader::EvaluateScript(nsIGlobalObject* aGlobalObject,
   }
 
   // Apply the delazify strategy if the script is small.
-  if (aRequest->IsTextSource() &&
+  if (!aRequest->IsRetrievedFromMemoryCache() &&
+      aRequest->IsFetchedAsTextSource() &&
       aRequest->ScriptTextLength() < OffThreadMinimumTextLength &&
       ShouldApplyDelazifyStrategy(aRequest)) {
     ApplyDelazifyStrategy(&options);
@@ -3680,18 +3878,22 @@ nsresult ScriptLoader::EvaluateScript(nsIGlobalObject* aGlobalObject,
   JSAutoRealm autoRealm(cx, global);
   JS::Rooted<JSScript*> script(cx);
   InstantiateClassicScriptFromAny(cx, options, aRequest, &script,
-                                  classicScriptValue, introductionScript, erv);
+                                  introductionScript, erv);
 
   if (!erv.Failed()) {
     LOG(("ScriptLoadRequest (%p): Evaluate Script", aRequest));
-    AUTO_PROFILER_MARKER_TEXT("ScriptExecution", JS,
-                              MarkerInnerWindowIdFromJSContext(cx),
-                              profilerLabelString);
+    AUTO_PROFILER_FLOW_MARKER_TEXT(
+        "ScriptExecution", JS, MarkerInnerWindowIdFromJSContext(cx),
+        profilerLabelString, Flow::FromPointer(aRequest));
 
     MOZ_ASSERT(options.noScriptRval);
     TRACE_FOR_TEST(aRequest, "evaluate:classic");
 
-    ExecuteCompiledScript(cx, classicScript, script, erv);
+    if (script && JS::GetScriptPrivate(script).isUndefined()) {
+      aRequest->FetchInfo()->AssociateWithScript(script);
+    }
+
+    ExecuteCompiledScript(cx, script, erv);
   }
   rv = EvaluationExceptionToNSResult(erv);
 
@@ -3714,13 +3916,13 @@ nsresult ScriptLoader::EvaluateScript(nsIGlobalObject* aGlobalObject,
 }
 
 /* static */
-LoadedScript* ScriptLoader::GetActiveScript(JSContext* aCx) {
+ScriptFetchInfo* ScriptLoader::GetActiveScriptFetchInfo(JSContext* aCx) {
   JS::Value value = JS::GetScriptedCallerPrivate(aCx);
   if (value.isUndefined()) {
     return nullptr;
   }
 
-  return static_cast<LoadedScript*>(value.toPrivate());
+  return static_cast<ScriptFetchInfo*>(value.toPrivate());
 }
 
 void ScriptLoader::RegisterForDiskCache(ScriptLoadRequest* aRequest) {
@@ -3731,7 +3933,15 @@ void ScriptLoader::RegisterForDiskCache(ScriptLoadRequest* aRequest) {
   MOZ_DIAGNOSTIC_ASSERT(!aRequest->isInList());
   MOZ_ASSERT(!IsWebExtensionRequest(aRequest),
              "Web extension scripts are not compatible with the disk cache");
-  mDiskCacheQueue.AppendElement(aRequest->getLoadedScript());
+
+  LoadedScript* loadedScript = aRequest->getLoadedScript();
+  MOZ_ASSERT(loadedScript->IsTextSource(),
+             "Serialized stencil case shouldn't be saved again");
+  loadedScript->ConvertToCachedStencil(
+      aRequest->GetStencil(), aRequest->ReferrerPolicy(), aRequest->BaseURL());
+  mDiskCacheQueue.AppendElement(loadedScript);
+
+  aRequest->ClearStencil();
 }
 
 void ScriptLoader::LoadEventFired() {
@@ -3744,13 +3954,46 @@ void ScriptLoader::Destroy() {
     mCache->UpdateEverHitTelemetry();
   }
 
-  if (mShutdownObserver) {
-    mShutdownObserver->Unregister();
-    mShutdownObserver = nullptr;
+  if (mObserver) {
+    mObserver->Unregister();
+    mObserver = nullptr;
   }
 
   CancelAndClearScriptLoadRequests();
   GiveUpDiskCaching();
+  StopCollectingDelazifications();
+}
+
+void ScriptLoader::OnMemoryPressure() {
+  // When memory pressure is detected, release the stencils held by the
+  // ongoing delazification collection.
+  // SharedScriptCache will also clear the cache, and then those stencils
+  // will no longer held by anything live long and will be collected
+  // shortly.
+
+  StopCollectingDelazifications();
+}
+
+void ScriptLoader::StopCollectingDelazifications() {
+  // NOTE: There's no difference between JS::FinishCollectingDelazifications
+  //       and JS::AbortCollectingDelazifications, except for whether
+  //       to return the stencil or not.
+  //       The stencil pointer is held by LoadedScript, and thus we call
+  //       JS::AbortCollectingDelazifications here, which is more light-weight.
+
+  for (size_t i = 0; i < mDelazificationCollectingScripts.Length(); ++i) {
+    JSScript* script = mDelazificationCollectingScripts[i];
+    JS::AbortCollectingDelazifications(script);
+  }
+  mDelazificationCollectingScripts.Clear();
+
+  for (size_t i = 0; i < mDelazificationCollectingModules.Length(); ++i) {
+    JSObject* module = mDelazificationCollectingModules[i];
+    JS::AbortCollectingDelazifications(module);
+  }
+  mDelazificationCollectingModules.Clear();
+
+  mozilla::DropJSObjects(this);
 }
 
 void ScriptLoader::MaybeUpdateDiskCache() {
@@ -3774,6 +4017,8 @@ void ScriptLoader::MaybeUpdateDiskCache() {
     if (!mCache->MaybeScheduleUpdateDiskCache()) {
       TRACE_FOR_TEST_0("diskcache:noschedule");
     }
+
+    StopCollectingDelazifications();
     return;
   }
 
@@ -3801,6 +4046,8 @@ void ScriptLoader::MaybeUpdateDiskCache() {
     GiveUpDiskCaching();
     return;
   }
+
+  StopCollectingDelazifications();
 
   LOG(("ScriptLoader (%p): Schedule the disk cache encoding.", this));
 }
@@ -3835,11 +4082,15 @@ void ScriptLoader::UpdateDiskCache() {
       continue;
     }
 
-    MOZ_ASSERT(loadedScript->HasStencil());
+    if (loadedScript->IsInvalidatedCachedStencil()) {
+      continue;
+    }
+
+    RefPtr<JS::Stencil> stencil = loadedScript->GetCachedStencil();
 
     Vector<uint8_t> compressed;
-    if (!EncodeAndCompress(fc, loadedScript, loadedScript->GetStencil(),
-                           loadedScript->SRI(), compressed)) {
+    if (!EncodeAndCompress(fc, loadedScript, stencil, loadedScript->SRI(),
+                           compressed)) {
       loadedScript->DropDiskCacheReference();
       loadedScript->DropSRIOrSRIAndSerializedStencil();
       TRACE_FOR_TEST(loadedScript, "diskcache:failed");
@@ -3848,8 +4099,7 @@ void ScriptLoader::UpdateDiskCache() {
 
     // The pref being -1 means "no limit".
     if (diskCacheMaxSizeInKb > 0) {
-      size_t sourceLength =
-          JS::GetScriptSourceLength(loadedScript->GetStencil());
+      size_t sourceLength = JS::GetScriptSourceLength(stencil);
       size_t expectedDiskCacheSize = sourceLength + compressed.length();
       if (expectedDiskCacheSize > size_t(diskCacheMaxSizeInKb) * 1024) {
         loadedScript->DropDiskCacheReference();
@@ -4323,6 +4573,11 @@ nsresult ScriptLoader::OnStreamComplete(
   nsresult rv = VerifySRI(aRequest, aChannel, aSRIStatus, aSRIDataVerifier);
 
   if (NS_SUCCEEDED(rv)) {
+    // These flags can be modified by the CacheEntryRevived.
+    bool IsFetchedAsTextSource = aRequest->IsFetchedAsTextSource();
+    bool IsRetrievedAsSerializedStencil =
+        aRequest->IsRetrievedAsSerializedStencil();
+
     nsCOMPtr<nsICacheInfoChannel> cacheInfo = do_QueryInterface(aChannel);
     nsCOMPtr<nsICacheEntryWriteHandle> cacheEntry;
     if (cacheInfo && NS_SUCCEEDED(cacheInfo->GetCacheEntryWriteHandle(
@@ -4339,7 +4594,12 @@ nsresult ScriptLoader::OnStreamComplete(
           ScriptHashKey key(this, aRequest, aRequest->ReferrerPolicy(),
                             aRequest->FetchOptions(), aRequest->URI());
           auto cacheResult = mCache->Lookup(*this, key, /* aSyncLoad = */ true);
+          MOZ_ASSERT_IF(
+              cacheResult.mState == CachedSubResourceState::Complete,
+              cacheResult.mCompleteValue->IsCachedStencil() ||
+                  cacheResult.mCompleteValue->IsInvalidatedCachedStencil());
           if (cacheResult.mState == CachedSubResourceState::Complete &&
+              cacheResult.mCompleteValue->IsCachedStencil() &&
               cacheResult.mCompleteValue->IsSRIMetadataReusableBy(
                   aRequest->mIntegrity) &&
               cacheResult.mCompleteValue->CacheEntryId() == id) {
@@ -4371,7 +4631,7 @@ nsresult ScriptLoader::OnStreamComplete(
       // If we are loading from source, store the cache info channel and
       // save the computed SRI hash or a dummy SRI hash in case we are going to
       // save the this script in the disk cache.
-      if (aRequest->IsTextSource() &&
+      if (!aRequest->IsRetrievedFromMemoryCache() && IsFetchedAsTextSource &&
           StaticPrefs::dom_script_loader_bytecode_cache_enabled()) {
         uint32_t fetchCount;
         if (NS_SUCCEEDED(cacheInfo->GetCacheTokenFetchCount(&fetchCount))) {
@@ -4390,13 +4650,13 @@ nsresult ScriptLoader::OnStreamComplete(
       }
     }
 
-    if (aRequest->IsTextSource()) {
+    if (IsFetchedAsTextSource) {
       mLoadedFromNeckoAsText++;
-    } else if (aRequest->IsSerializedStencil()) {
+    } else if (IsRetrievedAsSerializedStencil) {
       mLoadedFromNeckoAsSerializedStencil++;
     }
-    // NOTE: aRequest->IsCachedStencil() case is handled above by incrementing
-    //       mMemoryCacheRevived.
+    // NOTE: IsCachedStencil() and IsInvalidatedCachedStencil() cases are
+    //       handled above by incrementing mMemoryCacheRevived.
 
     if (NS_SUCCEEDED(rv)) {
       rv = PrepareLoadedRequest(aRequest, aChannel, aChannelStatus);
@@ -4448,7 +4708,7 @@ nsresult ScriptLoader::VerifySRI(ScriptLoadRequest* aRequest,
 
 nsresult ScriptLoader::SaveSRIHash(
     ScriptLoadRequest* aRequest, SRICheckDataVerifier* aSRIDataVerifier) const {
-  MOZ_ASSERT(aRequest->IsTextSource());
+  MOZ_ASSERT(aRequest->IsFetchedAsTextSource());
   JS::TranscodeBuffer& sri = aRequest->SRI();
   MOZ_ASSERT(sri.empty());
 
@@ -4528,7 +4788,7 @@ void ScriptLoader::ReportErrorToConsole(ScriptLoadRequest* aRequest,
   } else if (aResult == NS_ERROR_DOM_WEBEXT_CONTENT_SCRIPT_URI) {
     MOZ_ASSERT(!isScript);
     message = "WebExtContentScriptModuleSourceNotAllowed";
-  } else if (net::UrlClassifierFeatureFactory::IsClassifierBlockingErrorCode(
+  } else if (net::ChannelClassifierUtils::IsClassifierBlockingErrorCode(
                  aResult)) {
     // Blocking classifier error codes already show their own console messages.
     return;
@@ -4552,7 +4812,7 @@ void ScriptLoader::ReportErrorToConsole(ScriptLoadRequest* aRequest,
 
   nsContentUtils::ReportToConsole(
       nsIScriptError::warningFlag, "Script Loader"_ns, mDocument,
-      nsContentUtils::eDOM_PROPERTIES, message, params, loc.ref());
+      PropertiesFile::DOM_PROPERTIES, message, params, loc.ref());
 }
 
 void ScriptLoader::ReportWarningToConsole(
@@ -4566,7 +4826,7 @@ void ScriptLoader::ReportWarningToConsole(
       aRequest->GetScriptLoadContext()->GetScriptColumnNumber();
   nsContentUtils::ReportToConsole(
       nsIScriptError::warningFlag, "Script Loader"_ns, mDocument,
-      nsContentUtils::eDOM_PROPERTIES, aMessageName, aParams,
+      PropertiesFile::DOM_PROPERTIES, aMessageName, aParams,
       SourceLocation{mDocument->GetDocumentURI(), lineNo,
                      columnNo.oneOriginValue()});
 }
@@ -4591,8 +4851,7 @@ void ScriptLoader::HandleLoadError(ScriptLoadRequest* aRequest,
    * We make a note of this script node by including it in a dedicated
    * array of blocked tracking nodes under its parent document.
    */
-  if (net::UrlClassifierFeatureFactory::IsClassifierBlockingErrorCode(
-          aResult)) {
+  if (net::ChannelClassifierUtils::IsClassifierBlockingErrorCode(aResult)) {
     nsCOMPtr<nsIContent> cont = do_QueryInterface(
         aRequest->GetScriptLoadContext()->GetScriptElementForUrlClassifier());
     mDocument->AddBlockedNodeByClassifier(cont);
@@ -4830,6 +5089,8 @@ static bool MimeTypeMatchesExpectedModuleType(
       return nsContentUtils::IsJsonMimeType(typeString);
     case JS::ModuleType::CSS:
       return nsContentUtils::HasCssMimeTypeEssence(typeString);
+    case JS::ModuleType::Text:
+      return true;
     case JS::ModuleType::Unknown:
     case JS::ModuleType::Bytes:
       break;
@@ -4841,6 +5102,10 @@ static bool MimeTypeMatchesExpectedModuleType(
 nsresult ScriptLoader::PrepareLoadedRequest(ScriptLoadRequest* aRequest,
                                             nsIChannel* aChannel,
                                             nsresult aStatus) {
+  PROFILER_MARKER("ScriptLoader::PrepareLoadedRequest", JS,
+                  {mozilla::MarkerStack::Capture()}, FlowMarker,
+                  Flow::FromPointer(aRequest));
+
   if (NS_FAILED(aStatus)) {
     return aStatus;
   }

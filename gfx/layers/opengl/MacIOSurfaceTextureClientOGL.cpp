@@ -38,8 +38,11 @@ MacIOSurfaceTextureData* MacIOSurfaceTextureData::Create(const IntSize& aSize,
     return nullptr;
   }
 
-  RefPtr<MacIOSurface> surf = MacIOSurface::CreateIOSurface(
-      aSize.width, aSize.height, aFormat == SurfaceFormat::B8G8R8A8);
+  MacIOSurface::AllowAlpha allowAlpha =
+      ((aFormat == SurfaceFormat::B8G8R8A8) ? MacIOSurface::AllowAlpha::Yes
+                                            : MacIOSurface::AllowAlpha::No);
+  RefPtr<MacIOSurface> surf =
+      MacIOSurface::CreateIOSurface(aSize.width, aSize.height, allowAlpha);
   if (!surf) {
     return nullptr;
   }
@@ -51,7 +54,8 @@ bool MacIOSurfaceTextureData::Serialize(SurfaceDescriptor& aOutDescriptor) {
   RefPtr<layers::GpuFence> gpuFence;
   aOutDescriptor = SurfaceDescriptorMacIOSurface(
       mSurface->GetIOSurfaceID(), !mSurface->HasAlpha(),
-      mSurface->GetYUVColorSpace(), std::move(gpuFence));
+      mSurface->GetYUVColorSpace(), mSurface->GetTransferFunction(),
+      std::move(gpuFence));
   return true;
 }
 
@@ -60,7 +64,8 @@ void MacIOSurfaceTextureData::GetSubDescriptor(
   RefPtr<layers::GpuFence> gpuFence;
   *aOutDesc = SurfaceDescriptorMacIOSurface(
       mSurface->GetIOSurfaceID(), !mSurface->HasAlpha(),
-      mSurface->GetYUVColorSpace(), std::move(gpuFence));
+      mSurface->GetYUVColorSpace(), mSurface->GetTransferFunction(),
+      std::move(gpuFence));
 }
 
 void MacIOSurfaceTextureData::FillInfo(TextureData::Info& aInfo) const {

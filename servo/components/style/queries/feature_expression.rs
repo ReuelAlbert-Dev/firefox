@@ -8,16 +8,22 @@
 use super::feature::{Evaluator, QueryFeatureDescription};
 use super::feature::{FeatureFlags, KeywordDiscriminant};
 use crate::context::QuirksMode;
+use crate::custom_properties::{
+    self, ComputedSubstitutionFunctions, VariableValue as CustomVariableValue,
+};
 use crate::derives::*;
+use crate::dom::AttributeTracker;
 use crate::parser::{Parse, ParserContext};
-use crate::properties::CSSWideKeyword;
+use crate::properties::{self, CSSWideKeyword};
 use crate::properties_and_values::value::{ComputedValueComponent as Component, ValueInner};
 use crate::selector_map::PrecomputedHashSet;
 use crate::str::{starts_with_ignore_ascii_case, string_as_ascii_lowercase};
 use crate::stylesheets::{CssRuleType, Origin, UrlExtraData};
-use crate::values::computed::{self, CSSPixelLength, Ratio, ToComputedValue};
-use crate::values::specified::{Angle, Integer, Length, Number, Percentage, Resolution, Time};
-use crate::values::{CSSFloat, DashedIdent};
+use crate::values::computed::{self, CSSPixelLength, ToComputedValue};
+use crate::values::specified::{
+    Angle, Integer, Length, Number, Percentage, Ratio, Resolution, Time,
+};
+use crate::values::DashedIdent;
 use crate::{Atom, Zero};
 use cssparser::{Parser, ParserInput, Token};
 use selectors::kleene_value::KleeneValue;
@@ -592,11 +598,13 @@ impl QueryFeatureExpression {
             },
             Evaluator::Integer(eval) => {
                 let v = eval(context);
-                self.kind.evaluate(v, |v| *expect!(Integer, v))
+                self.kind
+                    .evaluate(v, |v| expect!(Integer, v).to_computed_value(context))
             },
             Evaluator::Float(eval) => {
                 let v = eval(context);
-                self.kind.evaluate(v, |v| *expect!(Float, v))
+                self.kind
+                    .evaluate(v, |v| expect!(Float, v).to_computed_value(context))
             },
             Evaluator::NumberRatio(eval) => {
                 let ratio = eval(context);
@@ -604,8 +612,11 @@ impl QueryFeatureExpression {
                 // to convert it if necessary.
                 // FIXME: we may need to update here once
                 // https://github.com/w3c/csswg-drafts/issues/4954 got resolved.
-                self.kind
-                    .evaluate(ratio, |v| expect!(NumberRatio, v).used_value())
+                self.kind.evaluate(ratio, |v| {
+                    expect!(NumberRatio, v)
+                        .to_computed_value(context)
+                        .used_value()
+                })
             },
             Evaluator::OptionalNumberRatio(eval) => {
                 let ratio = match eval(context) {
@@ -613,8 +624,11 @@ impl QueryFeatureExpression {
                     None => return KleeneValue::Unknown,
                 };
                 // See above for subtleties here.
-                self.kind
-                    .evaluate(ratio, |v| expect!(NumberRatio, v).used_value())
+                self.kind.evaluate(ratio, |v| {
+                    expect!(NumberRatio, v)
+                        .to_computed_value(context)
+                        .used_value()
+                })
             },
             Evaluator::Resolution(eval) => {
                 let v = eval(context).dppx();
@@ -633,9 +647,9 @@ impl QueryFeatureExpression {
                 let computed = self
                     .kind
                     .non_ranged_value()
-                    .map(|v| *expect!(BoolInteger, v));
+                    .map(|v| expect!(BoolInteger, v).to_computed_value(context));
                 let boolean = eval(context);
-                computed.map_or(boolean, |v| v == boolean)
+                computed.map_or(boolean, |v| v == boolean as i32)
             },
         })
     }
@@ -654,11 +668,11 @@ pub enum QueryExpressionValue {
     /// A length.
     Length(Length),
     /// An integer.
-    Integer(i32),
+    Integer(Integer),
     /// A floating point value.
-    Float(CSSFloat),
+    Float(Number),
     /// A boolean value, specified as an integer (i.e., either 0 or 1).
-    BoolInteger(bool),
+    BoolInteger(Integer),
     /// A single non-negative number or two non-negative numbers separated by '/',
     /// with optional whitespace on either side of the '/'.
     NumberRatio(Ratio),
@@ -678,9 +692,10 @@ pub enum QueryExpressionValue {
     Time(Time),
     /// A custom property name.
     Custom(DashedIdent),
-    /// A simple var(...) reference without a default (equivalent to a bare Custom ident,
-    /// but will serialize with the `var()` wrapper)
-    Var(DashedIdent),
+    /// An arbitrary substitution function (var(), attr(), env()), stored as a string
+    /// for later evaluation. We store this as a custom-property value to make it easy
+    /// to resolve later.
+    Function(Box<CustomVariableValue>),
 }
 
 impl QueryExpressionValue {
@@ -694,21 +709,17 @@ impl QueryExpressionValue {
     {
         match *self {
             QueryExpressionValue::Length(ref l) => l.to_css(dest),
-            QueryExpressionValue::Integer(v) => v.to_css(dest),
-            QueryExpressionValue::Float(v) => v.to_css(dest),
-            QueryExpressionValue::BoolInteger(v) => dest.write_str(if v { "1" } else { "0" }),
-            QueryExpressionValue::NumberRatio(ratio) => ratio.to_css(dest),
+            QueryExpressionValue::Integer(ref v) => v.to_css(dest),
+            QueryExpressionValue::Float(ref v) => v.to_css(dest),
+            QueryExpressionValue::BoolInteger(ref v) => v.to_css(dest),
+            QueryExpressionValue::NumberRatio(ref ratio) => ratio.to_css(dest),
             QueryExpressionValue::Resolution(ref r) => r.to_css(dest),
             QueryExpressionValue::Keyword(k) => k.to_css(dest),
-            QueryExpressionValue::Percentage(v) => v.to_css(dest),
-            QueryExpressionValue::Angle(v) => v.to_css(dest),
-            QueryExpressionValue::Time(v) => v.to_css(dest),
+            QueryExpressionValue::Percentage(ref v) => v.to_css(dest),
+            QueryExpressionValue::Angle(ref v) => v.to_css(dest),
+            QueryExpressionValue::Time(ref v) => v.to_css(dest),
             QueryExpressionValue::Custom(ref v) => v.to_css(dest),
-            QueryExpressionValue::Var(ref v) => {
-                dest.write_str("var(")?;
-                v.to_css(dest)?;
-                dest.write_char(')')
-            },
+            QueryExpressionValue::Function(ref f) => f.to_css(dest),
             QueryExpressionValue::Enumerated(value) => match for_expr
                 .expect("caller should have passed for_expr")
                 .feature()
@@ -732,24 +743,23 @@ impl QueryExpressionValue {
             },
             Evaluator::Integer(..) => {
                 let integer = Integer::parse(context, input)?;
-                QueryExpressionValue::Integer(integer.value())
+                QueryExpressionValue::Integer(integer)
             },
             Evaluator::BoolInteger(..) => {
-                let integer = Integer::parse_non_negative(context, input)?;
-                let value = integer.value();
-                if value > 1 {
+                let integer = Integer::parse(context, input)?;
+                if matches!(integer.resolve(), Some(v) if v != 0 && v != 1) {
                     return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError));
                 }
-                QueryExpressionValue::BoolInteger(value == 1)
+                QueryExpressionValue::BoolInteger(integer)
             },
             Evaluator::Float(..) => {
                 let number = Number::parse(context, input)?;
-                QueryExpressionValue::Float(number.get())
+                QueryExpressionValue::Float(number)
             },
             Evaluator::OptionalNumberRatio(..) | Evaluator::NumberRatio(..) => {
                 use crate::values::specified::Ratio as SpecifiedRatio;
                 let ratio = SpecifiedRatio::parse(context, input)?;
-                QueryExpressionValue::NumberRatio(Ratio::new(ratio.0.get(), ratio.1.get()))
+                QueryExpressionValue::NumberRatio(ratio)
             },
             Evaluator::Resolution(..) => {
                 QueryExpressionValue::Resolution(Resolution::parse(context, input)?)
@@ -770,7 +780,7 @@ impl QueryExpressionValue {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self, ParseError<'i>> {
         if let Ok(number) = input.try_parse(|i| Number::parse(context, i)) {
-            return Ok(Self::Float(number.get()));
+            return Ok(Self::Float(number));
         }
         if let Ok(percent) = input.try_parse(|i| Percentage::parse(context, i)) {
             return Ok(Self::Percentage(percent));
@@ -793,17 +803,27 @@ impl QueryExpressionValue {
         if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
             return Ok(Self::Keyword(keyword));
         }
+        input.skip_whitespace();
+        let start = input.position();
         if let Ok(Token::Function(ref name)) = input.next() {
-            // Here, we only handle simple `var(--foo)` references when used as individual
-            // query expression values. More complex usages such as `var(...)` with default,
-            // or `var(...)` used within `calc(...)` expressions, will be substituted and
-            // resolved at query evaluation time.
-            if name.eq_ignore_ascii_case("var") {
-                if let Ok(ident) =
-                    input.try_parse(|i| i.parse_nested_block(|i| DashedIdent::parse(context, i)))
-                {
-                    return Ok(Self::Var(ident));
-                }
+            // Helper to parse the function arg and store the complete expression (function
+            // name and parenthesized argument) into a CustomVariableValue.
+            let parse_func =
+                |input: &mut Parser<'i, 't>| -> Result<CustomVariableValue, ParseError<'i>> {
+                    input.parse_nested_block(|i| i.expect_no_error_token().map_err(Into::into))?;
+                    let mut input = ParserInput::new(input.slice_from(start));
+                    CustomVariableValue::parse(
+                        &mut Parser::new(&mut input),
+                        Some(&context.namespaces.prefixes),
+                        context.url_data,
+                    )
+                };
+
+            if properties::enabled_arbitrary_substitution_functions()
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(name))
+            {
+                return Ok(Self::Function(Box::new(parse_func(input)?)));
             }
         }
         Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
@@ -839,7 +859,6 @@ impl ToCss for QueryStyleRange {
     where
         W: fmt::Write,
     {
-        dest.write_char('(')?;
         match self {
             Self::StyleRange2 {
                 ref value1,
@@ -850,7 +869,7 @@ impl ToCss for QueryStyleRange {
                 dest.write_char(' ')?;
                 op1.to_css(dest)?;
                 dest.write_char(' ')?;
-                value2.to_css(dest, None)?;
+                value2.to_css(dest, None)
             },
             Self::StyleRange3 {
                 ref value1,
@@ -867,10 +886,9 @@ impl ToCss for QueryStyleRange {
                 dest.write_char(' ')?;
                 op2.to_css(dest)?;
                 dest.write_char(' ')?;
-                value3.to_css(dest, None)?;
+                value3.to_css(dest, None)
             },
         }
-        dest.write_char(')')
     }
 }
 
@@ -911,15 +929,31 @@ impl QueryStyleRange {
     }
 
     /// Returns whether this style-range query evaluates to true for the given context.
-    pub fn evaluate(&self, context: &computed::Context) -> KleeneValue {
+    pub fn evaluate(
+        &self,
+        context: &computed::Context,
+        attribute_tracker: &mut AttributeTracker,
+    ) -> KleeneValue {
         match self {
             QueryStyleRange::StyleRange2 {
                 ref value1,
                 ref op1,
                 ref value2,
             } => Self::compare_values(
-                Self::resolve_value(value1, context, &mut PrecomputedHashSet::default()).as_ref(),
-                Self::resolve_value(value2, context, &mut PrecomputedHashSet::default()).as_ref(),
+                Self::resolve_value(
+                    value1,
+                    context,
+                    attribute_tracker,
+                    &mut PrecomputedHashSet::default(),
+                )
+                .as_ref(),
+                Self::resolve_value(
+                    value2,
+                    context,
+                    attribute_tracker,
+                    &mut PrecomputedHashSet::default(),
+                )
+                .as_ref(),
             )
             .is_some_and(|c| op1.evaluate(c))
             .into(),
@@ -931,8 +965,18 @@ impl QueryStyleRange {
                 ref op2,
                 ref value3,
             } => {
-                let v1 = Self::resolve_value(value1, context, &mut PrecomputedHashSet::default());
-                let v2 = Self::resolve_value(value2, context, &mut PrecomputedHashSet::default());
+                let v1 = Self::resolve_value(
+                    value1,
+                    context,
+                    attribute_tracker,
+                    &mut PrecomputedHashSet::default(),
+                );
+                let v2 = Self::resolve_value(
+                    value2,
+                    context,
+                    attribute_tracker,
+                    &mut PrecomputedHashSet::default(),
+                );
                 Self::compare_values(v1.as_ref(), v2.as_ref())
                     .is_some_and(|c1| {
                         op1.evaluate(c1)
@@ -941,6 +985,7 @@ impl QueryStyleRange {
                                 Self::resolve_value(
                                     value3,
                                     context,
+                                    attribute_tracker,
                                     &mut PrecomputedHashSet::default(),
                                 )
                                 .as_ref(),
@@ -956,10 +1001,11 @@ impl QueryStyleRange {
     fn resolve_value(
         value: &QueryExpressionValue,
         context: &computed::Context,
+        attribute_tracker: &mut AttributeTracker,
         visited_set: &mut PrecomputedHashSet<DashedIdent>,
     ) -> Option<Component> {
         match value {
-            QueryExpressionValue::Custom(ident) | QueryExpressionValue::Var(ident) => {
+            QueryExpressionValue::Custom(ident) => {
                 // `ident` is the dashed ident, but we need the name
                 // without "--" for custom-property lookup.
                 let name = ident.undashed();
@@ -978,7 +1024,13 @@ impl QueryStyleRange {
                         // and we risk infinite recursion, so instead return None
                         // (i.e. the value cannot be resolved).
                         if visited_set.insert(ident.clone()) {
-                            Self::resolve_universal(&v.css, &v.url_data, context, visited_set)
+                            Self::resolve_universal(
+                                &v.css,
+                                &v.url_data,
+                                context,
+                                attribute_tracker,
+                                visited_set,
+                            )
                         } else {
                             None
                         }
@@ -988,6 +1040,31 @@ impl QueryStyleRange {
                         None
                     },
                 }
+            },
+            QueryExpressionValue::Function(value) => {
+                let sub_funcs = ComputedSubstitutionFunctions::new(
+                    Some(context.inherited_custom_properties().clone()),
+                    None,
+                );
+                let stylist = context
+                    .builder
+                    .stylist
+                    .expect("container queries should have a stylist around");
+                let substituted = custom_properties::substitute(
+                    &value,
+                    &sub_funcs,
+                    stylist,
+                    context,
+                    attribute_tracker,
+                )
+                .ok()?;
+                Self::resolve_universal(
+                    &substituted.css,
+                    &value.url_data,
+                    context,
+                    attribute_tracker,
+                    visited_set,
+                )
             },
             QueryExpressionValue::Length(v) => {
                 Some(Component::Length(v.to_computed_value(context)))
@@ -1021,6 +1098,7 @@ impl QueryStyleRange {
         css_text: &str,
         url_data: &UrlExtraData,
         context: &computed::Context,
+        attribute_tracker: &mut AttributeTracker,
         visited_set: &mut PrecomputedHashSet<DashedIdent>,
     ) -> Option<Component> {
         let parser_context = ParserContext::new(
@@ -1032,11 +1110,14 @@ impl QueryStyleRange {
             /* namespaces = */ Default::default(),
             /* error_reporter = */ None,
             /* use_counters = */ None,
+            /* attr_taint */ Default::default(),
         );
         let mut input = ParserInput::new(css_text);
         QueryExpressionValue::parse_for_style_range(&parser_context, &mut Parser::new(&mut input))
             .ok()
-            .and_then(|parsed| Self::resolve_value(&parsed, context, visited_set))
+            .and_then(|parsed| {
+                Self::resolve_value(&parsed, context, attribute_tracker, visited_set)
+            })
     }
 
     fn compare_values(value1: Option<&Component>, value2: Option<&Component>) -> Option<Ordering> {

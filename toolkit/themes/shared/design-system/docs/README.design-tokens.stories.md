@@ -4,8 +4,15 @@ Our design tokens are stored in JSON, the benefit of which is that they can be c
 
 For more information on how design tokens are named and organized, see the [Acorn Design System docs](https://acorn.firefox.com/latest/desktop/design-tokens/how-design-tokens-work/overview-YYp6MVjt).
 
+## Design token tiers
+Design tokens are split into different levels: base, application, and component. The global `tokens-shared.css`, `tokens-brand.css` and `tokens-platform.css` files include the base, application and *some* component tokens. Component tokens that are generally used for styling outside of reusable moz- components like button, card, input, sidebar, panel, etc are included.
+
+While there are many global tokens, some component tokens are stored next to their component and aren't always imported by default. The moz- components keep their design token definitions next to their CSS/JS in `toolkit/content/widgets/moz-*/`, and the `browser/themes/shared/` folder also has design tokens. This means design tokens for tabbrowser, urlbar, etc can be kept with the code that uses them.
+
+Only design tokens in the `toolkit/themes/shared/design-system/src/tokens/` folder are included in the global design tokens. Any other design tokens will be built next to their source `component.tokens.json` file and need to be manually included where they're needed.
+
 ## Quick start
-`src/tokens` holds our source of truth for design tokens in `mozilla-central` under the [design-system](https://searchfox.org/mozilla-central/source/toolkit/themes/shared/design-system) folder in `toolkit/themes/shared`. The CSS design token files in that folder come from the JSON files. If you need to modify a design token file, you should be editing the JSON.
+`src/tokens` holds our source of truth for design tokens in `mozilla-central` under the [design-system](https://searchfox.org/firefox-main/source/toolkit/themes/shared/design-system) folder in `toolkit/themes/shared`. The CSS design token files in that folder come from the JSON files. If you need to modify a design token file, you should be editing the JSON.
 
 The tokens are organized into files with the `*.tokens.json` suffix, where the first part of the filename defines the top-level category of token. For example, `border.tokens.json` outputs `--border-*` tokens.
 
@@ -102,7 +109,7 @@ $ ./mach npm test --prefix=toolkit/themes/shared/design-system
 
 ## JSON format deep dive
 
-Style Dictionary works by ingesting JSON files with tokens data and performing various platform-specific transformations to output token files formatted for different languages. The library has certain quirks and limitations that we had to take into consideration when coming up with a JSON format for representing our tokens. The following is a bit of a "how to" guide for reading and adding to [`src/tokens`](https://searchfox.org/mozilla-central/source/toolkit/themes/shared/design-system/src/tokens) for anyone who needs to consume our tokens or add new tokens.
+Style Dictionary works by ingesting JSON files with tokens data and performing various platform-specific transformations to output token files formatted for different languages. The library has certain quirks and limitations that we had to take into consideration when coming up with a JSON format for representing our tokens. The following is a bit of a "how to" guide for reading and adding to [`src/tokens`](https://searchfox.org/firefox-main/source/toolkit/themes/shared/design-system/src/tokens) for anyone who needs to consume our tokens or add new tokens.
 
 ### Naming
 
@@ -256,9 +263,9 @@ If a token has the same value for both the light and dark themes it will either 
 
 The above JSON indicates that `--button-background-color-disabled` will have the value of `var(--button-background-color)` regardless of theme.
 
-#### Brand and platform themes
+#### Global token brand and platform themes
 
-The Firefox desktop client consists of [two distinct surfaces](https://acorn.firefox.com/latest/resources/browser-anatomy/desktop-ZaxCgqkt#section-anatomy-fd); "the chrome," or the UI of the browser application that surrounds web pages, and the web content itself which is often referred to as "in-content." Firefox UI development spans both surfaces since our `about:` pages are "in-content" pages. In our design system we distinguish between these surfaces by using the terminology of `platform` vs `brand`. Chrome specific token values live in [`tokens-platform.css`](https://searchfox.org/mozilla-central/source/toolkit/themes/shared/design-system/tokens-platform.css) and in-content specific token values live in [`tokens-brand.css`](https://searchfox.org/mozilla-central/source/toolkit/themes/shared/design-system/tokens-brand.css).
+The Firefox desktop client consists of [two distinct surfaces](https://acorn.firefox.com/latest/resources/browser-anatomy/desktop-ZaxCgqkt#section-anatomy-fd); "the chrome," or the UI of the browser application that surrounds web pages, and the web content itself which is often referred to as "in-content." Firefox UI development spans both surfaces since our `about:` pages are "in-content" pages. In our design system we distinguish between these surfaces by using the terminology of `platform` vs `brand`. Chrome specific token values live in [`tokens-platform.css`](https://searchfox.org/firefox-main/source/toolkit/themes/shared/design-system/tokens-platform.css) and in-content specific token values live in [`tokens-brand.css`](https://searchfox.org/firefox-main/source/toolkit/themes/shared/design-system/tokens-brand.css).
 
 We use `platform` and `brand` keys in our JSON to indicate when a token has a surface-specific value. For example this token definition:
 
@@ -269,7 +276,7 @@ We use `platform` and `brand` keys in our JSON to indicate when a token has a su
       "value": {
         "brand": {
           "light": "{color.gray.100}",
-          "dark": "{color.gray.05}"
+          "dark": "{color.gray.0}"
         },
         "platform": {
           "default": "currentColor"
@@ -279,7 +286,7 @@ We use `platform` and `brand` keys in our JSON to indicate when a token has a su
   }
 }
 ```
-communicates that `--text-color` should have the value `currentColor` in `tokens-platform.css` for chrome surfaces, and the value `light-dark(var(--color-gray-100), var(--color-gray-05))` in `tokens-brand.css` for in-content pages. The resulting CSS spans multiple files:
+communicates that `--text-color` should have the value `currentColor` in `tokens-platform.css` for chrome surfaces, and the value `light-dark(var(--color-gray-100), var(--color-gray-0))` in `tokens-brand.css` for in-content pages. The resulting CSS spans multiple files:
 
 ```css
 /* tokens-platform.css */
@@ -298,10 +305,31 @@ communicates that `--text-color` should have the value `currentColor` in `tokens
   :root,
   :host(.anonymous-content-host) {
     /** Text **/
-    --text-color: light-dark(var(--color-gray-100), var(--color-gray-05));
+    --text-color: light-dark(var(--color-gray-100), var(--color-gray-0));
   }
 }
 ```
+
+#### Chrome native OS theme
+
+Sometimes rather than using our own theme, we defer to the user's OS theme, this only happens in the browser chrome and is referred to as the "native theme." If the user is on Linux (or has `browser.theme.native-theme=true`) and is using `System theme — auto` then we use the native theme. If the user is on a theme other than `System theme — auto`, `Dark` or `Light` (using a LWT) then we also apply the native theme.
+
+This means there are several options of what the value of a design token will be in the browser chrome. When a `nativeTheme` property is set then that value is used for native theme and LWT modes. If they are not in this state, they aren't using Windows HCM, and we have a `nativeTheme` value, then we use the "browser theme" value. This is a special case where we use the platform/brand/shared value.
+
+```json
+{
+  "color.accent.primary.@base": {
+    "value": {
+      "light": "{color.blue.60}",
+      "dark": "{color.cyan.30}",
+      "nativeTheme": "AccentColor",
+      "forcedColors": "ButtonText"
+    }
+  }
+}
+```
+
+This snippet will use the light/dark value in-content but it will also use it in the chrome when using the `Light` or `Dark` theme, and conditionally when using the `System theme — auto` (based on the native-theme pref). Otherwise it will use `AccentColor` (or `ButtonText` in HCM).
 
 ### Adding new tokens
 
@@ -319,12 +347,12 @@ If you need any help feel free to reach out in #firefox-reusable-components on S
 
 ### Overriding tokens
 
-Our build process provides a mechanism to override design tokens behind a pref. To do so, you will need to update [override-identifiers.js](https://searchfox.org/mozilla-central/source/toolkit/themes/shared/design-system/config/override-identifiers.js), adding a name and pref to classify the token overrides. For example, to override design tokens for Nova, we use this configuration:
+Our build process provides a mechanism to override design tokens behind a pref. To do so, you will need to update [override-identifiers.js](https://searchfox.org/firefox-main/source/toolkit/themes/shared/design-system/config/override-identifiers.js), adding a name and pref to classify the token overrides. For example, to override design tokens for Nova, we use this configuration:
 
 ```js
 {
   name: "nova",
-  pref: "browser.design-tokens.nova",
+  pref: "browser.nova.enabled",
 }
 ```
 
@@ -333,7 +361,7 @@ Then you can create new JSON files in `src/tokens` that end with a suffix using 
 When you run `./mach buildtokens`, the CSS output will include the new tokens under a media query using the `pref` that you defined. For example:
 
 ```css
-@media -moz-pref("browser.design-tokens.nova") {
+@media -moz-pref("browser.nova.enabled") {
   /* Your token overrides */
 }
 ```

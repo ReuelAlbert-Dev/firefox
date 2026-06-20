@@ -71,13 +71,14 @@ CssAltContent::CssAltContent(nsIContent* aContent) {
     }
   }
   mItems = frame->StyleContent()->AltContentItems();
-}
+  if (mItems.IsEmpty()) {
+    return;
+  }
 
-void CssAltContent::AppendToString(nsAString& aOut) {
   // There can be multiple alt text items.
   for (const auto& item : mItems) {
     if (item.IsString()) {
-      aOut.Append(NS_ConvertUTF8toUTF16(item.AsString().AsString()));
+      mText.Append(NS_ConvertUTF8toUTF16(item.AsString().AsString()));
     } else if (item.IsAttr()) {
       // This item gets its value from an attribute on the element or from
       // fallback text.
@@ -103,10 +104,12 @@ void CssAltContent::AppendToString(nsAString& aOut) {
           fallback->ToString(val);
         }
       }
-      aOut.Append(val);
+      mText.Append(val);
     }
   }
 }
+
+void CssAltContent::AppendToString(nsAString& aOut) { aOut.Append(mText); }
 
 /* static */
 bool CssAltContent::HandleAttributeChange(nsIContent* aContent,
@@ -119,7 +122,8 @@ bool CssAltContent::HandleAttributeChange(nsIContent* aContent,
   // Handle any pseudo-elements with CSS alt content.
   for (dom::Element* pseudo : {nsLayoutUtils::GetBeforePseudo(aContent),
                                nsLayoutUtils::GetAfterPseudo(aContent),
-                               nsLayoutUtils::GetMarkerPseudo(aContent)}) {
+                               nsLayoutUtils::GetMarkerPseudo(aContent),
+                               nsLayoutUtils::GetCheckmarkPseudo(aContent)}) {
     // CssAltContent wants a child of a pseudo-element if there is one.
     nsIContent* content = pseudo ? pseudo->GetFirstChild() : nullptr;
     if (!content) {

@@ -13,6 +13,7 @@
 #include "nsGlobalWindowInner.h"
 #include "nsIDocShell.h"
 #include "nsISupportsPrimitives.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsSpeechTask.h"
 #include "nsSynthVoiceRegistry.h"
 
@@ -22,7 +23,8 @@ mozilla::LogModule* GetSpeechSynthLog() {
 
   return sLog;
 }
-#define LOG(type, msg) MOZ_LOG(GetSpeechSynthLog(), type, msg)
+#define LOG(type, msg) \
+  MOZ_LOG_FMT(GetSpeechSynthLog(), type, MOZ_LOG_EXPAND_ARGS msg)
 
 namespace mozilla::dom {
 
@@ -135,7 +137,7 @@ void SpeechSynthesis::Speak(SpeechSynthesisUtterance& aUtterance) {
 
 void SpeechSynthesis::AdvanceQueue() {
   LOG(LogLevel::Debug,
-      ("SpeechSynthesis::AdvanceQueue length=%zu", mSpeechQueue.Length()));
+      ("SpeechSynthesis::AdvanceQueue length={}", mSpeechQueue.Length()));
 
   if (mSpeechQueue.IsEmpty()) {
     return;
@@ -168,8 +170,8 @@ void SpeechSynthesis::Cancel() {
     mSpeechQueue.Clear();
   }
 
-  if (mCurrentTask) {
-    mCurrentTask->Cancel();
+  if (RefPtr<nsSpeechTask> task = mCurrentTask) {
+    task->Cancel();
   }
 }
 
@@ -268,6 +270,11 @@ void SpeechSynthesis::ForceEnd() {
   if (mCurrentTask) {
     mCurrentTask->ForceEnd();
   }
+}
+
+void SpeechSynthesis::DisconnectFromOwner() {
+  Cancel();
+  DOMEventTargetHelper::DisconnectFromOwner();
 }
 
 NS_IMETHODIMP

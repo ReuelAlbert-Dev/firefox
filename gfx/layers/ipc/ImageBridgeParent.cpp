@@ -61,9 +61,11 @@ void ImageBridgeParent::Setup() {
 
 ImageBridgeParent::ImageBridgeParent(nsISerialEventTarget* aThread,
                                      EndpointProcInfo aChildProcessInfo,
-                                     dom::ContentParentId aContentId)
+                                     dom::ContentParentId aContentId,
+                                     uint32_t aNamespace)
     : mThread(aThread),
       mContentId(aContentId),
+      mNamespace(aNamespace),
       mClosed(false),
       mCompositorThreadHolder(CompositorThreadHolder::GetSingleton()) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -74,10 +76,10 @@ ImageBridgeParent::ImageBridgeParent(nsISerialEventTarget* aThread,
 ImageBridgeParent::~ImageBridgeParent() = default;
 
 /* static */
-ImageBridgeParent* ImageBridgeParent::CreateSameProcess() {
+ImageBridgeParent* ImageBridgeParent::CreateSameProcess(uint32_t aNamespace) {
   EndpointProcInfo procInfo = EndpointProcInfo::Current();
   RefPtr<ImageBridgeParent> parent = new ImageBridgeParent(
-      CompositorThread(), procInfo, dom::ContentParentId());
+      CompositorThread(), procInfo, dom::ContentParentId(), aNamespace);
 
   {
     MonitorAutoLock lock(*sImageBridgesLock);
@@ -91,7 +93,7 @@ ImageBridgeParent* ImageBridgeParent::CreateSameProcess() {
 
 /* static */
 bool ImageBridgeParent::CreateForGPUProcess(
-    Endpoint<PImageBridgeParent>&& aEndpoint) {
+    Endpoint<PImageBridgeParent>&& aEndpoint, uint32_t aNamespace) {
   MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_GPU);
 
   nsCOMPtr<nsISerialEventTarget> compositorThread = CompositorThread();
@@ -101,7 +103,7 @@ bool ImageBridgeParent::CreateForGPUProcess(
 
   RefPtr<ImageBridgeParent> parent =
       new ImageBridgeParent(compositorThread, aEndpoint.OtherEndpointProcInfo(),
-                            dom::ContentParentId());
+                            dom::ContentParentId(), aNamespace);
 
   compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>&&>(
       "layers::ImageBridgeParent::Bind", parent, &ImageBridgeParent::Bind,
@@ -178,22 +180,7 @@ class MOZ_STACK_CLASS AutoImageBridgeParentAsyncMessageSender final {
   ~AutoImageBridgeParentAsyncMessageSender() {
     mImageBridge->SendPendingAsyncMessages();
     if (mToDestroy) {
-      // Iterate mToDestroy but de-duplicate it to avoid destroying the
-      // same texture parent actor twice.
-      nsTHashSet<PTextureParent*> seenTextureParents;
-      for (const auto& op : *mToDestroy) {
-        // Peek inside the op (as DestroyActor does) to see if we are about
-        // to destroy a PTextureParent.
-        if (op.type() == OpDestroy::TPTexture) {
-          PTextureParent* textureParent = op.get_PTexture().AsParent();
-          if (!seenTextureParents.EnsureInserted(textureParent)) {
-            // Already seen, so skip this one.
-            continue;
-          }
-        }
-
-        mImageBridge->DestroyActor(op);
-      }
+      mImageBridge->DestroyActors(*mToDestroy);
     }
   }
 
@@ -240,14 +227,16 @@ mozilla::ipc::IPCResult ImageBridgeParent::RecvUpdate(
 
 /* static */
 bool ImageBridgeParent::CreateForContent(
-    Endpoint<PImageBridgeParent>&& aEndpoint, dom::ContentParentId aContentId) {
+    Endpoint<PImageBridgeParent>&& aEndpoint, dom::ContentParentId aContentId,
+    uint32_t aNamespace) {
   nsCOMPtr<nsISerialEventTarget> compositorThread = CompositorThread();
   if (!compositorThread) {
     return false;
   }
 
-  RefPtr<ImageBridgeParent> bridge = new ImageBridgeParent(
-      compositorThread, aEndpoint.OtherEndpointProcInfo(), aContentId);
+  RefPtr<ImageBridgeParent> bridge =
+      new ImageBridgeParent(compositorThread, aEndpoint.OtherEndpointProcInfo(),
+                            aContentId, aNamespace);
   compositorThread->Dispatch(NewRunnableMethod<Endpoint<PImageBridgeParent>&&>(
       "layers::ImageBridgeParent::Bind", bridge, &ImageBridgeParent::Bind,
       std::move(aEndpoint)));
@@ -312,17 +301,18 @@ mozilla::ipc::IPCResult ImageBridgeParent::RecvReleaseCompositable(
   return IPC_OK();
 }
 
-PTextureParent* ImageBridgeParent::AllocPTextureParent(
+already_AddRefed<PTextureParent> ImageBridgeParent::AllocPTextureParent(
     const SurfaceDescriptor& aSharedData, ReadLockDescriptor& aReadLock,
     const LayersBackend& aLayersBackend, const TextureFlags& aFlags,
     const uint64_t& aSerial, const wr::MaybeExternalImageId& aExternalImageId) {
+  if (aExternalImageId.isSome() &&
+      !OwnsExternalImageId(aExternalImageId.ref())) {
+    NS_ERROR("We do not own this external image id.");
+    return nullptr;
+  }
   return TextureHost::CreateIPDLActor(this, aSharedData, std::move(aReadLock),
                                       aLayersBackend, aFlags, mContentId,
                                       aSerial, aExternalImageId);
-}
-
-bool ImageBridgeParent::DeallocPTextureParent(PTextureParent* actor) {
-  return TextureHost::DestroyIPDLActor(actor);
 }
 
 PMediaSystemResourceManagerParent*
@@ -338,7 +328,7 @@ bool ImageBridgeParent::DeallocPMediaSystemResourceManagerParent(
 }
 
 void ImageBridgeParent::SendAsyncMessage(
-    const nsTArray<AsyncParentMessageData>& aMessage) {
+    Span<const AsyncParentMessageData> aMessage) {
   (void)SendParentAsyncMessages(aMessage);
 }
 
@@ -402,6 +392,11 @@ already_AddRefed<ImageBridgeParent> ImageBridgeParent::GetInstance(
   return bridge.forget();
 }
 
+bool ImageBridgeParent::OwnsExternalImageId(
+    const wr::ExternalImageId& aId) const {
+  return (mNamespace == static_cast<uint32_t>(wr::AsUint64(aId) >> 32));
+}
+
 bool ImageBridgeParent::AllocShmem(size_t aSize, ipc::Shmem* aShmem) {
   if (mClosed) {
     return false;
@@ -440,7 +435,8 @@ void ImageBridgeParent::NotifyNotUsed(PTextureParent* aTexture,
   }
 
   uint64_t textureId = TextureHost::GetTextureSerial(aTexture);
-  mPendingAsyncMessage.push_back(OpNotifyNotUsed(textureId, aTransactionId));
+  mPendingAsyncMessage.AppendElement(
+      OpNotifyNotUsed(textureId, aTransactionId));
 
   if (!IsAboutToSendAsyncMessages()) {
     SendPendingAsyncMessages();

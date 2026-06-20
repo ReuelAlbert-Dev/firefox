@@ -222,7 +222,7 @@ CheckVertexAttribPointer(const bool isWebgl2,
   if (!isTypeValid) {
     const auto info =
         nsPrintfCString("Bad `type`: %s", EnumString(desc.type).c_str());
-    return Err(webgl::ErrorInfo{LOCAL_GL_INVALID_ENUM, info.BeginReading()});
+    return Err(webgl::ErrorInfo{LOCAL_GL_INVALID_ENUM, info.get()});
   }
 
   ////

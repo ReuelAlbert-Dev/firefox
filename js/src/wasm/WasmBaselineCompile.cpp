@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -322,7 +320,8 @@ void BaseCompiler::jumpTable(const LabelVector& labels, Label* theTable) {
   // constant pool entries.
   masm.flush();
 
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) || \
+    defined(JS_CODEGEN_RISCV64)
   // Prevent nop sequences to appear in the jump table.
   AutoForbidNops afn(&masm);
 #endif
@@ -734,11 +733,13 @@ bool BaseCompiler::endFunction() {
                         HasDebugFrameWithLiveRefs::Maybe)) {
       return false;
     }
+
     insertBreakablePoint(CallSiteKind::LeaveFrame);
     if (!createStackMap("debug: leave-frame breakpoint",
                         HasDebugFrameWithLiveRefs::Maybe)) {
       return false;
     }
+
     restoreRegisterReturnValues(resultType);
   }
 
@@ -936,7 +937,8 @@ void BaseCompiler::insertPerFunctionDebugStub() {
 
     // Check the filter bit.  There is one bit per function in the module.
     // Table elements are 32-bit because the masm makes that convenient.
-    masm.branchTest32(Assembler::NonZero, Address(scratch, func_.index / 32),
+    masm.branchTest32(Assembler::NonZero,
+                      Address(scratch, (func_.index / 32) * sizeof(uint32_t)),
                       Imm32(1 << (func_.index % 32)), &L);
 
     // Fast path: return to the execution.
@@ -949,7 +951,8 @@ void BaseCompiler::insertPerFunctionDebugStub() {
     // Logic as above, except abiret to jump to the LR directly
     masm.loadPtr(Address(InstanceReg, Instance::offsetOfDebugFilter()),
                  scratch);
-    masm.branchTest32(Assembler::NonZero, Address(scratch, func_.index / 32),
+    masm.branchTest32(Assembler::NonZero,
+                      Address(scratch, (func_.index / 32) * sizeof(uint32_t)),
                       Imm32(1 << (func_.index % 32)), &L);
     masm.abiret();
   }
@@ -967,7 +970,7 @@ void BaseCompiler::insertPerFunctionDebugStub() {
     masm.ma_ldr(
         DTRAddr(InstanceReg, DtrOffImm(Instance::offsetOfDebugFilter())), tmp1);
     masm.ma_mov(Imm32(func_.index / 32), tmp2);
-    masm.ma_ldr(DTRAddr(tmp1, DtrRegImmShift(tmp2, LSL, 0)), tmp2);
+    masm.ma_ldr(DTRAddr(tmp1, DtrRegImmShift(tmp2, LSL, 2)), tmp2);
     masm.ma_tst(tmp2, Imm32(1 << func_.index % 32), tmp1, Assembler::Always);
     masm.ma_bx(lr, Assembler::Zero);
   }
@@ -979,7 +982,8 @@ void BaseCompiler::insertPerFunctionDebugStub() {
     // Logic same as ARM64.
     masm.loadPtr(Address(InstanceReg, Instance::offsetOfDebugFilter()),
                  scratch);
-    masm.branchTest32(Assembler::NonZero, Address(scratch, func_.index / 32),
+    masm.branchTest32(Assembler::NonZero,
+                      Address(scratch, (func_.index / 32) * sizeof(uint32_t)),
                       Imm32(1 << (func_.index % 32)), &L);
     masm.abiret();
   }
@@ -1651,6 +1655,7 @@ bool BaseCompiler::insertDebugCollapseFrame() {
   if (!compilerEnv_.debugEnabled() || deadCode_) {
     return true;
   }
+
   insertBreakablePoint(CallSiteKind::CollapseFrame);
   return createStackMap("debug: collapse-frame breakpoint",
                         HasDebugFrameWithLiveRefs::Maybe);
@@ -4667,8 +4672,8 @@ bool BaseCompiler::emitTryTable() {
 
     // This is a `catch $t`, load the tag type we're trying to match
     const TagType& tagType = *codeMeta_.tags[tryTableCatch.tagIndex].type;
-    const TagOffsetVector& tagOffsets = tagType.argOffsets();
-    ResultType tagParams = tagType.resultType();
+    const TagOffsetVector& tagOffsets = tagType.exceptionArgOffsets();
+    ResultType tagParams = tagType.argResultType();
 
     // Load the tag for this catch and compare it against the exception's tag.
     // If they don't match, skip to the next catch handler.
@@ -4887,7 +4892,7 @@ bool BaseCompiler::emitCatch() {
   // Extract the arguments in the exception package and push them.
   const SharedTagType& tagType = codeMeta_.tags[tagIndex].type;
   const ValTypeVector& params = tagType->argTypes();
-  const TagOffsetVector& offsets = tagType->argOffsets();
+  const TagOffsetVector& offsets = tagType->exceptionArgOffsets();
 
   // The landing pad uses the block return protocol to communicate the
   // exception object pointer to the catch block.
@@ -5181,8 +5186,8 @@ bool BaseCompiler::emitThrow() {
   }
 
   const TagDesc& tagDesc = codeMeta_.tags[tagIndex];
-  const ResultType& params = tagDesc.type->resultType();
-  const TagOffsetVector& offsets = tagDesc.type->argOffsets();
+  const ResultType& params = tagDesc.type->argResultType();
+  const TagOffsetVector& offsets = tagDesc.type->exceptionArgOffsets();
 
   // Load the tag object
 #ifdef RABALDR_PIN_INSTANCE
@@ -6814,7 +6819,8 @@ bool BaseCompiler::emitMemCopy() {
     return true;
   }
 
-  if (dstMemIndex == 0 && srcMemIndex == 0 && isMem32(dstMemIndex)) {
+  if (dstMemIndex == 0 && srcMemIndex == 0 && isMem32(dstMemIndex) &&
+      codeMeta_.memories[srcMemIndex].pageSize() == PageSize::Standard) {
     int32_t signedLength;
     if (peekConst(&signedLength) && signedLength != 0 &&
         uint32_t(signedLength) <= MaxInlineMemoryCopyLength) {
@@ -7304,16 +7310,16 @@ bool BaseCompiler::emitI64MulWide(bool isSigned) {
   // temporary.
   RegI64 y = popI64();
   RegI64 x = popI64();
-  RegI64 temp0 = needI64();
+  RegI64 temp = needI64();
 
   // Compute zHi:zLo = x *widen y.
-  masm.move64(x, temp0);
-  masm.mul64(y, temp0);
-  pushI64(temp0);  // zLo
+  masm.move64(x, temp);
+  masm.mul64(y, temp);
+  pushI64(temp);  // zLo
 
-  temp0 = needI64();
-  masm.wasmMulI64WideHI64(x.reg, y.reg, temp0.reg, isSigned);
-  pushI64(temp0);  // zHi
+  temp = needI64();
+  masm.wasmMulI64WideHI64(x.reg, y.reg, temp.reg, isSigned);
+  pushI64(temp);  // zHi
 
   free(x);
   free(y);
@@ -7396,10 +7402,10 @@ void BaseCompiler::emitPreBarrier(RegPtr valueAddr) {
 #endif
 #ifdef JS_CODEGEN_ARM64
   // The prebarrier stub assumes the PseudoStackPointer is set up.  It is OK
-  // to just move the sp to x28 here because x28 is not being used by the
+  // to just move the sp to x20 here because x20 is not being used by the
   // baseline compiler and need not be saved or restored.
-  MOZ_ASSERT(!GeneralRegisterSet::All().hasRegisterIndex(x28.asUnsized()));
-  masm.Mov(x28, sp);
+  MOZ_ASSERT(!GeneralRegisterSet::All().hasRegisterIndex(x20.asUnsized()));
+  masm.Mov(x20, sp);
 #endif
   // The prebarrier call preserves all volatile registers
   EmitWasmPreBarrierCallImmediate(masm, instance, scratch, valueAddr,
@@ -8969,6 +8975,8 @@ bool BaseCompiler::emitArrayFill() {
   if (elementType.isRefRepr()) {
     freePtr(RegPtr(PreBarrierReg));
   }
+
+  sync();
 
   // Perform the fill loop using `numElements` as the loop variable, counting
   // down to zero.

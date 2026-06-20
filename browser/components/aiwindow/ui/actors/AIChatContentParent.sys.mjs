@@ -6,44 +6,39 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AIWindow:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
-  getSecurityOrchestrator:
-    "chrome://global/content/ml/security/SecurityOrchestrator.sys.mjs",
+  captureThumbnail:
+    "moz-src:///browser/components/aiwindow/models/HistoryThumbnails.sys.mjs",
   SmartWindowTelemetry:
     "moz-src:///browser/components/aiwindow/ui/modules/SmartWindowTelemetry.sys.mjs",
   AIWindowUI:
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindowUI.sys.mjs",
+  AIWindowTelemetry:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindowTelemetry.sys.mjs",
+  BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
+  URILoadingHelper: "resource:///modules/URILoadingHelper.sys.mjs",
+  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
 /**
  * JSWindowActor to pass data between AIChatContent singleton and content pages.
- *
- * Handles:
- * - Message routing between ai-window and ai-chat-content
- * - Conversation ID tracking for security ledger access
- * - Push-based trusted URL updates to child
  */
 export class AIChatContentParent extends JSWindowActorParent {
-  /**
-   * The session ledger for the current conversation.
-   * Stored for EventTarget listener management and direct access.
-   *
-   * @type {SessionLedger|null}
-   */
-  #sessionLedger = null;
+  #settingsURI = Services.io.newURI("about:settings");
+  #prefsURI = Services.io.newURI("about:preferences");
 
   /**
-   * Counter to detect superseded #setConversation calls.
-   * Prevents stale async calls from attaching listeners to wrong ledgers.
+   * Returns true if the URI points to the browser settings page.
+   * Matches both about:preferences and its about:settings alias,
    *
-   * @type {number}
+   * @param {nsIURI} uri - A parsed URI object
+   * @returns {boolean}
    */
-  #setConversationGeneration = 0;
-
-  /**
-   * Bound handler for ledger "change" events.
-   * Stable reference needed for addEventListener/removeEventListener.
-   */
-  #onLedgerChange = () => this.#pushTrustedUrlsToChild();
+  isSettingsURI(uri) {
+    return (
+      uri.equalsExceptRef(this.#settingsURI) ||
+      uri.equalsExceptRef(this.#prefsURI)
+    );
+  }
 
   dispatchMessageToChatContent(message) {
     // Ideally we should allowlist or use a schema to validate what we send to
@@ -66,38 +61,35 @@ export class AIChatContentParent extends JSWindowActorParent {
   }
 
   /**
-   * Sets the current conversation for security ledger tracking.
+   * Dispatch seen links for a conversation. This can be a partial set of seen links
+   * for incremental updates, or the full list of links.
    *
-   * Called directly by ai-window when a conversation is opened or changed.
-   * Subscribes to ledger changes and pushes initial trusted URLs to child.
-   *
-   * @param {string|null} conversationId - The conversation identifier
+   * @param {object} payload
+   * @param {string} payload.conversationId
+   * @param {Set<string>} payload.seenUrls
    */
-  setConversation(conversationId) {
-    this.#setConversation(conversationId);
+  dispatchSeenUrlsToChatContent(payload) {
+    this.sendAsyncMessage("AIChatContent:SeenUrls", payload);
+  }
+
+  setGeneratingOnChatContent(isGenerating) {
+    this.sendAsyncMessage("AIChatContent:SetGenerating", { isGenerating });
   }
 
   /**
-   * Seeds a mentioned URL into the security ledger.
+   * Forward the conversation's history results pool to the content page. Sent
+   * only when the pool changes (a search_browsing_history tool call ran).
    *
-   * Called by ai-window at submission time when the user's message
-   * includes @mentioned tabs. This represents explicit user consent
-   * to trust the URL.
-   *
-   * @param {string} conversationId - Conversation to seed into
-   * @param {string} url - URL to seed as trusted
+   * @param {object} payload
+   * @param {object[]} payload.records
    */
-  seedMentionedUrl(conversationId, url) {
-    this.#handleSeedMentionedUrl({ conversationId, url });
+  dispatchHistoryResultsToChatContent(payload) {
+    this.sendAsyncMessage("AIChatContent:HistoryResults", payload);
   }
 
   receiveMessage({ data, name }) {
     switch (name) {
-      case "aiChatContentActor:search":
-        this.#handleSearchFromChild(data);
-        break;
-
-      case "aiChatContentActor:followUp":
+      case "AIChatContent:DispatchFollowUp":
         this.#handleFollowUpFromChild(data);
         break;
 
@@ -109,7 +101,7 @@ export class AIChatContentParent extends JSWindowActorParent {
         this.#handleNewChat();
         break;
 
-      case "aiChatContentActor:footer-action":
+      case "AIChatContent:DispatchAction":
         this.#handleFooterActionFromChild(data);
         break;
 
@@ -121,6 +113,23 @@ export class AIChatContentParent extends JSWindowActorParent {
         this.#handleAccountSignIn();
         break;
 
+      case "AIChatContent:ToolUIUpdate":
+        this.#handleToolUIUpdate(data);
+        break;
+
+      case "AIChatContent:RequestAssets":
+        this.#handleRequestAssets(data);
+        break;
+
+      case "AIChatContent:HistoryGridRender":
+      case "AIChatContent:HistoryGridItemClick":
+        lazy.AIWindowTelemetry.recordHistoryGridEvent(
+          this.#getAIWindowElement(),
+          data,
+          name
+        );
+        break;
+
       default:
         console.warn(`AIChatContentParent received unknown message: ${name}`);
         break;
@@ -128,42 +137,9 @@ export class AIChatContentParent extends JSWindowActorParent {
     return undefined;
   }
 
-  /**
-   * Cleans up ledger subscription and state on actor destruction.
-   */
-  didDestroy() {
-    this.#unsubscribeLedger();
-  }
-
-  /**
-   * Removes the ledger change listener and clears the ledger reference.
-   * Called when conversation changes or actor is destroyed.
-   */
-  #unsubscribeLedger() {
-    if (this.#sessionLedger) {
-      this.#sessionLedger.removeEventListener("change", this.#onLedgerChange);
-      this.#sessionLedger = null;
-    }
-  }
-
   #notifyContentReady() {
     const aiWindow = this.#getAIWindowElement();
     aiWindow?.onContentReady();
-
-    // If the ledger is already bound (setConversation completed before child
-    // was ready), push trusted URLs now that the child can receive messages.
-    if (this.#sessionLedger) {
-      this.#pushTrustedUrlsToChild();
-    }
-  }
-
-  #handleSearchFromChild(data) {
-    try {
-      const { topChromeWindow } = this.browsingContext;
-      lazy.AIWindow.performSearch(data, topChromeWindow);
-    } catch (e) {
-      console.warn("Could not perform search from AI Window chat", e);
-    }
   }
 
   #handleFooterActionFromChild(data) {
@@ -180,13 +156,17 @@ export class AIChatContentParent extends JSWindowActorParent {
     aiWindow?.onOpenLink();
 
     try {
-      const { url } = data;
+      const { url, preferSwitchToTab } = data;
       if (!url) {
         return;
       }
 
       const uri = Services.io.newURI(url);
-      if (uri.scheme !== "http" && uri.scheme !== "https") {
+      if (
+        uri.scheme !== "http" &&
+        uri.scheme !== "https" &&
+        !this.isSettingsURI(uri)
+      ) {
         return;
       }
 
@@ -206,13 +186,51 @@ export class AIChatContentParent extends JSWindowActorParent {
         return;
       }
 
-      const tabFound = window.switchToTabHavingURI(url, false, {});
-      if (!tabFound) {
-        window.gBrowser.selectedTab = window.gBrowser.addTab(url, {
-          triggeringPrincipal:
-            Services.scriptSecurityManager.createNullPrincipal({}),
-        });
+      if (this.isSettingsURI(uri)) {
+        lazy.URILoadingHelper.switchToTabHavingURI(window, url, true, {});
+        return;
       }
+
+      const { userContextId } =
+        window.gBrowser.selectedBrowser.browsingContext.originAttributes;
+      const triggeringPrincipal =
+        Services.scriptSecurityManager.createNullPrincipal({ userContextId });
+
+      if (preferSwitchToTab) {
+        // Switch to an existing tab if one matches, otherwise
+        // open in a new tab
+        if (
+          lazy.URILoadingHelper.switchToTabHavingURI(window, url, false, {})
+        ) {
+          return;
+        }
+
+        lazy.URILoadingHelper.openWebLinkIn(window, url, "tab", {
+          triggeringPrincipal,
+          userContextId,
+          forceForeground: false,
+        });
+        return;
+      }
+
+      const where = lazy.BrowserUtils.whereToOpenLink(data);
+      if (where === "current") {
+        const tabFound = lazy.URILoadingHelper.switchToTabHavingURI(
+          window,
+          url,
+          false,
+          {}
+        );
+        if (tabFound) {
+          return;
+        }
+      }
+
+      lazy.URILoadingHelper.openWebLinkIn(window, url, where, {
+        triggeringPrincipal,
+        userContextId,
+        forceForeground: false,
+      });
     } catch (e) {
       console.warn("Could not open link from AI Window chat", e);
     }
@@ -262,94 +280,60 @@ export class AIChatContentParent extends JSWindowActorParent {
     }
   }
 
-  /**
-   * Sets the current conversation and subscribes to ledger changes.
-   *
-   * Unsubscribes from previous ledger before subscribing to new one.
-   * Uses a generation counter to discard stale calls after await.
-   * Pushes initial trusted URL state after subscribing to cover any
-   * change events missed during the async gap.
-   *
-   * @param {string|null} conversationId - The conversation identifier
-   */
-  async #setConversation(conversationId) {
-    this.#unsubscribeLedger();
-    const generation = ++this.#setConversationGeneration;
-
-    if (!conversationId) {
-      return;
-    }
-
+  #handleToolUIUpdate(data) {
     try {
-      const orchestrator = await lazy.getSecurityOrchestrator();
-
-      if (generation !== this.#setConversationGeneration) {
-        return;
-      }
-
-      this.#sessionLedger = orchestrator.registerSession(conversationId);
-      this.#sessionLedger.addEventListener("change", this.#onLedgerChange);
-      this.#pushTrustedUrlsToChild();
+      const aiWindow = this.#getAIWindowElement();
+      aiWindow.handleToolUIUpdate(data);
     } catch (e) {
-      console.warn("Failed to set conversation for security ledger:", e);
+      console.warn("Could not handle tool UI update from AI Window chat", e);
     }
   }
 
   /**
-   * Handles seeding a mentioned URL into the conversation ledger.
+   * For a set of history results, resolve the page assets — the thumbnail
+   * (`moz-page-thumb://` URI, or null) and whether Places has a real favicon for
+   * the page — then send them back to the requesting message.
    *
-   * Called at submission time when the user's message includes @mentions.
-   * The "change" event triggers a push automatically if subscribed.
-   * If not yet subscribed, URLs will be pushed once setConversation binds the ledger.
-   *
-   * @param {object} data - Seed request data
-   * @param {string} data.conversationId - Conversation to seed into
-   * @param {string} data.url - URL to seed
+   * @param {object} data
+   * @param {string} data.messageId - Identifies the message whose grid requested
+   *   the assets, echoed back so the content side can route the results.
+   * @param {Array<{url: string, thumbnail?: string}>} data.items
    */
-  async #handleSeedMentionedUrl({ conversationId, url }) {
-    if (!conversationId || !url) {
-      return;
-    }
-
+  async #handleRequestAssets({ messageId, items }) {
     try {
-      const orchestrator = await lazy.getSecurityOrchestrator();
-      const sessionLedger = orchestrator.registerSession(conversationId);
-      sessionLedger.seedConversation([url]);
-    } catch (e) {
-      console.warn("Failed to seed mentioned URL:", e);
-    }
-  }
+      const images = await Promise.all(
+        (items ?? []).map(async ({ url, thumbnail }) => ({
+          url,
+          image: await lazy.captureThumbnail(thumbnail),
+          hasFavicon: await this.#pageHasFavicon(url),
+        }))
+      );
 
-  /**
-   * Pushes the current trusted URL list to the child process.
-   *
-   * Uses the locally-held session ledger to build the trusted URL set.
-   * Returns early if no ledger is bound (e.g., before setConversation).
-   */
-  #pushTrustedUrlsToChild() {
-    if (!this.#sessionLedger) {
-      return;
-    }
-
-    // Security validation is gated behind this pref. When disabled,
-    // skip pushing trusted URLs so links render without validation.
-    if (
-      !Services.prefs.getBoolPref(
-        "browser.smartwindow.checkSecurityFlags",
-        true
-      )
-    ) {
-      return;
-    }
-
-    try {
-      const merged = this.#sessionLedger.mergeAll();
-      const trustedUrls = merged.getAllUrls();
-      this.sendAsyncMessage("AIChatContent:TrustedUrlsUpdated", {
-        trustedUrls,
+      this.sendAsyncMessage("AIChatContent:AssetsReady", {
+        messageId,
+        images,
       });
     } catch (e) {
-      console.warn("Failed to push trusted URLs to child:", e);
+      console.warn("Could not resolve history assets for AI Window chat", e);
+    }
+  }
+
+  /**
+   * Whether Places has a stored favicon for the page. When false, a
+   * `page-icon:` request for the URL would render the default favicon, so the
+   * UI can choose its own fallback instead.
+   *
+   * @param {string} url
+   * @returns {Promise<boolean>}
+   */
+  async #pageHasFavicon(url) {
+    try {
+      const favicon = await lazy.PlacesUtils.favicons.getFaviconForPage(
+        Services.io.newURI(url)
+      );
+      return !!favicon;
+    } catch (e) {
+      return false;
     }
   }
 }

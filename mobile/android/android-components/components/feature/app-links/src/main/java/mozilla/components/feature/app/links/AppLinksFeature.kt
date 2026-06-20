@@ -191,6 +191,25 @@ class AppLinksFeature(
     }
 
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun dismissRedirect(
+        sessionState: SessionState,
+        url: String,
+        fallbackUrl: String?,
+    ) {
+        val urlToLoad = when {
+            isSchemeSupported(url) -> url
+            fallbackUrl != null && isSchemeSupported(fallbackUrl) -> fallbackUrl
+            else -> return // No supported URL to load.
+        }
+
+        loadUrlUseCase?.invoke(
+            url = urlToLoad,
+            sessionId = sessionState.id,
+            flags = EngineSession.LoadUrlFlags.select(EXTERNAL, LOAD_FLAGS_BYPASS_LOAD_URI_DELEGATE),
+        )
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal fun cancelRedirect(
         sessionState: SessionState,
         url: String,
@@ -239,6 +258,9 @@ class AppLinksFeature(
             onCancelRedirect = {
                 cancelRedirect(sessionState, url, fallbackUrl, appIntent)
             }
+            onDismissRedirect = {
+                dismissRedirect(sessionState, url, fallbackUrl)
+            }
         }.showNow(fragmentManager, FRAGMENT_TAG)
     }
 
@@ -280,9 +302,12 @@ class AppLinksFeature(
 
     private fun buildDialogTitle(targetAppName: String?): String = when {
         !targetAppName.isNullOrBlank() ->
-            context.getString(R.string.mozac_feature_applinks_normal_confirm_dialog_title_with_app_name, targetAppName)
+            context.getString(
+                R.string.mozac_feature_applinks_normal_confirm_dialog_title_with_app_name_2,
+                targetAppName,
+            )
         else ->
-            context.getString(R.string.mozac_feature_applinks_normal_confirm_dialog_title)
+            context.getString(R.string.mozac_feature_applinks_normal_confirm_dialog_title_2)
     }
 
     private fun buildDialogMessage(): String =

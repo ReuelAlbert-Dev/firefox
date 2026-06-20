@@ -94,7 +94,7 @@ nsExtProtocolChannel::nsExtProtocolChannel(nsIURI* aURI, nsILoadInfo* aLoadInfo)
       mConnectedParent(false),
       mLoadInfo(aLoadInfo) {}
 
-nsExtProtocolChannel::~nsExtProtocolChannel() {}
+nsExtProtocolChannel::~nsExtProtocolChannel() = default;
 
 NS_IMETHODIMP nsExtProtocolChannel::GetLoadGroup(nsILoadGroup** aLoadGroup) {
   NS_IF_ADDREF(*aLoadGroup = mLoadGroup);
@@ -331,6 +331,18 @@ NS_IMETHODIMP nsExtProtocolChannel::SetLoadInfo(nsILoadInfo* aLoadInfo) {
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsExtProtocolChannel::GetParentProcessChannelHandle(
+    mozilla::dom::ParentProcessChannelHandle** aValue) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsExtProtocolChannel::SetParentProcessChannelHandle(
+    mozilla::dom::ParentProcessChannelHandle* aValue) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // From nsIRequest
 ////////////////////////////////////////////////////////////////////////////////
@@ -473,7 +485,7 @@ nsExternalProtocolHandler::nsExternalProtocolHandler() {
   m_schemeName = "default";
 }
 
-nsExternalProtocolHandler::~nsExternalProtocolHandler() {}
+nsExternalProtocolHandler::~nsExternalProtocolHandler() = default;
 
 NS_IMPL_ADDREF(nsExternalProtocolHandler)
 NS_IMPL_RELEASE(nsExternalProtocolHandler)

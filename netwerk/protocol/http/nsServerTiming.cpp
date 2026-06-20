@@ -83,11 +83,7 @@ void ServerTimingParser::Parse() {
       // This is true whether or not the value makes any sense (or, indeed, if
       // there even is a value).
       if (currentName.LowerCaseEqualsASCII("dur") && !foundDuration) {
-        if (currentValue.BeginReading()) {
-          timingHeader->SetDuration(ParseDouble(currentValue));
-        } else {
-          timingHeader->SetDuration(0.0);
-        }
+        timingHeader->SetDuration(ParseDouble(currentValue));
         foundDuration = true;
       } else if (currentName.LowerCaseEqualsASCII("desc") &&
                  !foundDescription) {

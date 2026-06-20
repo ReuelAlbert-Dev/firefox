@@ -1,29 +1,33 @@
 From: Michael Froman <mfroman@mozilla.com>
-Date: Mon, 29 Dec 2025 13:18:00 -0600
-Subject: Bug 2006933 - (fix-932f274e86) don't include rtc_error.h, forward
- declare RTCError
+Date: Wed, 8 Apr 2026 10:58:00 -0500
+Subject: Bug 2030139 - (fix-bb3693c382) fix linux builds for constexpr
+ containing std::string
 
-Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/fb61f91d422c3d77545d0d10778314eb958fc8c6
+Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/cab51cf0d4e9e67e9f5b053128d05e859d47b7c2
 ---
- api/rtp_parameters.h | 2 +-
- 1 file changed, 1 insertion(+), 1 deletion(-)
+ modules/portal/pipewire_utils.cc | 9 +++++++++
+ 1 file changed, 9 insertions(+)
 
-diff --git a/api/rtp_parameters.h b/api/rtp_parameters.h
-index 09eebcab05..db025379da 100644
---- a/api/rtp_parameters.h
-+++ b/api/rtp_parameters.h
-@@ -23,13 +23,13 @@
- #include "absl/strings/string_view.h"
- #include "api/media_types.h"
- #include "api/priority.h"
--#include "api/rtc_error.h"
- #include "api/rtp_transceiver_direction.h"
- #include "api/video/resolution.h"
- #include "api/video_codecs/scalability_mode.h"
- #include "rtc_base/system/rtc_export.h"
+diff --git a/modules/portal/pipewire_utils.cc b/modules/portal/pipewire_utils.cc
+index 850726cc58..7008696b7d 100644
+--- a/modules/portal/pipewire_utils.cc
++++ b/modules/portal/pipewire_utils.cc
+@@ -28,9 +28,18 @@
  
  namespace webrtc {
-+class RTCError;
- class StringBuilder;
  
- using CodecParameterMap = std::map<std::string, std::string>;
++#if defined(__GNUC__) && defined(WEBRTC_MOZILLA_BUILD)
++// Mozilla linux builds are using -std=gnu++20, which doesn't approve
++// of using std::string in a constexpr.  PipewireVersion now contains
++// std::string as of libwebrtc commit d167fe9296.
++static const PipeWireVersion kReentrantDeinitMinVersion = {.major = 0,
++                                                           .minor = 3,
++                                                           .micro = 49};
++#else
+ constexpr PipeWireVersion kReentrantDeinitMinVersion = {.major = 0,
+                                                         .minor = 3,
+                                                         .micro = 49};
++#endif
+ 
+ PipeWireVersion PipeWireVersion::Parse(const std::string_view& version) {
+   std::vector<std::string_view> parsed_version = split(version, '.');

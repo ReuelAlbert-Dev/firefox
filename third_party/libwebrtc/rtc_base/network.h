@@ -15,14 +15,15 @@
 
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "absl/base/nullability.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
-#include "api/array_view.h"
 #include "api/environment/environment.h"
 #include "api/field_trials_view.h"
 #include "api/scoped_refptr.h"
@@ -70,7 +71,6 @@ std::string MakeNetworkKey(absl::string_view name,
 // Utility function that attempts to determine an adapter type by an interface
 // name (e.g., "wlan0"). Can be used by NetworkManager subclasses when other
 // mechanisms fail to determine the type.
-RTC_EXPORT AdapterType GetAdapterTypeFromName(absl::string_view network_name);
 RTC_EXPORT AdapterType GetAdapterTypeFromName(absl::string_view network_name);
 
 class DefaultLocalAddressProvider {
@@ -126,6 +126,13 @@ class RTC_EXPORT NetworkManager : public DefaultLocalAddressProvider,
                                   public MdnsResponderProvider {
  public:
   NetworkManager() = default;
+  // NetworksChangedCallback joins the removal tag and the callable.
+  struct NetworksChangedCallback {
+    const void* removal_tag;
+    absl::AnyInvocable<void()> callback;
+  };
+
+  explicit NetworkManager(NetworksChangedCallback callback);
   // This enum indicates whether adapter enumeration is allowed.
   enum EnumerationPermission {
     ENUMERATION_ALLOWED,  // Adapter enumeration is allowed. Getting 0 network
@@ -187,11 +194,12 @@ class RTC_EXPORT NetworkManager : public DefaultLocalAddressProvider,
 
   // The implementation of the Subscribe methods is in the .cc file due
   // to linking issues with Chrome.
-  void SubscribeNetworksChanged(absl::AnyInvocable<void()> callback);
+  [[deprecated]] void SubscribeNetworksChanged(
+      absl::AnyInvocable<void()> callback);
   void SubscribeNetworksChanged(void* tag, absl::AnyInvocable<void()> callback);
   void UnsubscribeNetworksChanged(void* tag);
   void NotifyNetworksChanged() { networks_changed_callbacks_.Send(); }
-  void SubscribeError(absl::AnyInvocable<void()> callback);
+  [[deprecated]] void SubscribeError(absl::AnyInvocable<void()> callback);
   void SubscribeError(void* tag, absl::AnyInvocable<void()> callback);
   void UnsubscribeError(void* tag);
   void NotifyError() { error_callbacks_.Send(); }
@@ -231,7 +239,8 @@ class RTC_EXPORT Network {
   std::unique_ptr<Network> Clone() const;
 
   // This signal is fired whenever type() or underlying_type_for_vpn() changes.
-  void SubscribeTypeChanged(absl::AnyInvocable<void(const Network*)> callback) {
+  [[deprecated]] void SubscribeTypeChanged(
+      absl::AnyInvocable<void(const Network*)> callback) {
     type_changed_callbacks_.AddReceiver(std::move(callback));
   }
   void SubscribeTypeChanged(void* tag,
@@ -246,12 +255,33 @@ class RTC_EXPORT Network {
   }
 
   // This signal is fired whenever network preference changes.
-  void SubscribeNetworkPreferenceChanged(
+  [[deprecated]] void SubscribeNetworkPreferenceChanged(
       absl::AnyInvocable<void(const Network*)> callback) {
     network_preference_changed_callbacks_.AddReceiver(std::move(callback));
   }
+  void SubscribeNetworkPreferenceChanged(
+      void* tag,
+      absl::AnyInvocable<void(const Network*)> callback) {
+    network_preference_changed_callbacks_.AddReceiver(tag, std::move(callback));
+  }
+  void UnsubscribeNetworkPreferenceChanged(void* tag) {
+    network_preference_changed_callbacks_.RemoveReceivers(tag);
+  }
   void NotifyNetworkPreferenceChanged(Network* network) {
     network_preference_changed_callbacks_.Send(network);
+  }
+
+  // This signal is fired whenever network slice changes.
+  void SubscribeNetworkSliceChanged(
+      void* tag,
+      absl::AnyInvocable<void(const Network*)> callback) {
+    network_slice_changed_callbacks_.AddReceiver(tag, std::move(callback));
+  }
+  void UnsubscribeNetworkSliceChanged(void* tag) {
+    network_slice_changed_callbacks_.RemoveReceivers(tag);
+  }
+  void NotifyNetworkSliceChanged(const Network* network) {
+    network_slice_changed_callbacks_.Send(network);
   }
 
   const DefaultLocalAddressProvider* default_local_address_provider() const {
@@ -414,8 +444,17 @@ class RTC_EXPORT Network {
     NotifyNetworkPreferenceChanged(this);
   }
 
-  static std::pair<AdapterType, bool /* vpn */> GuessAdapterFromNetworkCost(
-      int network_cost);
+  NetworkSlice network_slice() const { return network_slice_; }
+  void set_network_slice(NetworkSlice slice) {
+    if (network_slice_ == slice) {
+      return;
+    }
+    network_slice_ = slice;
+    NotifyNetworkSliceChanged(this);
+  }
+
+  static std::tuple<AdapterType, bool /* vpn */, NetworkSlice>
+  GuessAdapterFromNetworkCost(int network_cost);
 
   // Debugging description of this network
   std::string ToString() const;
@@ -437,8 +476,10 @@ class RTC_EXPORT Network {
   bool active_ = true;
   uint16_t id_ = 0;
   NetworkPreference network_preference_ = NetworkPreference::NEUTRAL;
+  NetworkSlice network_slice_ = NetworkSlice::NO_SLICE;
   CallbackList<const Network*> type_changed_callbacks_;
   CallbackList<const Network*> network_preference_changed_callbacks_;
+  CallbackList<const Network*> network_slice_changed_callbacks_;
   friend class NetworkManager;
 };
 
@@ -446,6 +487,7 @@ class RTC_EXPORT Network {
 class RTC_EXPORT NetworkManagerBase : public NetworkManager {
  public:
   NetworkManagerBase();
+  explicit NetworkManagerBase(NetworksChangedCallback callback);
 
   std::vector<const Network*> GetNetworks() const override;
   std::vector<const Network*> GetAnyAddressNetworks() override;
@@ -456,7 +498,7 @@ class RTC_EXPORT NetworkManagerBase : public NetworkManager {
 
   // Check if MAC address in |bytes| is one of the pre-defined
   // MAC addresses for know VPNs.
-  static bool IsVpnMacAddress(ArrayView<const uint8_t> address);
+  static bool IsVpnMacAddress(std::span<const uint8_t> address);
 
  protected:
   // Updates `networks_` with the networks listed in `list`. If
@@ -521,7 +563,13 @@ class RTC_EXPORT BasicNetworkManager : public NetworkManagerBase,
       SocketFactory* absl_nonnull socket_factory,
       NetworkMonitorFactory* absl_nullable network_monitor_factory = nullptr);
 
-  ~BasicNetworkManager();
+  BasicNetworkManager(
+      const Environment& env,
+      SocketFactory* absl_nonnull socket_factory,
+      NetworksChangedCallback callback,
+      NetworkMonitorFactory* absl_nullable network_monitor_factory = nullptr);
+
+  ~BasicNetworkManager() override;
 
   void StartUpdating() override;
   void StopUpdating() override;
@@ -611,6 +659,5 @@ class RTC_EXPORT BasicNetworkManager : public NetworkManagerBase,
 };
 
 }  //  namespace webrtc
-
 
 #endif  // RTC_BASE_NETWORK_H_

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,6 +18,7 @@
 #include "mozilla/FileUtils.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/intl/Localization.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/widget/WinTaskbar.h"
 #include "mozilla/WindowsVersion.h"
@@ -36,6 +36,7 @@
 #include "nsIOutputStream.h"
 #include "nsIPrefService.h"
 #include "nsIStringBundle.h"
+#include "nsITimer.h"
 #include "nsIWindowsRegKey.h"
 #include "nsIXULAppInfo.h"
 #include "nsLocalFile.h"
@@ -44,11 +45,14 @@
 #include "nsProxyRelease.h"
 #include "nsServiceManagerUtils.h"
 #include "nsShellService.h"
+#include "nsThreadUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsWindowsHelpers.h"
 #include "nsXULAppAPI.h"
 #include "Windows11TaskbarPinning.h"
 #include "WindowsDefaultBrowser.h"
+#include "WindowsUIElement.h"
+#include "WindowsUIOverlayImage.h"
 #include "WindowsUserChoice.h"
 #include "WinUtils.h"
 
@@ -57,6 +61,7 @@
 #include <mbstring.h>
 #include <objbase.h>
 #include <propkey.h>
+#include <uiautomation.h>
 #include <propvarutil.h>
 #include <shellapi.h>
 #include <strsafe.h>
@@ -223,7 +228,7 @@ static bool IsPathDefaultForClass(
   nsAutoString pathFromReg(cmdFromReg);
   nsLocalFile::CleanupCmdHandlerPath(pathFromReg);
 
-  return _wcsicmp(exePath, pathFromReg.Data()) == 0;
+  return _wcsicmp(exePath, pathFromReg.get()) == 0;
 }
 
 static bool IsMsixProgIdDefaultForClass(
@@ -454,8 +459,216 @@ nsWindowsShellService::CanSetDefaultBrowserUserChoice(bool* aResult) {
   return NS_OK;
 }
 
-nsresult nsWindowsShellService::LaunchModernSettingsDialogDefaultApps() {
+class __declspec(novtable) IOpenWithLauncher : public IUnknown {
+ public:
+  // lpszPath selects what the picker offers to set as default. It accepts
+  // several shapes:
+  //   - a file path:     "C:\\path\\to\\file.pdf"
+  //   - a file type:     ".pdf"
+  //   - a protocol:      "http"
+  //   - a protocol URI:  "https://example.com", "mailto:foo@example.com"
+  // flags determines the messaging and actions available of the
+  // IOpenWithLauncher dialog.
+  virtual HRESULT STDMETHODCALLTYPE Launch(HWND hWndParent, LPCWSTR lpszPath,
+                                           int flags) = 0;
+};
+
+NS_IMETHODIMP
+nsWindowsShellService::LaunchSetDefaultAppPicker(const nsAString& aTarget,
+                                                 int32_t aFlags) {
+  static constexpr GUID IID_IOpenWithLauncher = {
+      0x6a283fe2,
+      0xecfa,
+      0x4599,
+      {0x91, 0xc4, 0xe8, 0x09, 0x57, 0x13, 0x7b, 0x26}};
+
+  nsresult rv;
+  nsCOMPtr<nsIWindowsRegKey> regKey =
+      do_CreateInstance("@mozilla.org/windows-registry-key;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Get the CLSID from the registry.
+  rv =
+      regKey->Open(nsIWindowsRegKey::ROOT_KEY_LOCAL_MACHINE,
+                   u"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\OpenWith"_ns,
+                   nsIWindowsRegKey::ACCESS_READ);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoString value;
+  rv = regKey->ReadStringValue(u"OpenWithLauncher"_ns, value);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  CLSID CLSID_IOpenWithLauncher;
+  HRESULT hr = ::CLSIDFromString(value.get(), &CLSID_IOpenWithLauncher);
+  NS_ENSURE_HRESULT(hr, NS_ERROR_FAILURE);
+
+  RefPtr<IOpenWithLauncher> pOWL;
+  hr = CoCreateInstance(CLSID_IOpenWithLauncher, nullptr, CLSCTX_LOCAL_SERVER,
+                        IID_IOpenWithLauncher, getter_AddRefs(pOWL));
+  NS_ENSURE_HRESULT(hr, NS_ERROR_NOT_AVAILABLE);
+
+  // Make sure the dialog is foregrounded.
+  CoAllowSetForegroundWindow(pOWL, nullptr);
+
+  hr = pOWL->Launch(nullptr, PromiseFlatString(aTarget).get(), aFlags);
+
+  return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsWindowsShellService::LaunchModernSettingsDialogDefaultApps() {
   return ::LaunchModernSettingsDialogDefaultApps() ? NS_OK : NS_ERROR_FAILURE;
+}
+
+static void DisplayOverlayImageWhileVisible(
+    nsCOMPtr<nsISerialEventTarget> aSerialEventTarget,
+    RefPtr<WindowsUIElement> aElement,
+    WindowsUIOverlayImage::DisplayMode aDisplayMode) {
+  RefPtr<WindowsUIOverlayImage> overlayImage{
+      aElement->CreateOverlayImage(aDisplayMode)};
+  if (!overlayImage) {
+    return;
+  }
+
+  auto timer{std::make_shared<nsCOMPtr<nsITimer>>()};
+  auto callback{[timer, aElement, overlayImage](nsITimer* aTimer) {
+    if (aElement->IsMoving().valueOr(true)) {
+      // The element is moving
+      aTimer->Cancel();
+      return;
+    }
+
+    if (!aElement->IsVisible()) {
+      // The element isn't visible
+      aTimer->Cancel();
+      return;
+    }
+
+    if (!overlayImage->IsVisible()) {
+      // The overlay image isn't visible
+      aTimer->Cancel();
+      return;
+    }
+
+    overlayImage->AdvanceFrame();
+  }};
+
+  const uint32_t kDelayMs{30};
+  NS_NewTimerWithCallback(getter_AddRefs(*timer), callback, kDelayMs,
+                          nsITimer::TYPE_REPEATING_SLACK,
+                          "DisplayOverlayImageWhileVisibleTimer"_ns,
+                          aSerialEventTarget);
+}
+
+static void DisplayOverlayImageWhenElementIsStill(
+    nsCOMPtr<nsISerialEventTarget> aSerialEventTarget,
+    RefPtr<WindowsUIElement> aElement,
+    WindowsUIOverlayImage::DisplayMode aDisplayMode) {
+  auto timer{std::make_shared<nsCOMPtr<nsITimer>>()};
+  auto attempts{std::make_shared<int>(0)};
+  auto callback{[timer, attempts, aSerialEventTarget, aElement,
+                 aDisplayMode](nsITimer* aTimer) {
+    const int kMaxAttempts{10};
+    if (++(*attempts) > kMaxAttempts) {
+      // Maximum number of attempts reached
+      aTimer->Cancel();
+      return;
+    }
+
+    if (aElement->IsMoving().valueOr(true)) {
+      // The element is moving
+      return;
+    }
+
+    // The element is still
+    aTimer->Cancel();
+
+    DisplayOverlayImageWhileVisible(aSerialEventTarget, aElement, aDisplayMode);
+  }};
+
+  const uint32_t kTrackingDelayMs{500};
+  NS_NewTimerWithCallback(getter_AddRefs(*timer), callback, kTrackingDelayMs,
+                          nsITimer::TYPE_REPEATING_SLACK,
+                          "DisplayOverlayImageWhenElementIsStillTimer"_ns,
+                          aSerialEventTarget);
+}
+
+static mozilla::Maybe<WindowsUIOverlayImage::DisplayMode>
+GetDisplayKitImagePref() {
+  if (!mozilla::IsWin11OrLater()) {
+    // The feature is only available in Win11
+    return mozilla::Nothing();
+  }
+
+  nsAutoString pref;
+  Preferences::GetString(
+      "browser.shell.displayKitImageBehindSetDefaultBrowserButton", pref);
+
+  if (pref.EqualsIgnoreCase("static")) {
+    return mozilla::Some(WindowsUIOverlayImage::DisplayMode::Static);
+  }
+  if (pref.EqualsIgnoreCase("animated")) {
+    return mozilla::Some(WindowsUIOverlayImage::DisplayMode::Animated);
+  }
+  return mozilla::Nothing();
+}
+
+static bool GetFocusPref() {
+  return Preferences::GetBool("browser.shell.focusSetDefaultBrowserButton",
+                              false);
+}
+
+static void HighlightSetDefaultBrowserButton() {
+  const bool focus{GetFocusPref()};
+  const mozilla::Maybe<WindowsUIOverlayImage::DisplayMode> displayMode{
+      GetDisplayKitImagePref()};
+  if (!focus && displayMode.isNothing()) {
+    return;
+  }
+
+  nsCOMPtr<nsISerialEventTarget> serialEventTarget;
+  const nsresult nsr{
+      NS_CreateBackgroundTaskQueue("HighlightSetDefaultBrowserButtonQueue",
+                                   getter_AddRefs(serialEventTarget))};
+  if (NS_FAILED(nsr)) {
+    return;
+  }
+
+  auto timer{std::make_shared<nsCOMPtr<nsITimer>>()};
+  auto attempts{std::make_shared<int>(0)};
+  auto callback{[timer, attempts, focus, displayMode,
+                 serialEventTarget](nsITimer* aTimer) {
+    const int kMaxAttempts{40};
+    if (++(*attempts) > kMaxAttempts) {
+      // Maximum number of attempts reached
+      aTimer->Cancel();
+      return;
+    }
+
+    auto [window, button]{FindSetDefaultBrowserButton()};
+    if (!window || !button) {
+      // The window or button cannot be found
+      return;
+    }
+
+    // The window and button are found
+    aTimer->Cancel();
+
+    RefPtr<WindowsUIElement> element{new WindowsUIElement(window, button)};
+    if (focus) {
+      element->Focus();
+    }
+    if (displayMode.isSome()) {
+      DisplayOverlayImageWhenElementIsStill(serialEventTarget, element,
+                                            *displayMode);
+    }
+  }};
+
+  const uint32_t kRetryDelayMs{500};
+  NS_NewTimerWithCallback(getter_AddRefs(*timer), callback, kRetryDelayMs,
+                          nsITimer::TYPE_REPEATING_SLACK,
+                          "HighlightSetDefaultBrowserButtonTimer"_ns,
+                          serialEventTarget);
 }
 
 NS_IMETHODIMP
@@ -479,9 +692,11 @@ nsWindowsShellService::SetDefaultBrowser(bool aForAllUsers) {
 
   if (NS_SUCCEEDED(rv)) {
     rv = LaunchModernSettingsDialogDefaultApps();
-    // The above call should never really fail, but just in case
-    // fall back to showing control panel for all defaults
-    if (NS_FAILED(rv)) {
+    if (NS_SUCCEEDED(rv)) {
+      HighlightSetDefaultBrowserButton();
+    } else {
+      // The above call should never really fail, but just in case
+      // fall back to showing control panel for all defaults
       rv = LaunchControlPanelDefaultsSelectionUI();
     }
   }
@@ -1311,7 +1526,8 @@ static nsresult GetMatchingShortcut(int aCSIDL, const nsAString& aAUMID,
     // This is a case sensitive comparison, but that's probably fine for
     // the vast majority of cases -- and certainly for all the ones where
     // a shortcut was created by the installer.
-    if (StrStrIW(findData.cFileName, aShortcutSubstring.Data()) == NULL) {
+    if (StrStrIW(findData.cFileName,
+                 PromiseFlatString(aShortcutSubstring).get()) == NULL) {
       continue;
     }
 
@@ -1501,8 +1717,7 @@ static bool IsCurrentAppPinnedToTaskbarSync(const nsAString& aumid) {
   // Right now only run this check on MSIX to avoid
   // false positives when only private browsing is pinned.
   if (widget::WinUtils::HasPackageIdentity()) {
-    auto pinWithWin11TaskbarAPIResults =
-        IsCurrentAppPinnedToTaskbarWin11(false);
+    auto pinWithWin11TaskbarAPIResults = IsCurrentAppPinnedToTaskbarWin11();
     switch (pinWithWin11TaskbarAPIResults.result) {
       case Win11PinToTaskBarResultStatus::NotPinned:
         return false;
@@ -1715,7 +1930,8 @@ static nsresult ManageShortcutTaskbarPins(bool aCheckOnly, bool aPinType,
 
 static nsresult PinShortcutToTaskbarImpl(bool aCheckOnly,
                                          const nsAString& aAppUserModelId,
-                                         const nsAString& aShortcutPath) {
+                                         const nsAString& aShortcutPath,
+                                         const bool aFireAndForget = false) {
   // Verify shortcut is visible to `shell:appsfolder`. Shortcut creation -
   // during install or runtime - causes a race between it propagating to the
   // virtual `shell:appsfolder` and attempts to pin via `ITaskbarManager`,
@@ -1728,7 +1944,7 @@ static nsresult PinShortcutToTaskbarImpl(bool aCheckOnly,
   }
 
   auto pinWithWin11TaskbarAPIResults =
-      PinCurrentAppToTaskbarWin11(aCheckOnly, aAppUserModelId);
+      PinCurrentAppToTaskbarWin11(aCheckOnly, aAppUserModelId, aFireAndForget);
   switch (pinWithWin11TaskbarAPIResults.result) {
     case Win11PinToTaskBarResultStatus::NotSupported:
       // Fall through to the win 10 mechanism
@@ -1934,9 +2150,10 @@ static bool PollAppsFolderForShortcut(const nsAString& aAppUserModelId,
 }
 
 static nsresult PinCurrentAppToTaskbarImpl(
-    bool aCheckOnly, bool aPrivateBrowsing, const nsAString& aAppUserModelId,
-    const nsAString& aShortcutName, const nsAString& aShortcutSubstring,
-    nsIFile* aGreDir, const ShortcutLocations& location) {
+    bool aCheckOnly, bool aPrivateBrowsing, const bool aFireAndForget,
+    const nsAString& aAppUserModelId, const nsAString& aShortcutName,
+    const nsAString& aShortcutSubstring, nsIFile* aGreDir,
+    const ShortcutLocations& location) {
   MOZ_DIAGNOSTIC_ASSERT(
       !NS_IsMainThread(),
       "PinCurrentAppToTaskbarImpl should be called off main thread only");
@@ -1986,13 +2203,13 @@ static nsresult PinCurrentAppToTaskbarImpl(
       return NS_ERROR_FILE_NOT_FOUND;
     }
   }
-  return PinShortcutToTaskbarImpl(aCheckOnly, aAppUserModelId, shortcutPath);
+  return PinShortcutToTaskbarImpl(aCheckOnly, aAppUserModelId, shortcutPath,
+                                  aFireAndForget);
 }
 
-static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
-                                                bool aPrivateBrowsing,
-                                                JSContext* aCx,
-                                                dom::Promise** aPromise) {
+static nsresult PinCurrentAppToTaskbarAsyncImpl(
+    bool aCheckOnly, bool aPrivateBrowsing, JSContext* aCx,
+    dom::Promise** aPromise, const bool aFireAndForget = false) {
   if (!NS_IsMainThread()) {
     return NS_ERROR_NOT_SAME_THREAD;
   }
@@ -2058,8 +2275,8 @@ static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
   NS_DispatchBackgroundTask(
       NS_NewRunnableFunction(
           "CheckPinCurrentAppToTaskbarAsync",
-          [aCheckOnly, aPrivateBrowsing, shortcutName, aumid = nsString{aumid},
-           greDir, location = std::move(location),
+          [aCheckOnly, aPrivateBrowsing, aFireAndForget, shortcutName,
+           aumid = nsString{aumid}, greDir, location = std::move(location),
            promiseHolder = std::move(promiseHolder)] {
             nsresult rv = NS_ERROR_FAILURE;
             HRESULT hr = CoInitialize(nullptr);
@@ -2068,8 +2285,8 @@ static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
               nsAutoString shortcutSubstring;
               shortcutSubstring.AssignLiteral(MOZ_APP_DISPLAYNAME);
               rv = PinCurrentAppToTaskbarImpl(
-                  aCheckOnly, aPrivateBrowsing, aumid, shortcutName,
-                  shortcutSubstring, greDir.get(), location);
+                  aCheckOnly, aPrivateBrowsing, aFireAndForget, aumid,
+                  shortcutName, shortcutSubstring, greDir.get(), location);
               CoUninitialize();
             }
 
@@ -2093,10 +2310,11 @@ static nsresult PinCurrentAppToTaskbarAsyncImpl(bool aCheckOnly,
 
 NS_IMETHODIMP
 nsWindowsShellService::PinCurrentAppToTaskbarAsync(bool aPrivateBrowsing,
+                                                   bool aFireAndForget,
                                                    JSContext* aCx,
                                                    dom::Promise** aPromise) {
   return PinCurrentAppToTaskbarAsyncImpl(
-      /* aCheckOnly */ false, aPrivateBrowsing, aCx, aPromise);
+      /* aCheckOnly */ false, aPrivateBrowsing, aCx, aPromise, aFireAndForget);
 }
 
 NS_IMETHODIMP

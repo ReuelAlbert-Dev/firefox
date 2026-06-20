@@ -5,10 +5,11 @@
 package org.mozilla.fenix.tabgroups
 
 import androidx.compose.animation.rememberSplineBasedDecay
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxWithConstraintsScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,48 +23,52 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewParameter
 import androidx.compose.ui.tooling.preview.PreviewParameterProvider
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import mozilla.components.browser.state.state.createTab
-import mozilla.components.compose.base.RadioCheckmarkColors
+import mozilla.components.compose.base.annotation.FlexibleWindowLightDarkPreview
 import mozilla.components.compose.base.theme.surfaceDimVariant
 import mozilla.components.support.base.utils.MAX_URI_LENGTH
-import mozilla.components.support.utils.ext.isLandscape
 import mozilla.components.ui.colors.PhotonColors
 import org.mozilla.fenix.compose.SwipeToDismissState2
 import org.mozilla.fenix.compose.TabThumbnail
 import org.mozilla.fenix.compose.TabThumbnailImageData
 import org.mozilla.fenix.tabstray.TabsTrayTestTag
 import org.mozilla.fenix.tabstray.TabsTrayTestTag.TAB_GROUP_TITLE
+import org.mozilla.fenix.tabstray.browser.compose.TabItemInteractionState
 import org.mozilla.fenix.tabstray.data.TabGroupTheme
 import org.mozilla.fenix.tabstray.data.TabsTrayItem
 import org.mozilla.fenix.tabstray.ui.tabitems.LOREM_IPSUM
 import org.mozilla.fenix.tabstray.ui.tabitems.MultiSelectTabButton
-import org.mozilla.fenix.tabstray.ui.tabitems.TabContentCardShape
 import org.mozilla.fenix.tabstray.ui.tabitems.TabGridTabItem
 import org.mozilla.fenix.tabstray.ui.tabitems.TabGroupMenuButton
 import org.mozilla.fenix.tabstray.ui.tabitems.TabHeaderIconTouchTargetSize
 import org.mozilla.fenix.tabstray.ui.tabitems.TabsTrayItemClickHandler
 import org.mozilla.fenix.tabstray.ui.tabitems.TabsTrayItemSelectionState
-import org.mozilla.fenix.tabstray.ui.tabitems.ThumbnailShape
 import org.mozilla.fenix.tabstray.ui.tabitems.gridItemAspectRatio
+import org.mozilla.fenix.tabstray.ui.tabitems.tabContentCardShape
+import org.mozilla.fenix.tabstray.ui.tabitems.tabGridItemContainerColor
 import org.mozilla.fenix.tabstray.ui.tabitems.tabItemClickable
+import org.mozilla.fenix.tabstray.ui.tabitems.tabItemConditionalBorder
+import org.mozilla.fenix.tabstray.ui.tabitems.tabItemGridInteractionAnimation
+import org.mozilla.fenix.tabstray.ui.tabitems.thumbnailShape
 import org.mozilla.fenix.theme.FirefoxTheme
 
 const val TOP_START_THUMBNAIL_INDEX = 0
@@ -77,7 +82,10 @@ const val BOTTOM_END_THUMBNAIL_INDEX = 3
  * @param selectionState: The tab selection state.
  * @param clickHandler: Handler for all click-handling inputs (long click, click, etc)
  * @param modifier: The Modifier
- * @param thumbnailSizePx: The size of each thumbnail in px.
+ * @param interactionState The tab item's interaction state (hover, drag, etc)
+ * @param onDeleteTabGroupClick Invoked when the user clicks on delete tab group.
+ * @param onEditTabGroupClick Invoked when the user clicks to edit the tab group.
+ * @param onCloseTabGroupClick Invoked when the user clicks to close the tab group.
  */
 @Composable
 fun TabGroupCard(
@@ -85,32 +93,34 @@ fun TabGroupCard(
     selectionState: TabsTrayItemSelectionState,
     clickHandler: TabsTrayItemClickHandler,
     modifier: Modifier = Modifier,
-    thumbnailSizePx: Int,
+    interactionState: TabItemInteractionState,
+    onDeleteTabGroupClick: (TabsTrayItem.TabGroup) -> Unit,
+    onEditTabGroupClick: () -> Unit,
+    onCloseTabGroupClick: () -> Unit,
 ) {
+    val containerColor = tabGridItemContainerColor(selectionState)
+
     Box(
         modifier = modifier
             .wrapContentSize()
+            .tabItemGridInteractionAnimation(interactionState)
             .testTag(TabsTrayTestTag.TAB_ITEM_ROOT),
     ) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(TabContentCardShape)
+                .clip(tabContentCardShape)
                 .tabItemClickable(
                     clickHandler = clickHandler,
                     clickedItem = group,
                 ),
-            shape = TabContentCardShape,
-            border = if (selectionState.isFocused) {
-                BorderStroke(width = 4.dp, color = MaterialTheme.colorScheme.tertiary)
-            } else {
-                null
-            },
+            shape = tabContentCardShape,
+            border = tabItemConditionalBorder(selectionState),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                containerColor = containerColor,
             ),
         ) {
-            Column {
+            Column(modifier = Modifier.aspectRatio(gridItemAspectRatio)) {
                 // Title Row
                 Row(
                     modifier = Modifier
@@ -119,42 +129,45 @@ fun TabGroupCard(
                         .wrapContentHeight(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Spacer(
-                        modifier = Modifier
-                            .width(FirefoxTheme.layout.space.static100),
-                    )
+                    CompositionLocalProvider(LocalContentColor provides group.theme.onPrimary) {
+                        Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static100))
 
-                    Text(
-                        text = group.title.take(MAX_URI_LENGTH),
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag(TAB_GROUP_TITLE),
-                        color = group.theme.onPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = FirefoxTheme.typography.caption,
-                    )
+                        Text(
+                            text = group.title.take(MAX_URI_LENGTH),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag(TAB_GROUP_TITLE),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = FirefoxTheme.typography.caption,
+                        )
 
-                    Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static50))
+                        Spacer(modifier = Modifier.width(FirefoxTheme.layout.space.static50))
 
-                    TabGroupOptionButton(groupTheme = group.theme, selectionState = selectionState)
+                        TabGroupOptionButton(
+                            selectionState = selectionState,
+                            onDeleteTabGroupClick = { onDeleteTabGroupClick(group) },
+                            onEditTabGroupClick = onEditTabGroupClick,
+                            onCloseTabGroupClick = onCloseTabGroupClick,
+                        )
+                    }
                 }
 
-                Spacer(
-                    modifier = Modifier
-                        .height(FirefoxTheme.layout.space.static25),
-                )
+                Spacer(modifier = Modifier.height(FirefoxTheme.layout.space.static25))
 
                 // 4x4 Thumbnail Grid
                 Card(
                     modifier = Modifier
-                        .aspectRatio(gridItemAspectRatio)
-                        .padding(horizontal = FirefoxTheme.layout.space.static50),
-                    shape = ThumbnailShape,
+                        .padding(
+                            start = FirefoxTheme.layout.space.static50,
+                            end = FirefoxTheme.layout.space.static50,
+                            bottom = FirefoxTheme.layout.space.static50,
+                        ),
+                    shape = thumbnailShape,
                 ) {
                     ThumbnailsGridView(
                         thumbnails = group.thumbnails,
-                        thumbnailSizePx = thumbnailSizePx,
+                        containerColor = containerColor,
                     )
                 }
 
@@ -168,128 +181,156 @@ fun TabGroupCard(
  * Renders the button in the top-right corner of the TabGroupCard.
  */
 @Composable
-private fun TabGroupOptionButton(groupTheme: TabGroupTheme, selectionState: TabsTrayItemSelectionState) {
+private fun TabGroupOptionButton(
+    selectionState: TabsTrayItemSelectionState,
+    onDeleteTabGroupClick: () -> Unit,
+    onEditTabGroupClick: () -> Unit,
+    onCloseTabGroupClick: () -> Unit,
+) {
     if (selectionState.multiSelectEnabled) {
         MultiSelectTabButton(
             isSelected = selectionState.isSelected,
-            isActive = selectionState.isFocused,
-            activeColors = RadioCheckmarkColors.default(),
-            uncheckedBorderColor = groupTheme.onPrimary,
+            uncheckedBorderColor = LocalContentColor.current,
         )
     } else {
-        TabGroupMenuButton(modifier = Modifier.size(TabHeaderIconTouchTargetSize), includeCloseOption = true)
+        TabGroupMenuButton(
+            modifier = Modifier.size(TabHeaderIconTouchTargetSize),
+            includeCloseOption = true,
+            onDeleteTabGroupClick = onDeleteTabGroupClick,
+            onEditTabGroupClick = onEditTabGroupClick,
+            onCloseTabGroupClick = onCloseTabGroupClick,
+        )
     }
 }
 
 /**
- * * Renders up to 4 Tab thumbnails in a 2x2 grid.
+ * Determines the dimensions of the group thumbnails, which
+ * should each occupy one quarter of a thumbnail's size, by halving
+ * each dimension and subtracting the required padding.
+ * Returns the results as a Pair with the first element the width in Dp
+ * and the second element the height in Dp.
+ */
+private val BoxWithConstraintsScope.groupThumbnailDimens: ThumbnailDimensions
+    @ReadOnlyComposable
+    @Composable
+    get() {
+        return ThumbnailDimensions(
+            width = Width((this.maxWidth - FirefoxTheme.layout.space.static25) / 2),
+            height = Height((this.maxHeight - FirefoxTheme.layout.space.static25) / 2),
+        )
+    }
+
+private val BoxWithConstraintsScope.groupThumbnailSizePx: Int
+    @ReadOnlyComposable
+    @Composable
+    get() {
+        return with(LocalDensity.current) {
+            maxOf(groupThumbnailDimens.width, groupThumbnailDimens.height).roundToPx()
+        }
+    }
+
+/**
+ * Renders up to 4 Tab thumbnails in a 2x2 grid.
+ * Note that the aspect ratio is not set because these thumbnails
+ * size themselves to fit the available space.
  * @param thumbnails: List of thumbnails.  May be empty, or up to size 4.
- * @param thumbnailSizePx: The size of each thumbnail in px.
  * @param modifier: Modifier parameter
- * @param aspectRatio: The aspect ratio for the tab group thumbnail.
+ * @param containerColor: Background Color of the thumbnails grid.
  */
 @Composable
 fun ThumbnailsGridView(
     thumbnails: List<TabThumbnailImageData>,
-    thumbnailSizePx: Int,
     modifier: Modifier = Modifier,
-    aspectRatio: Float = groupThumbnailItemAspectRatio,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(color = MaterialTheme.colorScheme.surfaceContainerHighest),
-        verticalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
-    ) {
-        Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
+    BoxWithConstraints {
+        val groupThumbnailDimens = groupThumbnailDimens
+        val thumbnailSizePx = groupThumbnailSizePx
+        Column(
+            modifier = modifier
+                .fillMaxWidth()
+                .background(color = containerColor),
+            verticalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
         ) {
-            TabGroupThumbnail(
-                tabThumbnailImageData = thumbnails.getOrNull(TOP_START_THUMBNAIL_INDEX),
-                thumbnailSizePx = thumbnailSizePx,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_FIRST),
-                aspectRatio = aspectRatio,
-            )
-            TabGroupThumbnail(
-                tabThumbnailImageData = thumbnails.getOrNull(TOP_END_THUMBNAIL_INDEX),
-                thumbnailSizePx = thumbnailSizePx,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_SECOND),
-                aspectRatio = aspectRatio,
-            )
-        }
-
-        Row(
-            modifier =
-                Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
-        ) {
-            TabGroupThumbnail(
-                tabThumbnailImageData = thumbnails.getOrNull(BOTTOM_START_THUMBNAIL_INDEX),
-                thumbnailSizePx = thumbnailSizePx,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_THIRD),
-                aspectRatio = aspectRatio,
-            )
-            TabGroupThumbnail(
-                tabThumbnailImageData = thumbnails.getOrNull(BOTTOM_END_THUMBNAIL_INDEX),
-                thumbnailSizePx = thumbnailSizePx,
-                modifier = Modifier
-                    .weight(1f)
-                    .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_FOURTH),
-                aspectRatio = aspectRatio,
-            )
+            Row(
+                modifier =
+                    Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
+            ) {
+                TabGroupThumbnail(
+                    tabThumbnailImageData = thumbnails.getOrNull(TOP_START_THUMBNAIL_INDEX),
+                    thumbnailSizePx = thumbnailSizePx,
+                    modifier = Modifier
+                        .width(groupThumbnailDimens.width)
+                        .height(groupThumbnailDimens.height)
+                        .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_FIRST),
+                )
+                TabGroupThumbnail(
+                    tabThumbnailImageData = thumbnails.getOrNull(TOP_END_THUMBNAIL_INDEX),
+                    thumbnailSizePx = thumbnailSizePx,
+                    modifier = Modifier
+                        .width(groupThumbnailDimens.width)
+                        .height(groupThumbnailDimens.height)
+                        .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_SECOND),
+                )
+            }
+            Row(
+                modifier =
+                    Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(FirefoxTheme.layout.space.static25),
+            ) {
+                TabGroupThumbnail(
+                    tabThumbnailImageData = thumbnails.getOrNull(BOTTOM_START_THUMBNAIL_INDEX),
+                    thumbnailSizePx = thumbnailSizePx,
+                    modifier = Modifier
+                        .width(groupThumbnailDimens.width)
+                        .height(groupThumbnailDimens.height)
+                        .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_THIRD),
+                )
+                TabGroupThumbnail(
+                    tabThumbnailImageData = thumbnails.getOrNull(BOTTOM_END_THUMBNAIL_INDEX),
+                    thumbnailSizePx = thumbnailSizePx,
+                    modifier = Modifier
+                        .width(groupThumbnailDimens.width)
+                        .height(groupThumbnailDimens.height)
+                        .testTag(TabsTrayTestTag.TAB_GROUP_THUMBNAIL_FOURTH),
+                )
+            }
         }
     }
 }
 
 /**
- * A TabGroup has anywhere from 0 to 4 thumbnail images.
+ * A ExpandedTabGroup has anywhere from 0 to 4 thumbnail images.
  * Renders a thumbnail image if thumbnail image data is available,
  * or an empty box if the thumbnail image data is null.
  *
  * @param tabThumbnailImageData: thumbnail image data (may be null)
  * @param thumbnailSizePx: the size of each thumbnail in px
  * @param modifier: The modifier
- * @param aspectRatio: The aspect ratio for the tab group thumbnail.
  */
 @Composable
 private fun TabGroupThumbnail(
     tabThumbnailImageData: TabThumbnailImageData?,
     thumbnailSizePx: Int,
     modifier: Modifier = Modifier,
-    aspectRatio: Float = groupThumbnailItemAspectRatio,
 ) {
     if (tabThumbnailImageData != null) {
         TabThumbnail(
             tabThumbnailImageData = tabThumbnailImageData,
             thumbnailSizePx = thumbnailSizePx,
             shape = RectangleShape,
-            modifier = modifier
-                .aspectRatio(aspectRatio),
+            modifier = modifier,
         )
     } else {
         Box(
             modifier = modifier
-                .background(color = MaterialTheme.colorScheme.surfaceDimVariant)
-                .aspectRatio(aspectRatio),
+                .background(color = MaterialTheme.colorScheme.surfaceDimVariant),
         )
     }
 }
 
 private data class TabGroupCardPreviewState(
-    val group: TabsTrayItem.TabGroup = TabsTrayItem.TabGroup(
-        title = "Tab Group Item",
-        theme = TabGroupTheme.default,
-        tabs = hashSetOf(),
-        closed = false,
-    ),
     val title: String = "Group 1",
     val color: Color = PhotonColors.Pink70,
     val selectionState: TabsTrayItemSelectionState =
@@ -299,11 +340,29 @@ private data class TabGroupCardPreviewState(
             multiSelectEnabled = false,
         ),
     val groupSize: Int,
+    val group: TabsTrayItem.TabGroup = TabsTrayItem.TabGroup(
+        title = "Tab Group Item",
+        theme = TabGroupTheme.default,
+        closed = false,
+        tabs = List(groupSize) { index ->
+            TabsTrayItem.Tab(
+                id = "Tab$index",
+                title = "Tab $index",
+                url = "mozilla.org",
+                inactive = false,
+                private = false,
+                icon = null,
+                lastAccess = 0L,
+                isFocused = false,
+            )
+        }.toMutableList(),
+    ),
+    val interactionState: TabItemInteractionState = TabItemInteractionState(),
 )
 
 private class TabGroupCardPreviewProvider : PreviewParameterProvider<TabGroupCardPreviewState> {
     val data = listOf(
-        Pair("Empty", TabGroupCardPreviewState(groupSize = 4)),
+        Pair("Empty", TabGroupCardPreviewState(groupSize = 0)),
         Pair("1 Tab", TabGroupCardPreviewState(groupSize = 1)),
         Pair("2 Tabs", TabGroupCardPreviewState(groupSize = 2)),
         Pair("3 Tabs", TabGroupCardPreviewState(groupSize = 3)),
@@ -364,6 +423,32 @@ private class TabGroupCardPreviewProvider : PreviewParameterProvider<TabGroupCar
                 groupSize = 4,
             ),
         ),
+        Pair(
+            "Dragged",
+            TabGroupCardPreviewState(
+                selectionState =
+                    TabsTrayItemSelectionState(
+                        isFocused = false,
+                        isSelected = false,
+                        multiSelectEnabled = false,
+                    ),
+                groupSize = 4,
+                interactionState = TabItemInteractionState(isDragged = true),
+            ),
+        ),
+        Pair(
+            "Hovered by item",
+            TabGroupCardPreviewState(
+                selectionState =
+                    TabsTrayItemSelectionState(
+                        isFocused = false,
+                        isSelected = false,
+                        multiSelectEnabled = false,
+                    ),
+                groupSize = 4,
+                interactionState = TabItemInteractionState(isHoveredByItem = true),
+            ),
+        ),
     )
 
     override val values: Sequence<TabGroupCardPreviewState>
@@ -398,67 +483,16 @@ private fun ThumbnailsGridViewPreview(
     thumbnails: List<TabThumbnailImageData>,
 ) {
     FirefoxTheme {
-        ThumbnailsGridView(thumbnails = thumbnails, thumbnailSizePx = 12)
-    }
-}
-
-@Preview(device = "id:pixel_tablet")
-@Composable
-private fun TabGroupCardTablet() {
-    FirefoxTheme {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            TabGridTabItem(
-                tab = TabsTrayItem.Tab(
-                    createTab(
-                        url = "about:home",
-                        title = "Tab Item",
-                    ),
-                ),
-                modifier = Modifier.weight(1f),
-                thumbnailSizePx = 50,
-                selectionState = TabsTrayItemSelectionState(
-                    isSelected = false,
-                    isFocused = false,
-                    multiSelectEnabled = false,
-                ),
-                swipeState = SwipeToDismissState2(
-                    density = LocalDensity.current,
-                    isRtl = false,
-                    decayAnimationSpec = rememberSplineBasedDecay(),
-                ),
-                onClick = {},
-                onCloseClick = {},
-            )
-            TabGroupCard(
-                group = TabsTrayItem.TabGroup(
-                    title = "Tab Group Item",
-                    theme = TabGroupTheme.default,
-                    tabs = hashSetOf(),
-                    closed = false,
-                ),
-                selectionState = TabsTrayItemSelectionState(
-                    isSelected = false,
-                    isFocused = false,
-                    multiSelectEnabled = false,
-                ),
-                thumbnailSizePx = 12,
-                clickHandler = TabsTrayItemClickHandler(
-                    enabled = true,
-                    onClick = { item: TabsTrayItem -> {} },
-                    onCloseClick = { item: TabsTrayItem -> {} },
-                    onLongClick = { item: TabsTrayItem -> {} },
-                ),
-                modifier = Modifier.weight(1f),
+        Box(modifier = Modifier.size(100.dp)) {
+            ThumbnailsGridView(
+                thumbnails = thumbnails,
             )
         }
     }
 }
 
-@PreviewLightDark
+// Groups are not supported in Private mode.
+@FlexibleWindowLightDarkPreview
 @Composable
 private fun TabGroupCardPreview(
     @PreviewParameter(TabGroupCardPreviewProvider::class) tabGroupCardState: TabGroupCardPreviewState,
@@ -488,19 +522,23 @@ private fun TabGroupCardPreview(
                 ),
                 onCloseClick = {},
                 onClick = {},
+                interactionState = tabGroupCardState.interactionState,
             )
 
             TabGroupCard(
                 group = tabGroupCardState.group,
                 selectionState = tabGroupCardState.selectionState,
-                thumbnailSizePx = 12,
                 clickHandler = TabsTrayItemClickHandler(
                     enabled = true,
-                    onClick = { item: TabsTrayItem -> {} },
-                    onCloseClick = { item: TabsTrayItem -> {} },
-                    onLongClick = { item: TabsTrayItem -> {} },
+                    onClick = { _: TabsTrayItem -> },
+                    onCloseClick = { _: TabsTrayItem -> },
+                    onLongClick = { _: TabsTrayItem -> },
                 ),
                 modifier = Modifier.weight(1f),
+                interactionState = tabGroupCardState.interactionState,
+                onDeleteTabGroupClick = {},
+                onEditTabGroupClick = {},
+                onCloseTabGroupClick = {},
             )
         }
     }
@@ -535,18 +573,19 @@ internal fun fakeThumbnails(limit: Int = 4): List<TabThumbnailImageData> {
     ).subList(0, limit)
 }
 
-/**
- * The width to height ratio of each group thumbnail item.
- * In landscape mode, the width to height ratio is 2:1
- * and in portrait mode, the width to height ratio is approximately 13:17.
- * This differs from the single 4:5 thumbnail in order to arrange the
- * four thumbnail grid as a unit into an approximate 4:5 ratio.
- */
-private val groupThumbnailItemAspectRatio: Float
-    @Composable
-    @ReadOnlyComposable
-    get() = if (LocalContext.current.isLandscape()) {
-        1.98f
-    } else {
-        0.76f
-    }
+@JvmInline
+private value class Width(val width: Dp)
+
+@JvmInline
+private value class Height(val height: Dp)
+
+@JvmInline
+private value class ThumbnailDimensions(private val dimensions: Pair<Width, Height>) {
+    constructor(width: Width, height: Height) : this(width to height)
+
+    val width: Dp
+        get() = this.dimensions.first.width
+
+    val height: Dp
+        get() = this.dimensions.second.height
+}

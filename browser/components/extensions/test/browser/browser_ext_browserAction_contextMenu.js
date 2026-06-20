@@ -1,5 +1,3 @@
-/* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -159,9 +157,9 @@ function openContextMenu(menuId, targetId) {
 }
 
 function waitForElementShown(element) {
-  let win = element.ownerGlobal;
+  let win = element.documentGlobal;
   let dwu = win.windowUtils;
-  return BrowserTestUtils.waitForCondition(() => {
+  return TestUtils.waitForCondition(() => {
     info("Waiting for overflow button to have non-0 size");
     let bounds = dwu.getBoundsWithoutFlushing(element);
     return bounds.width > 0 && bounds.height > 0;

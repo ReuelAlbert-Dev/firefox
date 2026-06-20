@@ -158,8 +158,8 @@ int r_assoc_destroy(r_assoc **assocp)
     for(i=0;i<assoc->size;i++)
       destroy_assoc_chain(assoc->chains[i]);
 
-    RFREE(assoc->chains);
-    RFREE(*assocp);
+    free(assoc->chains);
+    free(*assocp);
 
     return(0);
   }
@@ -174,9 +174,9 @@ static int destroy_assoc_chain(r_assoc_el *chain)
       if(chain->destroy)
 	chain->destroy(chain->data);
 
-      RFREE(chain->key);
+      free(chain->key);
 
-      RFREE(chain);
+      free(chain);
       chain=nxt;
     }
 
@@ -243,7 +243,7 @@ int r_assoc_insert(
 
       if(!(new_bucket=R_NEW(r_assoc_el)))
 	ABORT(R_NO_MEMORY);
-      if(!(new_bucket->key=(char *)RMALLOC(len)))
+      if(!(new_bucket->key=(char *)malloc(len)))
 	ABORT(R_NO_MEMORY);
       memcpy(new_bucket->key,key,len);
       new_bucket->key_len=len;
@@ -271,8 +271,8 @@ int r_assoc_insert(
     _status=0;
   abort:
     if(_status && new_bucket){
-      RFREE(new_bucket->key);
-      RFREE(new_bucket);
+      free(new_bucket->key);
+      free(new_bucket);
     }
     return(_status);
   }
@@ -363,8 +363,8 @@ int r_assoc_iter_delete(r_assoc_iterator *iter)
       iter->prev->destroy(iter->prev->data);
 
     iter->assoc->num_elements--;
-    RFREE(iter->prev->key);
-    RFREE(iter->prev);
+    free(iter->prev->key);
+    free(iter->prev);
     return(0);
   }
 

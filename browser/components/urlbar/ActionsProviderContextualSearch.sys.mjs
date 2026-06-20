@@ -104,6 +104,9 @@ class ProviderContextualSearch extends ActionsProvider {
     if (type == INSTALLED_ENGINE) {
       result.engine = engine.name;
       result.dataset = { providesSearchMode: true };
+      if (key != "matched-contextual-search") {
+        result.dataset.immediateSearch = true;
+      }
     }
 
     return new ActionsResult(result);
@@ -201,6 +204,9 @@ class ProviderContextualSearch extends ActionsProvider {
    *   Load flags. See nsIWebProgressListener.idl for possible values.
    */
   async onLocationChange(window, uri, _webProgress, _flags) {
+    if (!uri.scheme.startsWith("http")) {
+      return;
+    }
     try {
       if (this.#visitedEngineDomains.has(uri.host)) {
         this.#visitedEngineDomains.set(uri.host, true);
@@ -223,6 +229,8 @@ class ProviderContextualSearch extends ActionsProvider {
    */
   async #matchTabToSearchEngine(queryContext) {
     let searchStr = queryContext.trimmedSearchString.toLocaleLowerCase();
+    let defaultEngine = lazy.SearchService.defaultEngine;
+    let matchedEngine = null;
 
     for (let engine of await lazy.SearchService.getVisibleEngines()) {
       let engineName = engine.name.toLocaleLowerCase();
@@ -237,14 +245,29 @@ class ProviderContextualSearch extends ActionsProvider {
         ((await this.#shouldskipRecentVisitCheck(searchStr)) ||
           (await this.#engineDomainHasRecentVisits(engine.searchUrlDomain)))
       ) {
-        return {
-          type: INSTALLED_ENGINE,
-          engine,
-          key: "matched-contextual-search",
-        };
+        if (engine.name == defaultEngine.name) {
+          return {
+            type: INSTALLED_ENGINE,
+            engine,
+            key: "matched-contextual-search",
+          };
+        }
+
+        if (!matchedEngine) {
+          matchedEngine = engine;
+        }
       }
     }
-    return null;
+
+    if (!matchedEngine) {
+      return null;
+    }
+
+    return {
+      type: INSTALLED_ENGINE,
+      engine: matchedEngine,
+      key: "matched-contextual-search",
+    };
   }
 
   /*
@@ -320,7 +343,7 @@ class ProviderContextualSearch extends ActionsProvider {
       engine,
       queryContext.searchString,
       controller,
-      type == INSTALLED_ENGINE
+      this.#resultEngine.key == "matched-contextual-search"
     );
 
     if (

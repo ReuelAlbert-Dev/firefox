@@ -107,7 +107,7 @@ static void LogMixedContentMessage(
   AutoTArray<nsString, 1> params;
   CopyUTF8toUTF16(aContentLocation->GetSpecOrDefault(),
                   *params.AppendElement());
-  nsContentUtils::FormatLocalizedString(nsContentUtils::eSECURITY_PROPERTIES,
+  nsContentUtils::FormatLocalizedString(PropertiesFile::SECURITY_PROPERTIES,
                                         messageLookupKey.get(), params,
                                         localizedMsg);
 
@@ -580,6 +580,7 @@ nsresult nsMixedContentBlocker::ShouldLoad(bool aHadInsecureImageRedirect,
     case ExtContentPolicy::TYPE_WEB_TRANSPORT:
     case ExtContentPolicy::TYPE_WEB_IDENTITY:
     case ExtContentPolicy::TYPE_JSON:
+    case ExtContentPolicy::TYPE_TEXT:
       break;
 
     case ExtContentPolicy::TYPE_INVALID:

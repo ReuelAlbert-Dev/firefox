@@ -30,15 +30,12 @@
 #include "api/make_ref_counted.h"
 #include "api/peer_connection_interface.h"
 #include "api/rtc_error.h"
+#include "api/rtp_transport_factory.h"
 #include "api/scoped_refptr.h"
 #include "api/test/rtc_error_matchers.h"
 #include "api/transport/data_channel_transport_interface.h"
 #include "api/transport/enums.h"
 #include "api/units/time_delta.h"
-#include "call/payload_type.h"
-#include "call/payload_type_picker.h"
-#include "media/base/codec.h"
-#include "media/base/media_constants.h"
 #include "p2p/base/ice_transport_internal.h"
 #include "p2p/base/p2p_constants.h"
 #include "p2p/base/port_allocator.h"
@@ -48,7 +45,9 @@
 #include "p2p/dtls/dtls_transport_internal.h"
 #include "p2p/dtls/fake_dtls_transport.h"
 #include "p2p/test/fake_ice_transport.h"
+#include "p2p/test/fake_port_allocator.h"
 #include "pc/dtls_transport.h"
+#include "pc/rtp_transport.h"
 #include "pc/rtp_transport_internal.h"
 #include "pc/session_description.h"
 #include "pc/transport_stats.h"
@@ -69,6 +68,7 @@
 #include "test/create_test_field_trials.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
+#include "test/run_loop.h"
 #include "test/wait_until.h"
 
 namespace webrtc {
@@ -123,10 +123,22 @@ class JsepTransportControllerTest : public JsepTransportController::Observer,
     fake_ice_transport_factory_ = std::make_unique<FakeIceTransportFactory>();
     fake_dtls_transport_factory_ = std::make_unique<FakeDtlsTransportFactory>();
   }
+  ~JsepTransportControllerTest() override {
+    if (network_thread_ != nullptr && port_allocator_) {
+      network_thread_->BlockingCall([&] { port_allocator_ = std::nullopt; });
+    }
+  }
 
   void CreateJsepTransportController(JsepTransportController::Config config,
                                      Thread* network_thread = Thread::Current(),
                                      PortAllocator* port_allocator = nullptr) {
+    if (port_allocator == nullptr) {
+      if (!port_allocator_) {
+        port_allocator_.emplace(env_, network_thread->socketserver(),
+                                network_thread);
+      }
+      port_allocator = &*port_allocator_;
+    }
     config.transport_observer = this;
     config.rtcp_handler = [](const CopyOnWriteBuffer& packet,
                              int64_t packet_time_us) {
@@ -156,8 +168,7 @@ class JsepTransportControllerTest : public JsepTransportController::Observer,
     transport_controller_ = std::make_unique<JsepTransportController>(
         env_, signaling_thread_, network_thread, port_allocator,
         /*async_resolver_factory=*/nullptr,
-        /*lna_permission_factory=*/nullptr, payload_type_picker_,
-        std::move(config));
+        /*lna_permission_factory=*/nullptr, std::move(config));
   }
 
   std::unique_ptr<SessionDescription> CreateSessionDescriptionWithoutBundle() {
@@ -354,14 +365,13 @@ class JsepTransportControllerTest : public JsepTransportController::Observer,
       DataChannelTransportInterface* data_channel_transport) override {
     std::string str_mid(mid);
     changed_rtp_transport_by_mid_[str_mid] = rtp_transport;
-    changed_dtls_transport_by_mid_[str_mid] =
-        dtls_transport ? dtls_transport->internal() : nullptr;
+    changed_dtls_transport_by_mid_[str_mid] = dtls_transport;
     return true;
   }
 
   FieldTrials field_trials_ = CreateTestFieldTrials();
   Environment env_;
-  AutoThread main_thread_;
+  test::RunLoop main_thread_;
   // Information received from signals from transport controller.
   IceConnectionState connection_state_ = kIceConnectionConnecting;
   PeerConnectionInterface::IceConnectionState ice_connection_state_ =
@@ -384,13 +394,15 @@ class JsepTransportControllerTest : public JsepTransportController::Observer,
   std::unique_ptr<Thread> network_thread_;
   std::unique_ptr<FakeIceTransportFactory> fake_ice_transport_factory_;
   std::unique_ptr<FakeDtlsTransportFactory> fake_dtls_transport_factory_;
+  std::optional<FakePortAllocator> port_allocator_;
   Thread* const signaling_thread_ = nullptr;
   Thread* ice_signaled_on_thread_ = nullptr;
   // Used to verify the SignalRtpTransportChanged/SignalDtlsTransportChanged are
   // signaled correctly.
   std::map<std::string, RtpTransportInternal*> changed_rtp_transport_by_mid_;
-  std::map<std::string, DtlsTransportInternal*> changed_dtls_transport_by_mid_;
-  PayloadTypePicker payload_type_picker_;
+  std::map<std::string, scoped_refptr<DtlsTransport>>
+      changed_dtls_transport_by_mid_;
+  std::unique_ptr<RtpTransportFactory> custom_rtp_transport_factory_ = nullptr;
   // Transport controller needs to be destroyed first, because it may issue
   // callbacks that modify the changed_*_by_mid in the destructor.
   std::unique_ptr<JsepTransportController> transport_controller_;
@@ -440,9 +452,9 @@ TEST_F(JsepTransportControllerTest, GetDtlsTransport) {
       transport_controller_->LookupDtlsTransportByMid(kVideoMid1);
   DtlsTransport* my_transport =
       static_cast<DtlsTransport*>(dtls_transport.get());
-  EXPECT_NE(nullptr, my_transport->internal());
+  EXPECT_EQ(DtlsTransportState::kNew, my_transport->Information().state());
   transport_controller_.reset();
-  EXPECT_EQ(nullptr, my_transport->internal());
+  EXPECT_EQ(DtlsTransportState::kClosed, my_transport->Information().state());
 }
 
 TEST_F(JsepTransportControllerTest, GetDtlsTransportWithRtcpMux) {
@@ -508,9 +520,11 @@ TEST_F(JsepTransportControllerTest, NeedIceRestart) {
   // Initially NeedsIceRestart should return false.
   EXPECT_FALSE(transport_controller_->NeedsIceRestart(kAudioMid1));
   EXPECT_FALSE(transport_controller_->NeedsIceRestart(kVideoMid1));
-  // Set the needs-ice-restart flag and verify NeedsIceRestart starts returning
-  // true.
+  // Set the needs-ice-restart flag, synchronize the transport states and verify
+  // NeedsIceRestart starts returning true.
   transport_controller_->SetNeedsIceRestartFlag();
+  transport_controller_->SetTransportStates(
+      transport_controller_->GetTransportStates_n());
   EXPECT_TRUE(transport_controller_->NeedsIceRestart(kAudioMid1));
   EXPECT_TRUE(transport_controller_->NeedsIceRestart(kVideoMid1));
   // For a nonexistent transport, false should be returned.
@@ -2335,6 +2349,32 @@ TEST_F(JsepTransportControllerTest, RejectFirstContentInBundleGroup) {
   EXPECT_EQ(nullptr, transport_controller_->GetDtlsTransport(kDataMid1));
 }
 
+TEST_F(JsepTransportControllerTest,
+       RejectMissingContentInStaleRemoteOfferBundleGroup) {
+  CreateJsepTransportController(JsepTransportController::Config());
+
+  auto local_offer = CreateSessionDescriptionWithBundleGroup();
+  std::unique_ptr<SessionDescription> remote_answer(local_offer->Clone());
+  EXPECT_TRUE(
+      transport_controller_
+          ->SetLocalDescription(SdpType::kOffer, local_offer.get(), nullptr)
+          .ok());
+  EXPECT_TRUE(transport_controller_
+                  ->SetRemoteDescription(SdpType::kAnswer, local_offer.get(),
+                                         remote_answer.get())
+                  .ok());
+
+  auto remote_reoffer = std::make_unique<SessionDescription>();
+  AddAudioSection(remote_reoffer.get(), kAudioMid1, kIceUfrag1, kIcePwd1,
+                  ICEMODE_FULL, CONNECTIONROLE_ACTPASS, nullptr);
+  remote_reoffer->contents()[0].rejected = true;
+
+  RTCError error = transport_controller_->SetRemoteDescription(
+      SdpType::kOffer, local_offer.get(), remote_reoffer.get());
+  EXPECT_FALSE(error.ok());
+  EXPECT_EQ(RTCErrorType::INVALID_PARAMETER, error.type());
+}
+
 // Tests that applying non-RTCP-mux offer would fail when kRtcpMuxPolicyRequire
 // is used.
 TEST_F(JsepTransportControllerTest, ApplyNonRtcpMuxOfferWhenMuxingRequired) {
@@ -2761,62 +2801,6 @@ TEST_F(JsepTransportControllerTest,
                   .ok());
 }
 
-TEST_F(JsepTransportControllerTest, SuggestPayloadTypeBasic) {
-  auto config = JsepTransportController::Config();
-  CreateJsepTransportController(std::move(config));
-  Codec pcmu_codec = CreateAudioCodec(-1, kPcmuCodecName, 8000, 1);
-  RTCErrorOr<PayloadType> pcmu_pt =
-      transport_controller_->SuggestPayloadType("mid", pcmu_codec);
-  ASSERT_TRUE(pcmu_pt.ok());
-  EXPECT_EQ(pcmu_pt.value(), PayloadType(0));
-}
-
-TEST_F(JsepTransportControllerTest, SuggestPayloadTypeReusesRemotePayloadType) {
-  auto config = JsepTransportController::Config();
-  CreateJsepTransportController(std::move(config));
-  const PayloadType remote_lyra_pt(99);
-  Codec remote_lyra_codec = CreateAudioCodec(remote_lyra_pt, "lyra", 8000, 1);
-  auto offer = std::make_unique<SessionDescription>();
-  AddAudioSection(offer.get(), kAudioMid1, kIceUfrag1, kIcePwd1, ICEMODE_FULL,
-                  CONNECTIONROLE_ACTPASS, nullptr);
-  offer->contents()[0].media_description()->set_codecs({remote_lyra_codec});
-  EXPECT_TRUE(transport_controller_
-                  ->SetRemoteDescription(SdpType::kOffer, nullptr, offer.get())
-                  .ok());
-  Codec local_lyra_codec = CreateAudioCodec(-1, "lyra", 8000, 1);
-  RTCErrorOr<PayloadType> lyra_pt =
-      transport_controller_->SuggestPayloadType(kAudioMid1, local_lyra_codec);
-  ASSERT_TRUE(lyra_pt.ok());
-  EXPECT_EQ(lyra_pt.value(), remote_lyra_pt);
-}
-
-TEST_F(JsepTransportControllerTest,
-       SuggestPayloadTypeAvoidsRemoteLocalConflict) {
-  auto config = JsepTransportController::Config();
-  CreateJsepTransportController(std::move(config));
-  // libwebrtc will normally allocate 110 to DTMF/48000
-  const PayloadType remote_opus_pt(110);
-  Codec remote_opus_codec = CreateAudioCodec(remote_opus_pt, "opus", 48000, 2);
-  auto offer = std::make_unique<SessionDescription>();
-  AddAudioSection(offer.get(), kAudioMid1, kIceUfrag1, kIcePwd1, ICEMODE_FULL,
-                  CONNECTIONROLE_ACTPASS, nullptr);
-  offer->contents()[0].media_description()->set_codecs({remote_opus_codec});
-  EXPECT_TRUE(transport_controller_
-                  ->SetRemoteDescription(SdpType::kOffer, nullptr, offer.get())
-                  .ok());
-  // Check that we get the Opus codec back with the remote PT
-  Codec local_opus_codec = CreateAudioCodec(-1, "opus", 48000, 2);
-  RTCErrorOr<PayloadType> local_opus_pt =
-      transport_controller_->SuggestPayloadType(kAudioMid1, local_opus_codec);
-  EXPECT_EQ(local_opus_pt.value(), remote_opus_pt);
-  // Check that we don't get 110 allocated for DTMF, since it's in use for opus
-  Codec local_other_codec = CreateAudioCodec(-1, kDtmfCodecName, 48000, 1);
-  RTCErrorOr<PayloadType> other_pt =
-      transport_controller_->SuggestPayloadType(kAudioMid1, local_other_codec);
-  ASSERT_TRUE(other_pt.ok());
-  EXPECT_NE(other_pt.value(), remote_opus_pt);
-}
-
 TEST_F(JsepTransportControllerTest, RtpTransportCountHistogramNoBundle) {
   metrics::Reset();
   CreateJsepTransportController(JsepTransportController::Config());
@@ -2898,6 +2882,63 @@ TEST_F(JsepTransportControllerTest,
                   .ok());
   // Check Role -> should still be ICEROLE_CONTROLLING.
   EXPECT_EQ(ICEROLE_CONTROLLING, fake_dtls->fake_ice_transport()->GetIceRole());
+}
+
+TEST_F(JsepTransportControllerTest, CustomRtpTransportFactory) {
+  class CustomRtpTransportFactory : public RtpTransportFactory {
+   public:
+    explicit CustomRtpTransportFactory(const FieldTrialsView& field_trials)
+        : field_trials_view_(field_trials) {}
+    std::unique_ptr<RtpTransport> CreateRtpTransport(
+        absl::string_view transport_name,
+        std::unique_ptr<DtlsTransportInternal> rtp_dtls_transport,
+        std::unique_ptr<DtlsTransportInternal> rtcp_dtls_transport) override {
+      auto transport = std::make_unique<RtpTransport>(
+          /*rtcp_mux_enabled*/ false, field_trials_view_);
+      transport->SetRtpPacketTransport(rtp_dtls_transport.get());
+      if (transport_name == kAudioMid1) {
+        audio_transport_ = transport.get();
+        audio_rtp_dtls_transport_ = std::move(rtp_dtls_transport);
+        audio_rtcp_dtls_transport_ = std::move(rtcp_dtls_transport);
+      } else if (transport_name == kVideoMid1) {
+        video_transport_ = transport.get();
+        video_rtp_dtls_transport_ = std::move(rtp_dtls_transport);
+        video_rtcp_dtls_transport_ = std::move(rtcp_dtls_transport);
+      }
+      return transport;
+    }
+
+    RtpTransport* audio_transport_;
+    RtpTransport* video_transport_;
+
+   private:
+    // These DtlsTransportInternals just need to be kept alive.
+    std::unique_ptr<DtlsTransportInternal> audio_rtp_dtls_transport_;
+    std::unique_ptr<DtlsTransportInternal> audio_rtcp_dtls_transport_;
+    std::unique_ptr<DtlsTransportInternal> video_rtp_dtls_transport_;
+    std::unique_ptr<DtlsTransportInternal> video_rtcp_dtls_transport_;
+    const FieldTrialsView& field_trials_view_;
+  };
+
+  custom_rtp_transport_factory_ =
+      std::make_unique<CustomRtpTransportFactory>(field_trials_);
+  CustomRtpTransportFactory* factory = static_cast<CustomRtpTransportFactory*>(
+      custom_rtp_transport_factory_.get());
+
+  JsepTransportController::Config config;
+  config.rtp_transport_factory = custom_rtp_transport_factory_.get();
+  CreateJsepTransportController(std::move(config));
+  auto description = CreateSessionDescriptionWithoutBundle();
+  EXPECT_TRUE(
+      transport_controller_
+          ->SetLocalDescription(SdpType::kOffer, description.get(), nullptr)
+          .ok());
+  auto audio_rtp_transport = transport_controller_->GetRtpTransport(kAudioMid1);
+  auto video_rtp_transport = transport_controller_->GetRtpTransport(kVideoMid1);
+  EXPECT_NE(nullptr, audio_rtp_transport);
+  EXPECT_EQ(factory->audio_transport_, audio_rtp_transport);
+  EXPECT_NE(nullptr, video_rtp_transport);
+  EXPECT_EQ(factory->video_transport_, video_rtp_transport);
 }
 
 }  // namespace

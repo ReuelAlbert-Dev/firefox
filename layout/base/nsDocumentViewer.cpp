@@ -170,23 +170,6 @@ class nsDocViewerSelectionListener final : public nsISelectionListener {
   bool mSelectionWasCollapsed;
 };
 
-/** editor Implementation of the FocusListener interface */
-class nsDocViewerFocusListener final : public nsIDOMEventListener {
- public:
-  explicit nsDocViewerFocusListener(nsDocumentViewer* aDocViewer)
-      : mDocViewer(aDocViewer) {}
-
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIDOMEVENTLISTENER
-
-  void Disconnect() { mDocViewer = nullptr; }
-
- protected:
-  virtual ~nsDocViewerFocusListener() = default;
-
-  nsDocumentViewer* mDocViewer;
-};
-
 namespace viewer_detail {
 
 /**
@@ -360,9 +343,6 @@ class nsDocumentViewer final : public nsIDocumentViewer,
 
   nsresult SyncParentSubDocMap();
 
-  void RemoveFocusListener();
-  void ReinitializeFocusListener();
-
   mozilla::dom::Selection* GetDocumentSelection();
 
   void DestroyPresShell();
@@ -398,7 +378,6 @@ class nsDocumentViewer final : public nsIDocumentViewer,
   RefPtr<PresShell> mPresShell;
 
   RefPtr<nsDocViewerSelectionListener> mSelectionListener;
-  RefPtr<nsDocViewerFocusListener> mFocusListener;
 
   nsCOMPtr<nsIDocumentViewer> mPreviousViewer;
   // Observer that will prevent bfcaching if it gets notified.  This
@@ -469,9 +448,8 @@ void nsDocumentViewer::PrepareToStartLoad() {
   mClosingWhilePrinting = false;
 
   // Make sure we have destroyed it and cleared the data member
-  if (mPrintJob) {
-    mPrintJob->Destroy();
-    mPrintJob = nullptr;
+  if (RefPtr job = std::move(mPrintJob)) {
+    job->Destroy();
   }
 
 #endif  // NS_PRINTING
@@ -528,13 +506,13 @@ NS_INTERFACE_MAP_END
 nsDocumentViewer::~nsDocumentViewer() {
   if (mDocument) {
     Close();
-    mDocument->Destroy();
+    nsCOMPtr doc = std::move(mDocument);
+    doc->Destroy();
   }
 
 #ifdef NS_PRINTING
-  if (mPrintJob) {
-    mPrintJob->Destroy();
-    mPrintJob = nullptr;
+  if (RefPtr job = std::move(mPrintJob)) {
+    job->Destroy();
   }
 #endif
 
@@ -548,8 +526,6 @@ nsDocumentViewer::~nsDocumentViewer() {
   if (mSelectionListener) {
     mSelectionListener->Disconnect();
   }
-
-  RemoveFocusListener();
 
   // XXX(?) Revoke pending invalidate events
 }
@@ -568,26 +544,6 @@ void nsDocumentViewer::LoadStart(Document* aDocument) {
 
   if (!mDocument) {
     mDocument = aDocument;
-  }
-}
-
-void nsDocumentViewer::RemoveFocusListener() {
-  if (RefPtr<nsDocViewerFocusListener> oldListener =
-          std::move(mFocusListener)) {
-    oldListener->Disconnect();
-    if (mDocument) {
-      mDocument->RemoveEventListener(u"focus"_ns, oldListener, false);
-      mDocument->RemoveEventListener(u"blur"_ns, oldListener, false);
-    }
-  }
-}
-
-void nsDocumentViewer::ReinitializeFocusListener() {
-  RemoveFocusListener();
-  mFocusListener = new nsDocViewerFocusListener(this);
-  if (mDocument) {
-    mDocument->AddEventListener(u"focus"_ns, mFocusListener, false, false);
-    mDocument->AddEventListener(u"blur"_ns, mFocusListener, false, false);
   }
 }
 
@@ -728,14 +684,12 @@ nsresult nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow) {
   // now register ourselves as a selection listener, so that we get
   // called when the selection changes in the window
   if (!mSelectionListener) {
-    mSelectionListener = new nsDocViewerSelectionListener(this);
+    mSelectionListener = MakeRefPtr<nsDocViewerSelectionListener>(this);
   }
 
   if (RefPtr<mozilla::dom::Selection> selection = GetDocumentSelection()) {
     selection->AddSelectionListener(mSelectionListener);
   }
-
-  ReinitializeFocusListener();
 
   if (aDoInitialReflow && mDocument) {
     nsCOMPtr<Document> document = mDocument;
@@ -812,9 +766,8 @@ nsresult nsDocumentViewer::InitInternal(nsIWidget* aParentWidget,
       Hide();
     } else {
       // Avoid leaking the old viewer.
-      if (mPreviousViewer) {
-        mPreviousViewer->Destroy();
-        mPreviousViewer = nullptr;
+      if (nsCOMPtr prev = std::move(mPreviousViewer)) {
+        prev->Destroy();
       }
     }
   }
@@ -1374,8 +1327,6 @@ nsDocumentViewer::Open() {
 
   SyncParentSubDocMap();
 
-  ReinitializeFocusListener();
-
   // XXX re-enable image animations once that works correctly
 
   PrepareToStartLoad();
@@ -1427,7 +1378,6 @@ nsDocumentViewer::Close() {
     }
   }
 
-  RemoveFocusListener();
   return NS_OK;
 }
 
@@ -1470,9 +1420,8 @@ nsDocumentViewer::Destroy() {
   if (mPresShell) {
     DestroyPresShell();
   }
-  if (mDocument) {
-    mDocument->Destroy();
-    mDocument = nullptr;
+  if (nsCOMPtr doc = std::move(mDocument)) {
+    doc->Destroy();
   }
 
   // All callers are supposed to call destroy to break circular
@@ -1481,8 +1430,7 @@ nsDocumentViewer::Destroy() {
   // used from JS.
 
 #ifdef NS_PRINTING
-  if (mPrintJob) {
-    RefPtr<nsPrintJob> printJob = std::move(mPrintJob);
+  if (RefPtr printJob = std::move(mPrintJob)) {
     if (printJob->CreatedForPrintPreview()) {
       printJob->FinishPrintPreview();
     }
@@ -1763,12 +1711,8 @@ nsDocumentViewer::Show() {
 
   // We don't need the previous viewer anymore since we're not
   // displaying it.
-  if (mPreviousViewer) {
-    // This little dance *may* only be to keep
-    // PresShell::EndObservingDocument happy, but I'm not sure.
-    nsCOMPtr<nsIDocumentViewer> prevViewer(mPreviousViewer);
-    mPreviousViewer = nullptr;
-    prevViewer->Destroy();
+  if (nsCOMPtr prev = std::move(mPreviousViewer)) {
+    prev->Destroy();
   }
 
   // Hold on to the document so we can use it after the script blocker below
@@ -1834,9 +1778,8 @@ nsDocumentViewer::Hide() {
   NS_ASSERTION(mPresContext, "Can't have a presshell and no prescontext!");
 
   // Avoid leaking the old viewer.
-  if (mPreviousViewer) {
-    mPreviousViewer->Destroy();
-    mPreviousViewer = nullptr;
+  if (nsCOMPtr prev = std::move(mPreviousViewer)) {
+    prev->Destroy();
   }
 
   if (mIsSticky) {
@@ -1982,7 +1925,7 @@ void nsDocumentViewer::CreateDeviceContext(
     widget = widget->GetTopLevelWidget();
   }
 
-  mDeviceContext = new nsDeviceContext();
+  mDeviceContext = MakeRefPtr<nsDeviceContext>();
   mDeviceContext->Init(widget);
 }
 
@@ -2028,6 +1971,10 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP nsDocumentViewer::SelectAll() {
     return NS_ERROR_FAILURE;
   }
 
+  // XXX Chrome and Safari select all in the shadow, but we do it in the <body>
+  // or the document element. Shouldn't we consider the root element from the
+  // selection range or the focused element if there is no selection range and
+  // use the shadow root?
   nsCOMPtr<nsINode> bodyNode;
   if (mDocument->IsHTMLOrXHTML()) {
     // XXXbz why not just do GetBody() for all documents, then GetRootElement()
@@ -2442,55 +2389,6 @@ NS_IMETHODIMP nsDocViewerSelectionListener::NotifySelectionChanged(
   return NS_OK;
 }
 
-// nsDocViewerFocusListener
-NS_IMPL_ISUPPORTS(nsDocViewerFocusListener, nsIDOMEventListener)
-
-nsresult nsDocViewerFocusListener::HandleEvent(Event* aEvent) {
-  NS_ENSURE_STATE(mDocViewer);
-
-  RefPtr<PresShell> presShell = mDocViewer->GetPresShell();
-  NS_ENSURE_TRUE(presShell, NS_ERROR_FAILURE);
-
-  RefPtr<nsFrameSelection> selection =
-      presShell->GetLastFocusedFrameSelection();
-  NS_ENSURE_TRUE(selection, NS_ERROR_FAILURE);
-  auto selectionStatus = selection->GetDisplaySelection();
-  nsAutoString eventType;
-  aEvent->GetType(eventType);
-  if (eventType.EqualsLiteral("focus")) {
-    // If selection was disabled, re-enable it.
-    if (selectionStatus == nsISelectionController::SELECTION_DISABLED ||
-        selectionStatus == nsISelectionController::SELECTION_HIDDEN) {
-      selection->SetDisplaySelection(nsISelectionController::SELECTION_ON);
-      selection->RepaintSelection(SelectionType::eNormal);
-    }
-    // See EditorBase::FinalizeSelection. This fixes up the case where focus
-    // left the editor's selection but returned to something else.
-    if (selection != presShell->ConstFrameSelection()) {
-      RefPtr<Document> doc = presShell->GetDocument();
-      const bool selectionMatchesFocus =
-          selection->IsIndependentSelection() &&
-          selection->GetIndependentSelectionRootParentElement() ==
-              doc->GetUnretargetedFocusedContent();
-      if (NS_WARN_IF(!selectionMatchesFocus)) {
-        presShell->FrameSelectionWillLoseFocus(*selection);
-        presShell->SelectionWillTakeFocus();
-      }
-    }
-  } else {
-    MOZ_ASSERT(eventType.EqualsLiteral("blur"), "Unexpected event type");
-    // If selection was on, disable it.
-    if (selectionStatus == nsISelectionController::SELECTION_ON ||
-        selectionStatus == nsISelectionController::SELECTION_ATTENTION) {
-      selection->SetDisplaySelection(
-          nsISelectionController::SELECTION_DISABLED);
-      selection->RepaintSelection(SelectionType::eNormal);
-    }
-  }
-
-  return NS_OK;
-}
-
 /** ---------------------------------------------------
  *  From nsIWebBrowserPrint
  */
@@ -2812,8 +2710,8 @@ nsDocumentViewer::ExitPrintPreview() {
     return NS_OK;
   }
 
-  mPrintJob->Destroy();
-  mPrintJob = nullptr;
+  RefPtr printJob = std::move(mPrintJob);
+  printJob->Destroy();
 
   // Since the print preview implementation discards the window that was used
   // to show the print preview, we skip certain cleanup that we would otherwise
@@ -2921,17 +2819,19 @@ void nsDocumentViewer::DecrementDestroyBlockedCount() {
 //
 void nsDocumentViewer::OnDonePrinting() {
 #ifdef NS_PRINTING
-  // If Destroy() has been called during calling nsPrintJob::Print() or
-  // nsPrintJob::PrintPreview(), mPrintJob is already nullptr here.
-  // So, the following clean up does nothing in such case.
-  // (Do we need some of this for that case?)
-  if (mPrintJob) {
-    RefPtr<nsPrintJob> printJob = std::move(mPrintJob);
-    if (GetIsPrintPreview()) {
-      printJob->DestroyPrintingData();
-    } else {
-      printJob->Destroy();
-    }
+  RefPtr printJob = std::move(mPrintJob);
+  if (!printJob) {
+    // If Destroy() has been called during calling nsPrintJob::Print() or
+    // nsPrintJob::PrintPreview(), mPrintJob is already nullptr here.
+    // So, the following clean up does nothing in such case.
+    // (Do we need some of this for that case?)
+    return;
+  }
+  if (GetIsPrintPreview()) {
+    printJob->DestroyPrintingData();
+  } else {
+    printJob->Destroy();
+  }
 
 // We are done printing, now clean up.
 //
@@ -2943,25 +2843,23 @@ void nsDocumentViewer::OnDonePrinting() {
 //
 // Otherwise the front-end code is responsible for cleaning the UI.
 #  ifdef ANDROID
-    // Android doesn't support Content Analysis and prints in a different way,
-    // so use different logic to clean up.
-    bool closeWindowAfterPrint = !printJob->CreatedForPrintPreview();
+  // Android doesn't support Content Analysis and prints in a different way,
+  // so use different logic to clean up.
+  bool closeWindowAfterPrint = !printJob->CreatedForPrintPreview();
 #  else
-    bool closeWindowAfterPrint = GetCloseWindowAfterPrint();
+  bool closeWindowAfterPrint = GetCloseWindowAfterPrint();
 #  endif
-    if (closeWindowAfterPrint) {
-      if (mContainer) {
-        if (nsCOMPtr<nsPIDOMWindowOuter> win = mContainer->GetWindow()) {
-          win->Close();
-        }
+  if (closeWindowAfterPrint) {
+    if (mContainer) {
+      if (nsCOMPtr<nsPIDOMWindowOuter> win = mContainer->GetWindow()) {
+        win->Close();
       }
-    } else if (mClosingWhilePrinting) {
-      if (mDocument) {
-        mDocument->Destroy();
-        mDocument = nullptr;
-      }
-      mClosingWhilePrinting = false;
     }
+  } else if (mClosingWhilePrinting) {
+    if (nsCOMPtr doc = std::move(mDocument)) {
+      doc->Destroy();
+    }
+    mClosingWhilePrinting = false;
   }
 #endif  // NS_PRINTING
 }
@@ -2989,7 +2887,7 @@ NS_IMETHODIMP nsDocumentViewer::SetPrintSettingsForSubdocument(
 
     auto devspec = MakeRefPtr<nsDeviceContextSpecProxy>(aRemotePrintJob);
     MOZ_TRY(devspec->Init(aPrintSettings, /* aIsPrintPreview = */ true));
-    mDeviceContext = new nsDeviceContext();
+    mDeviceContext = MakeRefPtr<nsDeviceContext>();
     MOZ_TRY(mDeviceContext->InitForPrinting(devspec));
     mPresContext = CreatePresContext(
         mDocument, nsPresContext::eContext_PrintPreview, FindContainerFrame());
@@ -3079,8 +2977,8 @@ void nsDocumentViewer::DestroyPresShell() {
     selection->RemoveSelectionListener(mSelectionListener);
   }
 
-  mPresShell->Destroy();
-  mPresShell = nullptr;
+  RefPtr ps = std::move(mPresShell);
+  ps->Destroy();
 }
 
 void nsDocumentViewer::InvalidatePotentialSubDocDisplayItem() {

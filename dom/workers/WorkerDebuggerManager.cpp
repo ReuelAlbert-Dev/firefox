@@ -74,7 +74,7 @@ class WorkerDebuggerEnumerator final : public nsSimpleEnumerator {
   explicit WorkerDebuggerEnumerator(
       const nsTArray<nsCOMPtr<nsIWorkerDebugger>>& aDebuggers)
       : mIndex(0) {
-    for (auto debugger : aDebuggers) {
+    for (const auto& debugger : aDebuggers) {
       bool isRemote;
       (void)debugger->GetIsRemote(&isRemote);
       if (!isRemote) {
@@ -299,7 +299,7 @@ void WorkerDebuggerManager::RegisterDebuggerMainThread(
     WorkerPrivate* aWorkerPrivate, bool aNotifyListeners) {
   AssertIsOnMainThread();
 
-  RefPtr<WorkerDebugger> debugger = new WorkerDebugger(aWorkerPrivate);
+  RefPtr<WorkerDebugger> debugger = WorkerDebugger::Create(aWorkerPrivate);
   mDebuggers.AppendElement(debugger);
 
   aWorkerPrivate->SetDebugger(debugger);

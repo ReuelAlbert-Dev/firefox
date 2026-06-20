@@ -149,7 +149,7 @@ def test_large_push_warning_message(capsys):
         )
         captured = capsys.readouterr()
         assert "Your push would schedule at least 1001 tasks" in captured.out
-        assert "lower priority" in captured.out
+        assert "lowest priority" in captured.out
 
 
 def test_get_sys_argv():
@@ -218,6 +218,7 @@ def test_get_sys_argv_2():
     ],
 )
 def test_push_to_try_routing(
+    mock_push_to_lando_try,
     url,
     push_to_vcs,
     expect_direct_push,
@@ -233,9 +234,7 @@ def test_push_to_try_routing(
     with ExitStack() as stack:
         stack.enter_context(patch("tryselect.push.vcs", mock_vcs))
         stack.enter_context(patch("tryselect.push.MACH_TRY_REMOTE", url))
-        mock_lando = stack.enter_context(
-            patch("tryselect.push.push_to_lando_try", return_value="job123")
-        )
+        mock_lando = stack.enter_context(mock_push_to_lando_try)
         stack.enter_context(patch("tryselect.push.check_working_directory"))
         stack.enter_context(
             patch(
@@ -245,13 +244,6 @@ def test_push_to_try_routing(
         )
 
         push._is_hg_try.cache_clear()
-
-        is_hg_try = "ssh://hg.mozilla.org/try" in url
-        if push_to_vcs and not is_hg_try:
-            mock_vcs.try_commit.return_value.__enter__ = MagicMock(
-                return_value="abc123"
-            )
-            mock_vcs.try_commit.return_value.__exit__ = MagicMock(return_value=False)
 
         push.push_to_try(
             "fuzzy",
@@ -263,16 +255,7 @@ def test_push_to_try_routing(
 
         if expect_direct_push:
             mock_lando.assert_not_called()
-            if is_hg_try:
-                # For hg remotes, push_to_try is called
-                mock_vcs.push_to_try.assert_called_once()
-            else:
-                # For non-hg remotes, try_commit and push are called
-                mock_vcs.try_commit.assert_called_once()
-                mock_vcs.push.assert_called_once_with(
-                    url,
-                    ref="feature-branch",
-                )
+            mock_vcs.push_to_try.assert_called_once()
         else:
             mock_lando.assert_called_once()
             mock_vcs.push_to_try.assert_not_called()

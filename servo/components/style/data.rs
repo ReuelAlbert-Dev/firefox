@@ -12,6 +12,7 @@ use crate::invalidation::element::restyle_hints::RestyleHint;
 use crate::properties::ComputedValues;
 use crate::selector_parser::{PseudoElement, RestyleDamage, EAGER_PSEUDO_COUNT};
 use crate::style_resolver::{PrimaryStyle, ResolvedElementStyles, ResolvedStyle};
+use crate::values::specified::TreeCountingFunction;
 #[cfg(feature = "gecko")]
 use malloc_size_of::MallocSizeOfOps;
 use selectors::matching::SelectorCaches;
@@ -109,10 +110,7 @@ impl fmt::Debug for EagerPseudoArray {
 
 // Can't use [None; EAGER_PSEUDO_COUNT] here because it complains
 // about Copy not being implemented for our Arc type.
-#[cfg(feature = "gecko")]
 const EMPTY_PSEUDO_ARRAY: &'static EagerPseudoArrayInner = &[None, None, None, None];
-#[cfg(feature = "servo")]
-const EMPTY_PSEUDO_ARRAY: &'static EagerPseudoArrayInner = &[None, None, None];
 
 impl EagerPseudoStyles {
     /// Returns whether there are any pseudo styles.
@@ -221,6 +219,34 @@ impl ElementStyles {
                 pseudo_style.each_cached_lazy_pseudo(|style| {
                     usage = std::cmp::max(usage, usage_from_flags(style.flags));
                 });
+            }
+        }
+
+        usage
+    }
+
+    /// Whether this element uses sibling-count() or sibling-index().
+    pub fn uses_tree_counting_function(&self, t: TreeCountingFunction) -> bool {
+        let usage_from_flags = |flags: ComputedValueFlags| -> bool {
+            if t == TreeCountingFunction::SiblingCount
+                && flags.intersects(ComputedValueFlags::USES_SIBLING_COUNT)
+            {
+                return true;
+            }
+            if t == TreeCountingFunction::SiblingIndex
+                && flags.intersects(ComputedValueFlags::USES_SIBLING_INDEX)
+            {
+                return true;
+            }
+            false
+        };
+
+        let primary = self.primary();
+        let mut usage = usage_from_flags(primary.flags);
+
+        for pseudo_style in self.pseudos.as_array() {
+            if let Some(ref pseudo_style) = pseudo_style {
+                usage |= usage_from_flags(pseudo_style.flags);
             }
         }
 
@@ -365,6 +391,49 @@ pub enum RestyleKind {
     CascadeOnly,
 }
 
+fn needs_to_match_self(hint: RestyleHint, style: &ComputedValues) -> bool {
+    if hint.intersects(RestyleHint::RESTYLE_SELF) {
+        return true;
+    }
+    if hint.intersects(RestyleHint::RESTYLE_SELF_IF_PSEUDO) && style.is_pseudo_style() {
+        return true;
+    }
+    if hint.intersects(RestyleHint::RESTYLE_IF_AFFECTED_BY_ANCESTOR_FONT)
+        && style
+            .flags
+            .intersects(ComputedValueFlags::USES_FONT_RELATIVE_UNITS_ON_CONTAINER_QUERIES)
+    {
+        return true;
+    }
+    hint.intersects(
+        RestyleHint::RESTYLE_IF_AFFECTED_BY_STYLE_QUERIES
+            | RestyleHint::RESTYLE_IF_AFFECTED_BY_NAMED_STYLE_CONTAINER,
+    ) && style
+        .flags
+        .intersects(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY)
+}
+
+fn needs_to_recascade_self(hint: RestyleHint, style: &ComputedValues) -> bool {
+    if hint.intersects(RestyleHint::RECASCADE_SELF) {
+        return true;
+    }
+    if hint.intersects(RestyleHint::RECASCADE_SELF_IF_INHERIT_RESET_STYLE)
+        && style
+            .flags
+            .contains(ComputedValueFlags::INHERITS_RESET_STYLE)
+    {
+        return true;
+    }
+    if hint.intersects(RestyleHint::RESTYLE_IF_AFFECTED_BY_ANCESTOR_FONT)
+        && style
+            .flags
+            .contains(ComputedValueFlags::USES_FONT_RELATIVE_UNITS)
+    {
+        return true;
+    }
+    return false;
+}
+
 impl ElementData {
     /// Invalidates style for this element, its descendants, and later siblings,
     /// based on the snapshot of the element that we took when attributes or
@@ -437,6 +506,20 @@ impl ElementData {
         }
     }
 
+    /// Return a copy of the element's primary style as a resolved style with the
+    /// given flags.
+    pub fn clone_style_with_flags(&self, flags: ComputedValueFlags) -> ResolvedStyle {
+        let primary_style = self.styles.primary();
+        // We are only using this pseudo to find the correct pseudo type so it
+        // does not matter it technically belongs to a different style.
+        let pseudo = primary_style.pseudo();
+        ResolvedStyle(
+            primary_style
+                .deref()
+                .clone_with_flags(flags, pseudo.as_ref()),
+        )
+    }
+
     /// Sets a new set of styles, returning the old ones.
     pub fn set_styles(&mut self, new_styles: ResolvedElementStyles) -> ElementStyles {
         self.flags.set(
@@ -463,9 +546,7 @@ impl ElementData {
             return None;
         }
 
-        let needs_to_match_self = hint.intersects(RestyleHint::RESTYLE_SELF)
-            || (hint.intersects(RestyleHint::RESTYLE_SELF_IF_PSEUDO) && style.is_pseudo_style());
-        if needs_to_match_self {
+        if needs_to_match_self(hint, style) {
             return Some(RestyleKind::MatchAndCascade);
         }
 
@@ -479,12 +560,7 @@ impl ElementData {
             ));
         }
 
-        let needs_to_recascade_self = hint.intersects(RestyleHint::RECASCADE_SELF)
-            || (hint.intersects(RestyleHint::RECASCADE_SELF_IF_INHERIT_RESET_STYLE)
-                && style
-                    .flags
-                    .contains(ComputedValueFlags::INHERITS_RESET_STYLE));
-        if needs_to_recascade_self {
+        if needs_to_recascade_self(hint, style) {
             return Some(RestyleKind::CascadeOnly);
         }
 
@@ -521,12 +597,7 @@ impl ElementData {
             ));
         }
 
-        let needs_to_recascade_self = hint.intersects(RestyleHint::RECASCADE_SELF)
-            || (hint.intersects(RestyleHint::RECASCADE_SELF_IF_INHERIT_RESET_STYLE)
-                && style
-                    .flags
-                    .contains(ComputedValueFlags::INHERITS_RESET_STYLE));
-        if needs_to_recascade_self {
+        if needs_to_recascade_self(hint, style) {
             return Some(RestyleKind::CascadeOnly);
         }
         return None;

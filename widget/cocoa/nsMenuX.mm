@@ -51,7 +51,11 @@ static RefPtr<nsIContent> GetMenuChildContent(
       });
 }
 
+// Global rather than per-instance: building a menu triggers DOM observer
+// callbacks on child/sibling nsMenuX instances, and we need to suppress those
+// across all instances to prevent re-entrant rebuilds.
 static bool gConstructingMenu = false;
+
 static bool gMenuMethodsSwizzled = false;
 
 // Protect against really deep menu nestings, for example from recursive
@@ -1418,7 +1422,7 @@ void nsMenuX::Dump(uint32_t aIndent) const {
 
 @end
 
-// OS X Leopard (at least as of 10.5.2) has an obscure bug triggered by some
+// MacOS Leopard (at least as of 10.5.2) has an obscure bug triggered by some
 // behavior that's present in Mozilla.org browsers but not (as best I can
 // tell) in Apple products like Safari.  (It's not yet clear exactly what this
 // behavior is.)

@@ -84,8 +84,8 @@ void ZoomConstraintsClient::Destroy() {
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
   if (observerService) {
-    observerService->RemoveObserver(this, BEFORE_FIRST_PAINT.Data());
-    observerService->RemoveObserver(this, COMPOSITOR_REINITIALIZED.Data());
+    observerService->RemoveObserver(this, BEFORE_FIRST_PAINT.get());
+    observerService->RemoveObserver(this, COMPOSITOR_REINITIALIZED.get());
   }
 
   Preferences::RemoveObserver(this, "browser.ui.zoom.force-user-scalable");
@@ -124,8 +124,8 @@ void ZoomConstraintsClient::Init(PresShell* aPresShell, Document* aDocument) {
   nsCOMPtr<nsIObserverService> observerService =
       mozilla::services::GetObserverService();
   if (observerService) {
-    observerService->AddObserver(this, BEFORE_FIRST_PAINT.Data(), false);
-    observerService->AddObserver(this, COMPOSITOR_REINITIALIZED.Data(), false);
+    observerService->AddObserver(this, BEFORE_FIRST_PAINT.get(), false);
+    observerService->AddObserver(this, COMPOSITOR_REINITIALIZED.get(), false);
   }
 
   Preferences::AddStrongObserver(this, "browser.ui.zoom.force-user-scalable");

@@ -1,33 +1,33 @@
-From: Jan Grulich <jgrulich@redhat.com>
-Date: Tue, 27 Jan 2026 14:48:00 +0000
-Subject: Bug 2012006 - WebRTC backport: PipeWire capture: clear existing
- capabilities before re-enumeration r=pehrsons
+From: Byron Campen <docfaraday@gmail.com>
+Date: Tue, 26 May 2026 14:02:00 -0500
+Subject: Bug 2040478 - (fix-d1ae1e9ad4) Explicitly convert these to a
+ std::string r?mjf
 
-Prevent duplicate capability entries by clearing the capabilities vector
-before re-enumerating node formats.
-
-This is a simple backport of an WebRTC upstream change.
-
-Upstream commit: 15229a1c98fcd07afe19ca131ccdc5c8ac9180f5
-
-Differential Revision: https://phabricator.services.mozilla.com/D280359
-Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/3905f189b8ac5e48713f1e7f7e4ccd9b14d7f20e
+Our toolchain does not yet support implicit conversion from string_view to string
+Mercurial Revision: https://hg.mozilla.org/mozilla-central/rev/1eae5aad7a7622115d156dea2dc974416046cd42
 ---
- modules/video_capture/linux/pipewire_session.cc | 4 ++++
- 1 file changed, 4 insertions(+)
+ call/payload_type_picker.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
 
-diff --git a/modules/video_capture/linux/pipewire_session.cc b/modules/video_capture/linux/pipewire_session.cc
-index 036739b74a..7b8d915ae9 100644
---- a/modules/video_capture/linux/pipewire_session.cc
-+++ b/modules/video_capture/linux/pipewire_session.cc
-@@ -138,6 +138,10 @@ void PipeWireNode::OnNodeInfo(void* data, const pw_node_info* info) {
-       uint32_t id = info->params[i].id;
-       if (id == SPA_PARAM_EnumFormat &&
-           info->params[i].flags & SPA_PARAM_INFO_READ) {
-+        RTC_LOG(LS_INFO)
-+            << "Clearing existing capabilities before re-enumeration for "
-+            << that->display_name_;
-+        that->capabilities_.clear();
-         pw_node_enum_params(reinterpret_cast<pw_node*>(that->proxy_), 0, id, 0,
-                             UINT32_MAX, nullptr);
-         break;
+diff --git a/call/payload_type_picker.cc b/call/payload_type_picker.cc
+index 45105a1054..d12c3b34e2 100644
+--- a/call/payload_type_picker.cc
++++ b/call/payload_type_picker.cc
+@@ -370,7 +370,7 @@ void PayloadTypeRecorder::Rollback() {
+ RTCError RtpHeaderExtensionRecorder::AddMapping(RtpHeaderExtensionId id,
+                                                 absl::string_view uri,
+                                                 bool encrypt) {
+-  auto it = uri_to_id_.find(std::pair{uri, encrypt});
++  auto it = uri_to_id_.find(std::pair{std::string(uri), encrypt});
+   if (it != uri_to_id_.end()) {
+     if (it->second != id) {
+       RTC_HISTOGRAM_BOOLEAN(
+@@ -393,7 +393,7 @@ RTCError RtpHeaderExtensionRecorder::AddMapping(RtpHeaderExtensionId id,
+ RTCErrorOr<RtpHeaderExtensionId> RtpHeaderExtensionRecorder::LookupId(
+     absl::string_view uri,
+     bool encrypt) const {
+-  auto it = uri_to_id_.find(std::pair{uri, encrypt});
++  auto it = uri_to_id_.find(std::pair{std::string(uri), encrypt});
+   if (it == uri_to_id_.end()) {
+     return RTCError(RTCErrorType::INVALID_PARAMETER,
+                     "No ID found for extension");

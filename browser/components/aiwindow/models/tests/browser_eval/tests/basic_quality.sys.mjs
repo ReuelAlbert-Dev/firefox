@@ -3,16 +3,17 @@
 
 import { ChatConversation } from "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs";
 import { AssistantRoleOpts } from "moz-src:///browser/components/aiwindow/ui/modules/ChatMessage.sys.mjs";
-import {
-  openAIEngine,
-  MODEL_FEATURES,
-} from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
+import { MODEL_FEATURES } from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
+import { openAIEngine } from "moz-src:///browser/components/aiwindow/models/openAIEngine.sys.mjs";
+import { buildEngineForFeature } from "moz-src:///browser/components/aiwindow/models/PromptLoader.sys.mjs";
 
 import {
   basicQualityEvalPrompt,
   basicQualityEvalResponseFormat,
   basicQualityEvalConfig,
 } from "chrome://mochitests/content/browser/browser/components/aiwindow/models/tests/browser_eval/prompts/basic_quality.sys.mjs";
+
+import { MLTestUtils } from "resource://testing-common/MLTestUtils.sys.mjs";
 
 const TEST_CASES = [
   ["Hello there, how are you?", "about:newtab", "about:newtab"],
@@ -30,14 +31,7 @@ const TEST_CASES = [
 
 export async function runChatEvalForModel(
   model,
-  {
-    Assert,
-    SpecialPowers,
-    setupEvaluation,
-    collectChatResponse,
-    renderPrompt,
-    reportEvalResult,
-  }
+  { Assert, SpecialPowers, setupEvaluation, collectChatResponse, renderPrompt }
 ) {
   const token = Services.env.get("MOZ_FXA_BEARER_TOKEN");
   Assert.ok(
@@ -60,7 +54,9 @@ export async function runChatEvalForModel(
 
   const origGetFxAccountToken = openAIEngine.getFxAccountToken;
   openAIEngine.getFxAccountToken = async () => token;
-  const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
+  const { engine, parameters } = await buildEngineForFeature(
+    MODEL_FEATURES.CHAT
+  );
   for (const [userQuery, currentUrl, page] of TEST_CASES) {
     const { cleanup } = await setupEvaluation({
       url: page,
@@ -73,17 +69,12 @@ export async function runChatEvalForModel(
       pageUrl: new URL(currentUrl),
       pageMeta: {},
     });
-    await conversation.generatePrompt(
-      userQuery,
-      new URL(currentUrl),
-      engineInstance
-    );
+    conversation.engine = engine;
+    conversation.parameters = parameters;
+    await conversation.generatePrompt(userQuery, new URL(currentUrl));
 
     conversation.addAssistantMessage("text", "", new AssistantRoleOpts());
-    const { responseText, toolCalls } = await collectChatResponse(
-      conversation,
-      engineInstance
-    );
+    const { responseText, toolCalls } = await collectChatResponse(conversation);
 
     Assert.ok(
       !!responseText.length || !!toolCalls.length,
@@ -94,7 +85,7 @@ export async function runChatEvalForModel(
       model_response: responseText,
       model_tool_calls: JSON.stringify(toolCalls, null, 2),
       conversation_history: JSON.stringify(
-        conversation.getMessagesInOpenAiFormat(),
+        conversation.getMessagesInChatCompletionsFormat(),
         null,
         2
       ),
@@ -102,7 +93,7 @@ export async function runChatEvalForModel(
       current_url: currentUrl,
     });
 
-    reportEvalResult({
+    MLTestUtils.reportEvalData({
       messages,
       response_format: basicQualityEvalResponseFormat,
       eval_config: basicQualityEvalConfig,

@@ -37,6 +37,11 @@ void AbortSignalImpl::GetReason(JSContext* aCx,
   }
   MaybeAssignAbortError(aCx);
   aReason.set(mReason);
+  if (NS_WARN_IF(!JS_WrapValue(aCx, aReason))) {
+    aReason.setUndefined();
+    // TODO(Bug 2026137) - AbortSignalImpl::GetReason should be made fallible
+    JS_ClearPendingException(aCx);
+  }
 }
 
 JS::Value AbortSignalImpl::RawReason() const { return mReason.get(); }
@@ -74,7 +79,7 @@ void AbortSignalImpl::RunAbortSteps() {
   // https://dom.spec.whatwg.org/#abortsignal-remove could be invoked in an
   // earlier algorithm to remove a later algorithm, so |mFollowers| must be a
   // |nsTObserverArray| to defend against mutation.
-  for (RefPtr<AbortFollower>& follower : mFollowers.ForwardRange()) {
+  for (RefPtr<AbortFollower> follower : mFollowers.ForwardRange()) {
     MOZ_ASSERT(follower->mFollowingSignal == this);
     follower->RunAbortAlgorithm();
   }
@@ -96,6 +101,7 @@ void AbortSignalImpl::Traverse(AbortSignalImpl* aSignal,
 void AbortSignalImpl::Unlink(AbortSignalImpl* aSignal) {
   aSignal->mReason.setUndefined();
   aSignal->UnlinkFollowers();
+  aSignal->DetachWeakPtr();
 }
 
 void AbortSignalImpl::MaybeAssignAbortError(JSContext* aCx) {

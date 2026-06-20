@@ -58,20 +58,6 @@ def platform_grouping(config, tasks):
     return groups.values()
 
 
-@group_by("platform-no-l10n")
-def platform_no_l10n_grouping(config, tasks):
-    """The same as `platform` grouping, but ignores l10n tasks. Useful when
-    grouping by multiple upstream kinds, only some of which contain l10n
-    tasks."""
-    groups = []
-    for grouped_tasks in platform_grouping(config, tasks):
-        group = [task for task in grouped_tasks if "locale" not in task.attributes]
-        if group:
-            groups.append(group)
-
-    return groups
-
-
 @group_by("single-locale")
 def single_locale_grouping(config, tasks):
     """Split by a single locale (but also by platform, build-type, product)
@@ -129,9 +115,18 @@ def chunk_locale_grouping(config, tasks):
         product = task.attributes.get(
             "shipping_product", task.task.get("shipping-product")
         )
-        chunk_locales = tuple(sorted(task.attributes.get("chunk_locales", [])))
+        chunk_locales = task.attributes.get("chunk_locales", [])
+        if chunk_locales:
+            chunk_key = tuple(sorted(chunk_locales))
+        else:
+            # Some tasks (e.g. repackage-l10n) are per-locale but still carry
+            # the original l10n_chunk number from their chunked upstream. Use
+            # that (a string, e.g. "1") to re-group them back into their
+            # original chunks. The type differs from the tuple above, but
+            # that's fine for dict-key grouping since they never collide.
+            chunk_key = task.attributes.get("l10n_chunk", ())
 
-        chunk_locale_key = (platform, build_type, product, chunk_locales)
+        chunk_locale_key = (platform, build_type, product, chunk_key)
         groups.setdefault(chunk_locale_key, [])
         if task not in groups[chunk_locale_key]:
             groups[chunk_locale_key].append(task)

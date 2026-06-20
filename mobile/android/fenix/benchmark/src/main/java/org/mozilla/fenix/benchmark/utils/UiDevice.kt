@@ -73,15 +73,17 @@ fun UiDevice.waitForHomepage() {
 
 fun UiDevice.clickIfExistsWithText(text: String) {
     findObject(UiSelector().text(text)).run {
-        waitForExists(WAITING_TIME_MS)
-        click()
+        if (waitForExists(WAITING_TIME_MS)) {
+            click()
+        }
     }
 }
 
 fun UiDevice.clickIfExistsWithResourceId(resourceId: String) {
     findObject(UiSelector().resourceId(resourceId)).run {
-        waitForExists(WAITING_TIME_MS)
-        click()
+        if (waitForExists(WAITING_TIME_MS)) {
+            click()
+        }
     }
 }
 
@@ -93,9 +95,9 @@ fun UiDevice.waitUntilPageLoaded() {
     refresh.waitForExists(WAITING_TIME_MS)
 }
 
-fun UiDevice.openTabsTray(useNewToolbar: Boolean) {
+fun UiDevice.openTabsTray() {
     val tabsTrayButton = findObject(
-        UiSelector().resourceId(getTabCounterId(useNewToolbar))
+        UiSelector().resourceId("TabCounterTestTags.tabCounter")
     )
     tabsTrayButton.waitForExists(WAITING_TIME_MS)
     tabsTrayButton.click()
@@ -182,17 +184,17 @@ fun UiDevice.closeAllTabs() {
     closeAllTabsButton.click()
 }
 
-fun UiDevice.enterSearchMode(useNewToolbar: Boolean) {
+fun UiDevice.enterSearchMode() {
     val urlBar = findObject(
-        UiSelector().resourceId(getUrlBarId(useNewToolbar))
+        UiSelector().resourceId("ADDRESSBAR_URL_BOX")
     )
     urlBar.waitForExists(WAITING_TIME_MS)
     urlBar.click()
 }
 
-fun UiDevice.loadSite(url: String, useNewToolbar: Boolean) {
+fun UiDevice.loadSite(url: String) {
     val urlBarEditField = findObject(
-        UiSelector().resourceId(getUrlBarEditField(useNewToolbar))
+        UiSelector().resourceId("ADDRESSBAR_SEARCH_BOX")
     )
     urlBarEditField.setText(url)
     pressEnter()
@@ -212,19 +214,4 @@ fun UiDevice.flingToBeginning(scrollableId: String, maxSwipes: Int) {
     val scrollable = UiScrollable(UiSelector().resourceId(scrollableId))
     scrollable.waitForExists(WAITING_TIME_MS)
     scrollable.flingToBeginning(maxSwipes)
-}
-
-private fun getUrlBarId(useNewToolbar: Boolean) = when (useNewToolbar) {
-    true -> "ADDRESSBAR_URL_BOX"
-    false -> "$TARGET_PACKAGE:id/toolbar"
-}
-
-private fun getUrlBarEditField(useNewToolbar: Boolean) = when (useNewToolbar) {
-    true -> "ADDRESSBAR_SEARCH_BOX"
-    false -> "$TARGET_PACKAGE:id/mozac_browser_toolbar_edit_url_view"
-}
-
-private fun getTabCounterId(useNewToolbar: Boolean) = when (useNewToolbar) {
-    true -> "TabCounterTestTags.tabCounter"
-    false -> "$TARGET_PACKAGE:id/counter_box"
 }

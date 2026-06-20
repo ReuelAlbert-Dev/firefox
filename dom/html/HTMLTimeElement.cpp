@@ -6,7 +6,6 @@
 
 #include "mozilla/dom/HTMLTimeElementBinding.h"
 #include "nsGenericHTMLElement.h"
-#include "nsGkAtoms.h"
 #include "nsVariant.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Time)
@@ -14,7 +13,7 @@ NS_IMPL_NS_NEW_HTML_ELEMENT(Time)
 namespace mozilla::dom {
 
 HTMLTimeElement::HTMLTimeElement(
-    already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo)
+    already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo)
     : nsGenericHTMLElement(std::move(aNodeInfo)) {}
 
 HTMLTimeElement::~HTMLTimeElement() = default;

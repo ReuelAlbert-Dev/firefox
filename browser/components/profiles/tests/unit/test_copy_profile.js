@@ -9,11 +9,45 @@ const { sinon } = ChromeUtils.importESModule(
 const { BackupService } = ChromeUtils.importESModule(
   "resource:///modules/backup/BackupService.sys.mjs"
 );
+const { ProfileAge } = ChromeUtils.importESModule(
+  "resource://gre/modules/ProfileAge.sys.mjs"
+);
+const { OSKeyStoreTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/OSKeyStoreTestUtils.sys.mjs"
+);
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
+);
 
 const execProcess = sinon.fake();
 
 add_setup(async () => {
   await initSelectableProfileService();
+
+  // During our unit tests, we're not interested in showing OSKeyStore
+  // authentication dialogs, nor are we interested in actually using the "real"
+  // OSKeyStore. We instead swap in our own implementation of nsIOSKeyStore
+  // which provides some stubbed out values. We also set up OSKeyStoreTestUtils
+  // which will suppress any reauthentication dialogs.
+  const fakeOSKeyStore = {
+    asyncEncryptBytes: sinon.stub(),
+    asyncDecryptBytes: sinon.stub(),
+    asyncDeleteSecret: sinon.stub().resolves(),
+    asyncSecretAvailable: sinon.stub().resolves(true),
+    asyncGetRecoveryPhrase: sinon.stub().resolves("SomeRecoveryPhrase"),
+    asyncRecoverSecret: sinon.stub().resolves(),
+    QueryInterface: ChromeUtils.generateQI([Ci.nsIOSKeyStore]),
+  };
+  let osKeyStoreCID = MockRegistrar.register(
+    "@mozilla.org/security/oskeystore;1",
+    fakeOSKeyStore
+  );
+
+  OSKeyStoreTestUtils.setup();
+  registerCleanupFunction(async () => {
+    await OSKeyStoreTestUtils.cleanup();
+    MockRegistrar.unregister(osKeyStoreCID);
+  });
 
   sinon.replace(getSelectableProfileService(), "execProcess", execProcess);
 });
@@ -43,9 +77,13 @@ add_task(async function test_copy_profile() {
     SelectableProfileService.currentProfile.path
   );
   Assert.ok(!encState, "No encryption state before copyProfile called");
+  let donorProfileAge = await ProfileAge();
+  donorProfileAge._times.source = "profile-copy-test";
+  await donorProfileAge.writeTimes();
 
   let copiedProfile =
     await SelectableProfileService.currentProfile.copyProfile();
+  let copiedProfileAge = await ProfileAge(copiedProfile.path);
 
   encState = await backupServiceInstance.loadEncryptionState(
     SelectableProfileService.currentProfile.path
@@ -78,6 +116,11 @@ add_task(async function test_copy_profile() {
     copiedProfile.theme.themeId,
     SelectableProfileService.currentProfile.theme.themeId,
     "Copied profile has the same theme"
+  );
+  Assert.equal(
+    copiedProfileAge.source,
+    "copy",
+    "Copied profile should use the correct source"
   );
 
   let prefsPath = PathUtils.join(copiedProfile.path, "prefs.js");

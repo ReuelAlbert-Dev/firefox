@@ -9,6 +9,7 @@
 #include "js/loader/ModuleLoaderBase.h"
 #include "mozilla/dom/ScriptLoadRequestType.h"
 
+class nsIGlobalObject;
 class nsIURI;
 
 namespace JS {
@@ -93,10 +94,19 @@ class ModuleLoader final : public JS::loader::ModuleLoaderBase {
   nsresult CompileCssModule(JSContext* aCx, JS::CompileOptions& aOptions,
                             ModuleLoadRequest* aRequest,
                             JS::MutableHandle<JSObject*> aModuleOut);
+  nsresult CreateTextModule(JSContext* aCx, JS::CompileOptions& aOptions,
+                            ModuleLoadRequest* aRequest,
+                            JS::MutableHandle<JSObject*> aModuleOut);
 
  private:
   const Kind mKind;
 };
+
+// Creates an ESM with a default CSSStyleSheet export from a
+// CSS source string.
+nsresult CreateCssModule(JSContext* aCx, nsIGlobalObject* aGlobal,
+                         const nsACString& aSource, nsIURI* aBaseURI,
+                         JS::MutableHandle<JSObject*> aModuleOut);
 
 }  // namespace mozilla::dom
 

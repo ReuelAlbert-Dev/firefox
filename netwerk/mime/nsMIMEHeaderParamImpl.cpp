@@ -755,14 +755,10 @@ nsresult nsMIMEHeaderParamImpl::DoParameterInternal(
   if (*aResult) {
     // then return charset and lang as well
     if (aLang && !lang.IsEmpty()) {
-      uint32_t len = lang.Length();
-      *aLang = (char*)moz_xmemdup(lang.BeginReading(), len + 1);
-      *(*aLang + len) = 0;
+      *aLang = ToNewCString(lang);
     }
     if (aCharset && !charset.IsEmpty()) {
-      uint32_t len = charset.Length();
-      *aCharset = (char*)moz_xmemdup(charset.BeginReading(), len + 1);
-      *(*aCharset + len) = 0;
+      *aCharset = ToNewCString(charset);
     }
   }
 

@@ -70,6 +70,14 @@ gfx::ColorRange RemoteTextureHostWrapper::GetColorRange() const {
   return mRemoteTexture->GetColorRange();
 }
 
+gfx::TransferFunction RemoteTextureHostWrapper::GetTransferFunction() const {
+  MOZ_ASSERT(mRemoteTexture, "TextureHost isn't valid yet");
+  if (!mRemoteTexture) {
+    return TextureHost::GetTransferFunction();
+  }
+  return mRemoteTexture->GetTransferFunction();
+}
+
 gfx::IntSize RemoteTextureHostWrapper::GetSize() const {
   MOZ_ASSERT(mRemoteTexture, "TextureHost isn't valid yet");
   if (!mRemoteTexture) {
@@ -101,8 +109,7 @@ void RemoteTextureHostWrapper::MaybeCreateRenderTexture() {
 
   // mRemoteTexture is also used for WebRender rendering.
   auto wrappedId = mRemoteTexture->mExternalImageId.ref();
-  RefPtr<wr::RenderTextureHost> texture =
-      new wr::RenderTextureHostWrapper(wrappedId);
+  RefPtr texture = MakeRefPtr<wr::RenderTextureHostWrapper>(wrappedId);
   wr::RenderThread::Get()->RegisterExternalImage(mExternalImageId.ref(),
                                                  texture.forget());
   mRenderTextureCreated = true;

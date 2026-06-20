@@ -1,9 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "FrameMetrics.h"
 #include "js/Array.h"  // JS::GetArrayLength, JS::IsArrayObject
 #include "js/JSON.h"
 #include "js/Object.h"
@@ -47,7 +46,7 @@
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/UniquePtr.h"
 #include "nsCharSeparatedTokenizer.h"
-#include "nsContentList.h"
+#include "mozilla/dom/ContentList.h"
 #include "nsContentUtils.h"
 #include "nsFocusManager.h"
 #include "nsGlobalWindowInner.h"
@@ -64,57 +63,6 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::dom::sessionstore;
-
-namespace {
-
-class DynamicFrameEventFilter final : public nsIDOMEventListener {
- public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(DynamicFrameEventFilter)
-
-  explicit DynamicFrameEventFilter(EventListener* aListener)
-      : mListener(aListener) {}
-
-  NS_IMETHODIMP HandleEvent(Event* aEvent) override {
-    if (mListener && TargetInNonDynamicDocShell(aEvent)) {
-      mListener->HandleEvent(*aEvent);
-    }
-
-    return NS_OK;
-  }
-
- private:
-  ~DynamicFrameEventFilter() = default;
-
-  bool TargetInNonDynamicDocShell(Event* aEvent) {
-    EventTarget* target = aEvent->GetTarget();
-    if (!target) {
-      return false;
-    }
-
-    nsPIDOMWindowOuter* outer = target->GetOwnerGlobalForBindingsInternal();
-    if (!outer || !outer->GetDocShell()) {
-      return false;
-    }
-
-    RefPtr<BrowsingContext> context = outer->GetBrowsingContext();
-    return context && !context->CreatedDynamically();
-  }
-
-  RefPtr<EventListener> mListener;
-};
-
-NS_IMPL_CYCLE_COLLECTION(DynamicFrameEventFilter, mListener)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(DynamicFrameEventFilter)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMEventListener)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(DynamicFrameEventFilter)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(DynamicFrameEventFilter)
-
-}  // anonymous namespace
 
 /* static */
 void SessionStoreUtils::ForEachNonDynamicChildFrame(
@@ -155,54 +103,6 @@ void SessionStoreUtils::ForEachNonDynamicChildFrame(
       int32_t childOffset = context->ChildOffset();
       aCallback.Call(WindowProxyHolder(context.forget()), childOffset);
     }
-  }
-}
-
-/* static */
-already_AddRefed<nsISupports>
-SessionStoreUtils::AddDynamicFrameFilteredListener(
-    const GlobalObject& aGlobal, EventTarget& aTarget, const nsAString& aType,
-    JS::Handle<JS::Value> aListener, bool aUseCapture, bool aMozSystemGroup,
-    ErrorResult& aRv) {
-  if (NS_WARN_IF(!aListener.isObject())) {
-    aRv.Throw(NS_ERROR_INVALID_ARG);
-    return nullptr;
-  }
-
-  JSContext* cx = aGlobal.Context();
-  JS::Rooted<JSObject*> obj(cx, &aListener.toObject());
-  JS::Rooted<JSObject*> global(cx, JS::CurrentGlobalOrNull(cx));
-  RefPtr<EventListener> listener =
-      new EventListener(cx, obj, global, GetIncumbentGlobal());
-
-  nsCOMPtr<nsIDOMEventListener> filter(new DynamicFrameEventFilter(listener));
-  if (aMozSystemGroup) {
-    aRv = aTarget.AddSystemEventListener(aType, filter, aUseCapture);
-  } else {
-    aRv = aTarget.AddEventListener(aType, filter, aUseCapture);
-  }
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  return filter.forget();
-}
-
-/* static */
-void SessionStoreUtils::RemoveDynamicFrameFilteredListener(
-    const GlobalObject& global, EventTarget& aTarget, const nsAString& aType,
-    nsISupports* aListener, bool aUseCapture, bool aMozSystemGroup,
-    ErrorResult& aRv) {
-  nsCOMPtr<nsIDOMEventListener> listener = do_QueryInterface(aListener);
-  if (!listener) {
-    aRv.Throw(NS_ERROR_NO_INTERFACE);
-    return;
-  }
-
-  if (aMozSystemGroup) {
-    aTarget.RemoveSystemEventListener(aType, listener, aUseCapture);
-  } else {
-    aTarget.RemoveEventListener(aType, listener, aUseCapture);
   }
 }
 
@@ -319,11 +219,11 @@ void SessionStoreUtils::RestoreScrollPosition(
   if (nsCOMPtr<Document> doc = aWindow.GetExtantDoc()) {
     if (nsPresContext* presContext = doc->GetPresContext()) {
       if (presContext->IsRootContentDocumentCrossProcess()) {
-        // Use eMainThread so this takes precedence over session history
+        // Use MainThread so this takes precedence over session history
         // (ScrollFrameHelper::ScrollToRestoredPosition()).
         presContext->PresShell()->ScrollToVisual(
             CSSPoint::ToAppUnits(CSSPoint(pos_X, pos_Y)),
-            layers::FrameMetrics::eMainThread, ScrollMode::Instant);
+            layers::ScrollOffsetUpdateType::MainThread, ScrollMode::Instant);
       }
     }
   }
@@ -607,7 +507,7 @@ static uint32_t AppendEntry(nsINode* aNode, const nsString& aId,
 static uint32_t CollectTextAreaElement(Document* aDocument,
                                        sessionstore::FormData& aFormData) {
   uint32_t size = 0;
-  RefPtr<nsContentList> textlist =
+  RefPtr<ContentList> textlist =
       NS_GetContentList(aDocument, kNameSpaceID_XHTML, u"textarea"_ns);
   uint32_t length = textlist->Length();
   for (uint32_t i = 0; i < length; ++i) {
@@ -619,7 +519,7 @@ static uint32_t CollectTextAreaElement(Document* aDocument,
     }
     DOMString autocomplete;
     textArea->GetAutocomplete(autocomplete);
-    if (autocomplete.AsAString().EqualsLiteral("off")) {
+    if (autocomplete.EqualsLiteral("off")) {
       continue;
     }
     nsAutoString id;
@@ -645,7 +545,7 @@ static uint32_t CollectTextAreaElement(Document* aDocument,
 static uint32_t CollectInputElement(Document* aDocument,
                                     sessionstore::FormData& aFormData) {
   uint32_t size = 0;
-  RefPtr<nsContentList> inputlist =
+  RefPtr<ContentList> inputlist =
       NS_GetContentList(aDocument, kNameSpaceID_XHTML, u"input"_ns);
   uint32_t length = inputlist->Length();
   for (uint32_t i = 0; i < length; ++i) {
@@ -717,7 +617,7 @@ static uint32_t CollectInputElement(Document* aDocument,
 static uint32_t CollectSelectElement(Document* aDocument,
                                      sessionstore::FormData& aFormData) {
   uint32_t size = 0;
-  RefPtr<nsContentList> selectlist =
+  RefPtr<ContentList> selectlist =
       NS_GetContentList(aDocument, kNameSpaceID_XHTML, u"select"_ns);
   uint32_t length = selectlist->Length();
   for (uint32_t i = 0; i < length; ++i) {
@@ -762,7 +662,7 @@ static uint32_t CollectSelectElement(Document* aDocument,
       select->GetValue(selectVal);
       size += AppendEntry(select, id,
                           SingleSelect{static_cast<uint32_t>(selectedIndex),
-                                       selectVal.AsAString()},
+                                       std::move(selectVal)},
                           aFormData);
     } else {
       HTMLOptionsCollection* options = select->GetOptions();
@@ -797,7 +697,7 @@ static uint32_t CollectSelectElement(Document* aDocument,
   return size;
 }
 
-static already_AddRefed<nsContentList> GetFormAssociatedCustomElements(
+static already_AddRefed<ContentList> GetFormAssociatedCustomElements(
     nsINode* aRootNode) {
   MOZ_ASSERT(aRootNode, "Content list has to have a root");
 
@@ -806,19 +706,19 @@ static already_AddRefed<nsContentList> GetFormAssociatedCustomElements(
     return aElement->HasCustomElementData() &&
            aElement->GetCustomElementData()->IsFormAssociated();
   };
-  RefPtr<nsContentList> list =
-      new nsContentList(aRootNode, matchFunc, nullptr, nullptr);
+  RefPtr<ContentList> list =
+      new ContentList(aRootNode, matchFunc, nullptr, nullptr);
   return list.forget();
 }
 
 static uint32_t CollectFormAssociatedCustomElement(
     Document* aDocument, sessionstore::FormData& aFormData) {
   uint32_t size = 0;
-  RefPtr<nsContentList> faceList = GetFormAssociatedCustomElements(aDocument);
+  RefPtr<ContentList> faceList = GetFormAssociatedCustomElements(aDocument);
   uint32_t length = faceList->Length();
   for (uint32_t i = 0; i < length; ++i) {
     MOZ_ASSERT(faceList->Item(i), "null item in node list!");
-    RefPtr<Element> element = Element::FromNode(faceList->Item(i));
+    RefPtr<Element> element = faceList->Item(i);
 
     nsAutoString id;
     element->GetId(id);
@@ -863,7 +763,7 @@ template <typename... ArgsT>
 void SessionStoreUtils::CollectFromTextAreaElement(Document& aDocument,
                                                    uint16_t& aGeneratedCount,
                                                    ArgsT&&... args) {
-  RefPtr<nsContentList> textlist =
+  RefPtr<ContentList> textlist =
       NS_GetContentList(&aDocument, kNameSpaceID_XHTML, u"textarea"_ns);
   uint32_t length = textlist->Length(true);
   for (uint32_t i = 0; i < length; ++i) {
@@ -876,7 +776,7 @@ void SessionStoreUtils::CollectFromTextAreaElement(Document& aDocument,
     }
     DOMString autocomplete;
     textArea->GetAutocomplete(autocomplete);
-    if (autocomplete.AsAString().EqualsLiteral("off")) {
+    if (autocomplete.EqualsLiteral("off")) {
       continue;
     }
     nsAutoString id;
@@ -892,8 +792,7 @@ void SessionStoreUtils::CollectFromTextAreaElement(Document& aDocument,
                               eCaseMatters)) {
       continue;
     }
-    AppendValueToCollectedData(textArea, id, value, aGeneratedCount,
-                               std::forward<ArgsT>(args)...);
+    AppendValueToCollectedData(textArea, id, value, aGeneratedCount, args...);
   }
 }
 
@@ -902,7 +801,7 @@ template <typename... ArgsT>
 void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
                                                 uint16_t& aGeneratedCount,
                                                 ArgsT&&... args) {
-  RefPtr<nsContentList> inputlist =
+  RefPtr<ContentList> inputlist =
       NS_GetContentList(&aDocument, kNameSpaceID_XHTML, u"input"_ns);
   uint32_t length = inputlist->Length(true);
   for (uint32_t i = 0; i < length; ++i) {
@@ -941,8 +840,7 @@ void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
       if (checked == input->DefaultChecked()) {
         continue;
       }
-      AppendValueToCollectedData(input, id, checked, aGeneratedCount,
-                                 std::forward<ArgsT>(args)...);
+      AppendValueToCollectedData(input, id, checked, aGeneratedCount, args...);
     } else if (input->ControlType() == FormControlType::InputFile) {
       IgnoredErrorResult rv;
       nsTArray<nsString> result;
@@ -951,7 +849,7 @@ void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
         continue;
       }
       AppendValueToCollectedData(input, id, u"file"_ns, result, aGeneratedCount,
-                                 std::forward<ArgsT>(args)...);
+                                 args...);
     } else {
       nsString value;
       input->GetValue(value, CallerType::System);
@@ -965,7 +863,7 @@ void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
         continue;
       }
       AppendValueToCollectedData(aDocument, input, id, value, aGeneratedCount,
-                                 std::forward<ArgsT>(args)...);
+                                 args...);
     }
   }
 }
@@ -975,7 +873,7 @@ template <typename... ArgsT>
 void SessionStoreUtils::CollectFromSelectElement(Document& aDocument,
                                                  uint16_t& aGeneratedCount,
                                                  ArgsT&&... args) {
-  RefPtr<nsContentList> selectlist =
+  RefPtr<ContentList> selectlist =
       NS_GetContentList(&aDocument, kNameSpaceID_XHTML, u"select"_ns);
   uint32_t length = selectlist->Length(true);
   for (uint32_t i = 0; i < length; ++i) {
@@ -999,13 +897,10 @@ void SessionStoreUtils::CollectFromSelectElement(Document& aDocument,
     if (!select->Multiple()) {
       // <select>s without the multiple attribute are hard to determine the
       // default value, so assume we don't have the default.
-      DOMString selectVal;
-      select->GetValue(selectVal);
       CollectedNonMultipleSelectValue val;
       val.mSelectedIndex = select->SelectedIndex();
-      val.mValue = selectVal.AsAString();
-      AppendValueToCollectedData(select, id, val, aGeneratedCount,
-                                 std::forward<ArgsT>(args)...);
+      select->GetValue(val.mValue);
+      AppendValueToCollectedData(select, id, val, aGeneratedCount, args...);
     } else {
       // <select>s with the multiple attribute are easier to determine the
       // default value since each <option> has a defaultSelected property
@@ -1042,11 +937,11 @@ void SessionStoreUtils::CollectFromSelectElement(Document& aDocument,
 template <typename... ArgsT>
 void SessionStoreUtils::CollectFromFormAssociatedCustomElement(
     Document& aDocument, uint16_t& aGeneratedCount, ArgsT&&... args) {
-  RefPtr<nsContentList> faceList = GetFormAssociatedCustomElements(&aDocument);
+  RefPtr<ContentList> faceList = GetFormAssociatedCustomElements(&aDocument);
   uint32_t length = faceList->Length(true);
   for (uint32_t i = 0; i < length; ++i) {
     MOZ_ASSERT(faceList->Item(i), "null item in node list!");
-    RefPtr<Element> element = Element::FromNode(faceList->Item(i));
+    RefPtr<Element> element = faceList->Item(i);
 
     nsAutoString id;
     element->GetId(id);
@@ -1062,7 +957,7 @@ void SessionStoreUtils::CollectFromFormAssociatedCustomElement(
     }
 
     AppendValueToCollectedData(element, id, value, state, aGeneratedCount,
-                               std::forward<ArgsT>(args)...);
+                               args...);
   }
 }
 
@@ -1464,7 +1359,7 @@ void RestoreFormEntry(Element* aNode, const FormEntryValue& aValue) {
         return;
       }
       auto* internals = data->GetElementInternals();
-      nsCOMPtr<nsIGlobalObject> global = aNode->GetOwnerGlobal();
+      nsCOMPtr<nsIGlobalObject> global = aNode->GetRelevantGlobal();
       internals->RestoreFormValue(
           nsContentUtils::ExtractFormAssociatedCustomElementValue(
               global, aValue.get_CustomElementTuple().value()),

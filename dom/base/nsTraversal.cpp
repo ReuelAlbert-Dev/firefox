@@ -8,7 +8,6 @@
 #include "mozilla/AutoRestore.h"
 #include "mozilla/dom/NodeFilterBinding.h"
 #include "nsError.h"
-#include "nsGkAtoms.h"
 #include "nsINode.h"
 
 using namespace mozilla;
@@ -23,7 +22,7 @@ nsTraversal::nsTraversal(nsINode* aRoot, uint32_t aWhatToShow,
   NS_ASSERTION(aRoot, "invalid root in call to nsTraversal constructor");
 }
 
-nsTraversal::~nsTraversal() { /* destructor code */ }
+nsTraversal::~nsTraversal() = default;
 
 /*
  * Tests if and how a node should be filtered. Uses mWhatToShow and

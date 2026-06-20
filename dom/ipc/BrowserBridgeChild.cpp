@@ -32,7 +32,7 @@ BrowserBridgeChild::BrowserBridgeChild(BrowsingContext* aBrowsingContext,
                                        TabId aId, const LayersId& aLayersId)
     : mId{aId}, mLayersId{aLayersId}, mBrowsingContext(aBrowsingContext) {}
 
-BrowserBridgeChild::~BrowserBridgeChild() {}
+BrowserBridgeChild::~BrowserBridgeChild() = default;
 
 already_AddRefed<BrowserBridgeHost> BrowserBridgeChild::FinishInit(
     nsFrameLoader* aFrameLoader) {
@@ -54,10 +54,6 @@ already_AddRefed<BrowserBridgeHost> BrowserBridgeChild::FinishInit(
 #endif  // defined(ACCESSIBILITY)
 
   return MakeAndAddRef<BrowserBridgeHost>(this);
-}
-
-nsILoadContext* BrowserBridgeChild::GetLoadContext() {
-  return mBrowsingContext;
 }
 
 void BrowserBridgeChild::NavigateByKey(bool aForward,
@@ -156,8 +152,8 @@ mozilla::ipc::IPCResult BrowserBridgeChild::RecvMaybeFireEmbedderLoadEvents(
 }
 
 mozilla::ipc::IPCResult BrowserBridgeChild::RecvScrollRectIntoView(
-    const nsRect& aRect, const ScrollAxis& aVertical,
-    const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
+    const nsRect& aRect, const AxisScrollParams& aVertical,
+    const AxisScrollParams& aHorizontal, const ScrollFlags& aScrollFlags,
     const int32_t& aAppUnitsPerDevPixel) {
   RefPtr<Element> owner = mFrameLoader->GetOwnerContent();
   if (!owner) {

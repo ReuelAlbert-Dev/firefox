@@ -10,7 +10,7 @@ import mozilla.appservices.places.BookmarkRoot
  * Function for reducing a new bookmarks state based on the received action.
  */
 internal fun bookmarksReducer(state: BookmarksState, action: BookmarksAction) = when (action) {
-    is InitEditLoaded -> state.copy(
+    is BookmarkToEditLoaded -> state.copy(
         currentFolder = action.folder,
         bookmarksEditBookmarkState = BookmarksEditBookmarkState(
             bookmark = action.bookmark,
@@ -65,12 +65,17 @@ internal fun bookmarksReducer(state: BookmarksState, action: BookmarksAction) = 
     is ReceivedSyncSignInUpdate -> {
         state.copy(isSignedIntoSync = action.isSignedIn)
     }
+    RootOverflowMenuClicked -> state.copy(rootMenuShown = true)
+    RootOverflowMenuDismissed -> state.copy(rootMenuShown = false)
+    is ImportAction.ImportFileClicked -> state.copy(rootMenuShown = false)
+    ImportAction.ImportStarted,
+    ImportAction.ImportFailed,
+    is ImportAction.ImportSucceeded,
     CloseClicked,
     FirstSyncCompleted,
     SelectFolderAction.ViewAppeared,
     SignIntoSyncClicked,
-    is InitEdit,
-    Init,
+    is ViewAppeared,
     PrivateBrowsingAuthorized,
     -> state
 }
@@ -277,6 +282,10 @@ private fun BookmarksState.handleSnackbarAction(action: SnackbarAction): Bookmar
 
         SnackbarAction.SelectFolderFailed -> {
             this.copy(bookmarksSnackbarState = BookmarksSnackbarState.SelectFolderFailed)
+        }
+
+        SnackbarAction.ImportFailed -> {
+            this.copy(bookmarksSnackbarState = BookmarksSnackbarState.ImportFailed)
         }
     }
 }

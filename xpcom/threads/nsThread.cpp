@@ -333,7 +333,7 @@ void nsThread::ThreadFunc(void* aArg) {
   SetupCurrentThreadForChaosMode();
 
   if (!initData->name.IsEmpty()) {
-    NS_SetCurrentThreadName(initData->name.BeginReading());
+    NS_SetCurrentThreadName(initData->name.get());
   }
 
   self->InitCommon();
@@ -356,7 +356,7 @@ void nsThread::ThreadFunc(void* aArg) {
   // which profiler_register_thread() requires. See bug 1347007.
   const bool registerWithProfiler = !initData->name.IsEmpty();
   if (registerWithProfiler) {
-    PROFILER_REGISTER_THREAD(initData->name.BeginReading());
+    PROFILER_REGISTER_THREAD(initData->name.get());
   }
 
   {
@@ -849,8 +849,8 @@ nsThread::BeginShutdown(nsIThreadShutdown** aShutdown) {
 
   // Set mShutdownContext and wake up the thread in case it is waiting for
   // events to process.
-  RefPtr<nsIRunnable> event =
-      new nsThreadShutdownEvent(WrapNotNull(this), WrapNotNull(context));
+  RefPtr<nsIRunnable> event = MakeRefPtr<nsThreadShutdownEvent>(
+      WrapNotNull(this), WrapNotNull(context));
   if (!mEvents->PutEvent(event, EventQueuePriority::Normal)) {
     // We do not expect this to happen. Let's collect some diagnostics.
     nsAutoCString threadName;

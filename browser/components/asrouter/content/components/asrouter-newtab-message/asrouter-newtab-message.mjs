@@ -14,8 +14,13 @@ import "chrome://global/content/elements/moz-button.mjs";
 const DEFAULT_CSS =
   "chrome://newtab/content/data/content/external-components/asrouter-newtab-message/asrouter-newtab-message.css";
 
-const DEFAULT_IMAGE =
-  "chrome://newtab/content/data/content/assets/kit-in-circle.svg";
+// Action types that, when present on a button's `action`, are dispatched
+// directly into New Tab's Redux store via the injected `dispatch` instead
+// of being forwarded to SpecialMessageActions in the parent process. This
+// is a deliberate, narrow boundary crossing — only the types listed here
+// are allowed to reach into HNT internals. Long-term, these should migrate
+// to a stable train-hop-compatible SpecialMessageActions API.
+const NEWTAB_DISPATCH_ACTION_TYPES = new Set(["WIDGETS_OPT_IN"]);
 
 export default class ASRouterNewTabMessage extends MozLitElement {
   static properties = {
@@ -32,6 +37,13 @@ export default class ASRouterNewTabMessage extends MozLitElement {
     handleBlock: { type: Function },
     handleClose: { type: Function },
     isIntersecting: { type: Boolean },
+
+    /**
+     * Injected by New Tab's MessageWrapper. When a button's action type is
+     * in `NEWTAB_DISPATCH_ACTION_TYPES`, the action is forwarded to this
+     * dispatch instead of going through SpecialMessageActions.
+     */
+    dispatch: { type: Function },
   };
 
   /**
@@ -50,6 +62,14 @@ export default class ASRouterNewTabMessage extends MozLitElement {
    * });
    */
   specialMessageAction(action) {
+    // Actions whose type is in the allowlist are dispatched directly into
+    // New Tab's Redux store via the injected `dispatch`. Everything else
+    // flows through the JSWindowActor pair to SpecialMessageActions in the
+    // parent process.
+    if (NEWTAB_DISPATCH_ACTION_TYPES.has(action?.type) && this.dispatch) {
+      this.dispatch(action);
+      return;
+    }
     this.dispatchEvent(
       new CustomEvent("ASRouterNewTabMessage:SpecialMessageAction", {
         bubbles: true,
@@ -60,9 +80,11 @@ export default class ASRouterNewTabMessage extends MozLitElement {
     );
   }
 
-  // We don't permanently block on dismiss, re-show behavior is controlled by
-  // the message's frequency cap. If a message should only appear once per
-  // session or lifetime, set that in the message config.
+  #handleXButton() {
+    this.handleBlock?.();
+    this.#handleDismiss();
+  }
+
   #handleDismiss() {
     this.handleDismiss?.();
   }
@@ -151,10 +173,10 @@ export default class ASRouterNewTabMessage extends MozLitElement {
     if (!primaryButton && !secondaryButton) {
       return nothing;
     }
-    return html`<div class="button-group">
+    return html`<moz-button-group class="button-group">
       ${this.#renderPrimaryButtonContent(primaryButton)}
       ${this.#renderSecondaryButton(secondaryButton)}
-    </div>`;
+    </moz-button-group>`;
   }
 
   render() {
@@ -176,11 +198,13 @@ export default class ASRouterNewTabMessage extends MozLitElement {
                 size="small"
                 iconSrc="chrome://global/skin/icons/close.svg"
                 data-l10n-id="newtab-activation-window-message-dismiss-button"
-                @click=${this.#handleDismiss.bind(this)}
+                @click=${this.#handleXButton.bind(this)}
               ></moz-button>
             </div>`}
         <div class="message-inner">
-          <img src=${content?.imageSrc || DEFAULT_IMAGE} alt="" />
+          ${content?.imageSrc
+            ? html`<img src=${content.imageSrc} alt="" />`
+            : nothing}
           <div class="message-content">
             ${this.#renderHeading(content?.heading)}
             ${this.#renderBody(content?.body)}

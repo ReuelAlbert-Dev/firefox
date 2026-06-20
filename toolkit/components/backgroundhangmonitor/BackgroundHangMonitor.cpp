@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -71,9 +69,6 @@ class BackgroundHangManager : public nsIObserver {
   // Stop hang monitoring
   bool mShutdown;
 
-  BackgroundHangManager(const BackgroundHangManager&);
-  BackgroundHangManager& operator=(const BackgroundHangManager&);
-
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIOBSERVER
@@ -128,6 +123,9 @@ class BackgroundHangManager : public nsIObserver {
   }
 
   BackgroundHangManager();
+
+  BackgroundHangManager(const BackgroundHangManager&) = delete;
+  BackgroundHangManager& operator=(const BackgroundHangManager&) = delete;
 
  private:
   virtual ~BackgroundHangManager();
@@ -184,8 +182,6 @@ class BackgroundHangThread final
   static MOZ_THREAD_LOCAL(BackgroundHangThread*) sTlsKey;
   static bool sTlsKeyInitialized;
 
-  BackgroundHangThread(const BackgroundHangThread&);
-  BackgroundHangThread& operator=(const BackgroundHangThread&);
   ~BackgroundHangThread();
 
   /* Keep a reference to the manager, so we can keep going even
@@ -247,6 +243,9 @@ class BackgroundHangThread final
                        uint32_t aMaxTimeoutMs,
                        BackgroundHangMonitor::ThreadType aThreadType =
                            BackgroundHangMonitor::THREAD_SHARED);
+
+  BackgroundHangThread(const BackgroundHangThread&) = delete;
+  BackgroundHangThread& operator=(const BackgroundHangThread&) = delete;
 
   // Report a hang; aManager->mLock IS locked. The hang will be processed
   // off-main-thread, and will then be submitted back.
@@ -560,7 +559,7 @@ BackgroundHangThread* BackgroundHangThread::FindThread() {
 bool BackgroundHangMonitor::ShouldDisableOnBeta(const nsCString& clientID) {
   MOZ_ASSERT(clientID.Length() == 36, "clientID is invalid");
   const char* suffix = clientID.get() + clientID.Length() - 4;
-  return strtol(suffix, NULL, 16) % BHR_BETA_MOD;
+  return strtol(suffix, nullptr, 16) % BHR_BETA_MOD;
 }
 
 bool BackgroundHangMonitor::DisableOnBeta() {

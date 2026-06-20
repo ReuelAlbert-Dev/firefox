@@ -83,7 +83,7 @@ SafeRefPtr<InternalRequest> InternalRequest::Clone() {
   }
   return clone;
 }
-InternalRequest::InternalRequest(const nsACString& aURL,
+InternalRequest::InternalRequest(NotNull<nsIURI*> aURL,
                                  const nsACString& aFragment)
     : mMethod("GET"),
       mHeaders(new InternalHeaders(HeadersGuardEnum::None)),
@@ -97,7 +97,6 @@ InternalRequest::InternalRequest(const nsACString& aURL,
       mCacheMode(RequestCache::Default),
       mRedirectMode(RequestRedirect::Follow),
       mPriorityMode(RequestPriority::Auto) {
-  MOZ_ASSERT(!aURL.IsEmpty());
   AddURL(aURL, aFragment);
 }
 
@@ -195,9 +194,7 @@ InternalRequest::InternalRequest(const IPCInternalRequest& aIPCRequest)
 void InternalRequest::ToIPCInternalRequest(
     IPCInternalRequest* aIPCRequest, mozilla::ipc::PBackgroundChild* aManager) {
   aIPCRequest->method() = mMethod;
-  for (const auto& url : mURLList) {
-    aIPCRequest->urlList().AppendElement(url);
-  }
+  aIPCRequest->urlList() = mURLList.Clone();
   mHeaders->ToIPC(aIPCRequest->headers(), aIPCRequest->headersGuard());
   aIPCRequest->bodySize() = mBodyLength;
   aIPCRequest->preferredAlternativeDataType() = mPreferredAlternativeDataType;
@@ -361,8 +358,10 @@ RequestDestination InternalRequest::MapContentPolicyTypeToRequestDestination(
     case nsIContentPolicy::TYPE_JSON:
     case nsIContentPolicy::TYPE_INTERNAL_JSON_PRELOAD:
       return RequestDestination::Json;
+    case nsIContentPolicy::TYPE_TEXT:
+    case nsIContentPolicy::TYPE_INTERNAL_TEXT_PRELOAD:
+      return RequestDestination::Text;
     case nsIContentPolicy::TYPE_INVALID:
-    case nsIContentPolicy::TYPE_END:
       break;
       // Do not add default: so that compilers can catch the missing case.
   }
@@ -421,6 +420,8 @@ RequestDestination InternalRequest::MapContentPolicyTypeToRequestDestination(
       return RequestDestination::_empty;
     case ExtContentPolicyType::TYPE_JSON:
       return RequestDestination::Json;
+    case ExtContentPolicyType::TYPE_TEXT:
+      return RequestDestination::Text;
       // Do not add default: so that compilers can catch the missing case.
   }
 

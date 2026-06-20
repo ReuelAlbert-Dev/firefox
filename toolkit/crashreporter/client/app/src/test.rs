@@ -7,7 +7,7 @@
 //! whole.
 
 use super::*;
-use crate::config::{test::MINIDUMP_PRUNE_SAVE_COUNT, Config};
+use crate::config::Config;
 use crate::settings::Settings;
 use crate::std::{
     ffi::OsString,
@@ -83,9 +83,7 @@ const MOCK_MINIDUMP_EXTRA: &str = r#"{
         "ReleaseChannel": "release",
         "BuildID": "1234",
         "AsyncShutdownTimeout": "{}",
-        "StackTraces": {
-            "status": "OK"
-        },
+        "StackTraces": "{}",
         "Version": "100.0",
         "ServerURL": "https://reports.example.com",
         "TelemetryServerURL": "https://telemetry.example.com",
@@ -104,9 +102,7 @@ static MOCK_MINIDUMP_EXTRA_EXPECTED: std::sync::LazyLock<String> = std::sync::La
         "ReleaseChannel": "release",
         "BuildID": "1234",
         "AsyncShutdownTimeout": "{{}}",
-        "StackTraces": {{
-            "status": "OK"
-        }},
+        "StackTraces": "{{}}",
         "Version": "100.0",
         "ServerURL": "https://reports.example.com",
         "TelemetryServerURL": "https://telemetry.example.com",
@@ -271,25 +267,29 @@ impl GuiTest {
             ..
         } = self;
         let before_run = self.before_run.take();
-        let mut config = Arc::new(std::mem::take(config));
+        let mut test_config = Arc::new(std::mem::take(config));
 
         // Run the mock environment.
-        mock.run(move || {
+        let result = mock.run(|| {
             let _glean = if *enable_glean {
-                Some(glean::test_init(&config))
+                Some(glean::test_init(&test_config))
             } else {
                 None
             };
             gui_interact(
-                move || {
+                || {
                     if let Some(f) = before_run {
                         f();
                     }
-                    try_run(&mut config)
+                    try_run(&mut test_config)
                 },
                 interact,
             )
-        })
+        });
+
+        *config = Arc::into_inner(test_config).unwrap();
+
+        result
     }
 
     /// Run the test as configured, using the given function to interact with the GUI.
@@ -526,8 +526,7 @@ fn auto_submit() {
     test.assert_files().submitted();
 }
 
-#[test]
-fn restart() {
+fn prepare_restart_test() -> (GuiTest, Counter) {
     let mut test = GuiTest::new();
     test.config.restart_command = Some("my_process".into());
     test.config.restart_args = vec!["a".into(), "b".into()];
@@ -541,32 +540,22 @@ fn restart() {
             Ok(crate::std::process::success_output())
         }),
     );
-    test.run(|interact| {
-        interact.element("restart", |_style, b: &model::Button| b.click.fire(&()));
-    });
-    test.assert_files()
-        .saved_settings(Settings::default())
-        .submitted();
-    ran_process.assert_one();
+    (test, ran_process)
 }
 
-#[test]
-fn no_restart_with_windows_error_reporting() {
-    let mut test = GuiTest::new();
-    test.config.restart_command = Some("my_process".into());
-    test.config.restart_args = vec!["a".into(), "b".into()];
-    // Keep the files around so we can ensure they match what we expect.
-    test.config.delete_dump = false;
-    // Add the "WindowsErrorReporting" key to the extra file
-    let minidump_extra_contents: &str = &format!(
+fn customize_extra_file(test: &mut GuiTest, extra_fields: &[(&str, &str)]) -> String {
+    let extra_fields_json = extra_fields
+        .iter()
+        .map(|(k, v)| format!(r#""{k}": "{v}","#))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let minidump_extra_contents = format!(
         r#"{{
             "Vendor": "FooCorp",
             "ProductName": "Bar",
             "ReleaseChannel": "release",
             "BuildID": "1234",
-            "StackTraces": {{
-                "status": "OK"
-            }},
+            "StackTraces": "{{}}",
             "Version": "100.0",
             "ServerURL": "https://reports.example.com",
             "TelemetryServerURL": "https://telemetry.example.com",
@@ -575,7 +564,7 @@ fn no_restart_with_windows_error_reporting() {
             "TelemetrySessionId": "telemetry_session",
             "SomeNestedJson": {{ "foo": "bar" }},
             "URL": "https://url.example.com",
-            "WindowsErrorReporting": "1",
+            {extra_fields_json}
             "ProcessType": "main",
             "CrashTime": "{time}",
             "MinidumpSha256Hash": "{MOCK_MINIDUMP_SHA256}"
@@ -592,22 +581,58 @@ fn no_restart_with_windows_error_reporting() {
             )
             .add_file_result(
                 "minidump.extra",
-                Ok(minidump_extra_contents.into()),
+                Ok(minidump_extra_contents.as_str().into()),
                 current_system_time(),
             );
         test.mock.set(MockFS, mock_files.clone());
         mock_files
     };
-    let ran_process = Counter::new();
-    let mock_ran_process = ran_process.clone();
-    test.mock.set(
-        Command::mock("my_process"),
-        Box::new(move |cmd| {
-            assert_eq!(cmd.args, &["a", "b"]);
-            mock_ran_process.inc();
-            Ok(crate::std::process::success_output())
-        }),
+    minidump_extra_contents
+}
+
+#[test]
+fn restart() {
+    let (mut test, ran_process )= prepare_restart_test();
+    test.run(|interact| {
+        interact.element("restart", |_style, b: &model::Button| b.click.fire(&()));
+    });
+    test.assert_files()
+        .saved_settings(Settings::default())
+        .submitted();
+    ran_process.assert_one();
+}
+
+#[test]
+fn no_restart_on_browser_shutdown() {
+    let (mut test, ran_process) = prepare_restart_test();
+    customize_extra_file(
+        &mut test,
+        &[("ShutdownProgress", "xpcom-will-shutdown"), ("ShutdownReason", "Unknown")]
     );
+
+    test.run(|interact| {
+        interact.element("restart", |style, b: &model::Button| {
+            // Check that the button is hidden, and invoke the click anyway to ensure the process
+            // isn't restarted (the window will still be closed).
+            assert_eq!(style.visible.get(), false);
+            b.click.fire(&())
+        });
+    });
+    test.assert_files()
+        .saved_settings(Settings::default())
+        .submitted();
+    assert_eq!(ran_process.count(), 0);
+}
+
+#[test]
+fn no_restart_with_windows_error_reporting() {
+    let (mut test, ran_process) = prepare_restart_test();
+    let minidump_extra_contents = customize_extra_file(
+        &mut test,
+        &[("WindowsErrorReporting", "1")]
+    );
+    test.config.delete_dump = false;
+
     test.run(|interact| {
         interact.element("restart", |style, b: &model::Button| {
             // Check that the button is hidden, and invoke the click anyway to ensure the process
@@ -622,7 +647,7 @@ fn no_restart_with_windows_error_reporting() {
         let dmp = assert_files.data("pending/minidump.dmp");
         let extra = assert_files.data("pending/minidump.extra");
         assert_files
-            .check(extra, compact_json(minidump_extra_contents))
+            .check(extra, compact_json(&minidump_extra_contents))
             .check_bytes(dmp, MOCK_MINIDUMP_FILE);
     }
 
@@ -726,7 +751,7 @@ fn ping_and_event_files() {
                 serde_json::json! {{
                     "foo": "bar",
                     "MinidumpSha256Hash": MOCK_MINIDUMP_SHA256,
-                    "StackTraces": { "status": "OK" }
+                    "StackTraces": "{}"
                 }}
             ),
         );
@@ -768,7 +793,7 @@ fn network_failure() {
                 serde_json::json! {{
                     "foo": "bar",
                     "MinidumpSha256Hash": MOCK_MINIDUMP_SHA256,
-                    "StackTraces": { "status": "OK" }
+                    "StackTraces": "{}"
                 }}
             ),
         );
@@ -806,7 +831,7 @@ fn pingsender_failure() {
                     "foo": "bar",
                     "MinidumpSha256Hash": MOCK_MINIDUMP_SHA256,
                     // No crash ping UUID since pingsender fails
-                    "StackTraces": { "status": "OK" }
+                    "StackTraces": "{}"
                 }}
             ),
         );
@@ -828,6 +853,87 @@ fn glean_ping() {
         interact.element("quit", |_style, b: &model::Button| b.click.fire(&()));
     });
     submitted_glean_ping.assert_one();
+}
+
+#[test]
+fn reads_profile_directory() {
+    let mut test = GuiTest::new();
+    let minidump_extra_contents = r#"{
+        "Vendor": "FooCorp",
+        "ProductName": "Bar",
+        "ProfileDirectory": "profile_dir",
+        "ReleaseChannel": "release",
+        "BuildID": "1234",
+        "AsyncShutdownTimeout": "{}",
+        "StackTraces": {
+            "status": "OK"
+        },
+        "Version": "100.0",
+        "ServerURL": "https://reports.example.com",
+        "TelemetryServerURL": "https://telemetry.example.com",
+        "TelemetryClientId": "telemetry_client",
+        "TelemetryProfileGroupId": "telemetry_profile_group",
+        "TelemetrySessionId": "telemetry_session",
+        "SomeNestedJson": { "foo": "bar" },
+        "URL": "https://url.example.com"
+    }"#;
+    test.files = {
+        let mock_files = MockFiles::new();
+        mock_files
+            .add_file_result(
+                "minidump.dmp",
+                Ok(MOCK_MINIDUMP_FILE.into()),
+                current_system_time(),
+            )
+            .add_file_result(
+                "minidump.extra",
+                Ok(minidump_extra_contents.into()),
+                current_system_time(),
+            )
+            .add_dir("profile_dir");
+        test.mock.set(MockFS, mock_files.clone());
+        mock_files
+    };
+    test.run(|interact| {
+        interact.element("quit", |_style, b: &model::Button| b.click.fire(&()));
+    });
+
+    assert_eq!(test.config.profile_dir, Some("profile_dir".into()));
+}
+
+#[test]
+#[ignore = "This test often passes, however it relies on Glean network scheduling, which has been
+    found to be unreliable for testing purposes. A more reliable unit test is in the glean module."]
+fn glean_ping_uses_pref() {
+    for pref_value in [false, true] {
+        let mut test = GuiTest::new();
+        test.enable_glean_pings();
+        // Set profile dir manually because glean is initialized earlier than the extra file is read
+        // in tests. We check that the profile dir is correctly read in another test.
+        test.config.profile_dir = Some("profile_dir".into());
+        test.files.add_dir("profile_dir").add_file(
+            "profile_dir/prefs.js",
+            format!(r#"user_pref("datareporting.healthreport.uploadEnabled", {pref_value});"#),
+        );
+
+        // Set a mock hook at the HTTP layer to check whether the ping is sent.
+        // test_before_next_send is called whether upload is enabled or not.
+        let submitted_glean_ping = Counter::new();
+        test.mock.set(
+            net::http::MockHttp,
+            Box::new(cc! { (submitted_glean_ping) move |_request, url| {
+                if url.starts_with("https://incoming.glean.example.com/submit/firefox-crashreporter-mock/crash") {
+                    submitted_glean_ping.inc();
+                }
+                Ok(Ok(vec!()))
+            }}),
+        );
+
+        test.run(|interact| {
+            interact.element("quit", |_style, b: &model::Button| b.click.fire(&()));
+        });
+        assert_eq!(submitted_glean_ping.count(), if pref_value { 1 } else { 0 });
+    }
 }
 
 #[test]
@@ -878,6 +984,7 @@ fn details_window() {
              ProcessType: main\n\
              ProductName: Bar\n\
              ReleaseChannel: release\n\
+             StackTraces: {{}}\n\
              SubmittedFrom: Client\n\
              Throttleable: 1\n\
              URL: https://url.example.com\n\
@@ -1239,6 +1346,7 @@ fn background_task_network_backend() {
                                 "ReleaseChannel":"release",
                                 "BuildID":"1234",
                                 "AsyncShutdownTimeout":"{}",
+                                "StackTraces":"{}",
                                 "Version":"100.0",
                                 "URL":"https://url.example.com",
                                 "Throttleable":"1",
@@ -1321,6 +1429,7 @@ fn curl_binary() {
             };
 
             let expected_args: Vec<OsString> = [
+                "--fail",
                 "--user-agent",
                 net::http::user_agent(),
                 "--form",
@@ -1403,6 +1512,7 @@ fn background_task_curl_fallback() {
                                     "ReleaseChannel":"release",
                                     "BuildID":"1234",
                                     "AsyncShutdownTimeout":"{}",
+                                    "StackTraces": "{}",
                                     "Version":"100.0",
                                     "URL":"https://url.example.com",
                                     "Throttleable":"1",
@@ -1460,6 +1570,7 @@ fn background_task_curl_fallback() {
                 };
 
                 let expected_args: Vec<OsString> = [
+                    "--fail",
                     "--user-agent",
                     net::http::user_agent(),
                     "--form",
@@ -1609,26 +1720,6 @@ fn report_response_failed() {
 #[test]
 fn response_indicates_discarded() {
     let mut test = GuiTest::new();
-    // A response indicating discarded triggers a prune of the directory containing the minidump.
-    // Since there is one more minidump (the main one, minidump.dmp), pruning should keep all but
-    // the first 3, which will be the oldest.
-    const SHOULD_BE_PRUNED: usize = 3;
-
-    for i in 0..MINIDUMP_PRUNE_SAVE_COUNT + SHOULD_BE_PRUNED - 1 {
-        test.files.add_dir("data_dir/pending").add_file_result(
-            format!("data_dir/pending/minidump{i}.dmp"),
-            Ok("contents".into()),
-            ::std::time::SystemTime::UNIX_EPOCH + ::std::time::Duration::from_secs(1234 + i as u64),
-        );
-        if i % 2 == 0 {
-            test.files
-                .add_file(format!("data_dir/pending/minidump{i}.extra"), "{}");
-        }
-        if i % 5 == 0 {
-            test.files
-                .add_file(format!("data_dir/pending/minidump{i}.memory.json.gz"), "{}");
-        }
-    }
     test.mock.set(
         Command::mock("curl"),
         Box::new(|_| {
@@ -1643,15 +1734,6 @@ fn response_indicates_discarded() {
 
     let mut assert_files = test.assert_files();
     assert_files.saved_settings(Settings::default()).pending();
-    for i in SHOULD_BE_PRUNED..MINIDUMP_PRUNE_SAVE_COUNT + SHOULD_BE_PRUNED - 1 {
-        assert_files.check_exists(format!("data_dir/pending/minidump{i}.dmp"));
-        if i % 2 == 0 {
-            assert_files.check_exists(format!("data_dir/pending/minidump{i}.extra"));
-        }
-        if i % 5 == 0 {
-            assert_files.check_exists(format!("data_dir/pending/minidump{i}.memory.json.gz"));
-        }
-    }
 }
 
 #[test]
@@ -1806,14 +1888,21 @@ impl TestCrashReportServer {
                 .expect("failed to create tokio runtime");
             let _guard = rt.enter();
 
-            let (addr, server) =
-                warp::serve(submit).bind_with_graceful_shutdown(([127, 0, 0, 1], 0), async move {
-                    rx.await.ok();
-                });
+            rt.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("failed to bind");
+                let addr = listener.local_addr().expect("failed to get local addr");
+                addr_channel_tx.send(addr).unwrap();
 
-            addr_channel_tx.send(addr).unwrap();
-
-            rt.block_on(server)
+                warp::serve(submit)
+                    .incoming(listener)
+                    .graceful(async move {
+                        rx.await.ok();
+                    })
+                    .run()
+                    .await;
+            })
         });
 
         let addr = addr_channel_rx.recv().unwrap();

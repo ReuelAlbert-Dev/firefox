@@ -711,9 +711,10 @@ TEST(MoofParser, test_case_mp4_subsets) {
 }
 #endif
 
-// Bug 2004835: check values too big to fit in an int64_t will result in
-// RebuildFragmentedIndex correctly returning false because we can't handle
-// them, instead of causing an overflow.
+// Bug 2004835 / Bug 2026875: fMP4 fragments whose tfdt encodes a negative
+// pre-roll via unsigned overflow (2^64 - N, e.g. AAC encoder delay) must be
+// accepted. The signed reinterpretation gives a small negative decode time
+// that the existing edit-list mechanism handles as pre-roll.
 TEST(MoofParser, overflow_tfdt)
 {
   static const char* kTestFilename = "test_case_2004835-overflow-tfdt.mp4";
@@ -723,12 +724,40 @@ TEST(MoofParser, overflow_tfdt)
   RefPtr<ByteStream> stream =
       new TestStream(buffer.Elements(), buffer.Length());
 
-  // File has only one track (video), whose ID is 1
+  // File has one track (video, ID=1) with tfdt = 2^64 - 2048.
+  // After the fix this is reinterpreted as int64_t(-2048), which is valid for
+  // CheckedInt64; the edit-list subtraction produces correct PTS values.
   const uint32_t videoTrackId = 1;
   MoofParser parser(stream, AsVariant(videoTrackId), false);
   const MediaByteRangeSet byteRanges(
       MediaByteRange(0, int64_t(buffer.Length())));
-  EXPECT_FALSE(parser.RebuildFragmentedIndex(byteRanges));
+  EXPECT_TRUE(parser.RebuildFragmentedIndex(byteRanges));
+  EXPECT_FALSE(parser.Moofs().IsEmpty());
+}
+
+// Bug 2027038: AAC encoder delay is encoded as 2^64-N
+// in tfdt.baseMediaDecodeTime; the matching edit list has mediaTime=-N.
+// After the static_cast fix: decodeTime(-N) - mMediaStart(-N) = 0, so the
+// first sample's presentation timestamp must be exactly 0.
+TEST(MoofParser, overflow_tfdt_aac_encoder_delay)
+{
+  static const char* kTestFilename = "test_case_aac_encoder_delay_tfdt.mp4";
+  nsTArray<uint8_t> buffer = ReadTestFile(kTestFilename);
+
+  ASSERT_FALSE(buffer.IsEmpty());
+  RefPtr<ByteStream> stream =
+      new TestStream(buffer.Elements(), buffer.Length());
+
+  // Audio track (ID=1), mdhd timescale=48000, tfdt=2^64-2048 (0xFFFFF800),
+  // elst mediaTime=-2048. After fix: decodeTime=-2048, -2048-(-2048)=0.
+  const uint32_t audioTrackId = 1;
+  MoofParser parser(stream, AsVariant(audioTrackId), true);
+  const MediaByteRangeSet byteRanges(
+      MediaByteRange(0, int64_t(buffer.Length())));
+  EXPECT_TRUE(parser.RebuildFragmentedIndex(byteRanges));
+  ASSERT_FALSE(parser.Moofs().IsEmpty());
+  ASSERT_FALSE(parser.Moofs()[0].mIndex.IsEmpty());
+  EXPECT_EQ(parser.Moofs()[0].mIndex[0].mDecodeTime.ToMicroseconds(), 0LL);
 }
 
 // 1833896.mp4 has mdhd timescale 0xF800001E (4,160,749,598 as uint32_t).

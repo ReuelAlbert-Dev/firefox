@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -225,17 +223,30 @@ DecodeStencil(JS::FrontendContext* fc, const ReadOnlyDecodeOptions& options,
 //   Collect delazifications
 // ************************************************************************
 
+enum class CollectDelazificationsResult {
+  // The collection wasn't ongoing, and it's newly started.
+  // The caller is responsible for either finishing or aborting later.
+  NewlyStarted,
+
+  // The collection has already started by other consumer.
+  // The caller doesn't own the collection.
+  AlreadyStarted,
+
+  // The target script is not supported and the collection is not started.
+  NotSupported,
+};
+
 // Start collecting delazifications for given script or module's source object.
 //
-// If the source object is already collecting delazifications, alreadyStarted is
-// set to true and returns true. alreadyStarted is set to false otherwise.
+// On successful case, this sets the result out-parameter to one of the above
+// CollectDelazificationsResult and returns true, and returns false otherwise.
 extern JS_PUBLIC_API bool StartCollectingDelazifications(
     JSContext* cx, JS::Handle<JSScript*> script, Stencil* stencil,
-    bool& alreadyStarted);
+    CollectDelazificationsResult& result);
 
 extern JS_PUBLIC_API bool StartCollectingDelazifications(
     JSContext* cx, JS::Handle<JSObject*> module, Stencil* stencil,
-    bool& alreadyStarted);
+    CollectDelazificationsResult& result);
 
 // Finish collecting delazifications and retrieve the result as a JS::Stencil
 // that reflects the delazification from the execution.
@@ -249,10 +260,8 @@ extern JS_PUBLIC_API bool FinishCollectingDelazifications(
 extern JS_PUBLIC_API bool FinishCollectingDelazifications(
     JSContext* cx, Handle<JSObject*> module, JS::Stencil** stencilOut);
 
-extern JS_PUBLIC_API void AbortCollectingDelazifications(
-    Handle<JSScript*> script);
-extern JS_PUBLIC_API void AbortCollectingDelazifications(
-    Handle<JSObject*> module);
+extern JS_PUBLIC_API void AbortCollectingDelazifications(JSScript* script);
+extern JS_PUBLIC_API void AbortCollectingDelazifications(JSObject* module);
 
 // ************************************************************************
 //   Cache

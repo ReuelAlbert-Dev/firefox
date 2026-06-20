@@ -209,7 +209,7 @@ nr_reg_local_count_children(void *ptr, r_assoc_iterator *iter, const char *prefi
 int
 nr_reg_rfree(void *ptr)
 {
-    RFREE(ptr);
+    free(ptr);
     return 0;
 }
 
@@ -278,7 +278,7 @@ nr_reg_insert_node(const char *name, void *node)
              nr_reg_type_name(((nr_registry_node*)node)->type),
              (_status ? "FAILED" : "succeeded"), data?data:"");
       if (freeit)
-        RFREE(data);
+        free(data);
     }
     return(_status);
 }
@@ -309,7 +309,7 @@ nr_reg_change_node(const char *name, void *node, void *old)
              nr_reg_type_name(((nr_registry_node*)node)->type),
              (_status ? "FAILED" : "succeeded"), data?data:"");
       if (freeit)
-        RFREE(data);
+        free(data);
     }
     return(_status);
 }
@@ -340,7 +340,7 @@ nr_reg_alloc_node_data(const char *name, nr_registry_node *node, int *freeit)
     }
 
     if (alloc > 0) {
-      s = (char*)RMALLOC(alloc);
+      s = (char*)malloc(alloc);
       if (!s)
         return 0;
 
@@ -395,7 +395,7 @@ nr_reg_alloc_node_data(const char *name, nr_registry_node *node, int *freeit)
     default:
       assert(0); /* bad value */
       if (freeit) {
-        RFREE(s);
+        free(s);
         *freeit = 0;
       }
       s = 0;
@@ -420,7 +420,7 @@ nr_reg_get(const char *name, int type, void *out)
 
     _status=0;
   abort:
-    if (free_node) RFREE(node);
+    if (free_node) free(node);
     return(_status);
 }
 
@@ -487,7 +487,7 @@ nr_reg_get_array(const char *name, unsigned char type, unsigned char *out, size_
 
     _status=0;
   abort:
-    if (node && free_node) RFREE(node);
+    if (node && free_node) free(node);
     return(_status);
 }
 
@@ -564,7 +564,7 @@ nr_reg_set(const char *name, int type, void *data)
     _status=0;
   abort:
     if (_status) {
-      if (node && free_node) RFREE(node);
+      if (node && free_node) free(node);
     }
     return(_status);
 }
@@ -638,7 +638,7 @@ nr_reg_set_parent_registries(const char *name)
     char *parent = 0;
     char *dot = 0;
 
-    if ((parent = r_strdup(name)) == 0)
+    if ((parent = strdup(name)) == 0)
       ABORT(R_NO_MEMORY);
 
     if ((dot = strrchr(parent, '.')) != 0) {
@@ -649,7 +649,7 @@ nr_reg_set_parent_registries(const char *name)
 
     _status=0;
   abort:
-    if (parent) RFREE(parent);
+    if (parent) free(parent);
     return(_status);
 }
 

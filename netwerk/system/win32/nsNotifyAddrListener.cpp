@@ -552,11 +552,7 @@ nsNotifyAddrListener::CheckAdaptersAddresses(void) {
           continue;
         }
 
-        if (LOG_ENABLED()) {
-          char buf[100];
-          addr.ToStringBuffer(buf, 100);
-          LOG(("Found DNS resolver=%s", buf));
-        }
+        LOG(("Found DNS resolver=%s", addr.ToString().get()));
         resolvers.AppendElement(addr);
       }
 

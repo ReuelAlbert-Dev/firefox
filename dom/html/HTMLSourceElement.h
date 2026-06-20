@@ -5,7 +5,6 @@
 #ifndef mozilla_dom_HTMLSourceElement_h
 #define mozilla_dom_HTMLSourceElement_h
 
-#include "mozilla/dom/HTMLMediaElement.h"
 #include "nsGenericHTMLElement.h"
 
 class nsAttrValue;
@@ -13,11 +12,12 @@ class nsAttrValue;
 namespace mozilla::dom {
 
 class MediaList;
+class MediaSource;
 
 class HTMLSourceElement final : public nsGenericHTMLElement {
  public:
   explicit HTMLSourceElement(
-      already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
+      already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED

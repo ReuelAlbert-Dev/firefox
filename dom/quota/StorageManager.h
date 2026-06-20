@@ -26,12 +26,12 @@ class Promise;
 struct StorageEstimate;
 
 class StorageManager final : public nsISupports, public nsWrapperCache {
-  nsCOMPtr<nsIGlobalObject> mOwner;
+  nsCOMPtr<nsIGlobalObject> mGlobal;
 
  public:
   explicit StorageManager(nsIGlobalObject* aGlobal);
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(StorageManager)
 
   void Shutdown();
@@ -39,7 +39,7 @@ class StorageManager final : public nsISupports, public nsWrapperCache {
   already_AddRefed<FileSystemManager> GetFileSystemManager();
 
   // WebIDL Boilerplate
-  nsIGlobalObject* GetParentObject() const { return mOwner; }
+  nsIGlobalObject* GetParentObject() const { return mGlobal; }
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;

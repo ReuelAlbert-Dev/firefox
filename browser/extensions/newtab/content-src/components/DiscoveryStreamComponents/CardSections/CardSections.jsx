@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState";
 import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard";
 import { useSelector } from "react-redux";
@@ -10,9 +10,14 @@ import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import {
   useIntersectionObserver,
   getActiveColumnLayout,
+  getNovaColumnLayout,
 } from "../../../lib/utils";
+import { shouldShowOMCHighlight } from "../../../lib/asrouter-message-utils.mjs";
 import { SectionContextMenu } from "../SectionContextMenu/SectionContextMenu";
+import { SectionFollowButton } from "../SectionFollowButton/SectionFollowButton";
 import { InterestPicker } from "../InterestPicker/InterestPicker";
+// @nova-cleanup(move-directory): Update import path after NovaInterestPicker moves to InterestPicker/
+import { InterestPicker as NovaInterestPicker } from "content-src/components/Nova/InterestPicker/InterestPicker";
 import { AdBanner } from "../AdBanner/AdBanner.jsx";
 import { PersonalizedCard } from "../PersonalizedCard/PersonalizedCard";
 import { FollowSectionButtonHighlight } from "../FeatureHighlight/FollowSectionButtonHighlight";
@@ -40,10 +45,15 @@ const PREF_DAILY_BRIEF_SECTIONID = "discoverystream.dailyBrief.sectionId";
 const PREF_DAILY_BRIEF_ENABLED = "discoverystream.dailyBrief.enabled";
 const PREF_SPOCS_STARTUPCACHE_ENABLED =
   "discoverystream.spocs.startupCache.enabled";
+// @nova-cleanup(remove-pref): Remove PREF_NOVA_ENABLED
+const PREF_NOVA_ENABLED = "nova.enabled";
 
 // Feed URL
 const CURATED_RECOMMENDATIONS_FEED_URL =
   "https://merino.services.mozilla.com/api/v1/curated-recommendations";
+
+// Divides evenly by 2, 3, and 4 to avoid orphan cards in any column layout.
+const DEFAULT_MAX_TILES = 12;
 
 function getLayoutData(responsiveLayouts, index) {
   let layoutData = {
@@ -91,17 +101,11 @@ function getLayoutData(responsiveLayouts, index) {
 
 // function to determine amount of tiles shown per section per viewport
 function getMaxTiles(responsiveLayouts) {
-  return responsiveLayouts
-    .flatMap(responsiveLayout => responsiveLayout)
-    .reduce((acc, t) => {
-      acc[t.columnCount] = t.tiles.length;
-
-      // Update maxTile if current tile count is greater
-      if (!acc.maxTile || t.tiles.length > acc.maxTile) {
-        acc.maxTile = t.tiles.length;
-      }
-      return acc;
-    }, {});
+  return (
+    responsiveLayouts
+      .flatMap(responsiveLayout => responsiveLayout)
+      .reduce((max, t) => Math.max(max, t.tiles.length), 0) || DEFAULT_MAX_TILES
+  );
 }
 
 /**
@@ -119,29 +123,23 @@ const prefToArray = (pref = "") => {
     .filter(item => item);
 };
 
-function shouldShowOMCHighlight(messageData, componentId) {
-  if (!messageData || Object.keys(messageData).length === 0) {
-    return false;
-  }
-  return messageData?.content?.messageType === componentId;
-}
-
 function CardSection({
   sectionPosition,
   section,
   dispatch,
   type,
-  firstVisibleTimestamp,
   ctaButtonVariant,
   ctaButtonSponsors,
   anySectionsFollowed,
-  placeholder,
+  spocsLoading,
   activeColumnLayout,
   syncLayoutOnFocus,
+  gridRef,
 }) {
   const prefs = useSelector(state => state.Prefs.values);
 
-  const { messageData } = useSelector(state => state.Messages);
+  const Messages = useSelector(state => state.Messages);
+  const { messageData } = Messages;
 
   const { sectionPersonalization, feeds } = useSelector(
     state => state.DiscoveryStream
@@ -151,9 +149,7 @@ function CardSection({
   const [focusedPosition, setFocusedPosition] = useState(0);
 
   const onCardFocus = position => {
-    if (Number.isInteger(position)) {
-      setFocusedPosition(position);
-    }
+    setFocusedPosition(position);
   };
 
   const handleCardKeyDown = e => {
@@ -222,6 +218,8 @@ function CardSection({
 
   const mayHaveSectionsPersonalization =
     prefs[PREF_SECTIONS_PERSONALIZATION_ENABLED];
+  // @nova-cleanup(remove-conditional): Remove novaEnabled, always use Nova layout
+  const novaEnabled = prefs[PREF_NOVA_ENABLED];
 
   const { sectionKey, title, subtitle, followable } = section;
   const { responsiveLayouts, name: layoutName } = section.layout;
@@ -271,7 +269,20 @@ function CardSection({
         },
       })
     );
-  }, [dispatch, sectionPersonalization, sectionKey, sectionPosition]);
+    dispatch(
+      ac.OnlyToOneContent(
+        {
+          type: at.SHOW_TOAST_MESSAGE,
+          data: {
+            toastId: "followSectionToast",
+            showNotifications: true,
+            toastData: { l10nId: "newtab-section-toast-follow", topic: title },
+          },
+        },
+        "ActivityStream:Content"
+      )
+    );
+  }, [dispatch, sectionPersonalization, sectionKey, sectionPosition, title]);
 
   const onUnfollowClick = useCallback(() => {
     const updatedSectionData = { ...sectionPersonalization };
@@ -294,13 +305,27 @@ function CardSection({
         },
       })
     );
-  }, [dispatch, sectionPersonalization, sectionKey, sectionPosition]);
+    dispatch(
+      ac.OnlyToOneContent(
+        {
+          type: at.SHOW_TOAST_MESSAGE,
+          data: {
+            toastId: "unfollowSectionToast",
+            showNotifications: true,
+            toastData: {
+              l10nId: "newtab-section-toast-unfollow",
+              topic: title,
+            },
+          },
+        },
+        "ActivityStream:Content"
+      )
+    );
+  }, [dispatch, sectionPersonalization, sectionKey, sectionPosition, title]);
 
-  let { maxTile } = getMaxTiles(responsiveLayouts);
-  if (placeholder) {
-    // We need a number that divides evenly by 2, 3, and 4.
-    // So it can be displayed without orphans in grids with 2, 3, and 4 columns.
-    maxTile = 12;
+  let maxTile = DEFAULT_MAX_TILES;
+  if (!spocsLoading) {
+    maxTile = getMaxTiles(responsiveLayouts);
   }
 
   const shouldShowBriefingCard =
@@ -362,7 +387,6 @@ function CardSection({
             lastUpdated={briefingLastUpdated}
             selectedTopics={selectedTopics}
             isFollowed={following}
-            firstVisibleTimestamp={firstVisibleTimestamp}
           />
         );
         continue;
@@ -386,7 +410,7 @@ function CardSection({
       const isPlaceholder =
         !rec ||
         rec.placeholder ||
-        placeholder ||
+        spocsLoading ||
         (rec.flight_id &&
           !spocsStartupCacheEnabled &&
           isForStartupCache.DiscoveryStream);
@@ -438,7 +462,6 @@ function CardSection({
           url={rec.url}
           id={rec.id}
           shim={rec.shim}
-          fetchTimestamp={rec.fetchTimestamp}
           type={type}
           context={rec.context}
           sponsor={rec.sponsor}
@@ -450,7 +473,6 @@ function CardSection({
           context_type={rec.context_type}
           bookmarkGuid={rec.bookmarkGuid}
           recommendation_id={rec.recommendation_id}
-          firstVisibleTimestamp={firstVisibleTimestamp}
           corpus_item_id={rec.corpus_item_id}
           scheduled_corpus_item_id={rec.scheduled_corpus_item_id}
           recommended_at={rec.recommended_at}
@@ -486,13 +508,10 @@ function CardSection({
       <div
         className={following ? "section-follow following" : "section-follow"}
       >
-        {followable &&
+        {followable !== false &&
           !anySectionsFollowed &&
           sectionPosition === 0 &&
-          shouldShowOMCHighlight(
-            messageData,
-            "FollowSectionButtonHighlight"
-          ) && (
+          shouldShowOMCHighlight(Messages, "FollowSectionButtonHighlight") && (
             <MessageWrapper dispatch={dispatch}>
               <FollowSectionButtonHighlight
                 verticalPosition="inset-block-center"
@@ -503,11 +522,11 @@ function CardSection({
               />
             </MessageWrapper>
           )}
-        {followable &&
+        {followable !== false &&
           !anySectionsFollowed &&
           sectionPosition === 0 &&
           shouldShowOMCHighlight(
-            messageData,
+            Messages,
             "FollowSectionButtonAltHighlight"
           ) && (
             <MessageWrapper dispatch={dispatch}>
@@ -519,7 +538,7 @@ function CardSection({
               />
             </MessageWrapper>
           )}
-        {followable && (
+        {followable !== false && (
           <moz-button
             onClick={following ? onUnfollowClick : onFollowClick}
             type="default"
@@ -550,6 +569,7 @@ function CardSection({
         title={title}
         type={type}
         sectionPosition={sectionPosition}
+        learnMoreUrl={prefs["sectionsLearnMore.url"]}
       />
     </div>
   );
@@ -563,11 +583,38 @@ function CardSection({
       <div className="section-heading">
         <div className="section-title-wrapper">
           <h2 className="section-title">{title}</h2>
+          {mayHaveSectionsPersonalization &&
+            novaEnabled &&
+            followable !== false && (
+              <SectionFollowButton
+                following={following}
+                onFollowClick={onFollowClick}
+                onUnfollowClick={onUnfollowClick}
+                title={title}
+              />
+            )}
           {subtitle && <p className="section-subtitle">{subtitle}</p>}
         </div>
-        {mayHaveSectionsPersonalization ? sectionContextWrapper : null}
+        {mayHaveSectionsPersonalization &&
+          (novaEnabled ? (
+            <SectionContextMenu
+              dispatch={dispatch}
+              index={sectionPosition}
+              following={following}
+              sectionPersonalization={sectionPersonalization}
+              sectionKey={sectionKey}
+              title={title}
+              type={type}
+              sectionPosition={sectionPosition}
+              buttonType="ghost"
+              learnMoreUrl={prefs["sectionsLearnMore.url"]}
+            />
+          ) : (
+            sectionContextWrapper
+          ))}
       </div>
       <div
+        ref={gridRef}
         className={`ds-section-grid ds-card-grid`}
         onFocusCapture={syncLayoutOnFocus}
         onKeyDown={handleCardKeyDown}
@@ -583,27 +630,47 @@ function CardSections({
   feed,
   dispatch,
   type,
-  firstVisibleTimestamp,
   ctaButtonVariant,
   ctaButtonSponsors,
-  placeholder,
+  spocsLoading,
 }) {
   const prefs = useSelector(state => state.Prefs.values);
   const { spocs, sectionPersonalization } = useSelector(
     state => state.DiscoveryStream
   );
-  const { messageData } = useSelector(state => state.Messages);
+  const Messages = useSelector(state => state.Messages);
+  const { messageData } = Messages;
   const personalizationEnabled = prefs[PREF_SECTIONS_PERSONALIZATION_ENABLED];
   const interestPickerEnabled = prefs[PREF_INTEREST_PICKER_ENABLED];
+  // @nova-cleanup(remove-conditional): Remove novaEnabled check once classic path is gone
+  const novaEnabled = prefs[PREF_NOVA_ENABLED];
+  const gridRef = useRef(null);
   const [activeColumnLayout, setActiveColumnLayout] = useState(() =>
     getActiveColumnLayout(window.innerWidth)
   );
-  const syncLayoutOnFocus = useCallback(() => {
-    const nextLayout = getActiveColumnLayout(window.innerWidth);
-    setActiveColumnLayout(currLayout =>
-      currLayout === nextLayout ? currLayout : nextLayout
-    );
-  }, []);
+
+  useLayoutEffect(() => {
+    if (!novaEnabled || !gridRef.current) {
+      return;
+    }
+    const columnLayout = getNovaColumnLayout(gridRef.current);
+    if (columnLayout) {
+      setActiveColumnLayout(columnLayout);
+    }
+  }, [novaEnabled]);
+
+  const syncLayoutOnFocus = useCallback(
+    e => {
+      let nextLayout = getActiveColumnLayout(window.innerWidth);
+      if (novaEnabled) {
+        nextLayout = getNovaColumnLayout(e.currentTarget);
+      }
+      setActiveColumnLayout(currLayout =>
+        currLayout === nextLayout ? currLayout : nextLayout
+      );
+    },
+    [novaEnabled]
+  );
 
   // Handle a render before feed has been fetched by displaying nothing
   if (!data) {
@@ -620,7 +687,7 @@ function CardSections({
 
   let sectionsData = data.sections;
 
-  if (placeholder) {
+  if (spocsLoading) {
     // To clean up the placeholder state for sections if the whole section is loading still.
     sectionsData = [
       {
@@ -659,13 +726,13 @@ function CardSections({
       section={section}
       dispatch={dispatch}
       type={type}
-      firstVisibleTimestamp={firstVisibleTimestamp}
       ctaButtonVariant={ctaButtonVariant}
       ctaButtonSponsors={ctaButtonSponsors}
       anySectionsFollowed={anySectionsFollowed}
-      placeholder={placeholder}
+      spocsLoading={spocsLoading}
       activeColumnLayout={activeColumnLayout}
       syncLayoutOnFocus={syncLayoutOnFocus}
+      gridRef={sectionPosition === 0 ? gridRef : undefined}
     />
   ));
 
@@ -700,7 +767,6 @@ function CardSections({
           key={`dscard-${spocToRender.id}`}
           dispatch={dispatch}
           type={type}
-          firstVisibleTimestamp={firstVisibleTimestamp}
           row={row}
           prefs={prefs}
         />
@@ -716,11 +782,15 @@ function CardSections({
   ) {
     const index = interestPicker.receivedFeedRank - 1;
 
+    // @nova-cleanup(remove-conditional): Remove novaEnabled check, always use NovaInterestPicker
+    const InterestPickerComponent = novaEnabled
+      ? NovaInterestPicker
+      : InterestPicker;
     sectionsToRender.splice(
       // Math.min is used here to ensure the given row stays within the bounds of the sectionsToRender array.
       Math.min(sectionsToRender.length - 1, index),
       0,
-      <InterestPicker
+      <InterestPickerComponent
         title={interestPicker.title}
         subtitle={interestPicker.subtitle}
         interests={interestPicker.sections || []}
@@ -732,7 +802,7 @@ function CardSections({
   function displayP13nCard() {
     if (messageData && Object.keys(messageData).length >= 1) {
       if (
-        shouldShowOMCHighlight(messageData, "PersonalizedCard") &&
+        shouldShowOMCHighlight(Messages, "PersonalizedCard") &&
         prefs[PREF_INFERRED_PERSONALIZATION_USER]
       ) {
         const row = messageData.content.position;

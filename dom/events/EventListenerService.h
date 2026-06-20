@@ -8,7 +8,6 @@
 #include "EventListenerManager.h"
 #include "jsapi.h"
 #include "nsCycleCollectionParticipant.h"
-#include "nsGkAtoms.h"
 #include "nsIEventListenerService.h"
 #include "nsString.h"
 #include "nsTHashMap.h"
@@ -48,7 +47,7 @@ class EventListenerInfo final : public nsIEventListenerInfo {
                     bool aCapturing, bool aAllowsUntrusted,
                     bool aInSystemEventGroup, bool aIsHandler);
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(EventListenerInfo)
   NS_DECL_NSIEVENTLISTENERINFO
 

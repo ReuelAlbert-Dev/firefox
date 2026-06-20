@@ -78,27 +78,27 @@ struct HitTestClipNode {
 impl HitTestClipNode {
     fn new(
         item: &ClipItemKey,
+        clip_rect: LayoutRect,
         interners: &Interners,
         parent: ClipNodeId,
         spatial_node_index: SpatialNodeIndex,
     ) -> Self {
         let region = match item.kind {
-            ClipItemKeyKind::Rectangle(rect, mode) => {
-                HitTestRegion::Rectangle(rect.into(), mode)
+            ClipItemKeyKind::Rectangle(mode) => {
+                HitTestRegion::Rectangle(clip_rect, mode)
             }
-            ClipItemKeyKind::RoundedRectangle(rect, radius, mode) => {
-                HitTestRegion::RoundedRectangle(rect.into(), radius.into(), mode)
+            ClipItemKeyKind::RoundedRectangle(radius, mode) => {
+                HitTestRegion::RoundedRectangle(clip_rect, radius.into(), mode)
             }
-            ClipItemKeyKind::ImageMask(rect, _, polygon_handle) => {
+            ClipItemKeyKind::ImageMask(_, polygon_handle) => {
                 if let Some(handle) = polygon_handle {
                     // Retrieve the polygon data from the interner.
                     let polygon = &interners.polygon[handle];
-                    HitTestRegion::Polygon(rect.into(), *polygon)
+                    HitTestRegion::Polygon(clip_rect, *polygon)
                 } else {
-                    HitTestRegion::Rectangle(rect.into(), ClipMode::Clip)
+                    HitTestRegion::Rectangle(clip_rect, ClipMode::Clip)
                 }
             }
-            ClipItemKeyKind::BoxShadow(..) => HitTestRegion::Invalid,
         };
 
         HitTestClipNode {
@@ -205,8 +205,14 @@ impl HitTestingScene {
             let src_clip_node = clip_tree_builder.get_node(clip_node_id);
             let clip_item = &interners.clip[src_clip_node.handle];
 
+            // SNAPTODO: Scene-build hit-test scene captures the unsnapped
+            // clip rect. Snapping happens against frame-time spatial state
+            // which isn't available here; audit hit-test consumers to
+            // confirm using the unsnapped value is correct for hit
+            // semantics, or apply a frame-time snap before testing.
             let clip_node = HitTestClipNode::new(
                 &clip_item.key,
+                src_clip_node.unsnapped_clip_rect,
                 interners,
                 src_clip_node.parent,
                 src_clip_node.spatial_node_index,
@@ -253,7 +259,6 @@ impl HitTestingScene {
 
 #[derive(MallocSizeOf)]
 enum HitTestRegion {
-    Invalid,
     Rectangle(LayoutRect, ClipMode),
     RoundedRectangle(LayoutRect, BorderRadius, ClipMode),
     Polygon(LayoutRect, PolygonKey),
@@ -272,7 +277,6 @@ impl HitTestRegion {
                 !rounded_rectangle_contains_point(point, &rect, &radii),
             HitTestRegion::Polygon(rect, polygon) =>
                 polygon_contains_point(point, &rect, &polygon),
-            HitTestRegion::Invalid => true,
         }
     }
 }

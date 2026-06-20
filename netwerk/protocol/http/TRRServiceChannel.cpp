@@ -13,6 +13,7 @@
 #include "nsDNSPrefetch.h"
 #include "nsEscape.h"
 #include "nsHttpConnectionMgr.h"
+#include "nsHttpHeaderArray.h"
 #include "nsHttpTransaction.h"
 #include "nsThreadUtils.h"
 #include "nsICancelable.h"
@@ -137,7 +138,15 @@ TRRServiceChannel::Cancel(nsresult status) {
         NS_DISPATCH_NORMAL);
   }
 
-  CancelNetworkRequest(status);
+  if (mCurrentEventTarget->IsOnCurrentThread()) {
+    CancelNetworkRequest(status);
+  } else {
+    mCurrentEventTarget->Dispatch(
+        NS_NewRunnableFunction("TRRServiceChannel::CancelNetworkRequest",
+                               [self = RefPtr(this), status]() {
+                                 self->CancelNetworkRequest(status);
+                               }));
+  }
   return NS_OK;
 }
 
@@ -450,12 +459,40 @@ nsresult TRRServiceChannel::BeginConnect() {
         .Add();
   }
 
+  // TRRServiceChannel does not use nsHttpChannelAuthProvider, so seed
+  // Proxy-Authorization onto mRequestHead here for https/masque proxies.
+  if (proxyInfo && mConnectionInfo->UsingConnect()) {
+    const nsCString& pa = proxyInfo->ProxyAuthorizationHeader();
+    if (!pa.IsEmpty()) {
+      DebugOnly<nsresult> rvSet =
+          mRequestHead.SetHeader(nsHttp::Proxy_Authorization, pa);
+      MOZ_ASSERT(NS_SUCCEEDED(rvSet));
+    }
+  }
+
   // Need to re-ask the handler, since mConnectionInfo may not be the connInfo
   // we used earlier
   if (gHttpHandler->IsHttp2Excluded(mConnectionInfo)) {
     StoreAllowSpdy(0);
     mCaps |= NS_HTTP_DISALLOW_SPDY;
     mConnectionInfo->SetNoSpdy(true);
+  }
+
+  auto canUseHappyEyeballs = [&]() {
+    if (!StaticPrefs::network_http_happy_eyeballs_enabled()) {
+      return false;
+    }
+    if (mProxyInfo || mConnectionInfo->ProxyInfo()) {
+      return false;
+    }
+    return true;
+  };
+
+  if (canUseHappyEyeballs()) {
+    LOG(("%p NS_HTTP_USE_HAPPY_EYEBALLS ", this));
+    mCaps |= NS_HTTP_USE_HAPPY_EYEBALLS;
+    mCaps &= ~NS_HTTP_FORCE_WAIT_HTTP_RR;
+    mConnectionInfo->SetHappyEyeballsEnabled(true);
   }
 
   // if this somehow fails we can go on without it
@@ -1126,8 +1163,8 @@ TRRServiceChannel::OnDataAvailable(nsIRequest* request, nsIInputStream* input,
 
   MOZ_ASSERT(mResponseHead, "No response head in ODA!!");
 
-  if (mListener) {
-    return mListener->OnDataAvailable(this, input, offset, count);
+  if (nsCOMPtr<nsIStreamListener> listener = mListener) {
+    return listener->OnDataAvailable(this, input, offset, count);
   }
 
   return NS_ERROR_ABORT;
@@ -1245,7 +1282,8 @@ TRRServiceChannel::OnStopRequest(nsIRequest* request, nsresult status) {
     MOZ_ASSERT(!LoadOnStopRequestCalled(),
                "We should not call OnStopRequest twice");
     StoreOnStopRequestCalled(true);
-    mListener->OnStopRequest(this, status);
+    nsCOMPtr<nsIStreamListener> listener = mListener;
+    listener->OnStopRequest(this, status);
   }
   StoreOnStopRequestCalled(true);
 
@@ -1411,6 +1449,11 @@ NS_IMETHODIMP TRRServiceChannel::GetHttpProxyConnectResponseCode(
 
   *aResponseCode = -1;
   return NS_OK;
+}
+
+NS_IMETHODIMP TRRServiceChannel::GetHttpProxyResponseHeader(const nsACString&,
+                                                            nsACString&) {
+  return NS_ERROR_NOT_AVAILABLE;
 }
 
 NS_IMETHODIMP

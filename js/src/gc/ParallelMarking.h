@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -50,6 +48,8 @@ class alignas(TypicalCacheLineSize) ParallelMarkTask : public GCParallelTask {
  private:
   bool tryMarking(AutoLockHelperThreadState& lock);
   bool requestWork(AutoLockHelperThreadState& lock);
+  void resumeWaitingTasks(AutoLockHelperThreadState& lock);
+  void markDeferredWeakmaps(AutoLockHelperThreadState& lock);
 
   void waitUntilResumed(AutoLockHelperThreadState& lock);
   void resume();
@@ -97,7 +97,7 @@ class MOZ_STACK_CLASS ParallelMarker {
 
   bool mark(const JS::SliceBudget& sliceBudget);
 
-  bool hasWork(MarkColor color) const;
+  bool anyMarkerHasEntries() const;
 
   void addTask(ParallelMarkTask* task, const AutoLockHelperThreadState& lock);
 

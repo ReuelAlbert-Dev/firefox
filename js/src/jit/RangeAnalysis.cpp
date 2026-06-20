@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -119,13 +117,10 @@ static inline void SpewRange(const MDefinition* def) {
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_Range) && def->type() != MIRType::None &&
       def->range()) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    def->printName(out);
-    out.printf(" has range ");
-    def->range()->dump(out);
-    out.printf("\n");
+    AutoJitSpewMessage msg(JitSpew_Range, "  ");
+    def->printName(msg.printer());
+    msg.append(" has range ");
+    def->range()->dump(msg.printer());
   }
 #endif
 }
@@ -149,13 +144,9 @@ static const char* TruncateKindString(TruncateKind kind) {
 static inline void SpewTruncate(const MDefinition* def, TruncateKind kind,
                                 bool shouldClone) {
   if (JitSpewEnabled(JitSpew_Range)) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    out.printf("truncating ");
-    def->printName(out);
-    out.printf(" (kind: %s, clone: %d)\n", TruncateKindString(kind),
-               shouldClone);
+    AutoJitSpewMessage msg(JitSpew_Range, "  truncating ");
+    def->printName(msg.printer());
+    msg.append(" (kind: %s, clone: %d)", TruncateKindString(kind), shouldClone);
   }
 }
 #else
@@ -332,11 +323,9 @@ bool RangeAnalysis::addBetaNodes() {
     }
 
     if (JitSpewEnabled(JitSpew_Range)) {
-      JitSpewHeader(JitSpew_Range);
-      Fprinter& out = JitSpewPrinter();
-      out.printf("  Adding beta node for %u with range ", val->id());
-      comp.dump(out);
-      out.printf("\n");
+      AutoJitSpewMessage msg(
+          JitSpew_Range, "  Adding beta node for %u with range ", val->id());
+      comp.dump(msg.printer());
     }
 
     if (!alloc().ensureBallast()) {

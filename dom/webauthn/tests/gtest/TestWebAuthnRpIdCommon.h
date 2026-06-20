@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -49,16 +47,6 @@ const RpIdTestCase kOriginRpIdTestCases[] = {
         "https://example.com/",
         "subdomain.example.com",
         false,
-    },
-    {
-        "https://a.b.c.example.com/",
-        "c.example.com",
-        true,
-    },
-    {
-        "https://a.b.c.example.com/",
-        "b.c.example.com",
-        true,
     },
     {
         "https://a.b.c.example.com/",
@@ -161,6 +149,19 @@ static const RpIdTestCase kWebOriginOnlyRpIdTestCases[] = {
         "maybetld.",
         true,
     },
+    // For web origins, an origin may claim any registrable domain suffix of its
+    // effective domain as the RP ID. Extensions use CanAccessURI and can only
+    // claim domains they have direct host permissions for.
+    {
+        "https://a.b.c.example.com/",
+        "c.example.com",
+        true,
+    },
+    {
+        "https://a.b.c.example.com/",
+        "b.c.example.com",
+        true,
+    },
 };
 // clang-format on
 
@@ -176,11 +177,10 @@ static const RpIdTestCase kWebOriginOnlyRpIdTestCases[] = {
 // that are valid for that origin.
 //
 // Since Bug 1956484, Firefox also allows web extensions to claim RP IDs based
-// on their host permissions. An extension can claim <domain> or any registrable
-// suffix of <domain> as an RP ID if
-//  (1) the extension has host permissions for https://<domain>, or
-//  (2) the extension has host permissions for http://<domain> and <domain>
-//      is a loopback hostname.
+// on their host permissions. An extension can claim <rpId> as an RP ID if
+//  (1) the extension has host permissions for https://<rpId>, or
+//  (2) <rpId> is a loopback hostname (per mozilla::net::IsLoopbackHostname) and
+//      the extension has host permissions for http://<rpId>.
 //
 // Firefox does not currently allow extensions to claim
 // "moz-extension://extension-id" as an RP ID.
@@ -218,6 +218,11 @@ static const RpIdTestCase kMatchPatternRpIdTestCases[] = {
         false,
     },
     {
+        "<all_urls>",
+        "addons.mozilla.org",
+        false,  // rejected by WebExtensionPolicy::IsRestrictedURI
+    },
+    {
         "https://*.com/",
         "example.com",
         true,
@@ -230,12 +235,27 @@ static const RpIdTestCase kMatchPatternRpIdTestCases[] = {
     {
         "https://*.subdomain.example.com/",
         "example.com",
-        true,
+        false,  // CanAccessURI(https://example.com) doesn't match *.subdomain.example.com
+    },
+    {
+        "https://a.b.c.example.com/",
+        "c.example.com",
+        false,  // extensions cannot claim a registrable suffix of their permitted domain
+    },
+    {
+        "https://a.b.c.example.com/",
+        "b.c.example.com",
+        false,
     },
     {
         "http://*.localhost/",
         "localhost",
         true,
+    },
+    {
+        "http://foo.localhost/",
+        "foo.localhost",
+        true,  // loopback subdomains are allowed via http://
     },
     {
         "http://*.allowlisted-secure-context.com/",

@@ -331,13 +331,13 @@ void SpeechDispatcherService::Setup() {
     return;
   }
 
-  for (uint32_t i = 0; i < std::size(kSpeechDispatcherSymbols); i++) {
-    *kSpeechDispatcherSymbols[i].function = PR_FindFunctionSymbol(
-        speechdLib, kSpeechDispatcherSymbols[i].functionName);
+  for (auto speechDispatcherSymbol : kSpeechDispatcherSymbols) {
+    *speechDispatcherSymbol.function =
+        PR_FindFunctionSymbol(speechdLib, speechDispatcherSymbol.functionName);
 
-    if (!*kSpeechDispatcherSymbols[i].function) {
+    if (!*speechDispatcherSymbol.function) {
       NS_WARNING(nsPrintfCString("Failed to find speechd symbol for'%s'",
-                                 kSpeechDispatcherSymbols[i].functionName)
+                                 speechDispatcherSymbol.functionName)
                      .get());
       NotifyError(u"missing-symbol"_ns);
       return;
@@ -365,7 +365,7 @@ void SpeechDispatcherService::Setup() {
   spd_set_notification_on(mSpeechdClient, SPD_END);
   spd_set_notification_on(mSpeechdClient, SPD_CANCEL);
 
-  if (list != NULL) {
+  if (list != nullptr) {
     for (int i = 0; list[i]; i++) {
       nsAutoString uri;
 

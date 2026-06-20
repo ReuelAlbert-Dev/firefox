@@ -101,7 +101,8 @@ WindowsTestDebug::ProcessesThatOpenedFile(
   auto endSession = MakeScopeExit(
       [&, handle]() { (void)NS_WARN_IF(FAILED(RmEndSession(handle))); });
 
-  LPCWSTR resources[] = {PromiseFlatString(aFilename).get()};
+  nsPromiseFlatString flatFilename(aFilename);
+  LPCWSTR resources[] = {flatFilename.getW()};
   if (NS_WARN_IF(FAILED(
           RmRegisterResources(handle, 1, resources, 0, nullptr, 0, nullptr)))) {
     return NS_ERROR_FAILURE;

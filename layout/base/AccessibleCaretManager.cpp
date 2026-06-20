@@ -218,7 +218,7 @@ void AccessibleCaretManager::UpdateCarets(const UpdateCaretsHintSet& aHint) {
 
 bool AccessibleCaretManager::IsCaretDisplayableInCursorMode(
     nsIFrame** aOutFrame, int32_t* aOutOffset) const {
-  RefPtr<nsCaret> caret = mPresShell->GetCaret();
+  RefPtr<nsCaret> caret = mPresShell->GetOriginalCaret();
   if (!caret || !caret->IsVisible()) {
     return false;
   }
@@ -379,8 +379,18 @@ void AccessibleCaretManager::UpdateCaretsForSelectionMode(
     if (mActiveCaret) {
       ProvideHapticFeedback(mozilla::HapticFeedbackType::TextHandleMove);
     }
+
+    AutoWeakFrame weakStartFrame = startFrameAndOffset.mFrame;
+    AutoWeakFrame weakEndFrame = endFrameAndOffset.mFrame;
+
     // Flush layout to make the carets intersection correct.
     if (MaybeFlushLayout() == Terminated::Yes) {
+      return;
+    }
+
+    if ((startFrameAndOffset.mFrame && !weakStartFrame.IsAlive()) ||
+        (endFrameAndOffset.mFrame && !weakEndFrame.IsAlive())) {
+      HideCaretsAndDispatchCaretStateChangedEvent();
       return;
     }
   }

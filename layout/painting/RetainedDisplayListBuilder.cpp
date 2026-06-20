@@ -318,7 +318,6 @@ bool RetainedDisplayListBuilder::PreProcessDisplayList(
     // If we're going to keep this linked list and not merge it, then mark the
     // item as used and put it back into the list.
     if (aKeepLinked) {
-      item->SetReused(true);
       if (item->GetChildren()) {
         item->UpdateBounds(Builder());
       }
@@ -693,7 +692,6 @@ class MergeState {
       if (item->GetType() == DisplayItemType::TYPE_SUBDOCUMENT) {
         mBuilder->IncrementSubDocPresShellPaintCount(item);
       }
-      item->SetReused(true);
       mBuilder->Metrics()->mReusedItems++;
       mOldItems[aNode.val].AddedToMergedList(
           AddNewNode(item, Some(aNode), aDirectPredecessors, Nothing()));
@@ -858,10 +856,6 @@ void RetainedDisplayListBuilder::GetModifiedAndFramesWithProps(
 
     if (flags.contains(RetainedDisplayListData::FrameFlag::HasProps)) {
       aOutFramesWithProps->AppendElement(frame);
-    }
-
-    if (flags.contains(RetainedDisplayListData::FrameFlag::HadWillChange)) {
-      Builder()->RemoveFromWillChangeBudgets(frame);
     }
   }
 
@@ -1513,8 +1507,6 @@ void CollectStackingContextItems(nsDisplayListBuilder* aBuilder,
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     item->SetMergedPreProcessed(false, true);
 #endif
-    item->SetReused(true);
-
     const bool isStackingContextItem = IsReuseableStackingContextItem(item);
 
     if (item->GetChildren()) {

@@ -27,6 +27,7 @@ extern crate cubeb_coreaudio;
 extern crate cubeb_pulse;
 extern crate data_storage;
 extern crate dom_fragmentdirectives;
+extern crate dom_speculationrules;
 extern crate encoding_glue;
 extern crate fog_control;
 extern crate gecko_profiler;
@@ -93,6 +94,7 @@ extern crate localization_ffi;
 extern crate ipcclientcerts;
 extern crate pdf_trust_anchors;
 extern crate qwac_trust_anchors;
+extern crate ssl_tokens_cache;
 extern crate trust_anchors;
 
 #[cfg(any(
@@ -144,6 +146,7 @@ extern crate data_encoding_ffi;
 
 extern crate binary_http;
 extern crate happy_eyeballs_glue;
+extern crate lockstore_ffi;
 extern crate mls_gk;
 extern crate oblivious_http;
 

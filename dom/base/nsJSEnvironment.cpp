@@ -27,6 +27,7 @@
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
 #include "nsPIDOMWindow.h"
+#include "nsPIDOMWindowInlines.h"
 #include "nsPresContext.h"
 #include "nsReadableUtils.h"
 #include "nsServiceManagerUtils.h"
@@ -395,7 +396,7 @@ void DispatchScriptErrorEvent(nsPIDOMWindowInner* win,
                               xpc::ErrorReport* xpcReport,
                               JS::Handle<JS::Value> exception,
                               JS::Handle<JSObject*> exceptionStack) {
-  nsContentUtils::AddScriptRunner(new ScriptErrorEvent(
+  nsContentUtils::AddScriptRunner(MakeAndAddRef<ScriptErrorEvent>(
       win, rootingCx, xpcReport, exception, exceptionStack));
 }
 
@@ -1537,8 +1538,8 @@ static void DOMGCSliceCallback(JSContext* aCx, JS::GCProgress aProgress,
       }
 
       MOZ_ASSERT(sCurrentGCStartTime);
-      glean::dom::gc_in_progress.AccumulateRawDuration(TimeStamp::Now() -
-                                                       sCurrentGCStartTime);
+      glean::dom::gc_in_progress.ProcessGet().AccumulateRawDuration(
+          TimeStamp::Now() - sCurrentGCStartTime);
 
 #if defined(MOZ_MEMORY)
       if (freeDirty &&
@@ -2070,7 +2071,7 @@ class nsJSArgArray final : public nsIJSArgArray {
                nsresult* prv);
 
   // nsISupports
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsJSArgArray,
                                                          nsIJSArgArray)
 

@@ -6,7 +6,8 @@
 
 const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const { clampDimensionsIfNeeded } = ChromeUtils.importESModule(
-  "resource:///modules/ScreenshotsUtils.sys.mjs"
+  "moz-src:///browser/components/screenshots/ScreenshotsUtils.sys.mjs",
+  { global: "shared" }
 );
 
 const CONTAINER_FLASHING_DURATION = 500;
@@ -35,7 +36,7 @@ function simulateCameraFlash(browsingContext) {
   }
 
   // Don't take a screenshot if the user prefers reduced motion.
-  if (node.ownerGlobal.matchMedia("(prefers-reduced-motion)").matches) {
+  if (node.documentGlobal.matchMedia("(prefers-reduced-motion)").matches) {
     return;
   }
 

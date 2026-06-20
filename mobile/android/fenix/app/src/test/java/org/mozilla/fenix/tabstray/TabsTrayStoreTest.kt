@@ -14,6 +14,7 @@ import org.mozilla.fenix.tabstray.redux.action.TabsTrayAction
 import org.mozilla.fenix.tabstray.redux.state.Page
 import org.mozilla.fenix.tabstray.redux.state.TabsTrayState
 import org.mozilla.fenix.tabstray.redux.store.TabsTrayStore
+import kotlin.test.assertIs
 
 class TabsTrayStoreTest {
 
@@ -24,7 +25,7 @@ class TabsTrayStoreTest {
         store.dispatch(TabsTrayAction.EnterSelectMode)
 
         assertTrue(store.state.mode.selectedTabs.isEmpty())
-        assertTrue(store.state.mode is TabsTrayState.Mode.Select)
+        assertIs<TabsTrayState.Mode.Select>(store.state.mode)
 
         store.dispatch(TabsTrayAction.AddSelectTab(TabsTrayItem.Tab(tab = createTab(url = "url"))))
 
@@ -32,7 +33,7 @@ class TabsTrayStoreTest {
         store.dispatch(TabsTrayAction.EnterSelectMode)
 
         assertTrue(store.state.mode.selectedTabs.isEmpty())
-        assertTrue(store.state.mode is TabsTrayState.Mode.Select)
+        assertIs<TabsTrayState.Mode.Select>(store.state.mode)
     }
 
     @Test
@@ -41,11 +42,11 @@ class TabsTrayStoreTest {
 
         store.dispatch(TabsTrayAction.EnterSelectMode)
 
-        assertTrue(store.state.mode is TabsTrayState.Mode.Select)
+        assertIs<TabsTrayState.Mode.Select>(store.state.mode)
 
         store.dispatch(TabsTrayAction.ExitSelectMode)
 
-        assertTrue(store.state.mode is TabsTrayState.Mode.Normal)
+        assertIs<TabsTrayState.Mode.Normal>(store.state.mode)
     }
 
     @Test
@@ -96,7 +97,6 @@ class TabsTrayStoreTest {
         assert(Page.positionToPage(position = 0) == Page.PrivateTabs)
         assert(Page.positionToPage(position = 1) == Page.NormalTabs)
         assert(Page.positionToPage(position = 2) == Page.SyncedTabs)
-        assert(Page.positionToPage(position = 3) == Page.SyncedTabs)
         assert(Page.positionToPage(position = -1) == Page.SyncedTabs)
     }
 
@@ -105,6 +105,23 @@ class TabsTrayStoreTest {
         assert(Page.pageToPosition(page = Page.PrivateTabs) == 0)
         assert(Page.pageToPosition(page = Page.NormalTabs) == 1)
         assert(Page.pageToPosition(page = Page.SyncedTabs) == 2)
+    }
+
+    @Test
+    fun `WHEN position is converted to page and tab groups should be shown THEN page is correct`() {
+        assert(Page.positionToPage(position = 0, shouldShowTabGroupsPage = true) == Page.PrivateTabs)
+        assert(Page.positionToPage(position = 1, shouldShowTabGroupsPage = true) == Page.NormalTabs)
+        assert(Page.positionToPage(position = 2, shouldShowTabGroupsPage = true) == Page.TabGroups)
+        assert(Page.positionToPage(position = 3, shouldShowTabGroupsPage = true) == Page.SyncedTabs)
+        assert(Page.positionToPage(position = -1, shouldShowTabGroupsPage = true) == Page.SyncedTabs)
+    }
+
+    @Test
+    fun `WHEN Page is converted to an index and tab groups should be shown THEN the index is correct`() {
+        assert(Page.pageToPosition(page = Page.PrivateTabs, shouldShowTabGroupsPage = true) == 0)
+        assert(Page.pageToPosition(page = Page.NormalTabs, shouldShowTabGroupsPage = true) == 1)
+        assert(Page.pageToPosition(page = Page.TabGroups, shouldShowTabGroupsPage = true) == 2)
+        assert(Page.pageToPosition(page = Page.SyncedTabs, shouldShowTabGroupsPage = true) == 3)
     }
 
     @Test

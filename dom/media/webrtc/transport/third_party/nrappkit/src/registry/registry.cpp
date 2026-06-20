@@ -139,7 +139,7 @@ NR_reg_get_registry(NR_registry_name name, NR_registry out)
 
     _status=0;
   abort:
-    if (free_node) RFREE(node);
+    if (free_node) free(node);
     return(_status);
 
 }
@@ -186,12 +186,6 @@ NR_reg_set_registry(NR_registry_name name)
     return nr_reg_set(name, NR_REG_TYPE_REGISTRY, 0);
 }
 
-int
-NR_reg_set_bytes(NR_registry_name name, const unsigned char *data, size_t length)
-{
-    return nr_reg_set_array(name, NR_REG_TYPE_BYTES, data, length);
-}
-
 
 int
 NR_reg_del(NR_registry_name name)
@@ -235,11 +229,11 @@ NR_reg_get_child_registry(NR_registry_name parent, unsigned int i, NR_registry c
 
     _status=0;
   abort:
-    RFREE(children);
+    free(children);
     return(_status);
 }
 
-// convenience methods, call RFREE on the returned data
+// convenience methods, call free on the returned data
 int
 NR_reg_alloc_data(NR_registry_name name, Data *data)
 {
@@ -251,7 +245,7 @@ NR_reg_alloc_data(NR_registry_name name, Data *data)
     if ((r=NR_reg_get_length(name, &length)))
       ABORT(r);
 
-    if (!(tmp = (UCHAR*)RMALLOC(length)))
+    if (!(tmp = (UCHAR*)malloc(length)))
       ABORT(R_NO_MEMORY);
 
     if ((r=NR_reg_get_bytes(name, tmp, length, &sanity_check)))
@@ -265,7 +259,7 @@ NR_reg_alloc_data(NR_registry_name name, Data *data)
     _status=0;
   abort:
     if (_status) {
-      if (tmp) RFREE(tmp);
+      if (tmp) free(tmp);
     }
     return(_status);
 }
@@ -280,7 +274,7 @@ NR_reg_alloc_string(NR_registry_name name, char **data)
     if ((r=NR_reg_get_length(name, &length)))
       ABORT(r);
 
-    if (!(tmp = (char*)RMALLOC(length+1)))
+    if (!(tmp = (char*)malloc(length+1)))
       ABORT(R_NO_MEMORY);
 
     if ((r=NR_reg_get_string(name, tmp, length+1)))
@@ -293,7 +287,7 @@ NR_reg_alloc_string(NR_registry_name name, char **data)
     _status=0;
   abort:
     if (_status) {
-      if (tmp) RFREE(tmp);
+      if (tmp) free(tmp);
     }
     return(_status);
 }
@@ -357,7 +351,6 @@ abort:                                                               \
 }
 
 NRSET2(NR_reg_set2_uchar,    UCHAR,   NR_reg_set_uchar)
-NRSET2(NR_reg_set2_string,   const char*,   NR_reg_set_string)
 
 /* requires parent already in legal form */
 int

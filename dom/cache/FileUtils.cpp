@@ -412,7 +412,7 @@ nsresult BodyDeleteOrphanedFiles(
               });
 
               nsID id;
-              QM_TRY(OkIf(id.Parse(leafName.BeginReading())), true);
+              QM_TRY(OkIf(id.Parse(PromiseFlatCString(leafName).get())), true);
 
               if (!aKnownBodyIds.Contains(id)) {
                 return true;

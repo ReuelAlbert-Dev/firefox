@@ -7,6 +7,8 @@
  * Bucket for the IP Protection server list.
  */
 
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
+
 const lazy = {};
 
 ChromeUtils.defineLazyGetter(lazy, "logConsole", () =>
@@ -27,6 +29,19 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///toolkit/components/ipprotection/IPProtectionService.sys.mjs",
   RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
 });
+
+/**
+ * Reserved country code used in the Remote Settings `vpn-serverlist`
+ * collection to mark the anycast / recommended entry. Excluded from the
+ * user-facing `countries` enumeration.
+ */
+export const RECOMMENDED_COUNTRY_CODE = "REC";
+
+/**
+ * Event dispatched by `IPProtectionServerlistBase` instances whenever the
+ * underlying list has been replaced (RS sync, pref change, initial fetch).
+ */
+const LIST_CHANGED_EVENT = "IPProtectionServerlist:ListChanged";
 
 /**
  *
@@ -193,7 +208,7 @@ class Country {
 /**
  * Base Class for the Serverlist
  */
-export class IPProtectionServerlistBase {
+export class IPProtectionServerlistBase extends EventTarget {
   __list = null;
 
   init() {}
@@ -212,25 +227,54 @@ export class IPProtectionServerlistBase {
   }
 
   /**
-   * Selects a default location - for alpha this is only the US.
+   * Enumerates countries known to the serverlist, excluding the reserved
+   * recommended (anycast) entry.
    *
-   * @returns {{Country, City}} - The best country/city to use.
+   * @returns {Array<{code: string, available: boolean}>} - One entry per
+   *   country. `code` is an ISO 3166-1 alpha-2 code. `available` is true iff
+   *   the country has at least one city containing a non-quarantined server.
    */
-  getDefaultLocation() {
-    /** @type {Country} */
-    const usa = this.__list.find(country => country.code === "US");
-    if (!usa) {
+  get countries() {
+    return this.__list
+      .filter(country => country.code !== RECOMMENDED_COUNTRY_CODE)
+      .map(country => ({
+        code: country.code,
+        available: country.cities.some(city =>
+          city.servers.some(server => !server.quarantined)
+        ),
+      }));
+  }
+
+  /**
+   * Resolves a country code to a usable {country, city} pair.
+   *
+   * @param {string} [countryCode=RECOMMENDED_COUNTRY_CODE]
+   *   ISO 3166-1 alpha-2 country code, or the reserved recommended code.
+   *   Defaults to the recommended entry.
+   * @returns {{country: Country, city: City}|null} - The first city with
+   *   servers in the requested country, or null if the country is absent or
+   *   has no usable city.
+   */
+  getLocation(countryCode = RECOMMENDED_COUNTRY_CODE) {
+    const country = this.__list.find(c => c.code === countryCode);
+    if (!country) {
       return null;
     }
-
-    const city = usa.cities.find(c => c.servers.length);
+    const city = country.cities.find(c => c.servers.length);
     if (!city) {
       return null;
     }
-    return {
-      city,
-      country: usa,
-    };
+    return { country, city };
+  }
+
+  /**
+   * Returns the recommended (anycast) location, falling back to the US entry
+   * when the Remote Settings collection has not shipped a `REC` entry yet.
+   *
+   * @returns {{country: Country, city: City}|null}
+   */
+  getRecommendedLocation() {
+    return this.getLocation(RECOMMENDED_COUNTRY_CODE) ?? this.getLocation("US");
   }
 
   /**
@@ -324,6 +368,7 @@ export class RemoteSettingsServerlist extends IPProtectionServerlistBase {
       );
 
       lazy.IPPStartupCache.storeLocationList(this.__list);
+      this.dispatchEvent(new Event(LIST_CHANGED_EVENT));
     };
 
     this.#runningPromise = fetchList().finally(
@@ -346,6 +391,7 @@ export class RemoteSettingsServerlist extends IPProtectionServerlistBase {
  */
 export class PrefServerList extends IPProtectionServerlistBase {
   #observer = null;
+  #previousList = null;
 
   constructor() {
     super();
@@ -358,22 +404,28 @@ export class PrefServerList extends IPProtectionServerlistBase {
   }
 
   async initOnStartupCompleted() {
-    Services.prefs.addObserver(
-      IPProtectionServerlist.PREF_NAME,
-      this.#observer
-    );
+    Services.prefs.addObserver(PrefServerList.PREF_NAME, this.#observer);
+    // If the pref changed between startup and registering the observer we have
+    // not handled it yet. If the value hasn't actually changed, this is a no-op.
+    this.maybeFetchList();
   }
 
   uninit() {
-    Services.prefs.removeObserver(
-      IPProtectionServerlist.PREF_NAME,
-      this.#observer
-    );
+    Services.prefs.removeObserver(PrefServerList.PREF_NAME, this.#observer);
   }
-  maybeFetchList(_forceUpdate = false) {
+
+  maybeFetchList(forceUpdate = false) {
+    const newList = Services.prefs.getStringPref(PrefServerList.PREF_NAME, "");
+
+    // If the list hasn't changed, we don't need to fetch it again.
+    if (!forceUpdate && newList === this.#previousList) {
+      return Promise.resolve();
+    }
+    this.#previousList = newList;
     this.__list = IPProtectionServerlistBase.dataToList(
       PrefServerList.prefValue
     );
+    this.dispatchEvent(new Event(LIST_CHANGED_EVENT));
     return Promise.resolve();
   }
 
@@ -407,6 +459,9 @@ export class PrefServerList extends IPProtectionServerlistBase {
  * @returns {IPProtectionServerlistBase} - The appropriate serverlist implementation.
  */
 export function IPProtectionServerlistFactory() {
+  if (AppConstants.MOZ_ENTERPRISE) {
+    return new PrefServerList();
+  }
   return PrefServerList.hasPrefValue
     ? new PrefServerList()
     : new RemoteSettingsServerlist();

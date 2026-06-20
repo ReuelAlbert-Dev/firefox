@@ -1,12 +1,10 @@
-/* vim: se cin sw=2 ts=2 et filetype=javascript :
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 const kWidgetId = "taskbar-tabs-button";
 
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 let lazy = {};
 
@@ -23,13 +21,6 @@ ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   });
 });
 
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "gioService",
-  "@mozilla.org/gio-service;1",
-  Ci.nsIGIOService
-);
-
 /**
  * Object which handles Taskbar Tabs page actions.
  */
@@ -45,15 +36,7 @@ export const TaskbarTabsPageAction = {
   init(aWindow) {
     let isPopupWindow = !aWindow.toolbar.visible;
     let isPrivate = lazy.PrivateBrowsingUtils.isWindowPrivate(aWindow);
-
-    let isSupportedWin =
-      AppConstants.platform === "win" &&
-      !Services.sysinfo.getProperty("hasWinPackageId", false); // Bug 1979190
-    let isSupportedLinux =
-      AppConstants.platform === "linux" &&
-      !lazy.gioService.isRunningUnderFlatpak && // Bug 2019113
-      !lazy.gioService.isRunningUnderSnap; // Bug 2019115
-    let isSupportedPlatform = isSupportedWin || isSupportedLinux;
+    let isSupportedPlatform = ["win", "linux"].includes(AppConstants.platform);
 
     if (isPopupWindow || isPrivate || !isSupportedPlatform) {
       lazy.logConsole.info("Not initializing Taskbar Tabs Page Action.");
@@ -89,7 +72,7 @@ export const TaskbarTabsPageAction = {
       return;
     }
 
-    let window = aEvent.target.ownerGlobal;
+    let window = aEvent.target.documentGlobal;
     let currentTab = window.gBrowser.selectedTab;
 
     if (this._processingTabs.has(currentTab)) {

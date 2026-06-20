@@ -180,6 +180,11 @@ void IDBTypedCursor<CursorType>::Reset() {
   AssertIsOnOwningThread();
 
   if constexpr (!IsKeyOnlyCursor) {
+    // May run after GetValue() already deserialized and cleared mCloneInfo in
+    // place (via DeserializeValue's scope-exit guard). That's fine:
+    // ClearCloneReadInfo early-returns once the files are released, so this is
+    // a no-op in that case, and still releases the files when GetValue() was
+    // never called.
     IDBObjectStore::ClearCloneReadInfo(mData.mCloneInfo);
   }
 
@@ -317,9 +322,6 @@ void IDBTypedCursor<CursorType>::GetValue(JSContext* const aCx,
         return;
       }
 
-      // XXX This seems redundant, sine mData.mCloneInfo is moved above.
-      IDBObjectStore::ClearCloneReadInfo(mData.mCloneInfo);
-
       mCachedValue = val;
       mHaveCachedValue = true;
     }
@@ -347,7 +349,7 @@ void IDBTypedCursor<CursorType>::Continue(JSContext* const aCx,
   }
 
   Key key;
-  auto result = key.SetFromJSVal(aCx, aKey);
+  auto result = key.SetFromJSVal(aCx, aKey, mTransaction);
   if (result.isErr()) {
     aRv = result.unwrapErr().ExtractErrorResult(
         InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
@@ -450,7 +452,7 @@ void IDBTypedCursor<CursorType>::ContinuePrimaryKey(
     }
 
     Key key;
-    auto result = key.SetFromJSVal(aCx, aKey);
+    auto result = key.SetFromJSVal(aCx, aKey, mTransaction);
     if (result.isErr()) {
       aRv = result.unwrapErr().ExtractErrorResult(
           InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
@@ -472,7 +474,7 @@ void IDBTypedCursor<CursorType>::ContinuePrimaryKey(
     }
 
     Key primaryKey;
-    result = primaryKey.SetFromJSVal(aCx, aPrimaryKey);
+    result = primaryKey.SetFromJSVal(aCx, aPrimaryKey, mTransaction);
     if (result.isErr()) {
       aRv = result.unwrapErr().ExtractErrorResult(
           InvalidMapsTo<NS_ERROR_DOM_INDEXEDDB_DATA_ERR>);
@@ -616,7 +618,7 @@ RefPtr<IDBRequest> IDBTypedCursor<CursorType>::Update(
 
     IDBObjectStore& objectStore = GetSourceObjectStoreRef();
     if (objectStore.HasValidKeyPath()) {
-      if (!valueWrapper.Clone(aCx)) {
+      if (!valueWrapper.Clone(aCx, mTransaction)) {
         aRv.Throw(NS_ERROR_DOM_DATA_CLONE_ERR);
         return nullptr;
       }

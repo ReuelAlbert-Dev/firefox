@@ -52,7 +52,7 @@ struct RTC_EXPORT StreamsConfig {
   // If `enable_repeated_initial_probing` is set to true, Probes are sent
   // periodically every 1s during the first 5s after the network becomes
   // available. The probes ignores max_total_allocated_bitrate.
-  std::optional<bool> enable_repeated_initial_probing;
+  bool enable_repeated_initial_probing = false;
   std::optional<double> pacing_factor;
 
   // TODO(srte): Use BitrateAllocationLimits here.
@@ -88,6 +88,9 @@ struct RTC_EXPORT NetworkRouteChange {
   // The TargetRateConstraints are set here so they can be changed synchronously
   // when network route changes.
   TargetRateConstraints constraints;
+  // If true, the change is significant enough to warrant a reset of the
+  // bandwidth estimator.
+  bool restart_bwe = true;
 };
 
 struct RTC_EXPORT PacedPacketInfo {
@@ -174,6 +177,9 @@ struct RTC_EXPORT PacketResult {
 
   SentPacket sent_packet;
   Timestamp receive_time = Timestamp::PlusInfinity();
+  // Delta from when feedback was sent and the packet was received. Can be used
+  // for calculating round trip time per packet.
+  std::optional<TimeDelta> arrival_time_offset;
   // Ecn marking from the feedback report how this packet was received.
   EcnMarking ecn = EcnMarking::kNotEct;
 
@@ -198,13 +204,9 @@ struct RTC_EXPORT TransportPacketsFeedback {
 
   Timestamp feedback_time = Timestamp::PlusInfinity();
   DataSize data_in_flight = DataSize::Zero();
+
   bool transport_supports_ecn = false;
   std::vector<PacketResult> packet_feedbacks;
-  // Smoothed RTT calculated on the current network route.
-  // Calculated similarly as RFC 6298 using exponentially weighted moving
-  // average with alpha 1/8. Note that it is not calculated for all feedback
-  // types.
-  TimeDelta smoothed_rtt = TimeDelta::PlusInfinity();
 
   // Arrival times for messages without send time information.
   std::vector<Timestamp> sendless_arrival_times;

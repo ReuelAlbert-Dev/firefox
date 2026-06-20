@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef RSDPARSA_SDP_ATTRIBUTE_LIST_H_
-#define RSDPARSA_SDP_ATTRIBUTE_LIST_H_
+#ifndef DOM_MEDIA_WEBRTC_SDP_RSDPARSASDPATTRIBUTELIST_H_
+#define DOM_MEDIA_WEBRTC_SDP_RSDPARSASDPATTRIBUTELIST_H_
 
+#include "mozilla/UniquePtr.h"
 #include "sdp/RsdparsaSdpGlue.h"
 #include "sdp/RsdparsaSdpInc.h"
 #include "sdp/SdpAttributeList.h"
@@ -24,11 +25,12 @@ class RsdparsaSdpAttributeList : public SdpAttributeList {
   using SdpAttributeList::GetAttribute;
   using SdpAttributeList::HasAttribute;
 
-  bool HasAttribute(AttributeType type, bool sessionFallback) const override;
-  const SdpAttribute* GetAttribute(AttributeType type,
-                                   bool sessionFallback) const override;
-  void SetAttribute(SdpAttribute* attr) override;
-  void RemoveAttribute(AttributeType type) override;
+  bool HasAttribute(const AttributeType type,
+                    const bool sessionFallback) const override;
+  const SdpAttribute* GetAttribute(const AttributeType type,
+                                   const bool sessionFallback) const override;
+  void SetAttribute(UniquePtr<SdpAttribute>&& attr) override;
+  void RemoveAttribute(const AttributeType type) override;
   void Clear() override;
   uint32_t Count() const override;
 
@@ -73,9 +75,16 @@ class RsdparsaSdpAttributeList : public SdpAttributeList {
 
   void Serialize(std::ostream&) const override;
 
-  virtual ~RsdparsaSdpAttributeList();
+  virtual ~RsdparsaSdpAttributeList() = default;
+
+  RsdparsaSdpAttributeList(const RsdparsaSdpAttributeList& orig) = delete;
+  RsdparsaSdpAttributeList& operator=(const RsdparsaSdpAttributeList& rhs) =
+      delete;
 
  private:
+  using RustAttributeList = const sdp::ffi::Vec<sdp::ffi::SdpAttribute>;
+  using RustMediaSection = sdp::ffi::SdpMedia;
+
   explicit RsdparsaSdpAttributeList(RsdparsaSessionHandle session)
       : mSession(std::move(session)),
         mSessionAttributes(nullptr),
@@ -92,7 +101,7 @@ class RsdparsaSdpAttributeList : public SdpAttributeList {
         mSessionAttributes(sessionAttributes),
         mAttributes() {
     mIsVideo =
-        sdp_rust_get_media_type(msection) == RustSdpMediaValue::kRustVideo;
+        sdp_rust_get_media_type(msection) == sdp::ffi::RustSdpMediaValue::Video;
     RustAttributeList* attributes = sdp_get_media_attribute_list(msection);
     LoadAll(attributes);
   }
@@ -106,9 +115,10 @@ class RsdparsaSdpAttributeList : public SdpAttributeList {
 
   bool AtSessionLevel() const { return !mSessionAttributes; }
 
-  bool IsAllowedHere(SdpAttribute::AttributeType type);
+  bool IsAllowedHere(const SdpAttribute::AttributeType type) const;
   void LoadAll(RustAttributeList* attributeList);
-  void LoadAttribute(RustAttributeList* attributeList, AttributeType type);
+  void LoadAttribute(RustAttributeList* attributeList,
+                     const AttributeType type);
   void LoadIceUfrag(RustAttributeList* attributeList);
   void LoadIcePwd(RustAttributeList* attributeList);
   void LoadIdentity(RustAttributeList* attributeList);
@@ -143,11 +153,7 @@ class RsdparsaSdpAttributeList : public SdpAttributeList {
   void WarnAboutMisplacedAttribute(SdpAttribute::AttributeType type,
                                    uint32_t lineNumber, SdpParser& errorHolder);
 
-  SdpAttribute* mAttributes[kNumAttributeTypes];
-
-  RsdparsaSdpAttributeList(const RsdparsaSdpAttributeList& orig) = delete;
-  RsdparsaSdpAttributeList& operator=(const RsdparsaSdpAttributeList& rhs) =
-      delete;
+  UniquePtr<SdpAttribute> mAttributes[kNumAttributeTypes];
 };
 
 }  // namespace mozilla

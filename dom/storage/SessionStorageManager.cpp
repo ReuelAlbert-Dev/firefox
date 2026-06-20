@@ -653,8 +653,7 @@ void SessionStorageManager::ClearStorages(
       return;
     }
 
-    mActor->SendClearStorages(aPattern, nsCString(aOriginScope),
-                              static_cast<uint32_t>(aMode));
+    mActor->SendClearStorages(aPattern, nsCString(aOriginScope), aMode);
   }
 
   ClearStoragesInternal(aPattern, aOriginScope, aMode);

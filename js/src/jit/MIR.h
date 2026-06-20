@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -29,6 +27,7 @@
 
 #include "NamespaceImports.h"
 
+#include "builtin/ModuleObject.h"  // js::ImportPhase
 #include "jit/AtomicOp.h"
 #include "jit/FixedList.h"
 #include "jit/InlineList.h"
@@ -562,10 +561,6 @@ class MDefinition : public MNode {
   void removeFlags(uint32_t flags) { flags_ &= ~flags; }
   void setFlags(uint32_t flags) { flags_ |= flags; }
 
-  // Calling isDefinition or isResumePoint on MDefinition is unnecessary.
-  bool isDefinition() const = delete;
-  bool isResumePoint() const = delete;
-
  protected:
   void setInstructionBlock(MBasicBlock* block, const BytecodeSite* site) {
     MOZ_ASSERT(isInstruction());
@@ -613,6 +608,10 @@ class MDefinition : public MNode {
         resultType_(other.resultType_) {}
 
   Opcode op() const { return op_; }
+
+  // Calling isDefinition or isResumePoint on MDefinition is unnecessary.
+  bool isDefinition() const = delete;
+  bool isResumePoint() const = delete;
 
 #ifdef JS_JITSPEW
   const char* opName() const;
@@ -1025,7 +1024,6 @@ class CompilerGCPointer {
   operator T() const { return static_cast<T>(ptr_); }
   T operator->() const { return static_cast<T>(ptr_); }
 
- private:
   CompilerGCPointer() = delete;
   CompilerGCPointer(const CompilerGCPointer<T>&) = delete;
   CompilerGCPointer<T>& operator=(const CompilerGCPointer<T>&) = delete;
@@ -2932,6 +2930,14 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
   [[nodiscard]] MDefinition* tryFoldBigInt64(TempAllocator& alloc);
   [[nodiscard]] MDefinition* tryFoldBigIntPtr(TempAllocator& alloc);
   [[nodiscard]] MDefinition* tryFoldBigInt(TempAllocator& alloc);
+  [[nodiscard]] MDefinition* tryFoldIntZero(TempAllocator& alloc);
+
+  // Create a new comparison with |operand| as the left-hand side operand and
+  // |value| as the right-hand side operand. |operand| must be an integer or
+  // BigInt.
+  [[nodiscard]] MCompare* newCompareInt(TempAllocator& alloc,
+                                        MDefinition* operand, int64_t value,
+                                        JSOp op, bool isSigned = true);
 
  public:
   bool congruentTo(const MDefinition* ins) const override {
@@ -6002,9 +6008,6 @@ class MPhi final : public MDefinition,
   // the phi operand along the loop backedge.
   MDefinition* getLoopBackedgeOperand() const;
 
-  // Whether this phi's type already includes information for def.
-  bool typeIncludes(MDefinition* def);
-
   // Mark all phis in |iterators|, and the phis they flow into, as having
   // implicit uses.
   [[nodiscard]] static bool markIteratorPhis(const PhiVector& iterators);
@@ -8596,19 +8599,6 @@ class MRoundToDouble : public MUnaryInstruction,
   ALLOW_CLONE(MRoundToDouble)
 };
 
-class MGetIteratorCache : public MUnaryInstruction,
-                          public BoxExceptPolicy<0, MIRType::Object>::Data {
-  explicit MGetIteratorCache(MDefinition* val)
-      : MUnaryInstruction(classOpcode, val) {
-    setResultType(MIRType::Object);
-  }
-
- public:
-  INSTRUCTION_HEADER(GetIteratorCache)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, value))
-};
-
 // Implementation for 'in' operator using instruction cache
 class MInCache : public MBinaryInstruction,
                  public MixPolicy<CacheIdPolicy<0>, ObjectPolicy<1>>::Data {
@@ -8691,20 +8681,6 @@ class MHasOwnCache : public MBinaryInstruction,
   INSTRUCTION_HEADER(HasOwnCache)
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, value), (1, idval))
-};
-
-// Implementation for instanceof operator with specific rhs.
-class MInstanceOf : public MBinaryInstruction,
-                    public MixPolicy<BoxExceptPolicy<0, MIRType::Object>,
-                                     ObjectPolicy<1>>::Data {
-  MInstanceOf(MDefinition* obj, MDefinition* proto)
-      : MBinaryInstruction(classOpcode, obj, proto) {
-    setResultType(MIRType::Boolean);
-  }
-
- public:
-  INSTRUCTION_HEADER(InstanceOf)
-  TRIVIAL_NEW_WRAPPERS
 };
 
 // Given a value being written to another object, update the generational store
@@ -8880,10 +8856,6 @@ class MResumePoint final : public MNode
   MResumePoint(MBasicBlock* block, jsbytecode* pc, ResumeMode mode);
   void inherit(MBasicBlock* state);
 
-  // Calling isDefinition or isResumePoint on MResumePoint is unnecessary.
-  bool isDefinition() const = delete;
-  bool isResumePoint() const = delete;
-
   void setBlock(MBasicBlock* block) {
     setBlockAndKind(block, Kind::ResumePoint);
   }
@@ -8908,6 +8880,10 @@ class MResumePoint final : public MNode
                            jsbytecode* pc, ResumeMode mode);
 
   MBasicBlock* block() const { return resumePointBlock(); }
+
+  // Calling isDefinition or isResumePoint on MResumePoint is unnecessary.
+  bool isDefinition() const = delete;
+  bool isResumePoint() const = delete;
 
   size_t numAllocatedOperands() const { return operands_.length(); }
   uint32_t stackDepth() const { return numAllocatedOperands(); }
@@ -8983,27 +8959,6 @@ class MResumePoint final : public MNode
 #endif
 };
 
-class MIsCallable : public MUnaryInstruction,
-                    public BoxExceptPolicy<0, MIRType::Object>::Data {
-  explicit MIsCallable(MDefinition* object)
-      : MUnaryInstruction(classOpcode, object) {
-    setResultType(MIRType::Boolean);
-    setMovable();
-  }
-
- public:
-  INSTRUCTION_HEADER(IsCallable)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, object))
-
-  bool congruentTo(const MDefinition* ins) const override {
-    return congruentIfOperandsEqual(ins);
-  }
-
-  MDefinition* foldsTo(TempAllocator& alloc) override;
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
-};
-
 class MHasClass : public MUnaryInstruction, public SingleObjectPolicy::Data {
   const JSClass* class_;
 
@@ -9022,7 +8977,10 @@ class MHasClass : public MUnaryInstruction, public SingleObjectPolicy::Data {
   const JSClass* getClass() const { return class_; }
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
+  AliasSet getAliasSet() const override {
+    // ProxyObject::swap can change the JSClass of certain proxy objects.
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
   bool congruentTo(const MDefinition* ins) const override {
     if (!ins->isHasClass()) {
       return false;
@@ -9062,7 +9020,10 @@ class MGuardToClass : public MUnaryInstruction,
   }
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
+  AliasSet getAliasSet() const override {
+    // ProxyObject::swap can change the JSClass of certain proxy objects.
+    return AliasSet::Load(AliasSet::ObjectFields);
+  }
   bool congruentTo(const MDefinition* ins) const override {
     if (!ins->isGuardToClass()) {
       return false;
@@ -9093,29 +9054,17 @@ class MGuardToFunction : public MUnaryInstruction,
   NAMED_OPERANDS((0, object))
 
   MDefinition* foldsTo(TempAllocator& alloc) override;
-  AliasSet getAliasSet() const override { return AliasSet::None(); }
+  AliasSet getAliasSet() const override {
+    // Note: this is different from MGuardToClass because functions can't be
+    // swapped.
+    return AliasSet::None();
+  }
   bool congruentTo(const MDefinition* ins) const override {
     if (!ins->isGuardToFunction()) {
       return false;
     }
     return congruentIfOperandsEqual(ins);
   }
-};
-
-// Note: we might call a proxy trap, so this instruction is effectful.
-class MIsArray : public MUnaryInstruction,
-                 public BoxExceptPolicy<0, MIRType::Object>::Data {
-  explicit MIsArray(MDefinition* value)
-      : MUnaryInstruction(classOpcode, value) {
-    setResultType(MIRType::Boolean);
-  }
-
- public:
-  INSTRUCTION_HEADER(IsArray)
-  TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, value))
-
-  MDefinition* foldsTo(TempAllocator& alloc) override;
 };
 
 class MIsTypedArray : public MUnaryInstruction,
@@ -9410,12 +9359,6 @@ class MObjectToIterator : public MUnaryInstruction,
   INSTRUCTION_HEADER(ObjectToIterator)
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object))
-
-  AliasSet getAliasSet() const override {
-    return skipRegistration_
-               ? AliasSet::Load(AliasSet::ObjectFields | AliasSet::Element)
-               : AliasSet::Store(AliasSet::Any);
-  }
 
   bool wantsIndices() const { return wantsIndices_; }
   void setWantsIndices(bool value) { wantsIndices_ = value; }

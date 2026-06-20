@@ -40,7 +40,8 @@ class Blob : public nsSupportsWeakReference, public nsWrapperCache {
   using BlobPart = OwningArrayBufferViewOrArrayBufferOrBlobOrUTF8String;
 
   // This creates a Blob or a File based on the type of BlobImpl.
-  static Blob* Create(nsIGlobalObject* aGlobal, BlobImpl* aImpl);
+  static already_AddRefed<Blob> Create(nsIGlobalObject* aGlobal,
+                                       BlobImpl* aImpl);
 
   static already_AddRefed<Blob> CreateStringBlob(nsIGlobalObject* aGlobal,
                                                  const nsACString& aData,
@@ -53,6 +54,12 @@ class Blob : public nsSupportsWeakReference, public nsWrapperCache {
                                                  void* aMemoryBuffer,
                                                  uint64_t aLength,
                                                  const nsAString& aContentType);
+
+  // This clones the current Blob
+  already_AddRefed<Blob> Clone() const;
+
+  // Returns true if the blob's JS wrapper has user-added properties (expandos).
+  bool HasExpandos() const;
 
   BlobImpl* Impl() const { return mImpl; }
 

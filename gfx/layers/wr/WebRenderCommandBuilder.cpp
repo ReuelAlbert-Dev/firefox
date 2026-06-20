@@ -9,6 +9,7 @@
 #include "mozilla/EffectCompositor.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/StaticPrefs_gfx.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/SVGGeometryFrame.h"
 #include "mozilla/SVGImageFrame.h"
 #include "mozilla/UniquePtr.h"
@@ -388,9 +389,6 @@ struct DIGroup {
        mClippedImageBounds.height);
     LayerIntSize size = mVisibleRect.Size();
     GP("imageSize: %d %d\n", size.width, size.height);
-    /*if (aItem->IsReused() && aData->mGeometry) {
-      return;
-    }*/
 
     GP("pre mInvalidRect: %s %p-%d - inv: %d %d %d %d\n", aItem->Name(),
        aItem->Frame(), aItem->GetPerFrameKey(), mInvalidRect.x, mInvalidRect.y,
@@ -1207,9 +1205,8 @@ static ItemActivity IsItemProbablyActive(
       return activity;
     }
     case DisplayItemType::TYPE_OPACITY: {
-      nsDisplayOpacity* opacityItem = static_cast<nsDisplayOpacity*>(aItem);
-      if (opacityItem->NeedsActiveLayer(aDisplayListBuilder,
-                                        opacityItem->Frame())) {
+      auto* opacityItem = static_cast<nsDisplayOpacity*>(aItem);
+      if (opacityItem->NeedsActiveLayer()) {
         return ItemActivity::Must;
       }
       return HasActiveChildren(*opacityItem->GetChildren(), aBuilder,
@@ -1853,11 +1850,6 @@ void WebRenderCommandBuilder::CreateWebRenderCommands(
   auto* item = aItem->AsPaintedDisplayItem();
   MOZ_RELEASE_ASSERT(item, "Tried to paint item that cannot be painted");
 
-  if (aBuilder.ReuseItem(item)) {
-    // No further processing should be needed, since the item was reused.
-    return;
-  }
-
   RenderRootStateManager* manager = mManager->GetRenderRootStateManager();
 
   // Note: this call to CreateWebRenderCommands can recurse back into
@@ -2034,14 +2026,8 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
     // the display item cache for descendants, since it's possible that some of
     // them got cached with a flattened opacity values., which may no longer be
     // applied.
-    Maybe<AutoDisplayItemCacheSuppressor> cacheSuppressor;
-
     if (itemType == DisplayItemType::TYPE_OPACITY) {
       nsDisplayOpacity* opacity = static_cast<nsDisplayOpacity*>(item);
-
-      if (!opacity->IsReused()) {
-        cacheSuppressor.emplace(aBuilder.GetDisplayItemCache());
-      }
 
       if (opacity->CanApplyOpacityToChildren(
               mManager->GetRenderRootStateManager()->LayerManager(),
@@ -2752,12 +2738,21 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
   // ChooseScaleAndSetTransform but for now we just fake it.
   // We tolerate slight changes in scale so that we don't, for example,
   // rerasterize on MotionMark
-  bool sameScale = FuzzyEqual(scale.xScale, oldScale.xScale, 1e-6f) &&
-                   FuzzyEqual(scale.yScale, oldScale.yScale, 1e-6f);
+  bool sameScale = gfx::FuzzyEqual(scale.xScale, oldScale.xScale, 1e-6f) &&
+                   gfx::FuzzyEqual(scale.yScale, oldScale.yScale, 1e-6f);
 
-  LayerIntRect itemRect =
-      LayerIntRect::FromUnknownRect(bounds.ScaleToOutsidePixels(
-          scale.xScale, scale.yScale, appUnitsPerDevPixel));
+  // The blob is rasterized into an integer-sized draw target whose origin is
+  // itemRect.TopLeft(). With pixel alignment disabled the placement rect is
+  // sent unrounded and snapped to the nearest device pixel by WebRender, so
+  // rasterize the blob on the nearest-pixel grid too (rather than rounding
+  // out); otherwise the mask alpha lands ~1px off the placement it's mapped
+  // onto.
+  LayerIntRect itemRect = LayerIntRect::FromUnknownRect(
+      StaticPrefs::layout_disable_pixel_alignment()
+          ? bounds.ScaleToNearestPixels(scale.xScale, scale.yScale,
+                                        appUnitsPerDevPixel)
+          : bounds.ScaleToOutsidePixels(scale.xScale, scale.yScale,
+                                        appUnitsPerDevPixel));
 
   LayerIntRect visibleRect =
       LayerIntRect::FromUnknownRect(
@@ -2770,7 +2765,21 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
   }
 
   LayoutDeviceToLayerScale2D layerScale(scale.xScale, scale.yScale);
-  LayoutDeviceRect imageRect = LayerRect(visibleRect) / layerScale;
+
+  // Rect the mask image is placed and sampled over. The blob itself must stay
+  // integer-sized (itemRect/visibleRect, above), but the placement rect we
+  // hand to WebRender becomes the mask clip node's rect, which WebRender snaps
+  // to device pixels at frame time. With pixel alignment disabled, send the
+  // true (unrounded) rect -- the same one the masked content uses -- so the
+  // mask snaps in lockstep with its content instead of carrying our own stale
+  // device-pixel RoundOut.
+  LayoutDeviceRect imageRect;
+  if (StaticPrefs::layout_disable_pixel_alignment()) {
+    imageRect = LayoutDeviceRect::FromAppUnits(
+        bounds.Intersect(aMaskItem->GetBuildingRect()), appUnitsPerDevPixel);
+  } else {
+    imageRect = LayerRect(visibleRect) / layerScale;
+  }
 
   nsPoint maskOffset = aMaskItem->ToReferenceFrame() - bounds.TopLeft();
 

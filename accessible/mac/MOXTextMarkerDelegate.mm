@@ -17,8 +17,8 @@ using namespace mozilla::a11y;
 
 #define PREF_ACCESSIBILITY_MAC_DEBUG "accessibility.mac.debug"
 
-MOZ_RUNINIT static nsTHashMap<nsPtrHashKey<mozilla::a11y::Accessible>,
-                              MOXTextMarkerDelegate*>
+constinit static nsTHashMap<nsPtrHashKey<mozilla::a11y::Accessible>,
+                            MOXTextMarkerDelegate*>
     sDelegates;
 
 @implementation MOXTextMarkerDelegate
@@ -519,7 +519,10 @@ mozAccessible* GetEditableNativeFromGeckoAccessible(Accessible* aAcc) {
       GeckoTextMarkerRange::MarkerRangeFromAXTextMarkerRange(
           mGeckoDocAccessible, textMarkerRange);
   if (range.IsValid()) {
-    range.Select();
+    // Avoid setting focus here, because doing so will move the
+    // VO cursor and interrupt navigation. This is distinct from
+    // the behaviour in moxSetSelectedTextRange.
+    range.Select(/* aSetFocus */ false);
   }
 }
 

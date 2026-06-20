@@ -31,18 +31,18 @@ using namespace layers;  // for PlanarYCbCrData and BufferRecycleBin
 using namespace ipc;
 using namespace gfx;
 
-layers::TextureForwarder* KnowsCompositorVideo::GetTextureForwarder() {
-  auto* vbc = VideoBridgeChild::GetSingleton();
+RefPtr<layers::TextureForwarder> KnowsCompositorVideo::GetTextureForwarder() {
+  auto vbc = VideoBridgeChild::GetSingleton();
   return (vbc && vbc->CanSend()) ? vbc : nullptr;
 }
 layers::LayersIPCActor* KnowsCompositorVideo::GetLayersIPCActor() {
-  return GetTextureForwarder();
+  return GetTextureForwarder().get();
 }
 
 /* static */ already_AddRefed<KnowsCompositorVideo>
 KnowsCompositorVideo::TryCreateForIdentifier(
     const layers::TextureFactoryIdentifier& aIdentifier) {
-  VideoBridgeChild* child = VideoBridgeChild::GetSingleton();
+  auto child = VideoBridgeChild::GetSingleton();
   if (!child) {
     return nullptr;
   }
@@ -108,8 +108,7 @@ MediaResult RemoteVideoDecoderChild::InitIPDL(
   if (!manager->CanSend()) {
     if (mLocation == RemoteMediaIn::GpuProcess) {
       // The manager doesn't support sending messages because we've just crashed
-      // and are working on reinitialization. Don't initialize mIPDLSelfRef and
-      // leave us in an error state. We'll then immediately reject the promise
+      // and are working on reinitialization. We immediately reject the promise
       // when Init() is called and the caller can try again. Hopefully by then
       // the new manager is ready, or we've notified the caller of it being no
       // longer available. If not, then the cycle repeats until we're ready.
@@ -138,11 +137,14 @@ MediaResult RemoteVideoDecoderChild::InitIPDL(
     }
   }
 
-  mIPDLSelfRef = this;
   VideoDecoderInfoIPDL decoderInfo(aVideoInfo, aFramerate);
-  MOZ_ALWAYS_TRUE(manager->SendPRemoteDecoderConstructor(
-      this, decoderInfo, aOptions, aIdentifier, aMediaEngineId, aTrackingId,
-      cdm));
+  if (!manager->SendPRemoteDecoderConstructor(this, decoderInfo, aOptions,
+                                              aIdentifier, aMediaEngineId,
+                                              aTrackingId, cdm)) {
+    return MediaResult(
+        NS_ERROR_DOM_MEDIA_FATAL_ERR,
+        RESULT_DETAIL("RemoteMediaManager unable to construct."));
+  }
 
   return NS_OK;
 }
@@ -170,6 +172,11 @@ RemoteVideoDecoderParent::RemoteVideoDecoderParent(
 
 IPCResult RemoteVideoDecoderParent::RecvConstruct(
     ConstructResolver&& aResolver) {
+  if (mDecoder || mShutdown) {
+    aResolver(MediaResult(NS_ERROR_ALREADY_INITIALIZED, __func__));
+    return IPC_OK();
+  }
+
   auto imageContainer = MakeRefPtr<layers::ImageContainer>(
       layers::ImageUsageType::RemoteVideoDecoder,
       layers::ImageContainer::SYNCHRONOUS);
@@ -200,6 +207,11 @@ IPCResult RemoteVideoDecoderParent::RecvConstruct(
           return;
         }
         MOZ_ASSERT(aValue.ResolveValue());
+        if (self->mDecoder || self->mShutdown) {
+          aValue.ResolveValue()->Shutdown();
+          resolver(MediaResult(NS_ERROR_ALREADY_INITIALIZED, __func__));
+          return;
+        }
         self->mDecoder =
             new MediaDataDecoderProxy(aValue.ResolveValue().forget(),
                                       do_AddRef(self->mDecodeTaskQueue.get()));

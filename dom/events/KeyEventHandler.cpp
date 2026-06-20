@@ -163,9 +163,7 @@ bool KeyEventHandler::TryConvertToKeyboardShortcut(
 
 bool KeyEventHandler::KeyElementIsDisabled() const {
   RefPtr<dom::Element> keyElement = GetHandlerElement();
-  return keyElement &&
-         keyElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
-                                 nsGkAtoms::_true, eCaseMatters);
+  return keyElement && keyElement->GetBoolAttr(nsGkAtoms::disabled);
 }
 
 already_AddRefed<dom::Element> KeyEventHandler::GetHandlerElement() const {
@@ -313,8 +311,7 @@ nsresult KeyEventHandler::DispatchXBLCommand(dom::EventTarget* aTarget,
 nsresult KeyEventHandler::DispatchXULKeyCommand(dom::Event* aEvent) {
   nsCOMPtr<dom::Element> handlerElement = GetHandlerElement();
   NS_ENSURE_STATE(handlerElement);
-  if (handlerElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
-                                  nsGkAtoms::_true, eCaseMatters)) {
+  if (handlerElement->GetBoolAttr(nsGkAtoms::disabled)) {
     // Don't dispatch command events for disabled keys.
     return NS_SUCCESS_DOM_NO_OPERATION;
   }
@@ -654,7 +651,7 @@ void KeyEventHandler::ReportKeyConflict(const char16_t* aKey,
   params.AppendElement(id);
   nsContentUtils::ReportToConsole(
       nsIScriptError::warningFlag, "Key dom::Event Handler"_ns, doc,
-      nsContentUtils::eDOM_PROPERTIES, aMessageName, params);
+      PropertiesFile::DOM_PROPERTIES, aMessageName, params);
 }
 
 bool KeyEventHandler::ModifiersMatchMask(

@@ -17,6 +17,7 @@
 #include "mozilla/ShortcutKeys.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TextEvents.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/EventBinding.h"
@@ -222,7 +223,6 @@ void GlobalKeyListener::HandleEventOnCaptureInSystemEventGroup(
   }
 
   WalkHandlersResult result = HasHandlerForEvent(aEvent);
-  widgetEvent->mFlags.mIsShortcutKey |= result.mRelevantHandlerFound;
   if (!result.mMeaningfulHandlerFound) {
     return;
   }
@@ -261,7 +261,6 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersInternal(
   }
 
   bool foundDisabledHandler = false;
-  bool foundRelevantHandler = false;
   for (const ShortcutKeyCandidate& key : shortcutKeys) {
     const bool skipIfEarlierHandlerDisabled =
         key.mSkipIfEarlierHandlerDisabled ==
@@ -277,7 +276,6 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersInternal(
     if (result.mMeaningfulHandlerFound) {
       return result;
     }
-    foundRelevantHandler |= result.mRelevantHandlerFound;
     // Note that if the candidate should not match if an earlier handler is
     // disabled, the char code of the candidate is a char which may be
     // introduced with different shift state. In this case, we do NOT find a
@@ -288,9 +286,7 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersInternal(
       foundDisabledHandler = result.mDisabledHandlerFound;
     }
   }
-  WalkHandlersResult result;
-  result.mRelevantHandlerFound = foundRelevantHandler;
-  return result;
+  return {};
 }
 
 GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
@@ -307,7 +303,6 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
 
   // Try all of the handlers until we find one that matches the event.
   bool foundDisabledHandler = false;
-  bool foundRelevantHandler = false;
   for (KeyEventHandler* handler = mHandler; handler;
        handler = handler->GetNextHandler()) {
     bool stopped = aKeyEvent->IsDispatchStopped();
@@ -357,7 +352,6 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
         result.mMeaningfulHandlerFound = true;
         result.mReservedHandlerForChromeFound =
             IsReservedKey(widgetKeyboardEvent, handler);
-        result.mRelevantHandlerFound = true;
         return result;
       }
 
@@ -370,10 +364,8 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
           WalkHandlersResult result;
           result.mMeaningfulHandlerFound = true;
           result.mReservedHandlerForChromeFound = true;
-          result.mRelevantHandlerFound = true;
           return result;
         }
-        foundRelevantHandler = true;
       }
       // Otherwise, we've not found a handler for the event yet.
       continue;
@@ -390,7 +382,6 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
       result.mReservedHandlerForChromeFound =
           IsReservedKey(widgetKeyboardEvent, handler);
       result.mDisabledHandlerFound = (rv == NS_SUCCESS_DOM_NO_OPERATION);
-      result.mRelevantHandlerFound = true;
       return result;
     }
   }
@@ -410,14 +401,25 @@ GlobalKeyListener::WalkHandlersResult GlobalKeyListener::WalkHandlersAndExecute(
 
   WalkHandlersResult result;
   result.mDisabledHandlerFound = foundDisabledHandler;
-  result.mRelevantHandlerFound = foundRelevantHandler;
   return result;
+}
+
+// Checks if aReservedValue is ReservedKey_True and target/doc has keyboard lock
+// enabled
+static bool KeyboardLockEnabledAndIsReservedKey(ReservedKey aReservedValue,
+                                                dom::EventTarget* aTarget) {
+  if (aReservedValue == ReservedKey_True) {
+    nsINode* node = nsINode::FromEventTarget(aTarget);
+    RefPtr<dom::Document> doc = node->AsDocument();
+    return doc && doc->HasFullscreenKeyboardLockEnabled();
+  }
+  return false;
 }
 
 bool GlobalKeyListener::IsReservedKey(WidgetKeyboardEvent* aKeyEvent,
                                       KeyEventHandler* aHandler) {
   // If the event is a reply event, it means that we've already sent the event
-  // to the remote process because of not reserved.
+  // to the remote process.
   if (aKeyEvent->IsHandledInRemoteProcess()) {
     return false;
   }
@@ -427,6 +429,18 @@ bool GlobalKeyListener::IsReservedKey(WidgetKeyboardEvent* aKeyEvent,
   // permissions.
   if (reserved == ReservedKey_False) {
     return false;
+  }
+
+  // When fullscreen keyboard lock is enabled, reserved shortcuts must be
+  // forwarded to content so that web pages can handle them; except the
+  // fullscreen-exit shortcut (View:FullScreen), which must always remain
+  // reserved so users can always exit fullscreen.
+  if (KeyboardLockEnabledAndIsReservedKey(reserved, mTarget)) {
+    nsCOMPtr<dom::Element> handlerElement = aHandler->GetHandlerElement();
+    nsAutoString command;
+    return handlerElement &&
+           handlerElement->GetAttr(nsGkAtoms::command, command) &&
+           command.EqualsLiteral("View:FullScreen");
   }
 
   if (reserved != ReservedKey_True &&
@@ -625,9 +639,7 @@ bool XULKeySetGlobalKeyListener::IsExecutableElement(
     return false;
   }
 
-  nsAutoString value;
-  aElement->GetAttr(nsGkAtoms::disabled, value);
-  if (value.EqualsLiteral("true")) {
+  if (aElement->GetBoolAttr(nsGkAtoms::disabled)) {
     return false;
   }
 

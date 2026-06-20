@@ -40,7 +40,6 @@ nsHtml5TreeBuilder::nsHtml5TreeBuilder(nsHtml5OplessBuilder* aBuilder)
       quirks(false),
       forceNoQuirks(false),
       allowDeclarativeShadowRoots(false),
-      noInSelectMode(false),
       keepBuffer(false),
       mBuilder(aBuilder),
       mViewSource(nullptr),
@@ -85,7 +84,6 @@ nsHtml5TreeBuilder::nsHtml5TreeBuilder(nsAHtml5TreeOpSink* aOpSink,
       quirks(false),
       forceNoQuirks(false),
       allowDeclarativeShadowRoots(false),
-      noInSelectMode(false),
       keepBuffer(false),
       mBuilder(nullptr),
       mViewSource(nullptr),
@@ -839,6 +837,11 @@ nsIContentHandle* nsHtml5TreeBuilder::createAndInsertFosterParentedElement(
   return child;
 }
 
+void nsHtml5TreeBuilder::optionElementPopped(nsIContentHandle* aOption) {
+  // TODO: Implement "maybe clone an option into selectedcontent" for
+  // customizable <select>.
+}
+
 void nsHtml5TreeBuilder::detachFromParent(nsIContentHandle* aElement) {
   MOZ_ASSERT(aElement, "Null element");
 
@@ -1099,7 +1102,7 @@ void nsHtml5TreeBuilder::addAttributesToElement(
   MOZ_ASSERT(aElement, "Null element");
   MOZ_ASSERT(aAttributes, "Null attributes");
 
-  if (aAttributes == nsHtml5HtmlAttributes::EMPTY_ATTRIBUTES) {
+  if (aAttributes->isEmpty()) {
     return;
   }
 
@@ -1730,14 +1733,24 @@ nsIContentHandle* nsHtml5TreeBuilder::getShadowRootFromHost(
     nsHtml5String aShadowRootMode, bool aShadowRootIsClonable,
     bool aShadowRootIsSerializable, bool aShadowRootDelegatesFocus,
     bool aShadowRootCustomElementRegistry,
+    nsHtml5String aShadowRootSlotAssignment,
     nsHtml5String aShadowRootReferenceTarget) {
-  mozilla::dom::ShadowRootMode mode;
+  using mozilla::dom::ShadowRootMode;
+  using mozilla::dom::SlotAssignmentMode;
+
+  ShadowRootMode mode;
   if (aShadowRootMode.LowerCaseEqualsASCII("open")) {
-    mode = mozilla::dom::ShadowRootMode::Open;
+    mode = ShadowRootMode::Open;
   } else if (aShadowRootMode.LowerCaseEqualsASCII("closed")) {
-    mode = mozilla::dom::ShadowRootMode::Closed;
+    mode = ShadowRootMode::Closed;
   } else {
     return nullptr;
+  }
+
+  SlotAssignmentMode slotAssignment = SlotAssignmentMode::Named;
+  if (mozilla::StaticPrefs::dom_shadowdom_shadowRootSlotAssignment_enabled() &&
+      aShadowRootSlotAssignment.LowerCaseEqualsASCII("manual")) {
+    slotAssignment = SlotAssignmentMode::Manual;
   }
 
   nsString shadowRootReferenceTarget;
@@ -1747,7 +1760,8 @@ nsIContentHandle* nsHtml5TreeBuilder::getShadowRootFromHost(
     nsIContent* root = nsContentUtils::AttachDeclarativeShadowRoot(
         static_cast<nsIContent*>(aHost), mode, aShadowRootIsClonable,
         aShadowRootIsSerializable, aShadowRootDelegatesFocus,
-        aShadowRootCustomElementRegistry, shadowRootReferenceTarget);
+        aShadowRootCustomElementRegistry, slotAssignment,
+        shadowRootReferenceTarget);
     if (!root) {
       nsContentUtils::LogSimpleConsoleError(
           u"Failed to attach Declarative Shadow DOM."_ns, "DOM"_ns,
@@ -1766,7 +1780,8 @@ nsIContentHandle* nsHtml5TreeBuilder::getShadowRootFromHost(
   opGetShadowRootFromHost operation(
       aHost, fragHandle, aTemplateNode, mode, aShadowRootIsClonable,
       aShadowRootIsSerializable, aShadowRootDelegatesFocus,
-      aShadowRootCustomElementRegistry, shadowRootReferenceTarget);
+      aShadowRootCustomElementRegistry, slotAssignment,
+      shadowRootReferenceTarget);
   treeOp->Init(mozilla::AsVariant(operation));
   return fragHandle;
 }

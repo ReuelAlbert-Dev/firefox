@@ -47,7 +47,6 @@ import mozprocess
 import mozrunner
 from manifestparser import TestManifest
 from manifestparser.filters import (
-    chunk_by_slice,
     failures,
     pathprefix,
     subsuite,
@@ -85,6 +84,7 @@ from mozprofile.cli import KeyValueParseError, parse_key_value, parse_preference
 from mozprofile.permissions import ServerLocations
 from mozrunner.utils import get_stack_fixer_function, test_environment
 from mozscreenshot import dump_screen
+from moztest.tsan import TSANErrorParser
 
 HAVE_PSUTIL = False
 try:
@@ -188,6 +188,19 @@ class MessageLogger:
         # Message buffering
         self.buffered_messages = []
 
+        # Per-test saved buffers for shutdown leak detection. When enabled,
+        # buffers are saved at test_end so they can be dumped if the test
+        # is later found to have leaked.
+        self._saved_buffers = None
+        self._current_test_name = None
+
+        # Retry-on-failure support: when retry_mode is True, failures are
+        # marked as expected so they don't fail the job on the initial run.
+        self.retry_mode = False
+
+    def enable_saved_buffers(self):
+        self._saved_buffers = {}
+
     def setManifest(self, name):
         self._manifest = name
 
@@ -210,7 +223,10 @@ class MessageLogger:
 
     def _fix_test_name(self, message):
         """Normalize a logged test path to match the relative path from the sourcedir."""
-        if message.get("test") is not None:
+        if message.get("test") is None:
+            if self._current_test_name is not None:
+                message["test"] = self._current_test_name
+        else:
             test = message["test"]
             for pattern in MessageLogger.TEST_PATH_PREFIXES:
                 test = re.sub(pattern, "", test)
@@ -294,7 +310,11 @@ class MessageLogger:
             self.restore_buffering = self.restore_buffering or self.buffering
             self.buffering = False
             if self.buffered_messages:
-                self.dump_buffered()
+                self.dump_buffered(mark_failures_as_expected=self.retry_mode)
+            self.dump_saved_buffer(message.get("test"))
+
+            if self.retry_mode:
+                self._mark_as_expected(message)
 
             # Logging the error message
             self.logger.log_raw(message)
@@ -312,12 +332,16 @@ class MessageLogger:
         # If a test ended, we clean the buffer
         if message["action"] == "test_end":
             self.is_test_running = False
+            if self._saved_buffers is not None and self.buffered_messages:
+                self._saved_buffers[self._current_test_name] = self.buffered_messages
             self.buffered_messages = []
+            self._current_test_name = None
             self.restore_buffering = self.restore_buffering or self.buffering
             self.buffering = False
 
         if message["action"] == "test_start":
             self.is_test_running = True
+            self._current_test_name = message.get("test")
             if self.restore_buffering:
                 self.restore_buffering = False
                 self.buffering = True
@@ -331,19 +355,51 @@ class MessageLogger:
     def flush(self):
         sys.stdout.flush()
 
-    def dump_buffered(self):
+    def _mark_as_expected(self, message):
+        """Transform a failure message so it doesn't fail the job."""
+        if message.get("action") == "test_status" and "expected" in message:
+            message["expected"] = message.get("status")
+        elif message.get("action") == "log":
+            if message.get("message", "").startswith("TEST-UNEXPECTED"):
+                message["message"] = message["message"].replace(
+                    "TEST-UNEXPECTED", "TEST-KNOWN", 1
+                )
+            elif message.get("level") == "ERROR":
+                message["action"] = "test_status"
+                message["status"] = "ERROR"
+                message["expected"] = "ERROR"
+                message["subtest"] = ""
+                message.pop("level", None)
+
+    def dump_buffered(self, messages=None, mark_failures_as_expected=False):
+        if messages is None:
+            messages = self.buffered_messages
+            self.buffered_messages = []
         last_timestamp = None
-        for buf in self.buffered_messages:
+        for buf in messages:
             # pylint --py3k W1619
             timestamp = datetime.fromtimestamp(buf["time"] / 1000).strftime("%H:%M:%S")
             if timestamp != last_timestamp:
                 self.logger.info(f"Buffered messages logged at {timestamp}")
             last_timestamp = timestamp
 
+            if mark_failures_as_expected:
+                self._mark_as_expected(buf)
+
             self.logger.log_raw(buf)
         self.logger.info("Buffered messages finished")
-        # Cleaning the list of buffered messages
-        self.buffered_messages = []
+
+    def dump_saved_buffer(self, test_name):
+        if self._saved_buffers is None or test_name not in self._saved_buffers:
+            return
+        messages = self._saved_buffers.pop(test_name)
+        if not messages:
+            return
+        self.logger.info(
+            f"Dumping buffered messages from {test_name} "
+            "that leaked a window or docshell"
+        )
+        self.dump_buffered(messages)
 
     def finish(self):
         self.dump_buffered()
@@ -541,6 +597,15 @@ class MochitestServer:
                 os.path.join(os.path.dirname(here), "bin"),
                 env["LD_LIBRARY_PATH"],
             ])
+            # The trainhop bundle ships an m-c libxul.so in tests/bin that gets
+            # loaded by this xpcshell. That libxul would rendez-vous with the
+            # crashhelper from the Beta/Release application directory, but the
+            # two speak incompatible IPC protocols (see bug 2037462), causing
+            # the synchronous startup rendez-vous to hang. The httpd xpcshell
+            # is not the SUT, so suppress its crash-reporter setup -- xpcshell
+            # only enters the OOPInit/SetExceptionHandler block when
+            # MOZ_CRASHREPORTER is set (XPCShellImpl.cpp), so we just unset it.
+            env.pop("MOZ_CRASHREPORTER", None)
 
         # When running with an ASan build, our xpcshell server will also be ASan-enabled,
         # thus consuming too much resources when running together with the browser on
@@ -1025,6 +1090,9 @@ class MochitestDesktop:
         self.countpass = 0
         self.countfail = 0
         self.counttodo = 0
+        self.countretry = 0
+        self.failedTests = set()
+        self.tests_started = 0
 
         self.expectedError = {}
         self.result = {}
@@ -1472,19 +1540,20 @@ class MochitestDesktop:
             raise RuntimeError("Error: Unable to start DoH server")
 
     def startServers(self, options, debuggerInfo, public=None):
-        port_checks = [
-            (options.httpPort, "HTTP test server"),
-            (options.sslPort, "ssltunnel"),
-            (options.webSocketPort, "WebSocket server"),
+        port_attrs = [
+            ("httpPort", "HTTP test server"),
+            ("sslPort", "ssltunnel"),
+            ("webSocketPort", "WebSocket server"),
         ]
-        for port, name in port_checks:
-            if _port_in_use(int(port)) and not _wait_for_port_available(int(port)):
-                self.log.error(
-                    f"{name} failed to bind to port {port}. "
-                    f"Another process may already be using it "
-                    f"(check: {_port_diagnostic_hint(int(port))})."
+        for attr, name in port_attrs:
+            port = int(getattr(options, attr))
+            if _port_in_use(port):
+                new_port = self.findFreePort(socket.SOCK_STREAM)
+                self.log.info(
+                    f"{name} port {port} already in use, "
+                    f"falling back to port {new_port}"
                 )
-                return False
+                setattr(options, attr, str(new_port))
 
         # start servers and set ports
         # TODO: pass these values, don't set on `self`
@@ -1525,9 +1594,17 @@ class MochitestDesktop:
         self.mozHttp2Server = None
         self.dohServer = None
         if options.useHttp3Server:
+            options.dohServerPort = self.findFreePort(socket.SOCK_STREAM)
+            options.http3ServerPort = self.findFreePort(socket.SOCK_DGRAM)
+            self.log.info(f"use doh server at port: {options.dohServerPort}")
+            self.log.info(f"use http3 server at port: {options.http3ServerPort}")
             self.startHttp3Server(options)
             self.startDoHServer(options, options.http3ServerPort, "h3")
         elif options.useHttp2Server:
+            options.dohServerPort = self.findFreePort(socket.SOCK_STREAM)
+            options.http2ServerPort = self.findFreePort(socket.SOCK_STREAM)
+            self.log.info(f"use doh server at port: {options.dohServerPort}")
+            self.log.info(f"use http2 server at port: {options.http2ServerPort}")
             self.startHttp2Server(options)
             self.startDoHServer(options, options.http2ServerPort, "h2")
 
@@ -1618,12 +1695,6 @@ class MochitestDesktop:
             chrometestDir = self.getChromeTestDir(options)
             manifestFile.write(
                 f"content mochitests {chrometestDir} contentaccessible=yes\n"
-            )
-            manifestFile.write(
-                f"content mochitests-any {chrometestDir} contentaccessible=yes remoteenabled=yes\n"
-            )
-            manifestFile.write(
-                f"content mochitests-content {chrometestDir} contentaccessible=yes remoterequired=yes\n"
             )
 
             if options.testingModulesDir is not None:
@@ -1779,9 +1850,6 @@ toolbar#nav-bar {
                 options.test_paths = self.normalize_paths(options.test_paths)
                 path_filter = pathprefix(options.test_paths)
                 filters.append(path_filter)
-
-            if options.totalChunks:
-                filters.append(chunk_by_slice(options.thisChunk, options.totalChunks))
 
             noDefaultFilters = False
             if options.runFailures:
@@ -2315,18 +2383,8 @@ toolbar#nav-bar {
             "ws": options.sslPort,
         }
 
-        if options.useHttp3Server:
-            options.dohServerPort = self.findFreePort(socket.SOCK_STREAM)
-            options.http3ServerPort = self.findFreePort(socket.SOCK_DGRAM)
+        if getattr(options, "dohServerPort", None) is not None:
             proxyOptions["dohServerPort"] = options.dohServerPort
-            self.log.info(f"use doh server at port: {options.dohServerPort}")
-            self.log.info(f"use http3 server at port: {options.http3ServerPort}")
-        elif options.useHttp2Server:
-            options.dohServerPort = self.findFreePort(socket.SOCK_STREAM)
-            options.http2ServerPort = self.findFreePort(socket.SOCK_STREAM)
-            proxyOptions["dohServerPort"] = options.dohServerPort
-            self.log.info(f"use doh server at port: {options.dohServerPort}")
-            self.log.info(f"use http2 server at port: {options.http2ServerPort}")
         return proxyOptions
 
     def merge_base_profiles(self, options, category):
@@ -2474,7 +2532,6 @@ toolbar#nav-bar {
             profile=options.profilePath,
             addons=extensions,
             locations=self.locations,
-            proxy=self.proxy(options),
             allowlistpaths=sandbox_allowlist_paths,
         )
 
@@ -2634,6 +2691,11 @@ toolbar#nav-bar {
             self.virtualAudioNodeIdList = []
 
     def dumpScreen(self, utilityPath):
+        if self.message_logger.retry_mode:
+            self.log.info(
+                "Not taking screenshot here: screenshot will be taken on retry if the test still fails"
+            )
+            return
         if self.haveDumpedScreen:
             self.log.info(
                 "Not taking screenshot here: see the one that was previously logged"
@@ -2845,12 +2907,12 @@ toolbar#nav-bar {
 
             # Log if slow events are used from chrome.
             env["MOZ_LOG"] = (
-                env["MOZ_LOG"] + "," if env["MOZ_LOG"] else ""
+                env["MOZ_LOG"] + "," if env.get("MOZ_LOG") else ""
             ) + "SlowChromeEvent:3"
 
             if detectShutdownLeaks:
                 env["MOZ_LOG"] = (
-                    env["MOZ_LOG"] + "," if env["MOZ_LOG"] else ""
+                    env["MOZ_LOG"] + "," if env.get("MOZ_LOG") else ""
                 ) + "DocShellAndDOMWindowLeak:3"
                 shutdownLeaks = ShutdownLeaks(self.log)
             else:
@@ -2861,6 +2923,11 @@ toolbar#nav-bar {
             else:
                 lsanLeaks = None
 
+            if mozinfo.info["tsan"] and mozinfo.isLinux and mozinfo.bits == 64:
+                tsanErrors = TSANErrorParser(self.log)
+            else:
+                tsanErrors = None
+
             # create an instance to process the output
             outputHandler = self.OutputHandler(
                 harness=self,
@@ -2870,6 +2937,7 @@ toolbar#nav-bar {
                 dump_screen_on_fail=screenshotOnFail,
                 shutdownLeaks=shutdownLeaks,
                 lsanLeaks=lsanLeaks,
+                tsanErrors=tsanErrors,
                 bisectChunk=bisectChunk,
                 restartAfterFailure=restartAfterFailure,
             )
@@ -2916,12 +2984,16 @@ toolbar#nav-bar {
                 marionette_args.get("port", 2828) if marionette_args else 2828
             )
             if _port_in_use(marionette_port):
-                self.log.error(
-                    f"Marionette port {marionette_port} is already in use. "
-                    "Another Firefox instance may already be running "
-                    f"(check: {_port_diagnostic_hint(marionette_port)})."
+                new_port = self.findFreePort(socket.SOCK_STREAM)
+                self.log.info(
+                    f"Marionette port {marionette_port} already in use, "
+                    f"falling back to port {new_port}"
                 )
-                return 1, f"port {marionette_port} already in use"
+                marionette_port = new_port
+                if marionette_args is None:
+                    marionette_args = {}
+                marionette_args["port"] = new_port
+                self.profile.set_preferences({"marionette.port": new_port})
 
             # start the runner
             try:
@@ -2994,10 +3066,18 @@ toolbar#nav-bar {
             runner.process_handler = None
 
             if not status and self.message_logger.is_test_running:
+                # In retry mode, queue the test for retry and suppress the
+                # unexpected failure on the initial run; otherwise report it
+                # as a real failure.
+                if self.message_logger.retry_mode:
+                    self.failedTests.add(self.lastTestSeen)
+                    expected = "FAIL"
+                else:
+                    expected = "PASS"
                 message = {
                     "action": "test_end",
                     "status": "FAIL",
-                    "expected": "PASS",
+                    "expected": expected,
                     "thread": None,
                     "pid": None,
                     "source": "mochitest",
@@ -3070,13 +3150,12 @@ toolbar#nav-bar {
             )
 
             expected = None
-            if crashAsPass or crash_count > 0:
+            if crashAsPass:
                 # self.message_logger.is_test_running indicates we need a test_end message
                 if self.message_logger.is_test_running:
                     # this works for browser-chrome, mochitest-plain has status=0
                     expected = "CRASH"
-                if crashAsPass:
-                    status = 0
+                status = 0
             elif crash_count or zombieProcesses:
                 if self.message_logger.is_test_running:
                     expected = "PASS"
@@ -3134,7 +3213,13 @@ toolbar#nav-bar {
         options.manifestFile = None
         # When runByManifest is true, runTests already sets profilePath
         # appropriately for each manifest (from profile-path key, or None).
-        if not options.runByManifest:
+        # restartAfterFailure and restartBetweenTests loop within runMochitests
+        # and need a fresh profile for each browser restart.
+        if (
+            not options.runByManifest
+            or options.restartAfterFailure
+            or options.restartBetweenTests
+        ):
             options.profilePath = None
 
     def initializeVirtualAudioDevices(self):
@@ -3332,6 +3417,17 @@ toolbar#nav-bar {
         finished = False
         status = 0
         bisection_log = 0
+
+        # Retry-on-failure relies on counters populated by the desktop
+        # OutputHandler pipeline, which remote harness subclasses bypass.
+        retry = (
+            type(self) is MochitestDesktop
+            and os.environ.get("MOZ_AUTOMATION") is not None
+        )
+        if retry:
+            self.message_logger.retry_mode = True
+            self.failedTests = set()
+
         while not finished:
             if options.bisectChunk:
                 testsToRun = bisect.pre_test(options, testsToRun, status)
@@ -3345,7 +3441,11 @@ toolbar#nav-bar {
                     )
                     bisection_log = 1
 
-            result = self.doTests(options, testsToRun, manifestToFilter)
+            self.tests_started = 0
+            if options.restartBetweenTests:
+                result = self.doTests(options, testsToRun[:1], manifestToFilter)
+            else:
+                result = self.doTests(options, testsToRun, manifestToFilter)
             if result == TBPL_RETRY:  # terminate task
                 return result
 
@@ -3364,11 +3464,45 @@ toolbar#nav-bar {
                     testsToRun = testsToRun[firstFail + 1 :]
                     if testsToRun == []:
                         status = -1
+            elif options.restartBetweenTests:
+                testsToRun = testsToRun[1:]
+                if not testsToRun:
+                    status = -1
+            elif retry and 0 < self.tests_started < len(testsToRun):
+                # A test timed out and the browser exited. Continue
+                # with the tests that didn't get to start.
+                testsToRun = testsToRun[self.tests_started :]
             else:
                 status = -1
 
             if status == -1:
                 finished = True
+
+        if retry:
+            self.message_logger.retry_mode = False
+            if self.failedTests:
+                self.countretry += len(self.failedTests)
+                self.log.info("Retrying tests that failed during initial run.")
+                self.log.group_start(name="retry")
+                if options.restartBetweenTests:
+                    # Restart the browser between each retried test, as on the
+                    # initial run, so the retry still isolates the failures.
+                    res = 0
+                    for test in self.getActiveTests(options):
+                        if test["path"] not in self.failedTests:
+                            continue
+                        testRes = self.doTests(
+                            options, {test["path"]}, manifestToFilter
+                        )
+                        if testRes == TBPL_RETRY:
+                            return testRes
+                        res = res or testRes
+                else:
+                    res = self.doTests(options, self.failedTests, manifestToFilter)
+                self.log.group_end(name="retry")
+                if res == TBPL_RETRY:
+                    return res
+                result = result or res
 
         # We need to print the summary only if options.bisectChunk has a value.
         # Also we need to make sure that we do not print the summary in between
@@ -3553,11 +3687,11 @@ toolbar#nav-bar {
             "socketprocess_networking": self.extraPrefs.get(
                 "network.http.network_access_on_socket_process.enabled", False
             ),
+            "standalone": options.restartBetweenTests,
             "swgl": self.extraPrefs.get("gfx.webrender.software", False),
             "verify": options.verify,
             "verify_fission": options.verify_fission,
             "vertical_tab": self.extraPrefs.get("sidebar.verticalTabs", False),
-            "webgl_ipc": self.extraPrefs.get("webgl.out-of-process", False),
             "wmfme": (
                 self.extraPrefs.get("media.wmf.media-engine.enabled", 0)
                 and self.extraPrefs.get(
@@ -3658,17 +3792,6 @@ toolbar#nav-bar {
                     f"The following extra environment variables will be set:\n  {env_list}"
                 )
 
-            self.parseAndCreateTestsDirs(m)
-
-            profilePath = list(self.profile_path_by_manifest[m])[0]
-            if profilePath:
-                options.profilePath = os.path.expanduser(profilePath.strip())
-                self.log.info(
-                    f"The following profile path will be set:\n  {options.profilePath}"
-                )
-            else:
-                options.profilePath = None
-
             # If we are using --run-by-manifest, we should not use the profile path (if) provided
             # by the user, since we need to create a new directory for each run. We would face
             # problems if we use the directory provided by the user.
@@ -3705,6 +3828,7 @@ toolbar#nav-bar {
             print(f"\tPassed: {self.countpass}")
             print(f"\tFailed: {self.countfail}")
             print(f"\tTodo: {self.counttodo}")
+            print(f"\tRetried: {self.countretry}")
             print(f"\tMode: {e10s_mode}")
             print("*** End BrowserChrome Test Results ***")
         else:
@@ -3712,8 +3836,9 @@ toolbar#nav-bar {
             print(f"1 INFO Passed:  {self.countpass}")
             print(f"2 INFO Failed:  {self.countfail}")
             print(f"3 INFO Todo:    {self.counttodo}")
-            print(f"4 INFO Mode:    {e10s_mode}")
-            print("5 INFO SimpleTest FINISHED")
+            print(f"4 INFO Retried: {self.countretry}")
+            print(f"5 INFO Mode:    {e10s_mode}")
+            print("6 INFO SimpleTest FINISHED")
 
         if os.getenv("MOZ_AUTOMATION") and self.perfherder_data:
             upload_dir = Path(os.getenv("MOZ_UPLOAD_DIR"))
@@ -3765,8 +3890,27 @@ toolbar#nav-bar {
     def doTests(self, options, testsToFilter=None, manifestToFilter=None):
         # A call to initializeLooping method is required in case of --run-by-dir or --bisect-chunk
         # since we need to initialize variables for each loop.
-        if options.bisectChunk or options.runByManifest:
+        if (
+            options.bisectChunk
+            or options.runByManifest
+            or options.restartAfterFailure
+            or options.restartBetweenTests
+        ):
             self.initializeLooping(options)
+
+        # Set up manifest-level test-directories and profile-path.
+        # In restart modes this runs on each iteration, ensuring a clean
+        # slate after cleanup() removed the previous directories.
+        if manifestToFilter:
+            self.parseAndCreateTestsDirs(manifestToFilter)
+            profilePath = list(self.profile_path_by_manifest[manifestToFilter])[0]
+            if profilePath:
+                options.profilePath = os.path.expanduser(profilePath.strip())
+                self.log.info(
+                    f"The following profile path will be set:\n  {options.profilePath}"
+                )
+            else:
+                options.profilePath = None
 
         # get debugger info, a dict of:
         # {'path': path to the debugger (string),
@@ -3836,6 +3980,9 @@ toolbar#nav-bar {
         try:
             if self.startServers(options, debuggerInfo) is False:
                 return 1
+
+            # Write proxy prefs now that server ports are finalized.
+            self.profile.set_proxy(self.proxy(options))
 
             if self.mozHttp2Server is not None:
                 for key, value in self.mozHttp2Server.ports().items():
@@ -4174,6 +4321,7 @@ toolbar#nav-bar {
             dump_screen_on_fail=False,
             shutdownLeaks=None,
             lsanLeaks=None,
+            tsanErrors=None,
             bisectChunk=None,
             restartAfterFailure=None,
         ):
@@ -4188,10 +4336,15 @@ toolbar#nav-bar {
             self.dump_screen_on_fail = dump_screen_on_fail
             self.shutdownLeaks = shutdownLeaks
             self.lsanLeaks = lsanLeaks
+            self.tsanErrors = tsanErrors
             self.bisectChunk = bisectChunk
             self.restartAfterFailure = restartAfterFailure
             self.browserProcessId = None
             self.stackFixerFunction = self.stackFixer()
+            self.current_test = None
+
+            if shutdownLeaks:
+                harness.message_logger.enable_saved_buffers()
 
         def processOutputLine(self, line):
             """per line handler of output for mozprocess"""
@@ -4219,7 +4372,8 @@ toolbar#nav-bar {
                 self.dumpScreenOnFail,
                 self.trackShutdownLeaks,
                 self.trackLSANLeaks,
-                self.countline,
+                self.trackTSanErrors,
+                self.count_structured,
             ]
             if self.bisectChunk or self.restartAfterFailure:
                 handlers.append(self.record_result)
@@ -4235,9 +4389,14 @@ toolbar#nav-bar {
 
         def finish(self):
             if self.shutdownLeaks:
-                numFailures, errorMessages = self.shutdownLeaks.process()
-                self.harness.countfail += numFailures
-                for message in errorMessages:
+                unattributedFailures, leakErrors = self.shutdownLeaks.process()
+                self.harness.countfail += unattributedFailures
+                for error in leakErrors:
+                    if error["test"] not in self.harness.failedTests:
+                        if self.harness.message_logger.retry_mode:
+                            self.harness.failedTests.add(error["test"])
+                        else:
+                            self.harness.countfail += 1
                     msg = {
                         "action": "test_status",
                         "subtest": "Shutdown",
@@ -4246,14 +4405,17 @@ toolbar#nav-bar {
                         "thread": None,
                         "pid": None,
                         "source": "mochitest",
-                        "time": message.get("time") or int(time.time() * 1000),
-                        "test": message["test"],
-                        "message": message["msg"],
+                        "time": error.get("time") or int(time.time() * 1000),
+                        "test": error["test"],
+                        "message": error["msg"],
                     }
                     self.harness.message_logger.process_message(msg)
 
             if self.lsanLeaks:
                 self.harness.countfail += self.lsanLeaks.process()
+
+            if self.tsanErrors:
+                self.tsanErrors.flush()
 
         # output message handlers:
         # these take a message and return a message
@@ -4284,25 +4446,33 @@ toolbar#nav-bar {
                     self.harness.expectedError[key] = error_msg.strip()
             return message
 
-        def countline(self, message):
-            if message["action"] == "log":
-                line = message.get("message", "")
-            elif message["action"] == "process_output":
-                line = message.get("data", "")
-            else:
-                return message
-            val = 0
-            try:
-                val = int(line.split(":")[-1].strip())
-            except (AttributeError, ValueError):
-                return message
-
-            if "Passed:" in line:
-                self.harness.countpass += val
-            elif "Failed:" in line:
-                self.harness.countfail += val
-            elif "Todo:" in line:
-                self.harness.counttodo += val
+        def count_structured(self, message):
+            if message["action"] == "test_start":
+                self.harness.tests_started += 1
+                self.current_test = message["test"]
+            elif message["action"] == "test_status":
+                if "expected" in message:
+                    if self.harness.message_logger.retry_mode:
+                        self.harness.failedTests.add(message["test"])
+                    else:
+                        self.harness.countfail += 1
+                elif message["status"] == "FAIL":
+                    self.harness.counttodo += 1
+                else:
+                    self.harness.countpass += 1
+            elif message["action"] == "log" and message.get("level") == "ERROR":
+                if self.harness.message_logger.retry_mode and self.current_test:
+                    self.harness.failedTests.add(self.current_test)
+                else:
+                    self.harness.countfail += 1
+            elif message["action"] == "test_end":
+                self.current_test = None
+                if (
+                    self.harness.message_logger.retry_mode
+                    and message["test"] in self.harness.failedTests
+                ):
+                    message["message"] = "Test had failures, will retry"
+                    message["expected"] = message.get("status", "PASS")
             return message
 
         def fix_stack(self, message):
@@ -4353,6 +4523,21 @@ toolbar#nav-bar {
                     self.lsanLeaks.log(line, self.harness.lastManifest)
                 else:
                     self.lsanLeaks.log(line, self.harness.lastTestSeen)
+            return message
+
+        def trackTSanErrors(self, message):
+            if self.tsanErrors and message["action"] in ("log", "process_output"):
+                line = (
+                    message.get("message", "")
+                    if message["action"] == "log"
+                    else message["data"]
+                )
+                pid = message.get("process")
+                if "(finished)" in self.harness.lastTestSeen:
+                    scope = self.harness.lastManifest
+                else:
+                    scope = self.harness.lastTestSeen
+                self.tsanErrors.log(line, pid=pid, scope=scope)
             return message
 
         def trackShutdownLeaks(self, message):

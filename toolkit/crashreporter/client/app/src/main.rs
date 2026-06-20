@@ -69,6 +69,7 @@ mod logging;
 mod logic;
 mod memory_test;
 mod net;
+mod prefs_parser;
 mod process;
 mod send_ping;
 mod settings;
@@ -87,6 +88,7 @@ fn main() {
         Some(s) if s == "--analyze" => analyze::main(),
         Some(s) if s == "--memtest" => memory_test::main(),
         Some(s) if s == "--send-ping" => send_ping::main(),
+        Some(s) if s == "--ping-cleanup" => send_ping::cleanup_main(),
         _ => report_main(),
     }
 }
@@ -144,9 +146,7 @@ fn report_main() {
                             "ProductName": "Bar",
                             "ReleaseChannel": "release",
                             "BuildID": "1234",
-                            "StackTraces": {
-                                "status": "OK"
-                            },
+                            "StackTraces": "{}",
                             "Version": "100.0",
                             "ServerURL": "https://reports.example",
                             "TelemetryServerURL": "https://telemetry.example",

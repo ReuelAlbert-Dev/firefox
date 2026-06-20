@@ -2,14 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-use std::fs::File;
-use std::io::{Error, ErrorKind};
-use std::path::Path;
-use std::process::Command;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use tar::Archive;
 use xz::read::XzDecoder;
 
-use crate::runner::CommandRunner;
+use anyhow::{anyhow, bail, Result};
+use log::info;
 
 /// Represents a certificate in an updater binary that should be replaced
 /// if present.
@@ -36,32 +36,24 @@ impl std::str::FromStr for CertOverride {
 /// Prepare an updater `pkg` for usage by unpacking it and replacing any requested certs in the
 /// updater binary inside.
 pub(crate) fn prepare_updater(
-    pkg: &str,
+    pkg: &Path,
     appname: &str,
-    cert_replace_script: Option<&Path>,
     cert_dir: Option<&Path>,
     cert_overrides: &[CertOverride],
     output_dir: &Path,
-    runner: &dyn CommandRunner,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<PathBuf> {
     let updater = unpack_updater(pkg, appname, output_dir)?;
     if !cert_overrides.is_empty() {
         replace_certs(
-            cert_replace_script.ok_or("cert_replace_script is required to override certs")?,
-            cert_dir.ok_or("cert_dir is required to override certs")?,
+            cert_dir.ok_or_else(|| anyhow!("cert_dir is required to override certs"))?,
             &updater,
             cert_overrides,
-            runner,
         )?;
     }
     return Ok(updater);
 }
 
-fn unpack_updater(
-    pkg: &str,
-    appname: &str,
-    output_dir: &Path,
-) -> Result<String, Box<dyn std::error::Error>> {
+fn unpack_updater(pkg: &Path, appname: &str, output_dir: &Path) -> Result<PathBuf> {
     let compressed = File::open(pkg)?;
     let tar = XzDecoder::new(compressed);
     let mut archive = Archive::new(tar);
@@ -71,47 +63,72 @@ fn unpack_updater(
     updater_binary.push("updater");
     let updater_path = updater_binary
         .to_str()
-        .ok_or("Couldn't parse updater binary path")?;
+        .ok_or_else(|| anyhow!("Couldn't parse updater binary path"))?;
     if !updater_binary.exists() {
-        return Err(Box::new(Error::new(
-            ErrorKind::Other,
-            format!("updater binary doesn't exist at {updater_path}"),
-        )));
+        bail!("updater binary doesn't exist at {updater_path}");
     }
-    return Ok(updater_path.to_string());
+    return Ok(updater_binary);
 }
 
-fn replace_certs(
-    cert_replace_script: &Path,
-    cert_dir: &Path,
-    updater: &str,
-    overrides: &[CertOverride],
-    runner: &dyn CommandRunner,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = Command::new("python3");
-    command
-        .arg(cert_replace_script)
-        .arg(cert_dir)
-        .arg(updater)
-        .arg(updater);
+fn replace_certs(cert_dir: &Path, updater: &Path, overrides: &[CertOverride]) -> Result<()> {
+    // read the entire updater into memory; we need to do this to find cert
+    // offsets further down
+    let mut updater_bytes = Vec::new();
+    let mut updater_file = OpenOptions::new().read(true).write(true).open(updater)?;
+    updater_file.read_to_end(&mut updater_bytes)?;
+
+    let updater_str = updater.to_str().unwrap_or("updater");
+
     for cert_pair in overrides {
-        command.arg(cert_pair.orig.clone());
-        command.arg(cert_pair.replacement.clone());
+        let before_bytes = read_cert(cert_dir, &cert_pair.orig)?;
+        let after_bytes = read_cert(cert_dir, &cert_pair.replacement)?;
+
+        // find the offset of the `orig` cert
+        let offset = match updater_bytes
+            .windows(before_bytes.len())
+            .position(|w| w == before_bytes)
+        {
+            Some(o) => o,
+            // If the `orig` cert isn't found there's simply nothing to do; this
+            // is not a fatal error.
+            None => continue,
+        };
+
+        // seek to the start of the `orig` cert and replace it with `replacement`
+        // this relies on the fact that the certs are the same length, which is
+        // checked at start-up.
+        updater_file.seek(SeekFrom::Start(offset as u64))?;
+        updater_file.write_all(&after_bytes)?;
+
+        info!(
+            "Replaced {} with {} in {}",
+            cert_pair.orig, cert_pair.replacement, updater_str
+        );
     }
-    if runner.run(&mut command)? == 0 {
-        return Ok(());
-    }
-    return Err(Box::new(Error::new(
-        ErrorKind::Other,
-        "Failed to replace certs!",
-    )));
+
+    return Ok(());
+}
+
+fn read_cert(cert_dir: &Path, cert_name: &str) -> Result<Vec<u8>> {
+    let cert_path = cert_dir.join(cert_name);
+    let mut cert_bytes = Vec::new();
+    File::open(cert_path)?.read_to_end(&mut cert_bytes)?;
+    return Ok(cert_bytes);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use std::{io::Read, str::FromStr};
     use tempfile::TempDir;
+
+    fn fixture_dir() -> PathBuf {
+        return Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    }
+
+    fn fixture(item: &Path) -> PathBuf {
+        return fixture_dir().join(item);
+    }
 
     fn make_tar_xz(appname: &str, output: &std::path::Path) {
         use tar::Header;
@@ -131,13 +148,6 @@ mod tests {
 
         let enc = builder.into_inner().unwrap();
         enc.finish().unwrap();
-    }
-
-    struct FakeRunner(i32);
-    impl CommandRunner for FakeRunner {
-        fn run(&self, _: &mut Command) -> Result<i32, Box<dyn std::error::Error>> {
-            Ok(self.0)
-        }
     }
 
     #[test]
@@ -168,7 +178,7 @@ mod tests {
 
         make_tar_xz("firefox", &archive);
 
-        let result = unpack_updater(archive.to_str().unwrap(), "firefox", &output_dir);
+        let result = unpack_updater(&archive, "firefox", &output_dir);
         assert!(result.is_ok());
         assert!(std::path::Path::new(&result.unwrap()).exists());
     }
@@ -188,30 +198,65 @@ mod tests {
         let enc = builder.into_inner().unwrap();
         enc.finish().unwrap();
 
-        let result = unpack_updater(archive.to_str().unwrap(), "firefox", &output_dir);
+        let result = unpack_updater(&archive, "firefox", &output_dir);
         assert!(result.is_err());
     }
 
     #[test]
-    fn replace_certs_success() {
-        let result = replace_certs(
-            &Path::new("/fake/cert_replace.py"),
-            &Path::new("/fake/cert_dir"),
-            "/fake/updater",
-            &vec![],
-            &FakeRunner(0),
+    fn replace_certs_success() -> Result<()> {
+        let tmpdir = TempDir::with_prefix("marannon_replace_certs_test").unwrap();
+        let dir = fixture_dir();
+        let updater = tmpdir.path().join("updater");
+        std::fs::copy(fixture(Path::new("updater")), &updater).unwrap();
+        replace_certs(
+            &dir,
+            &updater,
+            &vec![
+                CertOverride {
+                    orig: "release_primary.der".to_string(),
+                    replacement: "dep1.der".to_string(),
+                },
+                CertOverride {
+                    orig: "release_secondary.der".to_string(),
+                    replacement: "dep2.der".to_string(),
+                },
+            ],
+        )?;
+
+        // ensure the new data is in the updater
+        let mut updater_bytes = Vec::new();
+        File::open(updater)?.read_to_end(&mut updater_bytes)?;
+
+        let mut cert_bytes = Vec::new();
+        File::open(dir.join("dep1.der"))?.read_to_end(&mut cert_bytes)?;
+        assert!(
+            updater_bytes
+                .windows(cert_bytes.len())
+                .any(|w| w == cert_bytes),
+            "dep1.der not found in updater!"
         );
-        assert!(result.is_ok());
+
+        cert_bytes.clear();
+        File::open(dir.join("dep2.der"))?.read_to_end(&mut cert_bytes)?;
+        assert!(
+            updater_bytes
+                .windows(cert_bytes.len())
+                .any(|w| w == cert_bytes),
+            "dep2.der not found in updater!"
+        );
+
+        return Ok(());
     }
 
     #[test]
-    fn replace_certs_failure() {
+    fn replace_certs_file_doesnt_exist() {
         let result = replace_certs(
-            &Path::new("/fake/cert_replace.py"),
-            &Path::new("/fake/cert_dir"),
-            "/fake/updater",
-            &vec![],
-            &FakeRunner(1),
+            &fixture_dir(),
+            &fixture(Path::new("updater")),
+            &vec![CertOverride {
+                orig: "fake.der".to_string(),
+                replacement: "fake2.der".to_string(),
+            }],
         );
         assert!(result.is_err());
     }

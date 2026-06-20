@@ -344,15 +344,13 @@ nsPIDOMWindowOuter* nsPIDOMWindowOuter::GetFromCurrentInner(
 // nsOuterWindowProxy: Outer Window Proxy
 //*****************************************************************************
 
-// Give OuterWindowProxyClass 2 reserved slots, like the other wrappers, so
-// JSObject::swap can swap it with CrossCompartmentWrappers without requiring
-// malloc.
+// OuterWindowProxyClass has 2 (SwappableProxyReservedSlots) reserved slots.
 //
 // We store the nsGlobalWindowOuter* in our first slot.
 //
 // We store our holder weakmap in the second slot.
 const JSClass OuterWindowProxyClass = PROXY_CLASS_DEF(
-    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(2)); /* additional class flags */
+    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(js::SwappableProxyReservedSlots));
 
 static const size_t OUTER_WINDOW_SLOT = 0;
 static const size_t HOLDER_WEAKMAP_SLOT = 1;
@@ -1814,11 +1812,12 @@ void nsGlobalWindowOuter::SetInitialPrincipal(
 
   // Use the subject (or system) principal as the storage principal too until
   // the new window finishes navigating and gets a real storage principal.
-  nsDocShell::Cast(GetDocShell())
-      ->CreateAboutBlankDocumentViewer(
-          aNewWindowPrincipal, aNewWindowPrincipal, mDoc->GetPolicyContainer(),
-          mDoc->GetDocBaseURI(),
-          /* aIsInitialDocument */ true, mDoc->GetEmbedderPolicy());
+  nsCOMPtr<nsIPolicyContainer> policyContainer = mDoc->GetPolicyContainer();
+  nsCOMPtr<nsIURI> base = mDoc->GetDocBaseURI();
+  RefPtr<nsDocShell> docShell = nsDocShell::Cast(GetDocShell());
+  docShell->CreateAboutBlankDocumentViewer(
+      aNewWindowPrincipal, aNewWindowPrincipal, policyContainer, base,
+      /* aIsInitialDocument */ true, mDoc->GetEmbedderPolicy());
 
   if (mDoc) {
     MOZ_ASSERT(mDoc->IsInitialDocument(),
@@ -2252,14 +2251,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
       newInnerGlobal = newInnerWindow->GetWrapper();
     } else {
       newInnerWindow = nsGlobalWindowInner::Create(this, thisChrome, aActor);
-      if (StaticPrefs::dom_timeout_defer_during_load() &&
-          !aDocument->NodePrincipal()->IsURIInPrefList(
-              "dom.timeout.defer_during_load.force-disable")) {
-        // ensure the initial loading state is known
-        newInnerWindow->SetActiveLoadingState(
-            aDocument->GetReadyStateEnum() ==
-            Document::ReadyState::READYSTATE_LOADING);
-      }
+      // ensure the initial loading state is known
+      newInnerWindow->SetActiveLoadingState(
+          aDocument->GetReadyStateEnum() ==
+          Document::ReadyState::READYSTATE_LOADING);
 
       // The outer window is automatically treated as frozen when we
       // null out the inner window. As a result, initializing classes
@@ -3295,12 +3290,6 @@ already_AddRefed<BrowsingContext> nsGlobalWindowOuter::GetContentInternal(
     return do_AddRef(primaryContent->GetBrowsingContext());
   }
 
-  // For legacy untrusted callers we always return the same value as
-  // `window.top`
-  if (mDoc && aCallerType != CallerType::System) {
-    mDoc->WarnOnceAbout(DeprecatedOperations::eWindowContentUntrusted);
-  }
-
   MOZ_ASSERT(mBrowsingContext->IsContent());
   return do_AddRef(mBrowsingContext->Top());
 }
@@ -4269,6 +4258,16 @@ nsresult nsGlobalWindowOuter::SetFullscreenInternal(FullscreenReason aReason,
       mFullscreen.isSome(),
       mFullscreen.value() != FullscreenReason::ForForceExitFullscreen);
 
+  // We are in the chrome process and are exiting from fullscreen, whatever the
+  // reason, make sure to disable the fullscreen keyboard lock for the chrome
+  // document.
+  if (!aFullscreen) {
+    Document* doc = GetExtantDoc();
+    if (doc) {
+      doc->SetFullscreenKeyboardLockStatus(FullscreenKeyboardLock::None);
+    }
+  }
+
   // If we are already in full screen mode, just return, we don't care about the
   // reason here, because,
   // - If we are in fullscreen mode due to browser fullscreen mode, requesting
@@ -4563,13 +4562,13 @@ void nsGlobalWindowOuter::MakeMessageWithPrincipal(
   nsAutoCString contentDesc;
 
   if (aSubjectPrincipal->GetIsNullPrincipal()) {
-    nsContentUtils::GetLocalizedString(
-        nsContentUtils::eCOMMON_DIALOG_PROPERTIES, aNullMessage, aOutMessage);
+    nsContentUtils::GetLocalizedString(PropertiesFile::COMMON_DIALOG_PROPERTIES,
+                                       aNullMessage, aOutMessage);
   } else {
     auto* addonPolicy = BasePrincipal::Cast(aSubjectPrincipal)->AddonPolicy();
     if (addonPolicy) {
       nsContentUtils::FormatLocalizedString(
-          aOutMessage, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+          aOutMessage, PropertiesFile::COMMON_DIALOG_PROPERTIES,
           aContentMessage, addonPolicy->Name());
     } else {
       nsresult rv = NS_ERROR_FAILURE;
@@ -4585,7 +4584,7 @@ void nsGlobalWindowOuter::MakeMessageWithPrincipal(
       if (NS_SUCCEEDED(rv) && !contentDesc.IsEmpty()) {
         NS_ConvertUTF8toUTF16 ucsPrePath(contentDesc);
         nsContentUtils::FormatLocalizedString(
-            aOutMessage, nsContentUtils::eCOMMON_DIALOG_PROPERTIES,
+            aOutMessage, PropertiesFile::COMMON_DIALOG_PROPERTIES,
             aContentMessage, ucsPrePath);
       }
     }
@@ -4593,9 +4592,8 @@ void nsGlobalWindowOuter::MakeMessageWithPrincipal(
 
   if (aOutMessage.IsEmpty()) {
     // We didn't find a host so use the generic heading
-    nsContentUtils::GetLocalizedString(
-        nsContentUtils::eCOMMON_DIALOG_PROPERTIES, aFallbackMessage,
-        aOutMessage);
+    nsContentUtils::GetLocalizedString(PropertiesFile::COMMON_DIALOG_PROPERTIES,
+                                       aFallbackMessage, aOutMessage);
   }
 
   // Just in case
@@ -4826,8 +4824,8 @@ void nsGlobalWindowOuter::PromptOuter(const nsAString& aMessage,
   nsAutoString label;
   label.SetIsVoid(true);
   if (ShouldPromptToBlockDialogs()) {
-    nsContentUtils::GetLocalizedString(
-        nsContentUtils::eCOMMON_DIALOG_PROPERTIES, "ScriptDialogLabel", label);
+    nsContentUtils::GetLocalizedString(PropertiesFile::COMMON_DIALOG_PROPERTIES,
+                                       "ScriptDialogLabel", label);
   }
 
   nsAutoSyncOperation sync(mDoc, SyncOperationBehavior::eSuspendInput);
@@ -6052,7 +6050,7 @@ void nsGlobalWindowOuter::CloseOuter(bool aTrustedCaller) {
         nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                         "DOM Window"_ns,
                                         mDoc,  // Better name for the category?
-                                        nsContentUtils::eDOM_PROPERTIES,
+                                        PropertiesFile::DOM_PROPERTIES,
                                         "WindowCloseByScriptBlockedWarning");
 
         return;
@@ -6400,7 +6398,7 @@ void nsGlobalWindowOuter::UpdateCommands(const nsAString& anAction) {
       nsCOMPtr<nsPIWindowRoot> root = GetTopWindowRoot();
       if (root) {
         nsContentUtils::AddScriptRunner(
-            new ChildCommandDispatcher(root, child, this, anAction));
+            MakeAndAddRef<ChildCommandDispatcher>(root, child, this, anAction));
       }
       return;
     }
@@ -6422,7 +6420,7 @@ void nsGlobalWindowOuter::UpdateCommands(const nsAString& anAction) {
       doc->GetCommandDispatcher();
   if (xulCommandDispatcher) {
     nsContentUtils::AddScriptRunner(
-        new CommandDispatcher(xulCommandDispatcher, anAction));
+        MakeAndAddRef<CommandDispatcher>(xulCommandDispatcher, anAction));
   }
 }
 
@@ -6501,11 +6499,7 @@ bool nsGlobalWindowOuter::FindOuter(const nsAString& aString,
 // EventTarget
 //*****************************************************************************
 
-nsPIDOMWindowOuter* nsGlobalWindowOuter::GetOwnerGlobalForBindingsInternal() {
-  return this;
-}
-
-nsIGlobalObject* nsGlobalWindowOuter::GetOwnerGlobal() const {
+nsIGlobalObject* nsGlobalWindowOuter::GetRelevantGlobal() const {
   return GetCurrentInnerWindowInternal(this);
 }
 
@@ -7269,7 +7263,7 @@ void nsGlobalWindowOuter::CheckForDPIChange() {
 }
 
 nsresult nsGlobalWindowOuter::Dispatch(
-    already_AddRefed<nsIRunnable>&& aRunnable) const {
+    already_AddRefed<nsIRunnable> aRunnable) const {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
   return NS_DispatchToCurrentThread(std::move(aRunnable));
 }

@@ -111,17 +111,17 @@ TEST(StringListRange, StringListContains)
     nsCString list(test.mList);
     nsCString itemToSearch(test.mItemToSearch);
     EXPECT_EQ(test.mExpectedSkipEmpties, StringListContains(list, itemToSearch))
-        << "trying to find \"" << itemToSearch.Data() << "\" in \""
-        << list.Data() << "\" (skipping empties)";
+        << "trying to find \"" << itemToSearch.get() << "\" in \"" << list.get()
+        << "\" (skipping empties)";
     EXPECT_EQ(test.mExpectedProcessAll,
               StringListContains<StringListRangeEmptyItems::ProcessAll>(
                   list, itemToSearch))
-        << "trying to find \"" << itemToSearch.Data() << "\" in \""
-        << list.Data() << "\" (processing everything)";
+        << "trying to find \"" << itemToSearch.get() << "\" in \"" << list.get()
+        << "\" (processing everything)";
     EXPECT_EQ(test.mExpectedProcessEmpties,
               StringListContains<StringListRangeEmptyItems::ProcessEmptyItems>(
                   list, itemToSearch))
-        << "trying to find \"" << itemToSearch.Data() << "\" in \""
-        << list.Data() << "\" (processing empties)";
+        << "trying to find \"" << itemToSearch.get() << "\" in \"" << list.get()
+        << "\" (processing empties)";
   }
 }

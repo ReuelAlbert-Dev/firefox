@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -207,18 +205,18 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
   // True if we should populate the edge's names.
   bool wantNames;
 
-  void onChild(JS::GCCellPtr thing, const char* name) override {
+  bool onChild(JS::GCCellPtr thing, const char* name) override {
     if (!okay) {
-      return;
+      return true;
     }
 
     // Don't trace permanent atoms and well-known symbols that are owned by
     // a parent JSRuntime.
     if (thing.is<JSString>() && thing.as<JSString>().isPermanentAtom()) {
-      return;
+      return true;
     }
     if (thing.is<JS::Symbol>() && thing.as<JS::Symbol>().isWellKnownSymbol()) {
-      return;
+      return true;
     }
 
     char16_t* name16 = nullptr;
@@ -232,7 +230,7 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
       name16 = js_pod_malloc<char16_t>(strlen(name) + 1);
       if (!name16) {
         okay = false;
-        return;
+        return true;
       }
 
       size_t i;
@@ -248,8 +246,10 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
     // retains it, and its destructor will free it.
     if (!vec->append(Edge(name16, Node(thing)))) {
       okay = false;
-      return;
+      return true;
     }
+
+    return true;
   }
 
  public:

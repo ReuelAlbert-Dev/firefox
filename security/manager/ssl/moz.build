@@ -22,23 +22,24 @@ XPIDL_SOURCES += [
     "nsINSSVersion.idl",
     "nsIOSKeyStore.idl",
     "nsIOSReauthenticator.idl",
-    "nsIPK11Token.idl",
-    "nsIPK11TokenDB.idl",
     "nsIPKCS11Module.idl",
     "nsIPKCS11ModuleDB.idl",
     "nsIPKCS11Slot.idl",
+    "nsIPKCS11Token.idl",
     "nsIPublicKeyPinningService.idl",
     "nsISecretDecoderRing.idl",
     "nsISecurityUITelemetry.idl",
     "nsISiteIntegrityService.idl",
     "nsISiteSecurityService.idl",
     "nsITLSSocketControl.idl",
-    "nsITokenPasswordDialogs.idl",
     "nsITransportSecurityInfo.idl",
     "nsIX509Cert.idl",
     "nsIX509CertDB.idl",
     "nsIX509CertValidity.idl",
 ]
+
+if CONFIG["ENABLE_TESTS"]:
+    XPIDL_SOURCES += ["nsISSLTokensCacheTest.idl"]
 
 XPIDL_MODULE = "pipnss"
 
@@ -82,8 +83,10 @@ EXPORTS.mozilla += [
 ]
 
 EXPORTS.mozilla.psm += [
+    "EnabledSignatureSchemes.h",
     "IPCClientCertsChild.h",
     "IPCClientCertsParent.h",
+    "PSMIPCUtils.h",
     "SelectTLSClientAuthCertChild.h",
     "SelectTLSClientAuthCertParent.h",
     "TransportSecurityInfo.h",
@@ -116,7 +119,6 @@ UNIFIED_SOURCES += [
     "nsNSSModule.cpp",
     "nsNSSVersion.cpp",
     "nsNTLMAuthModule.cpp",
-    "nsPK11TokenDB.cpp",
     "nsPKCS12Blob.cpp",
     "nsRandomGenerator.cpp",
     "nsSecureBrowserUI.cpp",
@@ -133,7 +135,7 @@ UNIFIED_SOURCES += [
     "PKCS11Module.cpp",
     "PKCS11ModuleDB.cpp",
     "PKCS11Slot.cpp",
-    "PSMRunnable.cpp",
+    "PKCS11Token.cpp",
     "PublicKeyPinningService.cpp",
     "QWACs.cpp",
     "QWACTrustDomain.cpp",
@@ -264,7 +266,7 @@ USE_LIBS += ["mozpkix"]
 include("/ipc/chromium/chromium-config.mozbuild")
 
 if CONFIG["CC_TYPE"] in ("clang", "gcc"):
-    CXXFLAGS += [
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += [
         "-Wextra",
         # -Wextra enables this warning, but it's too noisy to be useful.
         "-Wno-missing-field-initializers",

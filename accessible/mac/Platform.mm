@@ -124,6 +124,30 @@ void PlatformFocusEvent(Accessible* aTarget) {
   }
 }
 
+void PlatformFocusedAccLocationChanged(Accessible* aFocusedAcc) {
+  // XXX: This function is called when CacheDomain::Viewport is updated on the
+  // document and the focused acc's bounds have changed. We redirect here
+  // instead of doing this work in maybeFireUAZoomChangeFocusEvent because
+  // other platforms will want this hook, too. See bug 1469779.
+  mozAccessible* nativeFocused = GetNativeFromGeckoAccessible(aFocusedAcc);
+  if (nativeFocused) {
+    int focusType = aFocusedAcc->IsEditableRoot()
+                        ? kUAZoomFocusTypeInsertionPoint
+                        : kUAZoomFocusTypeOther;
+    [nativeFocused maybeFireUAZoomChangeFocusEvent:focusType];
+  }
+}
+
+bool PlatformShouldTrackFocusedAccLocation() {
+  // We want to track location changes for the focused acc if the
+  // macOS magnifier is enabled, or we're running tests that have
+  // the bounds domain enabled. We can't just check that we're in a
+  // testing environment, because this will break our caching granularity
+  // tests.
+  return UAZoomEnabled() ||
+         (xpc::IsInAutomation() && DomainsAreActive(CacheDomain::Bounds));
+}
+
 void PlatformCaretMoveEvent(Accessible* aTarget, int32_t aOffset,
                             bool aIsSelectionCollapsed, int32_t aGranularity,
                             bool aFromUser) {
@@ -163,7 +187,15 @@ void PlatformTextChangeEvent(Accessible* aTarget, const nsAString& aStr,
   }
 }
 
-void PlatformShowHideEvent(Accessible*, Accessible*, bool, bool) {}
+void PlatformShowHideEvent(Accessible* aTarget, Accessible* aParent,
+                           bool aIsInsert, bool aFromUser) {
+  mozAccessible* wrapper = GetNativeFromGeckoAccessible(aTarget);
+  if (wrapper) {
+    [wrapper
+        handleAccessibleEvent:(aIsInsert ? nsIAccessibleEvent::EVENT_SHOW
+                                         : nsIAccessibleEvent::EVENT_HIDE)];
+  }
+}
 
 void PlatformSelectionEvent(Accessible* aTarget, Accessible* aWidget,
                             uint32_t aEventType) {
@@ -240,70 +272,65 @@ std::pair<EnumSet<Client>, Client> GetClients() {
           respondsToSelector:@selector(isVoiceOverEnabled)] &&
       [[NSWorkspace sharedWorkspace] isVoiceOverEnabled]) {
     AddClient(Client::VoiceOver);
-  } else if ([[NSWorkspace sharedWorkspace]
-                 respondsToSelector:@selector(isSwitchControlEnabled)] &&
-             [[NSWorkspace sharedWorkspace] isSwitchControlEnabled]) {
+  }
+
+  if ([[NSWorkspace sharedWorkspace]
+          respondsToSelector:@selector(isSwitchControlEnabled)] &&
+      [[NSWorkspace sharedWorkspace] isSwitchControlEnabled]) {
     AddClient(Client::SwitchControl);
-  } else if (UAZoomEnabled()) {
+  }
+
+  if (UAZoomEnabled()) {
     AddClient(Client::UAZoom);
-  } else {
-    Boolean foundSpecificClient = false;
+  }
 
-    // This is more complicated than the NSWorkspace queries above
-    // because (a) there is no "full keyboard access" query for NSWorkspace
-    // and (b) the [NSApplication fullKeyboardAccessEnabled] query checks
-    // the pre-Monterey version of full keyboard access, which is not what
-    // we're looking for here. For more info, see bug 1772375 comment 7.
-    Boolean exists;
-    long val = CFPreferencesGetAppIntegerValue(
-        CFSTR("FullKeyboardAccessEnabled"), CFSTR("com.apple.Accessibility"),
-        &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::FullKeyboardAccess);
-    }
+  // This is more complicated than the NSWorkspace queries above
+  // because (a) there is no "full keyboard access" query for NSWorkspace
+  // and (b) the [NSApplication fullKeyboardAccessEnabled] query checks
+  // the pre-Monterey version of full keyboard access, which is not what
+  // we're looking for here. For more info, see bug 1772375 comment 7.
+  Boolean exists;
+  long val = CFPreferencesGetAppIntegerValue(CFSTR("FullKeyboardAccessEnabled"),
+                                             CFSTR("com.apple.Accessibility"),
+                                             &exists);
+  if (exists && val == 1) {
+    AddClient(Client::FullKeyboardAccess);
+  }
 
-    val = CFPreferencesGetAppIntegerValue(CFSTR("CommandAndControlEnabled"),
-                                          CFSTR("com.apple.Accessibility"),
-                                          &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::VoiceControl);
-    }
+  val = CFPreferencesGetAppIntegerValue(CFSTR("CommandAndControlEnabled"),
+                                        CFSTR("com.apple.Accessibility"),
+                                        &exists);
+  if (exists && val == 1) {
+    AddClient(Client::VoiceControl);
+  }
 
-    val = CFPreferencesGetAppIntegerValue(
-        CFSTR("SpeakThisEnabled"), CFSTR("com.apple.universalaccess"), &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::SpeakSelection);
-    }
+  val = CFPreferencesGetAppIntegerValue(
+      CFSTR("SpeakThisEnabled"), CFSTR("com.apple.universalaccess"), &exists);
+  if (exists && val == 1) {
+    AddClient(Client::SpeakSelection);
+  }
 
-    val = CFPreferencesGetAppIntegerValue(CFSTR("speakItemUnderMouseEnabled"),
-                                          CFSTR("com.apple.universalaccess"),
-                                          &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::SpeakItemUnderMouse);
-    }
+  val = CFPreferencesGetAppIntegerValue(CFSTR("speakItemUnderMouseEnabled"),
+                                        CFSTR("com.apple.universalaccess"),
+                                        &exists);
+  if (exists && val == 1) {
+    AddClient(Client::SpeakItemUnderMouse);
+  }
 
-    val = CFPreferencesGetAppIntegerValue(CFSTR("typingEchoEnabled"),
-                                          CFSTR("com.apple.universalaccess"),
-                                          &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::SpeakTypingFeedback);
-    }
+  val = CFPreferencesGetAppIntegerValue(
+      CFSTR("typingEchoEnabled"), CFSTR("com.apple.universalaccess"), &exists);
+  if (exists && val == 1) {
+    AddClient(Client::SpeakTypingFeedback);
+  }
 
-    val = CFPreferencesGetAppIntegerValue(
-        CFSTR("hoverTextEnabled"), CFSTR("com.apple.universalaccess"), &exists);
-    if (exists && val == 1) {
-      foundSpecificClient = true;
-      AddClient(Client::HoverText);
-    }
+  val = CFPreferencesGetAppIntegerValue(
+      CFSTR("hoverTextEnabled"), CFSTR("com.apple.universalaccess"), &exists);
+  if (exists && val == 1) {
+    AddClient(Client::HoverText);
+  }
 
-    if (!foundSpecificClient) {
-      AddClient(Client::Unknown);
-    }
+  if (clients.isEmpty()) {
+    AddClient(Client::Unknown);
   }
   return std::make_pair(clients, clientToLog.value());
 }
@@ -361,6 +388,18 @@ uint64_t GetCacheDomainsForKnownClients(uint64_t aCacheDomains) {
     return CacheDomain::All;
   }
   return aCacheDomains;
+}
+
+void GetHumanReadableInstantiatorStr(nsAString& aResult) {
+  auto [clients, _] = GetClients();
+  nsAutoString result;
+  for (Client client : clients) {
+    if (!result.IsEmpty()) {
+      result.AppendLiteral(",");
+    }
+    result.AppendASCII(GetStringForClient(client));
+  }
+  aResult = result;
 }
 
 }  // namespace a11y

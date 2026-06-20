@@ -124,6 +124,27 @@ extern int32_t wgpu_server_get_dma_buf_fd(WGPUWebGPUParentPtr aParent,
   // fd should be closed by the caller.
   return fd.release();
 }
+
+extern "C" bool wgpu_server_get_linux_dmabuf_modifiers(
+    const uint64_t** aModifiers, uint32_t* aModifierCount) {
+  if (!aModifiers || !aModifierCount) {
+    return false;
+  }
+
+  *aModifiers = nullptr;
+  *aModifierCount = 0;
+
+  // Vulkan B8G8R8A8_UNORM maps to the exported ARGB dmabuf format on
+  // little-endian Linux.
+  const auto& modifiers = mozilla::gfx::gfxVars::DMABufModifiersARGB();
+  if (modifiers.IsEmpty()) {
+    return false;
+  }
+
+  *aModifiers = modifiers.Elements();
+  *aModifierCount = static_cast<uint32_t>(modifiers.Length());
+  return true;
+}
 #endif
 
 #if defined(XP_LINUX) && !defined(MOZ_WIDGET_ANDROID)
@@ -277,7 +298,8 @@ extern void wgpu_parent_create_swap_chain(
   }
   auto size = gfx::IntSize(aWidth, aHeight);
   auto format = gfx::SurfaceFormat(aFormat);
-  auto desc = layers::RGBDescriptor(size, format);
+  auto desc = layers::RGBDescriptor(size, format, gfx::ColorSpace2::SRGB,
+                                    gfx::TransferFunction::SRGB);
   auto owner = layers::RemoteTextureOwnerId{aRemoteTextureOwnerId};
   parent->DeviceCreateSwapChain(aDeviceId, aQueueId, desc, buffer_ids, owner,
                                 aUseSharedTextureInSwapChain);
@@ -508,7 +530,8 @@ void WebGPUParent::MaintainDevices() {
   ffi::wgpu_server_poll_all_devices(mContext.get(), false);
 }
 
-void WebGPUParent::LoseDevice(const RawId aDeviceId, uint8_t aReason,
+void WebGPUParent::LoseDevice(const RawId aDeviceId,
+                              dom::GPUDeviceLostReason aReason,
                               const nsACString& aMessage) {
   if (mActiveDeviceIds.Contains(aDeviceId)) {
     mActiveDeviceIds.Remove(aDeviceId);
@@ -541,8 +564,7 @@ bool WebGPUParent::ForwardError(ErrorBuffer& aError) {
     // "No errors are generated after device loss."
     if (error->isDeviceLost) {
       if (error->deviceId) {
-        LoseDevice(error->deviceId,
-                   static_cast<uint8_t>(dom::GPUDeviceLostReason::Unknown),
+        LoseDevice(error->deviceId, dom::GPUDeviceLostReason::Unknown,
                    error->message);
       }
     } else {
@@ -603,13 +625,13 @@ static void DeviceLostCleanupCallback(uint8_t* aUserData) {
 
   // NOTE: Based on `u8` discriminant values provided for `DeviceLostReason` in
   // `wgpu_bindings`.
-  uint8_t reason;
+  dom::GPUDeviceLostReason reason;
   switch (aReason) {
     case 0:
-      reason = static_cast<uint8_t>(dom::GPUDeviceLostReason::Unknown);
+      reason = dom::GPUDeviceLostReason::Unknown;
       break;
     case 1:
-      reason = static_cast<uint8_t>(dom::GPUDeviceLostReason::Destroyed);
+      reason = dom::GPUDeviceLostReason::Destroyed;
       break;
     default:
       MOZ_CRASH_UNSAFE_PRINTF(
@@ -713,8 +735,7 @@ void WebGPUParent::MapCallback(uint8_t* aUserData,
     // need to lose the device.
     if (aStatus == ffi::WGPUBufferMapAsyncStatus_ContextLost) {
       req->mParent->LoseDevice(
-          req->mDeviceId,
-          static_cast<uint8_t>(dom::GPUDeviceLostReason::Unknown),
+          req->mDeviceId, dom::GPUDeviceLostReason::Unknown,
           nsPrintfCString("Buffer %" PRIu64 " invalid", req->mBufferId));
     }
     auto error = nsPrintfCString("Mapping WebGPU buffer failed: %s",
@@ -1207,8 +1228,12 @@ ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
     return IPC_OK();
   }
   const auto stride = maybeStride.value();
-
   const auto& size = data->mDesc.size();
+
+  if (size.width > INT16_MAX || size.height > INT16_MAX || stride > INT16_MAX) {
+    return IPC_OK();
+  }
+
   const auto len = CheckedInt<size_t>(size.height) * stride;
   if (!len.isValid()) {
     return IPC_OK();
@@ -1341,20 +1366,11 @@ ipc::IPCResult WebGPUParent::GetFrontBufferSnapshot(
   auto snapshotRequest = MakeUnique<ReadbackSnapshotRequest>(
       mContext.get(), data, bufferId, shmem, stride);
 
-  ffi::WGPUBufferMapClosure closure = {
-      &ReadbackSnapshotCallback,
-      reinterpret_cast<uint8_t*>(snapshotRequest.release())};
-
-  ErrorBuffer error;
-  ffi::wgpu_server_buffer_map(mContext.get(), data->mDeviceId, bufferId, 0,
-                              bufferSize, ffi::WGPUHostMap_Read, closure,
-                              error.ToFFI());
-  if (ForwardError(error)) {
-    return IPC_OK();
-  }
-
-  // Callback should be called during the poll.
-  ffi::wgpu_server_poll_all_devices(mContext.get(), true);
+  ffi::WGPUBufferMapAsyncStatus status = ffi::wgpu_server_buffer_map_blocking(
+      mContext.get(), data->mDeviceId, bufferId, 0, bufferSize,
+      ffi::WGPUHostMap_Read);
+  ReadbackSnapshotCallback(
+      reinterpret_cast<uint8_t*>(snapshotRequest.release()), status);
 
   // Check if ReadbackSnapshotCallback is called.
   MOZ_RELEASE_ASSERT(data->mReadbackSnapshotCallbackCalled == true);
@@ -1427,6 +1443,11 @@ void WebGPUParent::SwapChainPresent(
     }
     std::shared_ptr<SharedTexture> sharedTexture = it->second;
     mSharedTextures.erase(it);
+
+    if (!sharedTexture->IsSubmitted()) {
+      gfxCriticalNoteOnce << "Texture is not submitted";
+      return;
+    }
 
     MOZ_ASSERT(sharedTexture->GetOwnerId() == aOwnerId);
 

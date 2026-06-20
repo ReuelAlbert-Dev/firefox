@@ -22,6 +22,7 @@ import {
   PREF_DEFAULT_VALUE_TOPSTORIES_ENABLED,
   PREF_DEFAULT_VALUE_TOPSITES_ENABLED,
 } from "resource://newtab/lib/ActivityStream.sys.mjs";
+import { WIDGET_REGISTRY } from "resource://newtab/common/WidgetsRegistry.mjs";
 
 // eslint-disable-next-line mozilla/use-static-import
 const { AppConstants } = ChromeUtils.importESModule(
@@ -257,12 +258,55 @@ export class PrefsFeed {
         .setStringPref("weather.display", valueObj.weather.display);
     }
 
+    // Write widgets.weather.size to the default branch so trainhop overrides
+    // the migration default computed by getWeatherWidgetSize() while a user's
+    // explicit size pick (user branch) still wins.
+    if (
+      typeof valueObj.widgets?.weatherSize === "string" &&
+      valueObj.widgets.weatherSize
+    ) {
+      Services.prefs
+        .getDefaultBranch(this._prefs._branchStr)
+        .setStringPref("widgets.weather.size", valueObj.widgets.weatherSize);
+    }
+
     // Write topSitesRows to the default branch to enable experiments with
     // the default row count without overriding an explicit user choice.
     if (valueObj.topSites?.topSitesRows) {
       Services.prefs
         .getDefaultBranch(this._prefs._branchStr)
         .setIntPref("topSitesRows", valueObj.topSites.topSitesRows);
+    }
+
+    // Write initialWallpaper to the user branch so it persists after the
+    // experiment ends. The guard prevents overwriting an existing value or a
+    // user's explicit wallpaper choice that has already cleared it.
+    if (
+      valueObj.wallpaper?.initialWallpaper &&
+      !this._prefs.get("newtabWallpapers.initialWallpaper")
+    ) {
+      this._prefs.set(
+        "newtabWallpapers.initialWallpaper",
+        valueObj.wallpaper.initialWallpaper
+      );
+    }
+
+    // Override per-widget default enabled values from widgetsSettings. Writing
+    // to the default branch lets a trainhop flip a widget's default (e.g. ship
+    // it off) while an explicit user toggle (user branch) still wins. Toggle
+    // VISIBILITY is handled separately by the widgetsSettings.*Visible terms in
+    // WidgetsRegistry — this only affects the on/off default value.
+    if (valueObj.widgetsSettings) {
+      const defaultBranch = Services.prefs.getDefaultBranch(
+        this._prefs._branchStr
+      );
+      for (const widget of WIDGET_REGISTRY) {
+        const value =
+          valueObj.widgetsSettings[widget.widgetsSettingsEnabledKey];
+        if (typeof value === "boolean") {
+          defaultBranch.setBoolPref(widget.enabledPref, value);
+        }
+      }
     }
 
     return valueObj;
@@ -275,14 +319,8 @@ export class PrefsFeed {
    *
    */
   _getAdsBackendFeatures() {
-    /**
-     * @backward-compat { version 149 }
-     *
-     * We can replace `adsBackend?` with `adsBackend` once 149 hits the
-     * release channel.
-     */
     const allEnrollments =
-      lazy.NimbusFeatures.adsBackend?.getAllEnrollments() || [];
+      lazy.NimbusFeatures.adsBackend.getAllEnrollments() || [];
 
     const valueObj = {};
     allEnrollments.reduce((accumulator, currentValue) => {
@@ -325,6 +363,17 @@ export class PrefsFeed {
    */
   onPocketExperimentUpdated(event, reason) {
     const value = lazy.NimbusFeatures.pocketNewtab.getAllVariables() || {};
+
+    if (
+      value.currentWallpaper &&
+      !this._prefs.get("newtabWallpapers.initialWallpaper")
+    ) {
+      this._prefs.set(
+        "newtabWallpapers.initialWallpaper",
+        value.currentWallpaper
+      );
+    }
+
     // Loaded experiments are set up inside init()
     if (
       reason !== "feature-experiment-loaded" &&
@@ -440,13 +489,7 @@ export class PrefsFeed {
     );
     lazy.NimbusFeatures.newtabWidgets.onUpdate(this.onWidgetsUpdated);
     lazy.NimbusFeatures.newtabOhttpImages.onUpdate(this.onOhttpImagesUpdated);
-    /**
-     * @backward-compat { version 149 }
-     *
-     * We can replace `adsBackend?` with `adsBackend` once 149 hits the
-     * release channel.
-     */
-    lazy.NimbusFeatures.adsBackend?.onUpdate(this.onAdsBackendUpdated);
+    lazy.NimbusFeatures.adsBackend.onUpdate(this.onAdsBackendUpdated);
 
     // Get the initial value of each activity stream pref
     const values = {};
@@ -500,6 +543,15 @@ export class PrefsFeed {
     values.featureConfig = lazy.NimbusFeatures.newtab.getAllVariables() || {};
     values.pocketConfig =
       lazy.NimbusFeatures.pocketNewtab.getAllVariables() || {};
+    if (
+      values.pocketConfig.currentWallpaper &&
+      !this._prefs.get("newtabWallpapers.initialWallpaper")
+    ) {
+      this._prefs.set(
+        "newtabWallpapers.initialWallpaper",
+        values.pocketConfig.currentWallpaper
+      );
+    }
     values.smartShortcutsConfig =
       lazy.NimbusFeatures.newtabSmartShortcuts.getAllVariables() || {};
     values.widgetsConfig =
@@ -547,13 +599,7 @@ export class PrefsFeed {
     );
     lazy.NimbusFeatures.newtabWidgets.offUpdate(this.onWidgetsUpdated);
     lazy.NimbusFeatures.newtabOhttpImages.offUpdate(this.onOhttpImagesUpdated);
-    /**
-     * @backward-compat { version 149 }
-     *
-     * We can replace `adsBackend?` with `adsBackend` once 149 hits the
-     * release channel.
-     */
-    lazy.NimbusFeatures.adsBackend?.offUpdate(this.onAdsBackendUpdated);
+    lazy.NimbusFeatures.adsBackend.offUpdate(this.onAdsBackendUpdated);
 
     if (this.geo === "") {
       Services.obs.removeObserver(this, lazy.Region.REGION_TOPIC);

@@ -65,8 +65,7 @@ TextureHost* GPUVideoTextureHost::EnsureWrappedTextureHost() {
     MOZ_ASSERT(mWrappedTextureHost->mExternalImageId.isSome());
     auto wrappedId = mWrappedTextureHost->mExternalImageId.ref();
 
-    RefPtr<wr::RenderTextureHost> texture =
-        new wr::RenderTextureHostWrapper(wrappedId);
+    RefPtr texture = MakeRefPtr<wr::RenderTextureHostWrapper>(wrappedId);
     wr::RenderThread::Get()->RegisterExternalImage(mExternalImageId.ref(),
                                                    texture.forget());
   }
@@ -100,6 +99,14 @@ gfx::ColorRange GPUVideoTextureHost::GetColorRange() const {
   return mWrappedTextureHost->GetColorRange();
 }
 
+gfx::TransferFunction GPUVideoTextureHost::GetTransferFunction() const {
+  MOZ_ASSERT(mWrappedTextureHost, "Image isn't valid yet");
+  if (!mWrappedTextureHost) {
+    return TextureHost::GetTransferFunction();
+  }
+  return mWrappedTextureHost->GetTransferFunction();
+}
+
 gfx::IntSize GPUVideoTextureHost::GetSize() const {
   MOZ_ASSERT(mWrappedTextureHost, "Image isn't valid yet");
   if (!mWrappedTextureHost) {
@@ -129,8 +136,7 @@ void GPUVideoTextureHost::CreateRenderTexture(
     MOZ_ASSERT(mWrappedTextureHost->mExternalImageId.isSome());
     auto wrappedId = mWrappedTextureHost->mExternalImageId.ref();
 
-    RefPtr<wr::RenderTextureHost> texture =
-        new wr::RenderTextureHostWrapper(wrappedId);
+    RefPtr texture = MakeRefPtr<wr::RenderTextureHostWrapper>(wrappedId);
     wr::RenderThread::Get()->RegisterExternalImage(mExternalImageId.ref(),
                                                    texture.forget());
     return;

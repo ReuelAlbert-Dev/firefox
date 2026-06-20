@@ -4,7 +4,6 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
-import { SearchWidgetTracker } from "moz-src:///browser/components/customizableui/SearchWidgetTracker.sys.mjs";
 
 const lazy = {};
 
@@ -68,7 +67,7 @@ const kSubviewEvents = ["ViewShowing", "ViewHiding"];
  * The current version. We can use this to auto-add new default widgets as necessary.
  * (would be const but isn't because of testing purposes)
  */
-var kVersion = 23;
+var kVersion = 24;
 
 /**
  * Buttons removed from built-ins by version they were removed. kVersion must be
@@ -183,6 +182,7 @@ var gUIStateBeforeReset = {
   drawInTitlebar: null,
   currentTheme: null,
   uiDensity: null,
+  uiDensityHadUserValue: null,
   autoTouchMode: null,
   sidebarPositionStart: null,
 };
@@ -442,8 +442,6 @@ var CustomizableUIInternal = {
     this.reconcileSidebarPrefs(kPrefSidebarVerticalTabsEnabled);
 
     this.initializeForTabsOrientation(CustomizableUI.verticalTabsEnabled);
-
-    SearchWidgetTracker.init();
 
     Services.obs.addObserver(this, "browser-set-toolbar-visibility");
 
@@ -808,18 +806,6 @@ var CustomizableUIInternal = {
       ];
     }
 
-    // Add the PBM reset button as the right most button item
-    if (currentVersion < 20) {
-      let navbarPlacements = gSavedState.placements[CustomizableUI.AREA_NAVBAR];
-      // Place the button as the first item to the left of the hamburger menu
-      if (
-        navbarPlacements &&
-        !navbarPlacements.includes("reset-pbm-toolbar-button")
-      ) {
-        navbarPlacements.push("reset-pbm-toolbar-button");
-      }
-    }
-
     if (currentVersion < 21) {
       // If the vertical-spacer has not yet been added, ensure its to the left of the urlbar initially
       let navbarPlacements = gSavedState.placements[CustomizableUI.AREA_NAVBAR];
@@ -853,6 +839,18 @@ var CustomizableUIInternal = {
       let buttonIndex = navbarPlacements.indexOf("save-to-pocket-button");
       if (buttonIndex != -1) {
         navbarPlacements.splice(buttonIndex, 1);
+      }
+    }
+
+    // Add the PBM reset button as the right most button item
+    if (currentVersion < 24) {
+      let navbarPlacements = gSavedState.placements[CustomizableUI.AREA_NAVBAR];
+      // Place the button as the first item to the left of the hamburger menu
+      if (
+        navbarPlacements &&
+        !navbarPlacements.includes("reset-pbm-toolbar-button")
+      ) {
+        navbarPlacements.push("reset-pbm-toolbar-button");
       }
     }
   },
@@ -1429,8 +1427,9 @@ var CustomizableUIInternal = {
           }
         } else if (
           provider == CustomizableUI.PROVIDER_XUL &&
+          !this.isWidgetRemovable(node) &&
           node.parentNode != container &&
-          !this.isWidgetRemovable(node)
+          !aAreaNode.overflowable?.isInOverflowList(node)
         ) {
           placementsToRemove.add(id);
           continue;
@@ -1532,7 +1531,7 @@ var CustomizableUIInternal = {
   addPanelCloseListeners(aPanel) {
     aPanel.addEventListener("click", this, { mozSystemGroup: true });
     aPanel.addEventListener("keypress", this, { mozSystemGroup: true });
-    let win = aPanel.ownerGlobal;
+    let win = aPanel.documentGlobal;
     if (!gPanelsForWindow.has(win)) {
       gPanelsForWindow.set(win, new Set());
     }
@@ -1546,7 +1545,7 @@ var CustomizableUIInternal = {
   removePanelCloseListeners(aPanel) {
     aPanel.removeEventListener("click", this, { mozSystemGroup: true });
     aPanel.removeEventListener("keypress", this, { mozSystemGroup: true });
-    let win = aPanel.ownerGlobal;
+    let win = aPanel.documentGlobal;
     let panels = gPanelsForWindow.get(win);
     if (panels) {
       panels.delete(this._getPanelForNode(aPanel));
@@ -1747,7 +1746,7 @@ var CustomizableUIInternal = {
       gPalette.get(aWidgetId)?.hideInNonPrivateBrowsing ?? false;
 
     for (let areaNode of areaNodes) {
-      let window = areaNode.ownerGlobal;
+      let window = areaNode.documentGlobal;
       if (
         !showInPrivateBrowsing &&
         lazy.PrivateBrowsingUtils.isWindowPrivate(window)
@@ -1827,7 +1826,7 @@ var CustomizableUIInternal = {
   registerBuildArea(aAreaId, aAreaNode) {
     // We ensure that the window is registered to have its customization data
     // cleaned up when unloading.
-    let window = aAreaNode.ownerGlobal;
+    let window = aAreaNode.documentGlobal;
     if (window.closed) {
       return;
     }
@@ -2085,7 +2084,7 @@ var CustomizableUIInternal = {
    *   moved.
    */
   insertNodeInWindow(aWidgetId, aAreaNode, isNew) {
-    let window = aAreaNode.ownerGlobal;
+    let window = aAreaNode.documentGlobal;
     let showInPrivateBrowsing = gPalette.has(aWidgetId)
       ? gPalette.get(aWidgetId).showInPrivateBrowsing
       : true;
@@ -2788,9 +2787,9 @@ var CustomizableUIInternal = {
       return;
     }
 
-    // Use ownerGlobal.document to ensure we get the right doc even for
+    // Use documentGlobal.document to ensure we get the right doc even for
     // elements in template tags.
-    let { document } = aShortcutNode.ownerGlobal;
+    let { document } = aShortcutNode.documentGlobal;
     let shortcutId = aShortcutNode.getAttribute("key");
     let shortcut;
     if (shortcutId) {
@@ -2854,7 +2853,7 @@ var CustomizableUIInternal = {
    *   show.
    */
   showWidgetView(aWidget, aNode, aEvent) {
-    let ownerWindow = aNode.ownerGlobal;
+    let ownerWindow = aNode.documentGlobal;
     let area = this.getPlacementOfWidget(aNode.id).area;
     let areaType = CustomizableUI.getAreaType(area);
     let anchor = aNode;
@@ -3141,7 +3140,7 @@ var CustomizableUIInternal = {
    * @returns {Array<WidgetGroupWrapper|XULWidgetGroupWrapper>}
    */
   getUnusedWidgets(aWindowPalette) {
-    let window = aWindowPalette.ownerGlobal;
+    let window = aWindowPalette.documentGlobal;
     let isWindowPrivate = lazy.PrivateBrowsingUtils.isWindowPrivate(window);
     // We use a Set because there can be overlap between the widgets in
     // gPalette and the items in the palette, especially after the first
@@ -4451,7 +4450,7 @@ var CustomizableUIInternal = {
     }
 
     for (let node of buildAreaNodes) {
-      if (node.ownerGlobal == aWindow) {
+      if (node.documentGlobal == aWindow) {
         return this.getCustomizationTarget(node) || node;
       }
     }
@@ -4502,6 +4501,12 @@ var CustomizableUIInternal = {
         kPrefCustomizationState
       );
       gUIStateBeforeReset.uiDensity = Services.prefs.getIntPref(kPrefUIDensity);
+      // browser.uidensity is sticky, so an explicit value equal to the default
+      // (normal density) still counts as a user value. Remember whether one was
+      // set so undoReset can faithfully restore the automatic (no user value)
+      // state rather than pinning the density to normal.
+      gUIStateBeforeReset.uiDensityHadUserValue =
+        Services.prefs.prefHasUserValue(kPrefUIDensity);
       gUIStateBeforeReset.autoTouchMode =
         Services.prefs.getBoolPref(kPrefAutoTouchMode);
       gUIStateBeforeReset.currentTheme = gSelectedTheme;
@@ -4575,7 +4580,7 @@ var CustomizableUIInternal = {
         let area = gAreas.get(areaId);
         if (area.get("type") == CustomizableUI.TYPE_TOOLBAR) {
           let defaultCollapsed = area.get("defaultCollapsed");
-          let win = areaNode.ownerGlobal;
+          let win = areaNode.documentGlobal;
           if (defaultCollapsed !== null) {
             win.setToolbarVisibility(
               areaNode,
@@ -4609,6 +4614,7 @@ var CustomizableUIInternal = {
       drawInTitlebar,
       currentTheme,
       uiDensity,
+      uiDensityHadUserValue,
       autoTouchMode,
       autoHideDownloadsButton,
       sidebarPositionStart,
@@ -4621,7 +4627,11 @@ var CustomizableUIInternal = {
 
     Services.prefs.setCharPref(kPrefCustomizationState, uiCustomizationState);
     Services.prefs.setIntPref(kPrefDrawInTitlebar, drawInTitlebar);
-    Services.prefs.setIntPref(kPrefUIDensity, uiDensity);
+    if (uiDensityHadUserValue) {
+      Services.prefs.setIntPref(kPrefUIDensity, uiDensity);
+    } else {
+      Services.prefs.clearUserPref(kPrefUIDensity);
+    }
     Services.prefs.setBoolPref(kPrefAutoTouchMode, autoTouchMode);
     Services.prefs.setBoolPref(
       kPrefAutoHideDownloadsButton,
@@ -4784,7 +4794,7 @@ var CustomizableUIInternal = {
     if (!areaNodes) {
       return false;
     }
-    let container = [...areaNodes].filter(n => n.ownerGlobal == aWindow);
+    let container = [...areaNodes].filter(n => n.documentGlobal == aWindow);
     if (!container.length) {
       return false;
     }
@@ -6847,9 +6857,9 @@ export var CustomizableUI = {
       "style",
     ];
 
-    // Use ownerGlobal.document to ensure we get the right doc even for
+    // Use documentGlobal.document to ensure we get the right doc even for
     // elements in template tags.
-    let doc = aSubview.ownerGlobal.document;
+    let doc = aSubview.documentGlobal.document;
     let fragment = doc.createDocumentFragment();
     for (let menuChild of aMenuItems) {
       if (menuChild.hidden) {
@@ -6874,7 +6884,7 @@ export var CustomizableUI = {
         let item = menuChild;
         if (!item.hasAttribute("onclick")) {
           subviewItem.addEventListener("click", event => {
-            let newEvent = new doc.ownerGlobal.PointerEvent("click", event);
+            let newEvent = new doc.documentGlobal.PointerEvent("click", event);
 
             // Telemetry should only pay attention to the original event.
             lazy.BrowserUsageTelemetry.ignoreEvent(newEvent);
@@ -7126,7 +7136,7 @@ function WidgetGroupWrapper(aWidget) {
     if (!buildAreas) {
       return [];
     }
-    return Array.from(buildAreas, node => this.forWindow(node.ownerGlobal));
+    return Array.from(buildAreas, node => this.forWindow(node.documentGlobal));
   });
 
   this.__defineGetter__("areaType", function () {
@@ -7285,7 +7295,7 @@ function XULWidgetSingleWrapper(aWidgetId, aNode, aDocument) {
         return aNode;
       }
       // ... or the toolbox
-      let toolbox = aNode.ownerGlobal.gNavToolbox;
+      let toolbox = aNode.documentGlobal.gNavToolbox;
       if (toolbox && toolbox.palette && aNode.parentNode == toolbox.palette) {
         return aNode;
       }
@@ -7519,7 +7529,7 @@ class OverflowableToolbar {
     );
     this.#defaultList._customizationTarget = this.#defaultList;
 
-    let window = this.#toolbar.ownerGlobal;
+    let window = this.#toolbar.documentGlobal;
 
     if (window.gBrowserInit.delayedStartupFinished) {
       this.init();
@@ -7577,7 +7587,7 @@ class OverflowableToolbar {
 
     this.#disable();
 
-    let window = this.#toolbar.ownerGlobal;
+    let window = this.#toolbar.documentGlobal;
     window.removeEventListener("resize", this);
     window.gNavToolbox.removeEventListener("customizationstarting", this);
     window.gNavToolbox.removeEventListener("aftercustomization", this);
@@ -7788,7 +7798,7 @@ class OverflowableToolbar {
       return;
     }
 
-    let win = this.#target.ownerGlobal;
+    let win = this.#target.documentGlobal;
     let checkOverflowHandle = this.#checkOverflowHandle;
     let webExtButtonID = this.#toolbar.getAttribute(
       "addon-webext-overflowbutton"
@@ -7898,7 +7908,7 @@ class OverflowableToolbar {
       return sum;
     }
 
-    let win = this.#target.ownerGlobal;
+    let win = this.#target.documentGlobal;
     let totalAvailWidth;
     let targetWidth;
     let targetChildrenWidth;
@@ -7959,7 +7969,7 @@ class OverflowableToolbar {
       `Attempting to move ${shouldMoveAllItems ? "all" : "some"} items back`
     );
     let placements = gPlacements.get(this.#toolbar.id);
-    let win = this.#target.ownerGlobal;
+    let win = this.#target.documentGlobal;
     let doc = this.#target.ownerDocument;
     let checkOverflowHandle = this.#checkOverflowHandle;
 
@@ -8075,7 +8085,7 @@ class OverflowableToolbar {
       return;
     }
 
-    let win = this.#target.ownerGlobal;
+    let win = this.#target.documentGlobal;
     if (win.document.documentElement.hasAttribute("inDOMFullscreen")) {
       // Toolbars are hidden and cannot be made visible in DOM fullscreen mode
       // so there's nothing to do here.
@@ -8131,7 +8141,7 @@ class OverflowableToolbar {
     const OVERFLOW_PANEL_HIDE_DELAY_MS = 500;
 
     this.show().then(() => {
-      let window = this.#toolbar.ownerGlobal;
+      let window = this.#toolbar.documentGlobal;
       if (this.#hideTimeoutId) {
         window.clearTimeout(this.#hideTimeoutId);
       }
@@ -8161,7 +8171,7 @@ class OverflowableToolbar {
             `overflowable toolbar with id: ${this.#toolbar.id}`
         );
       }
-      let win = this.#toolbar.ownerGlobal;
+      let win = this.#toolbar.documentGlobal;
       let { panel } = win.gUnifiedExtensions;
       this.#webExtListRef = panel.querySelector(`#${targetID}`);
     }
@@ -8354,7 +8364,7 @@ class OverflowableToolbar {
     // this window has finished painting and starting up.
     if (
       aTopic == "browser-delayed-startup-finished" &&
-      aSubject == this.#toolbar.ownerGlobal
+      aSubject == this.#toolbar.documentGlobal
     ) {
       Services.obs.removeObserver(this, "browser-delayed-startup-finished");
       this.init();

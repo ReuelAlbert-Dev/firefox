@@ -8,8 +8,10 @@
 #include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtils.h"
 #include "ipc/IPCMessageUtilsSpecializations.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/net/ClassOfService.h"
 #include "mozilla/net/DNS.h"
+#include "mozilla/net/HttpTrafficAnalyzer.h"
 #include "nsExceptionHandler.h"
 #include "nsICacheInfoChannel.h"
 #include "nsIDNSService.h"
@@ -116,14 +118,9 @@ struct ParamTraits<mozilla::net::NetAddr> {
              ReadParam(aReader, &aResult->inet6.ip.u64[0]) &&
              ReadParam(aReader, &aResult->inet6.ip.u64[1]) &&
              ReadParam(aReader, &aResult->inet6.scope_id);
-#if defined(XP_UNIX)
-    } else if (aResult->raw.family == AF_LOCAL) {
-      return aReader->ReadBytesInto(&aResult->local.path,
-                                    sizeof(aResult->local.path));
-#endif
     }
 
-    /* We've been tricked by some socket family we don't know about! */
+    // We've been tricked by some socket family we don't know about.
     return false;
   }
 };
@@ -203,6 +200,14 @@ struct ParamTraits<mozilla::net::LNAPermission>
     : public ContiguousEnumSerializerInclusive<
           mozilla::net::LNAPermission, mozilla::net::LNAPermission::Granted,
           mozilla::net::LNAPermission::Pending> {};
+
+template <>
+struct MOZ_ENUM_SERIALIZER_ALLOW_SENTINEL_UPPER_BOUND
+    ParamTraits<mozilla::net::HttpTrafficCategory>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::net::HttpTrafficCategory,
+          mozilla::net::HttpTrafficCategory::eN1Sys,
+          mozilla::net::HttpTrafficCategory::eInvalid> {};
 
 template <>
 struct ParamTraits<nsICacheInfoChannel::CacheDisposition>

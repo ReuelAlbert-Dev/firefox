@@ -216,7 +216,8 @@ class DataChannelConnection : public net::NeckoTargetHolder {
                           const uint16_t aLocalPort,
                           const uint16_t aRemotePort);
   void TransportStateChange(const std::string& aTransportId,
-                            TransportLayer::State aState);
+                            TransportLayer::State aState,
+                            const nsTArray<nsTArray<uint8_t>>& aRemoteCerts);
   void SetSignals(const std::string& aTransportId);
 
   [[nodiscard]] already_AddRefed<DataChannel> Open(
@@ -439,13 +440,7 @@ class DataChannel {
   // Called when there will be no more data sent
   void EndOfStream();
 
-  dom::RTCDataChannel* GetDomDataChannel() const {
-    MOZ_ASSERT(mDomEventTarget->IsOnCurrentThread());
-    if (NS_IsMainThread()) {
-      return mMainthreadDomDataChannel;
-    }
-    return mWorkerDomDataChannel;
-  }
+  RefPtr<dom::RTCDataChannel> GetDomDataChannel() const;
 
  private:
   nsresult AddDataToBinaryMsg(const char* data, uint32_t size);

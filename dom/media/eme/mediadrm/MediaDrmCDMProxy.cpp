@@ -42,7 +42,7 @@ void MediaDrmCDMProxy::Init(PromiseId aPromiseId, const nsAString& aOrigin,
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_TRUE_VOID(!mKeys.IsNull());
 
-  EME_LOG("MediaDrmCDMProxy::Init (%s, %s) %s",
+  EME_LOG("MediaDrmCDMProxy::Init ({}, {}) {}",
           NS_ConvertUTF16toUTF8(aOrigin).get(),
           NS_ConvertUTF16toUTF8(aTopLevelOrigin).get(),
           NS_ConvertUTF16toUTF8(aName).get());
@@ -186,14 +186,16 @@ void MediaDrmCDMProxy::NotifyOutputProtectionStatus(
 
 void MediaDrmCDMProxy::Shutdown() {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(mOwnerThread);
+  mKeys.Clear();
+  if (!mOwnerThread) {
+    return;
+  }
   nsCOMPtr<nsIRunnable> task(NewRunnableMethod(
       "MediaDrmCDMProxy::md_Shutdown", this, &MediaDrmCDMProxy::md_Shutdown));
 
   mOwnerThread->Dispatch(task, NS_DISPATCH_NORMAL);
   mOwnerThread->Shutdown();
   mOwnerThread = nullptr;
-  mKeys.Clear();
 }
 
 void MediaDrmCDMProxy::Terminated() {

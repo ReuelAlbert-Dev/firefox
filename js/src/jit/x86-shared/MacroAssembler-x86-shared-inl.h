@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -318,11 +316,23 @@ void MacroAssembler::abs32(Register src, Register dest) {
 }
 
 void MacroAssembler::absFloat32(FloatRegister src, FloatRegister dest) {
+  if (src != dest) {
+    if (!HasAVX()) {
+      moveFloat32(src, dest);
+      src = dest;
+    }
+  }
   float clearSignMask = mozilla::BitwiseCast<float>(INT32_MAX);
   vandpsSimd128(SimdConstant::SplatX4(clearSignMask), src, dest);
 }
 
 void MacroAssembler::absDouble(FloatRegister src, FloatRegister dest) {
+  if (src != dest) {
+    if (!HasAVX()) {
+      moveDouble(src, dest);
+      src = dest;
+    }
+  }
   double clearSignMask = mozilla::BitwiseCast<double>(INT64_MAX);
   vandpdSimd128(SimdConstant::SplatX2(clearSignMask), src, dest);
 }

@@ -256,9 +256,7 @@ NS_IMPL_ISUPPORTS(ForkServerLauncher, nsIObserver)
 bool ForkServerLauncher::sHaveStartedClient = false;
 StaticRefPtr<ForkServerLauncher> ForkServerLauncher::sSingleton;
 
-ForkServerLauncher::ForkServerLauncher() {}
-
-ForkServerLauncher::~ForkServerLauncher() {}
+ForkServerLauncher::ForkServerLauncher() = default;
 
 already_AddRefed<ForkServerLauncher> ForkServerLauncher::Create() {
   if (sSingleton == nullptr) {

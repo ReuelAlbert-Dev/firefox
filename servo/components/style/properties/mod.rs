@@ -22,7 +22,7 @@ pub mod generated {
 }
 
 use crate::applicable_declarations::RevertKind;
-use crate::custom_properties::{self, ComputedCustomProperties};
+use crate::custom_properties::{self, ComputedSubstitutionFunctions, SubstitutionResult};
 use crate::derives::*;
 use crate::dom::AttributeTracker;
 #[cfg(feature = "gecko")]
@@ -32,6 +32,7 @@ use crate::parser::ParserContext;
 use crate::stylesheets::CssRuleType;
 use crate::stylesheets::Origin;
 use crate::stylist::Stylist;
+use crate::typed_om::{ToTyped, TypedValue};
 use crate::values::{computed, serialize_atom_name};
 use arrayvec::{ArrayVec, Drain as ArrayVecDrain};
 use cssparser::{match_ignore_ascii_case, Parser, ParserInput};
@@ -44,7 +45,6 @@ use std::{
 };
 use style_traits::{
     CssString, CssWriter, KeywordsCollectFn, ParseError, ParsingMode, SpecifiedValueInfo, ToCss,
-    ToTyped, TypedValue,
 };
 use thin_vec::ThinVec;
 
@@ -190,6 +190,7 @@ pub enum CustomDeclarationValue {
 
 /// A custom property declaration with the property name and the declared value.
 #[derive(Clone, PartialEq, ToCss, ToShmem, MallocSizeOf, ToTyped)]
+#[typed(todo_derive_fields)]
 pub struct CustomDeclaration {
     /// The name of the custom property.
     #[css(skip)]
@@ -734,6 +735,15 @@ impl ShorthandId {
     }
 }
 
+/// Return the names of arbitrary substitution functions that are enabled.
+pub fn enabled_arbitrary_substitution_functions() -> &'static [&'static str] {
+    if static_prefs::pref!("layout.css.attr.enabled") {
+        &["var", "env", "attr"]
+    } else {
+        &["var", "env"]
+    }
+}
+
 fn parse_non_custom_property_declaration_value_into<'i>(
     declarations: &mut SourcePropertyDeclaration,
     context: &ParserContext,
@@ -765,13 +775,7 @@ fn parse_non_custom_property_declaration_value_into<'i>(
     };
 
     input.reset(&start);
-    input.look_for_arbitrary_substitution_functions(
-        if static_prefs::pref!("layout.css.attr.enabled") {
-            &["var", "env", "attr"]
-        } else {
-            &["var", "env"]
-        },
-    );
+    input.look_for_arbitrary_substitution_functions(enabled_arbitrary_substitution_functions());
 
     let err = match parse_entirely_into(declarations, input) {
         Ok(()) => {
@@ -1439,6 +1443,16 @@ impl ToCss for UnparsedValue {
     }
 }
 
+impl ToTyped for UnparsedValue {
+    fn to_typed(&self, dest: &mut ThinVec<TypedValue>) -> Result<(), ()> {
+        if self.from_shorthand.is_none() {
+            self.variable_value.to_typed(dest)?;
+            return Ok(());
+        }
+        Err(())
+    }
+}
+
 /// A simple cache for properties that come from a shorthand and have variable
 /// references.
 ///
@@ -1452,7 +1466,7 @@ impl UnparsedValue {
     fn substitute_variables<'cache>(
         &self,
         longhand_id: LonghandId,
-        custom_properties: &ComputedCustomProperties,
+        substitution_functions: &ComputedSubstitutionFunctions,
         stylist: &Stylist,
         computed_context: &computed::Context,
         shorthand_cache: &'cache mut ShorthandsWithPropertyReferencesCache,
@@ -1486,9 +1500,9 @@ impl UnparsedValue {
             }
         }
 
-        let css = match custom_properties::substitute(
+        let SubstitutionResult { css, attr_taint } = match custom_properties::substitute(
             &self.variable_value,
-            custom_properties,
+            substitution_functions,
             stylist,
             computed_context,
             attribute_tracker,
@@ -1516,6 +1530,7 @@ impl UnparsedValue {
             /* namespaces = */ Default::default(),
             None,
             None,
+            attr_taint,
         );
 
         let mut input = ParserInput::new(&css);

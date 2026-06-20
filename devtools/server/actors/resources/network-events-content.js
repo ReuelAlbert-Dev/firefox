@@ -290,7 +290,9 @@ class NetworkEventContentWatcher {
         resourceUpdates.remoteAddress = updateResource.remoteAddress;
         resourceUpdates.remotePort = updateResource.remotePort;
         resourceUpdates.waitingTime = updateResource.waitingTime;
-
+        if (Number.isInteger(updateResource.priority)) {
+          resourceUpdates.priority = updateResource.priority;
+        }
         lazy.NetworkUtils.setEventAsAvailable(resourceUpdates, [
           NETWORK_EVENT_TYPES.RESPONSE_COOKIES,
           NETWORK_EVENT_TYPES.RESPONSE_HEADERS,
@@ -298,7 +300,9 @@ class NetworkEventContentWatcher {
         break;
       }
       case NETWORK_EVENT_TYPES.RESPONSE_CONTENT:
-        resourceUpdates.contentSize = updateResource.contentSize;
+        if (updateResource.contentSize !== undefined) {
+          resourceUpdates.contentSize = updateResource.contentSize;
+        }
         resourceUpdates.mimeType = updateResource.mimeType;
         resourceUpdates.transferredSize = updateResource.transferredSize;
         break;

@@ -14,6 +14,19 @@ import { ChatConversation } from "./ChatConversation.sys.mjs";
 import { ChatMessage, ChatHistoryResult } from "./ChatMessage.sys.mjs";
 
 /**
+ *  Gets the URL of the currently selected tab of a window.
+ *  Primarily used to retrieve the current tab's url for use in
+ *  ChatMessage.pageUrl and message context chips.
+ *
+ *  @param {Window} window
+ *
+ *  @returns {?URL}
+ */
+export function getCurrentTabUrl(window) {
+  return window?.gBrowser?.selectedTab?.linkedBrowser?.currentURI;
+}
+
+/**
  * Creates a 12 characters GUID with 72 bits of entropy.
  *
  * @returns {string} A base64url encoded GUID.
@@ -32,6 +45,10 @@ export function makeGuid() {
  * @returns {ChatConversation} The parsed conversation object.
  */
 export function parseConversationRow(row) {
+  const seenUrlsArray = parseJSONOrNull(row.getResultByName("seen_urls"));
+  const serpUrlsForAnonymousFetchArray = parseJSONOrNull(
+    row.getResultByName("serp_urls_for_anonymous_fetch")
+  );
   return new ChatConversation({
     id: row.getResultByName("conv_id"),
     title: row.getResultByName("title"),
@@ -41,6 +58,14 @@ export function parseConversationRow(row) {
     createdDate: row.getResultByName("created_date"),
     updatedDate: row.getResultByName("updated_date"),
     status: row.getResultByName("status"),
+    securityProperties: parseJSONOrNull(
+      row.getResultByName("security_properties")
+    ),
+    seenUrls: Array.isArray(seenUrlsArray) ? seenUrlsArray : [],
+    serpUrlsForAnonymousFetch: Array.isArray(serpUrlsForAnonymousFetchArray)
+      ? serpUrlsForAnonymousFetchArray
+      : [],
+    memoriesToggled: row.getResultByName("memories_toggled"),
   });
 }
 
@@ -75,6 +100,7 @@ export function parseMessageRows(rows) {
         row.getResultByName("web_search_queries")
       ),
       pageHistoryDeleted: !!row.getResultByName("page_history_deleted"),
+      toolUIData: parseJSONOrNull(row.getResultByName("tool_ui_data")),
     });
   });
 }
@@ -88,13 +114,9 @@ export function parseMessageRows(rows) {
  */
 export function parseChatHistoryViewRows(rows) {
   return rows.map(row => {
-    const urlsString = row.getResultByName("urls");
-    const urls = urlsString
-      ? urlsString
-          .split(",")
-          .filter(url => url && url.trim())
-          .map(url => new URL(url.trim()))
-      : [];
+    const urls = (parseJSONOrNull(row.getResultByName("urls")) ?? [])
+      .filter(url => url && url.trim())
+      .map(url => new URL(url.trim()));
 
     return new ChatHistoryResult({
       convId: row.getResultByName("conv_id"),
@@ -157,4 +179,24 @@ export function getRoleLabel(role) {
   }
 
   return "";
+}
+
+/**
+ * Returns whether the sidebar should be open for a given tab state and the
+ * sidebarOpenByDefault pref value. The state's keepSidebarOpen field drives
+ * the decision:
+ * - true: user explicitly opened the sidebar for this tab
+ * - false: user explicitly closed it
+ * - null/undefined: no explicit preference, defer to the pref
+ *
+ * @param {object|null|undefined} state - The tab state object
+ * @param {boolean} sidebarOpenByDefault
+ * @returns {boolean}
+ */
+export function getKeepSidebarOpenState(state, sidebarOpenByDefault) {
+  const keepSidebarOpen = state?.keepSidebarOpen;
+  return (
+    keepSidebarOpen === true ||
+    (keepSidebarOpen == null && sidebarOpenByDefault)
+  );
 }

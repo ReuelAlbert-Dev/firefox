@@ -119,16 +119,6 @@ class DOMProxyHandler : public BaseDOMProxyHandler {
   static JSObject* GetExpandoObject(JSObject* obj);
 
   /*
-   * Clear the expando object for the given DOM proxy and return it.  This
-   * function will ensure that the returned object is exposed to active JS if
-   * the given object is exposed.
-   *
-   * GetAndClearExpandoObject does not DROP or clear the preserving wrapper
-   * flag.
-   */
-  static JSObject* GetAndClearExpandoObject(JSObject* obj);
-
-  /*
    * Ensure that the given proxy (obj) has an expando object, and return it.
    * Returns null on failure.
    */

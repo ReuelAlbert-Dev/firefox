@@ -9,7 +9,9 @@ import org.mozilla.fenix.helpers.HomeActivityIntentTestRule
 import org.mozilla.fenix.ui.efficiency.helpers.BasePage
 import org.mozilla.fenix.ui.efficiency.helpers.Selector
 import org.mozilla.fenix.ui.efficiency.navigation.NavigationRegistry
+import org.mozilla.fenix.ui.efficiency.navigation.NavigationStep
 import org.mozilla.fenix.ui.efficiency.selectors.TabDrawerSelectors
+import org.mozilla.fenix.ui.efficiency.selectors.ToolbarSelectors
 
 class TabDrawerPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRule, *>) : BasePage(composeRule) {
     override val pageName = "TabDrawerPage"
@@ -19,12 +21,42 @@ class TabDrawerPage(composeRule: AndroidComposeTestRule<HomeActivityIntentTestRu
             from = "HomePage",
             to = pageName,
             steps = listOf(
-                // Will need to create selectors for different pages to have a nav path
+                NavigationStep.Click(ToolbarSelectors.TAB_COUNTER),
             ),
+        )
+
+        NavigationRegistry.register(
+            from = pageName,
+            to = "HomePage",
+            steps = listOf(NavigationStep.PressBack),
+        )
+
+        NavigationRegistry.register(
+            from = pageName,
+            to = "BrowserPage",
+            steps = listOf(NavigationStep.PressBack),
         )
     }
 
     override fun mozGetSelectorsByGroup(group: String): List<Selector> {
         return TabDrawerSelectors.all.filter { it.groups.contains(group) }
+    }
+
+    fun closeTabWithTitle(title: String): TabDrawerPage {
+        mozClickFirstWithParentText(TabDrawerSelectors.TAB_ITEM_CLOSE, title)
+        return this
+    }
+
+    fun verifyNormalTabsList(): TabDrawerPage {
+        mozWaitUntilAbsent(TabDrawerSelectors.EMPTY_NORMAL_TABS_LIST)
+        mozVerify(TabDrawerSelectors.NORMAL_TABS_LIST)
+        return this
+    }
+
+    fun verifyExistingOpenTabs(vararg urls: String): TabDrawerPage {
+        urls.forEach { url ->
+            mozVerifyAnyHasChildWithText(TabDrawerSelectors.TAB_ITEM_ROOT, url)
+        }
+        return this
     }
 }

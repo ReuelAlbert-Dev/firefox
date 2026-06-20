@@ -9,12 +9,14 @@
  */
 
 add_task(async function test_dom_extractor_default_options() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <h1>Hello World</h1>
       <p>This is a paragraph</p>
     </article>
   `;
+  const actor = getPageExtractor();
 
   is(
     (await actor.getText()).text,
@@ -23,21 +25,22 @@ add_task(async function test_dom_extractor_default_options() {
   );
 
   is(
-    (await actor.getReaderModeContent(true /* force */)).text,
+    (
+      await actor.getText({
+        removeBoilerplate: true,
+        _forceRemoveBoilerplate: true,
+      })
+    ).text,
     "Hello World\nThis is a paragraph",
     "Reader mode can extract page content."
   );
 
-  Assert.deepEqual(
-    await actor.getReaderModeContent(),
-    { text: "", links: [], canvasSnapshots: [] },
-    "Empty result is returned on non-reader mode content."
-  );
   return cleanup();
 });
 
 add_task(async function test_dom_extractor_sufficient_length_option() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <h1>Hello World</h1>
       <p>First paragraph.</p>
@@ -52,7 +55,7 @@ add_task(async function test_dom_extractor_sufficient_length_option() {
   );
 
   is(
-    (await actor.getText()).text,
+    (await getPageExtractor().getText()).text,
     allText,
     "All text is returned with the default options."
   );
@@ -75,7 +78,7 @@ add_task(async function test_dom_extractor_sufficient_length_option() {
     }
 
     is(
-      (await actor.getText({ sufficientLength })).text,
+      (await getPageExtractor().getText({ sufficientLength })).text,
       expectedValue,
       `The text, given sufficientLength of ${sufficientLength}, matches the expectation.`
     );
@@ -85,39 +88,98 @@ add_task(async function test_dom_extractor_sufficient_length_option() {
 });
 
 add_task(
-  async function test_dom_extractor_sufficient_length_with_reader_mode() {
-    const { actor, cleanup } = await html`
+  async function test_dom_extractor_sufficient_length_with_boilerplate_removal() {
+    const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+    const { getPageExtractor, cleanup } = await html`
       <article>
         <p>
           This is some article text that has some kind of sufficient length. It
           is going to try and get some text at a sentence boundary.
         </p>
+        <p>This will get cut off.</p>
       </article>
     `;
 
+    // Note how this only wants up to the middle of a sentence. It stops at a DOM boundary though.
     const sufficientLength =
       "This is some article text that has some kind of sufficient length. It is going to try and"
         .length;
 
     is(
       (
-        await actor.getText({
+        await getPageExtractor().getText({
           sufficientLength,
           removeBoilerplate: true,
           _forceRemoveBoilerplate: true,
         })
       ).text,
-      "This is some article text that has some kind of sufficient length.",
-      `The text is cutoff at a period.`
+      [
+        "This is some article text that has some kind of sufficient length. It",
+        "is going to try and get some text at a sentence boundary.",
+        // "This will get cut off." <- note how this isn't here.
+      ].join("\n"),
+      "The text is cutoff at a period."
     );
 
     return cleanup();
   }
 );
 
+/**
+ * Unit test whitespace collapsing
+ */
+add_task(function test_whitespace_collapse() {
+  const { collapseWhitespace } = ChromeUtils.importESModule(
+    "moz-src:///toolkit/components/pageextractor/DOMExtractor.sys.mjs"
+  );
+
+  Assert.equal(
+    collapseWhitespace("  collapsed   text   "),
+    " collapsed text ",
+    "Normal whitespace gets properly collapsed"
+  );
+
+  Assert.equal(
+    collapseWhitespace("  \n collapsed \n  \n\n text   \n"),
+    "\ncollapsed\n\ntext\n",
+    "Text with newlines gets properly collapsed"
+  );
+
+  Assert.equal(
+    collapseWhitespace("  \t collapsed \t  \t\t text   \t"),
+    " collapsed text ",
+    "Tabs get ignored"
+  );
+
+  Assert.equal(
+    collapseWhitespace("  \n collapsed \n\r \r \n\n text   \n"),
+    "\ncollapsed\n\ntext\n",
+    "Tabs get ignored"
+  );
+
+  Assert.equal(
+    collapseWhitespace("    next", "previous   "),
+    "previous\nnext",
+    "Whitespace on the previous text gets properly collapsed into a single newline."
+  );
+
+  Assert.equal(
+    collapseWhitespace("    next", "previous \n  "),
+    "previous\n\nnext",
+    "Whitespace on the previous text gets placed into two newlines"
+  );
+
+  Assert.equal(
+    collapseWhitespace("    next", "previous \n \n\n  "),
+    "previous\n\nnext",
+    "Whitespace connected chunks of text has at most two newlines"
+  );
+});
+
 add_task(async function test_dom_extractor_whitespace_collapse_reader_mode() {
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
   // prettier-ignore
-  const { actor, cleanup } = await html`
+  const { getPageExtractor, cleanup } = await html`
       <article>
         <!-- A single newlines by count -->
         <pre>newlines\nrepeated</pre>
@@ -139,6 +201,8 @@ add_task(async function test_dom_extractor_whitespace_collapse_reader_mode() {
       </article>
     `;
 
+  const actor = getPageExtractor();
+
   is(
     (
       await actor.getText({
@@ -151,11 +215,9 @@ add_task(async function test_dom_extractor_whitespace_collapse_reader_mode() {
       "newlines\n\nrepeated",
       "newlines\n\nrepeated",
       "newlines\n\nrepeated",
-      "",
       "mixed\nnewlines",
       "mixed\n\nnewlines",
       "mixed\n\nnewlines",
-      "",
       "space behavior",
       "space behavior",
       "space behavior",
@@ -172,9 +234,10 @@ add_task(async function test_dom_extractor_whitespace_collapse_reader_mode() {
  * Test whitespace collapse behavior.
  */
 add_task(async function test_dom_extractor_normalize_whitespace() {
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
   // Ignore prettier since newlines get rewritten making this test case harder to read.
   // prettier-ignore
-  const { actor, cleanup } = await html`
+  const { getPageExtractor, cleanup } = await html`
     <!-- The HTML algorithm already collapses whitespace -->
     <p>aaaa      aaaa</p>
     <p>bbbb\n\n\ncccc</p>
@@ -195,7 +258,7 @@ add_task(async function test_dom_extractor_normalize_whitespace() {
   `;
 
   is(
-    (await actor.getText()).text,
+    (await getPageExtractor().getText()).text,
 
     [
       // The whitespace is removed by the html rendering algorithm..
@@ -216,7 +279,8 @@ add_task(async function test_dom_extractor_normalize_whitespace() {
 
 add_task(
   async function test_dom_extractor_ignores_hidden_and_collapsed_nodes() {
-    const { actor, cleanup } = await html`
+    const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+    const { getPageExtractor, cleanup } = await html`
       <article>
         <!-- Visible header -->
         <h1>Visible Title</h1>
@@ -299,7 +363,7 @@ add_task(
     ].join("\n");
 
     is(
-      (await actor.getText()).text,
+      (await getPageExtractor().getText()).text,
       expected,
       "The extractor returns only visible text."
     );
@@ -309,7 +373,8 @@ add_task(
 );
 
 add_task(async function test_dom_extractor_inline_batching() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <div>This is a simple section.</div>
     <div>
       <a href="http://example.com">This entire</a>
@@ -319,7 +384,7 @@ add_task(async function test_dom_extractor_inline_batching() {
   `;
 
   is(
-    (await actor.getText()).text,
+    (await getPageExtractor().getText()).text,
     [
       "This is a simple section.",
       "[This entire](http://example.com/) section continues in a batch.",
@@ -335,7 +400,8 @@ add_task(async function test_dom_extractor_inline_batching() {
 // https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/a
 
 add_task(async function test_dom_extractor_link_anchors() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <h1>Comprehensive Anchor Test</h1>
 
@@ -374,7 +440,7 @@ add_task(async function test_dom_extractor_link_anchors() {
     </article>
   `;
 
-  const result = await actor.getText();
+  const result = await getPageExtractor().getText();
   const { text, links } = result;
 
   const actualLines = text
@@ -416,13 +482,14 @@ add_task(async function test_dom_extractor_link_anchors() {
 
 // Test that empty href resolves to current page URL via .href property
 add_task(async function test_dom_extractor_empty_href() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <p><a href="">Empty Href Link</a></p>
     </article>
   `;
 
-  const result = await actor.getText();
+  const result = await getPageExtractor().getText();
   const { text, links } = result;
 
   // Empty href resolves to current page URL via .href property
@@ -441,7 +508,8 @@ add_task(async function test_dom_extractor_empty_href() {
 
 // Original test case from Bug 1995618 - validates the core requirement
 add_task(async function test_dom_extractor_links() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <h1>Example of Links</h1>
       <ul>
@@ -455,7 +523,7 @@ add_task(async function test_dom_extractor_links() {
       </ul>
     </article>
   `;
-  const { text, links } = await actor.getText();
+  const { text, links } = await getPageExtractor().getText();
 
   const lines = text.split("\n").filter(l => l.trim());
 
@@ -479,7 +547,8 @@ add_task(async function test_dom_extractor_links() {
 });
 
 add_task(async function test_dom_extractor_inline_block_styling() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     Bare text is sent in a batch.
     <span>Inline text at the root is sent in a <b>batch</b>.</span>
     <div>
@@ -489,7 +558,7 @@ add_task(async function test_dom_extractor_inline_block_styling() {
   `;
 
   is(
-    (await actor.getText()).text,
+    (await getPageExtractor().getText()).text,
     [
       "Bare text is sent in a batch.",
       "Inline text at the root is sent in a batch.",
@@ -503,7 +572,8 @@ add_task(async function test_dom_extractor_inline_block_styling() {
 });
 
 add_task(async function test_extractor_edge_cases() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <p>
         <a href="https://example.com/1">Link with [Brackets]</a>
@@ -531,7 +601,7 @@ add_task(async function test_extractor_edge_cases() {
     </article>
   `;
 
-  const result = await actor.getText();
+  const result = await getPageExtractor().getText();
   const { text, links } = result;
 
   const lines = text
@@ -575,7 +645,8 @@ add_task(async function test_extractor_edge_cases() {
 // becomes effectively:
 //   <a href="outer">text1</a><a href="inner">text2</a>
 add_task(async function test_extractor_nested_anchors() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <article>
       <div>
         <a href="https://example.com/outer-link">
@@ -586,7 +657,7 @@ add_task(async function test_extractor_nested_anchors() {
     </article>
   `;
 
-  const result = await actor.getText();
+  const result = await getPageExtractor().getText();
   const { text, links } = result;
 
   const lines = text
@@ -650,7 +721,8 @@ async function assertSnapshotPixel(
 }
 
 add_task(async function test_canvas_snapshot_basic() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="test" width="200" height="200"></canvas>
     <script>
       const ctx = document.getElementById("test").getContext("2d");
@@ -659,7 +731,7 @@ add_task(async function test_canvas_snapshot_basic() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -681,7 +753,8 @@ add_task(async function test_canvas_snapshot_basic() {
 });
 
 add_task(async function test_canvas_snapshot_multiple_limited() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="c1" width="100" height="100"></canvas>
     <canvas id="c2" width="100" height="100"></canvas>
     <canvas id="c3" width="100" height="100"></canvas>
@@ -695,7 +768,7 @@ add_task(async function test_canvas_snapshot_multiple_limited() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     maxCanvasCount: 2,
   });
@@ -706,7 +779,8 @@ add_task(async function test_canvas_snapshot_multiple_limited() {
 });
 
 add_task(async function test_canvas_snapshot_scaling() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="large" width="2000" height="1000"></canvas>
     <script>
       const ctx = document.getElementById("large").getContext("2d");
@@ -715,7 +789,7 @@ add_task(async function test_canvas_snapshot_scaling() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     maxCanvasDimension: 500,
   });
@@ -728,7 +802,8 @@ add_task(async function test_canvas_snapshot_scaling() {
 });
 
 add_task(async function test_canvas_snapshot_viewport_filtering() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas
       id="visible"
       width="100"
@@ -750,7 +825,7 @@ add_task(async function test_canvas_snapshot_viewport_filtering() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     justViewport: true,
   });
@@ -761,7 +836,8 @@ add_task(async function test_canvas_snapshot_viewport_filtering() {
 });
 
 add_task(async function test_canvas_snapshot_min_size_filter() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="large" width="100" height="100"></canvas>
     <canvas id="small" width="30" height="30"></canvas>
     <script>
@@ -773,7 +849,7 @@ add_task(async function test_canvas_snapshot_min_size_filter() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     minCanvasSize: 50,
   });
@@ -785,7 +861,8 @@ add_task(async function test_canvas_snapshot_min_size_filter() {
 });
 
 add_task(async function test_canvas_snapshot_shadow_dom() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <div id="host"></div>
     <script>
       const host = document.getElementById("host");
@@ -800,7 +877,7 @@ add_task(async function test_canvas_snapshot_shadow_dom() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -820,7 +897,8 @@ add_task(async function test_canvas_snapshot_shadow_dom() {
 });
 
 add_task(async function test_canvas_snapshot_closed_shadow_dom() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <div id="host"></div>
     <script>
       const host = document.getElementById("host");
@@ -835,7 +913,7 @@ add_task(async function test_canvas_snapshot_closed_shadow_dom() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -855,7 +933,8 @@ add_task(async function test_canvas_snapshot_closed_shadow_dom() {
 });
 
 add_task(async function test_canvas_snapshot_crossorigin() {
-  const { actor, tab, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, tab, cleanup } = await html`
     <canvas id="crossorigin" width="200" height="200"></canvas>
     <img
       id="crossorigin-img"
@@ -885,7 +964,7 @@ add_task(async function test_canvas_snapshot_crossorigin() {
     await content.wrappedJSObject.drawCrossOriginImage();
   });
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -897,11 +976,12 @@ add_task(async function test_canvas_snapshot_crossorigin() {
 });
 
 add_task(async function test_canvas_snapshot_empty() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="empty" width="100" height="100"></canvas>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -912,7 +992,8 @@ add_task(async function test_canvas_snapshot_empty() {
 });
 
 add_task(async function test_canvas_snapshot_webp_format() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="test" width="100" height="100"></canvas>
     <script>
       const ctx = document.getElementById("test").getContext("2d");
@@ -921,7 +1002,7 @@ add_task(async function test_canvas_snapshot_webp_format() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     canvasQuality: 0.5,
   });
@@ -934,7 +1015,8 @@ add_task(async function test_canvas_snapshot_webp_format() {
 });
 
 add_task(async function test_canvas_snapshot_quality_impact() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="test" width="200" height="200"></canvas>
     <script>
       const ctx = document.getElementById("test").getContext("2d");
@@ -947,12 +1029,12 @@ add_task(async function test_canvas_snapshot_quality_impact() {
     </script>
   `;
 
-  const highQuality = await actor.getText({
+  const highQuality = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     canvasQuality: 0.95,
   });
 
-  const lowQuality = await actor.getText({
+  const lowQuality = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
     canvasQuality: 0.1,
   });
@@ -970,7 +1052,8 @@ add_task(async function test_canvas_snapshot_quality_impact() {
 });
 
 add_task(async function test_canvas_snapshot_webgl() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="webgl" width="100" height="100"></canvas>
     <script>
       const canvas = document.getElementById("webgl");
@@ -980,7 +1063,7 @@ add_task(async function test_canvas_snapshot_webgl() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({
+  const { canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 
@@ -1000,7 +1083,8 @@ add_task(async function test_canvas_snapshot_webgl() {
 });
 
 add_task(async function test_canvas_snapshot_disabled_by_default() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <canvas id="test" width="100" height="100"></canvas>
     <script>
       const ctx = document.getElementById("test").getContext("2d");
@@ -1009,7 +1093,7 @@ add_task(async function test_canvas_snapshot_disabled_by_default() {
     </script>
   `;
 
-  const { canvasSnapshots } = await actor.getText({});
+  const { canvasSnapshots } = await getPageExtractor().getText({});
 
   is(canvasSnapshots.length, 0, "No canvas captured when option disabled");
 
@@ -1017,7 +1101,8 @@ add_task(async function test_canvas_snapshot_disabled_by_default() {
 });
 
 add_task(async function test_canvas_snapshot_with_text_extraction() {
-  const { actor, cleanup } = await html`
+  const { html } = await MLTestUtils.serveHTMLInTab({ browser: gBrowser });
+  const { getPageExtractor, cleanup } = await html`
     <h1>Page Title</h1>
     <p>Some text content</p>
     <canvas id="test" width="100" height="100"></canvas>
@@ -1028,7 +1113,7 @@ add_task(async function test_canvas_snapshot_with_text_extraction() {
     </script>
   `;
 
-  const { text, links, canvasSnapshots } = await actor.getText({
+  const { text, links, canvasSnapshots } = await getPageExtractor().getText({
     includeCanvasSnapshots: true,
   });
 

@@ -14,7 +14,7 @@ namespace mozilla {
 #ifndef IC_LOG
 LogModule* GetICLog();
 #  define IC_LOG(...) \
-    MOZ_LOG(GetICLog(), mozilla::LogLevel::Debug, (__VA_ARGS__))
+    MOZ_LOG_FMT(GetICLog(), mozilla::LogLevel::Debug, __VA_ARGS__)
 #endif
 
 namespace dom {
@@ -58,7 +58,7 @@ class ImageCapture final : public DOMEventTargetHelper {
   }
 
   // ImageCapture class members
-  nsIGlobalObject* GetParentObject() const { return GetOwnerGlobal(); }
+  nsIGlobalObject* GetParentObject() const { return GetRelevantGlobal(); }
 
   static already_AddRefed<ImageCapture> Constructor(const GlobalObject& aGlobal,
                                                     MediaStreamTrack& aTrack,

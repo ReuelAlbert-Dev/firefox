@@ -37,7 +37,7 @@ class AutoChildOpArgs;
 class CacheChild;
 
 enum class PutStatusPolicy { Default, RequireOK };
-bool IsValidPutRequestURL(const nsACString& aUrl, ErrorResult& aRv);
+bool IsValidPutRequestURL(nsIURI* aUrl, ErrorResult& aRv);
 bool IsValidPutRequestMethod(const RequestOrUTF8String& aRequest,
                              ErrorResult& aRv);
 bool IsValidPutRequestMethod(const Request& aRequest, ErrorResult& aRv);
@@ -121,7 +121,7 @@ class Cache final : public nsISupports,
   const Namespace mNamespace;
 
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(Cache)
 };
 

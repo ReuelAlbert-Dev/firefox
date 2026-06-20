@@ -6,7 +6,6 @@ package org.mozilla.fenix.ui
 
 import android.content.Context
 import android.hardware.camera2.CameraManager
-import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.core.net.toUri
 import androidx.test.espresso.Espresso
 import androidx.test.espresso.Espresso.openActionBarOverflowOrOptionsMenu
@@ -19,7 +18,7 @@ import org.junit.Test
 import org.mozilla.fenix.R
 import org.mozilla.fenix.customannotations.SkipLeaks
 import org.mozilla.fenix.customannotations.SmokeTest
-import org.mozilla.fenix.ext.settings
+import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.helpers.AppAndSystemHelper
 import org.mozilla.fenix.helpers.AppAndSystemHelper.denyPermission
 import org.mozilla.fenix.helpers.AppAndSystemHelper.denyPermissionAndDontAskAgainButton
@@ -53,6 +52,7 @@ import org.mozilla.fenix.ui.robots.navigationToolbar
 import org.mozilla.fenix.ui.robots.searchScreen
 import org.mozilla.fenix.ui.robots.settingsTurnOnSyncScreen
 import java.util.Locale
+import androidx.compose.ui.test.junit4.v2.AndroidComposeTestRule as AndroidComposeTestRuleV2
 
 /**
  *  Tests for verifying the search fragment
@@ -67,14 +67,15 @@ import java.util.Locale
 class SearchTest {
     private val queryString: String = "firefox"
     private val generalEnginesList = listOf("DuckDuckGo", "Google", "Bing")
+    private val scanButtonEnginesList = listOf("DuckDuckGo", "Bing")
     private val topicEnginesList = listOf("Wikipedia (en)")
     private val firefoxSuggestHeader = getStringResource(R.string.firefox_suggest_header)
 
     @get:Rule(order = 0)
     val fenixTestRule: FenixTestRule = FenixTestRule()
 
-    @get:Rule
-    val composeTestRule = AndroidComposeTestRule(
+    @get:Rule(order = 1)
+    val composeTestRule = AndroidComposeTestRuleV2(
         HomeActivityTestRule(
             skipOnboarding = true,
             isPocketEnabled = false,
@@ -87,8 +88,8 @@ class SearchTest {
         ),
     ) { it.activity }
 
-    @get:Rule
-    val memoryLeaksRule = DetectMemoryLeaksRule()
+    @get:Rule(order = 2)
+    val memoryLeaksRule = DetectMemoryLeaksRule(composeTestRule = { composeTestRule })
 
     @get:Rule
     val searchMockServerRule = SearchMockServerRule()
@@ -102,9 +103,11 @@ class SearchTest {
             verifySearchBarPlaceholder("Search or enter address")
         }.clickURLBar {
             verifyKeyboardVisibility(isExpectedToBeVisible = true)
-            verifyScanButton(isDisplayed = true)
             verifyVoiceSearchButton(isDisplayed = true)
             verifySearchBarPlaceholder("Search or enter address")
+            clickSearchSelectorButton()
+            selectTemporarySearchMethod("DuckDuckGo")
+            verifyScanButton(isDisplayed = true)
             typeSearch("mozilla ")
             waitForAppWindowToBeUpdated()
             verifyScanButton(isDisplayed = false)
@@ -175,7 +178,7 @@ class SearchTest {
         }
     }
 
-    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/3135010
+    // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/1059459
     @SmokeTest
     @Test
     fun verifyQRScanningCameraAccessDialogTest() {
@@ -185,6 +188,8 @@ class SearchTest {
         homeScreen(composeTestRule) {
         }.openSearch {
             waitForAppWindowToBeUpdated()
+            clickSearchSelectorButton()
+            selectTemporarySearchMethod("DuckDuckGo")
             clickScanButton()
             denyPermission()
             clickScanButton()
@@ -215,6 +220,8 @@ class SearchTest {
 
         homeScreen(composeTestRule) {
         }.openSearch {
+            clickSearchSelectorButton()
+            selectTemporarySearchMethod("DuckDuckGo")
             clickScanButton()
             grantSystemPermission()
             verifyScannerOpen()
@@ -224,7 +231,7 @@ class SearchTest {
     // TestRail link: https://mozilla.testrail.io/index.php?/cases/view/2154191
     @Test
     fun verifyScanButtonAvailableOnlyForGeneralSearchEnginesTest() {
-        generalEnginesList.forEach {
+        scanButtonEnginesList.forEach {
             searchScreen(composeTestRule) {
                 clickSearchSelectorButton()
                 selectTemporarySearchMethod(it)
@@ -687,10 +694,15 @@ class SearchTest {
         val firstPage = searchMockServerRule.server.getGenericAsset(1)
         val secondPage = searchMockServerRule.server.getGenericAsset(2)
 
-        createTabItem(firstPage.url.toString())
         createBookmarkItem(secondPage.url.toString(), secondPage.title, 1u)
 
-        homeScreen(composeTestRule) {
+        navigationToolbar(composeTestRule) {
+        }.enterURLAndEnterToBrowser(firstPage.url) {
+            verifyTabCounter("1")
+        }.openThreeDotMenu {
+        }.clickBookmarksButton {
+            verifyBookmarkTitle(secondPage.title)
+        }.goBackToHomeScreen {
         }.openSearch {
             typeSearch("generic")
             verifyTheSuggestionsHeader(firefoxSuggestHeader)
@@ -765,6 +777,8 @@ class SearchTest {
     @SmokeTest
     @Test
     fun verifyTabsSearchWithOpenTabsTest() {
+        TestHelper.appContext.components.settings.tabGroupsOnboardingEnabled = false
+
         val firstPageUrl = searchMockServerRule.server.getGenericAsset(1)
         val secondPageUrl = searchMockServerRule.server.getGenericAsset(2)
 
@@ -878,7 +892,7 @@ class SearchTest {
     @SmokeTest
     @Test
     fun searchHistoryNotRememberedInPrivateBrowsingTest() {
-        TestHelper.appContext.settings().shouldShowSearchSuggestionsInPrivate = true
+        TestHelper.appContext.components.settings.shouldShowSearchSuggestionsInPrivate = true
 
         val firstPageUrl = searchMockServerRule.server.getGenericAsset(1)
         val searchEngineName = "TestSearchEngine"

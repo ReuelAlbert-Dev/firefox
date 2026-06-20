@@ -6,6 +6,7 @@
 !define INSTALLER_HELPERS_NSH
 
 !include control_utils.nsh
+!include install_dir_helpers.nsh
 
 ; For new installs, install desktop launcher
 ; TODO: This case needs more nuance. To be fixed as part of Bug 1981597
@@ -61,40 +62,5 @@ FunctionEnd
   ${EndIf}
 !macroend
 !define GetExistingInstallPathFromShellVarContext "!insertmacro GetExistingInstallPathFromShellVarContext"
-
-!macro UseExistingInstallPathIfNoParam Path
-  ${GetInstallDirectoryPathParam} $R0
-  ${If} "$R0" == ""
-    ${GetInstallDirectoryNameParam} $R0
-    ${If} "$R0" == ""
-      StrCpy $INSTDIR "${Path}"
-    ${EndIf}
-  ${EndIf}
-!macroend
-!define UseExistingInstallPathIfNoParam "!insertmacro UseExistingInstallPathIfNoParam"
-
-!macro GetInstallDirectoryPathParam Result
-  Push $R0
-  ${GetParameters} $R0
-  ClearErrors
-  ${GetOptions} "$R0" "/InstallDirectoryPath=" ${Result}
-  ${If} ${Errors}
-    StrCpy ${Result} ""
-  ${EndIf}
-  Pop $R0
-!macroend
-!define GetInstallDirectoryPathParam "!insertmacro GetInstallDirectoryPathParam"
-
-!macro GetInstallDirectoryNameParam Result
-  Push $R0
-  ${GetParameters} $R0
-  ClearErrors
-  ${GetOptions} "$R0" "/InstallDirectoryName=" ${Result}
-  ${If} ${Errors}
-    StrCpy ${Result} ""
-  ${EndIf}
-  Pop $R0
-!macroend
-!define GetInstallDirectoryNameParam "!insertmacro GetInstallDirectoryNameParam"
 
 !endif

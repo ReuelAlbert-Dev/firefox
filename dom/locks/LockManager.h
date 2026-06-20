@@ -30,7 +30,7 @@ class LockManagerChild;
 
 class LockManager final : public nsISupports, public nsWrapperCache {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(LockManager)
 
  private:
@@ -39,7 +39,7 @@ class LockManager final : public nsISupports, public nsWrapperCache {
  public:
   static already_AddRefed<LockManager> Create(nsIGlobalObject& aGlobal);
 
-  nsIGlobalObject* GetParentObject() const { return mOwner; }
+  nsIGlobalObject* GetParentObject() const { return mGlobal; }
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -59,7 +59,7 @@ class LockManager final : public nsISupports, public nsWrapperCache {
  private:
   ~LockManager() = default;
 
-  nsCOMPtr<nsIGlobalObject> mOwner;
+  nsCOMPtr<nsIGlobalObject> mGlobal;
   RefPtr<locks::LockManagerChild> mActor;
 
   // Revokes itself and triggers LockManagerChild deletion on worker shutdown

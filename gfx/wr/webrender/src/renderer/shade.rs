@@ -74,7 +74,6 @@ const FAST_PATH_FEATURE: &str = "FAST_PATH";
 pub(crate) enum ShaderKind {
     Primitive,
     Cache(VertexArrayKind),
-    ClipCache(VertexArrayKind),
     Brush,
     Text,
     Composite,
@@ -203,13 +202,6 @@ impl LazilyCompiledShader {
                         &self.features,
                     )
                 }
-                ShaderKind::ClipCache(..) => {
-                    create_clip_shader(
-                        self.name,
-                        device,
-                        &self.features,
-                    )
-                }
             };
             self.program = Some(program?);
 
@@ -229,7 +221,6 @@ impl LazilyCompiledShader {
                 ShaderKind::Brush |
                 ShaderKind::Text => VertexArrayKind::Primitive,
                 ShaderKind::Cache(format) => format,
-                ShaderKind::ClipCache(format) => format,
                 ShaderKind::Composite => VertexArrayKind::Composite,
                 ShaderKind::Clear => VertexArrayKind::Clear,
                 ShaderKind::Copy => VertexArrayKind::Copy,
@@ -238,13 +229,7 @@ impl LazilyCompiledShader {
             let vertex_descriptor = match vertex_format {
                 VertexArrayKind::Primitive => &desc::PRIM_INSTANCES,
                 VertexArrayKind::LineDecoration => &desc::LINE,
-                VertexArrayKind::FastLinearGradient => &desc::FAST_LINEAR_GRADIENT,
-                VertexArrayKind::LinearGradient => &desc::LINEAR_GRADIENT,
-                VertexArrayKind::RadialGradient => &desc::RADIAL_GRADIENT,
-                VertexArrayKind::ConicGradient => &desc::CONIC_GRADIENT,
                 VertexArrayKind::Blur => &desc::BLUR,
-                VertexArrayKind::ClipRect => &desc::CLIP_RECT,
-                VertexArrayKind::ClipBoxShadow => &desc::CLIP_BOX_SHADOW,
                 VertexArrayKind::Border => &desc::BORDER,
                 VertexArrayKind::Scale => &desc::SCALE,
                 VertexArrayKind::SvgFilterNode => &desc::SVG_FILTER_NODE,
@@ -256,40 +241,22 @@ impl LazilyCompiledShader {
 
             device.link_program(program, vertex_descriptor)?;
             device.bind_program(program);
-            match self.kind {
-                ShaderKind::ClipCache(..) => {
-                    device.bind_shader_samplers(
-                        &program,
-                        &[
-                            ("sColor0", TextureSampler::Color0),
-                            ("sTransformPalette", TextureSampler::TransformPalette),
-                            ("sRenderTasks", TextureSampler::RenderTasks),
-                            ("sPrimitiveHeadersF", TextureSampler::PrimitiveHeadersF),
-                            ("sPrimitiveHeadersI", TextureSampler::PrimitiveHeadersI),
-                            ("sGpuBufferF", TextureSampler::GpuBufferF),
-                            ("sGpuBufferI", TextureSampler::GpuBufferI),
-                        ],
-                    );
-                }
-                _ => {
-                    device.bind_shader_samplers(
-                        &program,
-                        &[
-                            ("sColor0", TextureSampler::Color0),
-                            ("sColor1", TextureSampler::Color1),
-                            ("sColor2", TextureSampler::Color2),
-                            ("sDither", TextureSampler::Dither),
-                            ("sTransformPalette", TextureSampler::TransformPalette),
-                            ("sRenderTasks", TextureSampler::RenderTasks),
-                            ("sPrimitiveHeadersF", TextureSampler::PrimitiveHeadersF),
-                            ("sPrimitiveHeadersI", TextureSampler::PrimitiveHeadersI),
-                            ("sClipMask", TextureSampler::ClipMask),
-                            ("sGpuBufferF", TextureSampler::GpuBufferF),
-                            ("sGpuBufferI", TextureSampler::GpuBufferI),
-                        ],
-                    );
-                }
-            }
+            device.bind_shader_samplers(
+                &program,
+                &[
+                    ("sColor0", TextureSampler::Color0),
+                    ("sColor1", TextureSampler::Color1),
+                    ("sColor2", TextureSampler::Color2),
+                    ("sDither", TextureSampler::Dither),
+                    ("sTransformPalette", TextureSampler::TransformPalette),
+                    ("sRenderTasks", TextureSampler::RenderTasks),
+                    ("sPrimitiveHeadersF", TextureSampler::PrimitiveHeadersF),
+                    ("sPrimitiveHeadersI", TextureSampler::PrimitiveHeadersI),
+                    ("sClipMask", TextureSampler::ClipMask),
+                    ("sGpuBufferF", TextureSampler::GpuBufferF),
+                    ("sGpuBufferI", TextureSampler::GpuBufferI),
+                ],
+            );
 
             if let Some(profile) = &mut profile {
                 let end_time = zeitstempel::now();
@@ -513,16 +480,6 @@ fn create_prim_shader(
     device.create_program(name, features)
 }
 
-fn create_clip_shader(
-    name: &'static str,
-    device: &mut Device,
-    features: &[&'static str],
-) -> Result<Program, ShaderError> {
-    debug!("ClipShader {}", name);
-
-    device.create_program(name, features)
-}
-
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub struct ShaderHandle(usize);
 
@@ -593,10 +550,6 @@ pub struct Shaders {
     cs_border_solid: ShaderHandle,
     cs_scale: Vec<Option<ShaderHandle>>,
     cs_line_decoration: ShaderHandle,
-    cs_fast_linear_gradient: ShaderHandle,
-    cs_linear_gradient: ShaderHandle,
-    cs_radial_gradient: ShaderHandle,
-    cs_conic_gradient: ShaderHandle,
     cs_svg_filter_node: ShaderHandle,
 
     // Brush shaders
@@ -606,16 +559,8 @@ pub struct Shaders {
     brush_blend: BrushShader,
     brush_mix_blend: BrushShader,
     brush_yuv_image: Vec<Option<BrushShader>>,
-    brush_linear_gradient: BrushShader,
     brush_opacity: BrushShader,
     brush_opacity_aa: BrushShader,
-
-    /// These are "cache clip shaders". These shaders are used to
-    /// draw clip instances into the cached clip mask. The results
-    /// of these shaders are also used by the primitive shaders.
-    cs_clip_rectangle_slow: ShaderHandle,
-    cs_clip_rectangle_fast: ShaderHandle,
-    cs_clip_box_shadow: ShaderHandle,
 
     // The are "primitive shaders". These shaders draw and blend
     // final results on screen. They are aware of tile boundaries.
@@ -628,9 +573,24 @@ pub struct Shaders {
     ps_text_run_dual_source: Option<TextShader>,
 
     ps_split_composite: ShaderHandle,
+    // ps_quad_textured comes in sampler-type-specific variants so that
+    // external image sources (e.g. ANGLE DXGI textures) are sampled with the
+    // matching sColor0 declaration. The variant is selected via PatternKind.
     ps_quad_textured: ShaderHandle,
+    ps_quad_textured_external: Option<ShaderHandle>,
+    ps_quad_textured_external_bt709: Option<ShaderHandle>,
+    ps_quad_textured_rect: Option<ShaderHandle>,
     ps_quad_repeat: ShaderHandle,
     ps_quad_gradient: ShaderHandle,
+    ps_quad_box_shadow: ShaderHandle,
+    // ps_quad_yuv, like ps_quad_textured, comes in sampler-type-specific
+    // variants so the YUV planes are sampled with the matching sColor
+    // declaration. The variant is selected via PatternKind.
+    ps_quad_yuv: ShaderHandle,
+    ps_quad_yuv_external: Option<ShaderHandle>,
+    ps_quad_yuv_external_bt709: Option<ShaderHandle>,
+    ps_quad_yuv_rect: Option<ShaderHandle>,
+    ps_quad_backdrop: ShaderHandle,
     ps_mask: ShaderHandle,
     ps_mask_fast: ShaderHandle,
     ps_clear: ShaderHandle,
@@ -697,19 +657,6 @@ impl Shaders {
             &mut loader,
         )?;
 
-        let brush_linear_gradient = BrushShader::new(
-            "brush_linear_gradient",
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
-            &shader_list,
-            false /* advanced blend */,
-            false /* dual source */,
-            &mut loader,
-        )?;
-
         let brush_opacity_aa = BrushShader::new(
             "brush_opacity",
             &["ANTIALIASING"],
@@ -753,27 +700,6 @@ impl Shaders {
             ShaderKind::Cache(VertexArrayKind::Mask),
             "ps_quad_mask",
             &[FAST_PATH_FEATURE],
-            &shader_list,
-        )?;
-
-        let cs_clip_rectangle_slow = loader.create_shader(
-            ShaderKind::ClipCache(VertexArrayKind::ClipRect),
-            "cs_clip_rectangle",
-            &[],
-            &shader_list,
-        )?;
-
-        let cs_clip_rectangle_fast = loader.create_shader(
-            ShaderKind::ClipCache(VertexArrayKind::ClipRect),
-            "cs_clip_rectangle",
-            &[FAST_PATH_FEATURE],
-            &shader_list,
-        )?;
-
-        let cs_clip_box_shadow = loader.create_shader(
-            ShaderKind::ClipCache(VertexArrayKind::ClipBoxShadow),
-            "cs_clip_box_shadow",
-            &["TEXTURE_2D"],
             &shader_list,
         )?;
 
@@ -833,9 +759,52 @@ impl Shaders {
         let ps_quad_textured = loader.create_shader(
             ShaderKind::Primitive,
             "ps_quad_textured",
-            &[],
+            &["TEXTURE_2D"],
             &shader_list,
         )?;
+
+        // The TextureExternal variants are only used on devices that expose
+        // GL_OES_EGL_image_external via ESSL3. ESSL1 doesn't support the
+        // GLSL features used by the quad shaders.
+        let ps_quad_textured_external = if has_platform_support(
+                ImageBufferKind::TextureExternal, device,
+            ) && texture_external_version == TextureExternalVersion::ESSL3
+        {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_textured",
+                &["TEXTURE_EXTERNAL"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
+
+        let ps_quad_textured_external_bt709 = if has_platform_support(
+            ImageBufferKind::TextureExternalBT709, device,
+        ) {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_textured",
+                &["TEXTURE_EXTERNAL_BT709"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
+
+        let ps_quad_textured_rect = if has_platform_support(
+            ImageBufferKind::TextureRect, device,
+        ) {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_textured",
+                &["TEXTURE_RECT"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
 
         let ps_quad_repeat = loader.create_shader(
             ShaderKind::Primitive,
@@ -855,12 +824,77 @@ impl Shaders {
             &shader_list,
         )?;
 
-        let ps_split_composite = loader.create_shader(
+        let ps_quad_box_shadow = loader.create_shader(
             ShaderKind::Primitive,
-            "ps_split_composite",
+            "ps_quad_box_shadow",
             &[],
             &shader_list,
         )?;
+
+        let ps_quad_yuv = loader.create_shader(
+            ShaderKind::Primitive,
+            "ps_quad_yuv",
+            &["TEXTURE_2D"],
+            &shader_list,
+        )?;
+
+        // The TextureExternal variant is only used on devices that expose
+        // GL_OES_EGL_image_external via ESSL3 (ESSL1 doesn't support the GLSL
+        // features used by the quad shaders); on ESSL1 such planes are routed
+        // through the brush path in prepare.rs instead.
+        let ps_quad_yuv_external = if has_platform_support(
+                ImageBufferKind::TextureExternal, device,
+            ) && texture_external_version == TextureExternalVersion::ESSL3
+        {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_yuv",
+                &["TEXTURE_EXTERNAL"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
+
+        let ps_quad_yuv_external_bt709 = if has_platform_support(
+            ImageBufferKind::TextureExternalBT709, device,
+        ) {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_yuv",
+                &["TEXTURE_EXTERNAL_BT709"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
+
+        let ps_quad_yuv_rect = if has_platform_support(
+            ImageBufferKind::TextureRect, device,
+        ) {
+            Some(loader.create_shader(
+                ShaderKind::Primitive,
+                "ps_quad_yuv",
+                &["TEXTURE_RECT"],
+                &shader_list,
+            )?)
+        } else {
+            None
+        };
+
+        let ps_quad_backdrop = loader.create_shader(
+            ShaderKind::Primitive,
+            "ps_quad_backdrop",
+            &["TEXTURE_2D"],
+            &shader_list,
+        )?;
+
+        let ps_split_composite = loader.create_shader(
+        ShaderKind::Primitive,
+        "ps_split_composite",
+        &[],
+        &shader_list,
+    )?;
 
         let ps_clear = loader.create_shader(
             ShaderKind::Clear,
@@ -982,45 +1016,6 @@ impl Shaders {
             &shader_list,
         )?;
 
-        let cs_fast_linear_gradient = loader.create_shader(
-            ShaderKind::Cache(VertexArrayKind::FastLinearGradient),
-            "cs_fast_linear_gradient",
-            &[],
-            &shader_list,
-        )?;
-
-        let cs_linear_gradient = loader.create_shader(
-            ShaderKind::Cache(VertexArrayKind::LinearGradient),
-            "cs_linear_gradient",
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
-            &shader_list,
-        )?;
-
-        let cs_radial_gradient = loader.create_shader(
-            ShaderKind::Cache(VertexArrayKind::RadialGradient),
-            "cs_radial_gradient",
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
-            &shader_list,
-        )?;
-
-        let cs_conic_gradient = loader.create_shader(
-            ShaderKind::Cache(VertexArrayKind::ConicGradient),
-            "cs_conic_gradient",
-            if options.enable_dithering {
-               &[DITHERING_FEATURE]
-            } else {
-               &[]
-            },
-            &shader_list,
-        )?;
 
         let cs_border_segment = loader.create_shader(
             ShaderKind::Cache(VertexArrayKind::Border),
@@ -1044,10 +1039,6 @@ impl Shaders {
             cs_blur_rgba8,
             cs_border_segment,
             cs_line_decoration,
-            cs_fast_linear_gradient,
-            cs_linear_gradient,
-            cs_radial_gradient,
-            cs_conic_gradient,
             cs_border_solid,
             cs_scale,
             cs_svg_filter_node,
@@ -1057,17 +1048,22 @@ impl Shaders {
             brush_blend,
             brush_mix_blend,
             brush_yuv_image,
-            brush_linear_gradient,
             brush_opacity,
             brush_opacity_aa,
-            cs_clip_rectangle_slow,
-            cs_clip_rectangle_fast,
-            cs_clip_box_shadow,
             ps_text_run,
             ps_text_run_dual_source,
             ps_quad_textured,
+            ps_quad_textured_external,
+            ps_quad_textured_external_bt709,
+            ps_quad_textured_rect,
             ps_quad_repeat,
             ps_quad_gradient,
+            ps_quad_box_shadow,
+            ps_quad_yuv,
+            ps_quad_yuv_external,
+            ps_quad_yuv_external_bt709,
+            ps_quad_yuv_rect,
+            ps_quad_backdrop,
             ps_mask,
             ps_mask_fast,
             ps_split_composite,
@@ -1128,13 +1124,28 @@ impl Shaders {
 
     pub fn get_quad_shader(
         &mut self,
-        pattern: PatternKind
+        pattern: PatternKind,
     ) -> &mut LazilyCompiledShader {
         let shader_handle = match pattern {
             PatternKind::ColorOrTexture => self.ps_quad_textured,
+            PatternKind::TextureExternal => self.ps_quad_textured_external
+                .expect("bug: ps_quad_textured TEXTURE_EXTERNAL variant not loaded"),
+            PatternKind::TextureExternalBT709 => self.ps_quad_textured_external_bt709
+                .expect("bug: ps_quad_textured TEXTURE_EXTERNAL_BT709 variant not loaded"),
+            PatternKind::TextureRect => self.ps_quad_textured_rect
+                .expect("bug: ps_quad_textured TEXTURE_RECT variant not loaded"),
             PatternKind::Gradient => self.ps_quad_gradient,
             PatternKind::Repeat => self.ps_quad_repeat,
-            PatternKind::Mask => unreachable!(),
+            PatternKind::BoxShadow => self.ps_quad_box_shadow,
+            PatternKind::Yuv => self.ps_quad_yuv,
+            PatternKind::YuvTextureExternal => self.ps_quad_yuv_external
+                .expect("bug: ps_quad_yuv TEXTURE_EXTERNAL variant not loaded"),
+            PatternKind::YuvTextureExternalBT709 => self.ps_quad_yuv_external_bt709
+                .expect("bug: ps_quad_yuv TEXTURE_EXTERNAL_BT709 variant not loaded"),
+            PatternKind::YuvTextureRect => self.ps_quad_yuv_rect
+                .expect("bug: ps_quad_yuv TEXTURE_RECT variant not loaded"),
+            PatternKind::Backdrop => self.ps_quad_backdrop,
+            PatternKind::Mask => unreachable!("clip mask pattern is not a quad shader"),
         };
         self.loader.get(shader_handle)
     }
@@ -1161,15 +1172,48 @@ impl Shaders {
             BatchKind::Quad(PatternKind::ColorOrTexture) => {
                 self.ps_quad_textured
             }
+            BatchKind::Quad(PatternKind::TextureExternal) => {
+                self.ps_quad_textured_external
+                    .expect("bug: ps_quad_textured TEXTURE_EXTERNAL variant not loaded")
+            }
+            BatchKind::Quad(PatternKind::TextureExternalBT709) => {
+                self.ps_quad_textured_external_bt709
+                    .expect("bug: ps_quad_textured TEXTURE_EXTERNAL_BT709 variant not loaded")
+            }
+            BatchKind::Quad(PatternKind::TextureRect) => {
+                self.ps_quad_textured_rect
+                    .expect("bug: ps_quad_textured TEXTURE_RECT variant not loaded")
+            }
             BatchKind::Quad(PatternKind::Gradient) => {
                 self.ps_quad_gradient
             }
             BatchKind::Quad(PatternKind::Repeat) => {
                 self.ps_quad_repeat
             }
-            BatchKind::Quad(PatternKind::Mask) => {
-                unreachable!();
+            BatchKind::Quad(PatternKind::BoxShadow) => {
+                self.ps_quad_box_shadow
             }
+            BatchKind::Quad(PatternKind::Yuv) => {
+                self.ps_quad_yuv
+            }
+            BatchKind::Quad(PatternKind::YuvTextureExternal) => {
+                self.ps_quad_yuv_external
+                    .expect("bug: ps_quad_yuv TEXTURE_EXTERNAL variant not loaded")
+            }
+            BatchKind::Quad(PatternKind::YuvTextureExternalBT709) => {
+                self.ps_quad_yuv_external_bt709
+                    .expect("bug: ps_quad_yuv TEXTURE_EXTERNAL_BT709 variant not loaded")
+            }
+            BatchKind::Quad(PatternKind::YuvTextureRect) => {
+                self.ps_quad_yuv_rect
+                    .expect("bug: ps_quad_yuv TEXTURE_RECT variant not loaded")
+            }
+            BatchKind::Quad(PatternKind::Backdrop) => {
+                self.ps_quad_backdrop
+            }
+            BatchKind::Quad(PatternKind::Mask) => {
+            unreachable!();
+        }
             BatchKind::SplitComposite => {
                 self.ps_split_composite
             }
@@ -1203,27 +1247,6 @@ impl Shaders {
                     BrushBatchKind::MixBlend { .. } => {
                         &mut self.brush_mix_blend
                     }
-                    BrushBatchKind::LinearGradient => {
-                        // SWGL uses a native clip mask implementation that bypasses the shader.
-                        // Don't consider it in that case when deciding whether or not to use
-                        // an alpha-pass shader.
-                        if device.get_capabilities().uses_native_clip_mask {
-                            features.remove(BatchFeatures::CLIP_MASK);
-                        }
-                        // Gradient brushes can optimistically use the opaque shader even
-                        // with a blend mode if they don't require any features.
-                        if !features.intersects(
-                            BatchFeatures::ANTIALIASING
-                                | BatchFeatures::REPETITION
-                                | BatchFeatures::CLIP_MASK,
-                        ) {
-                            features.remove(BatchFeatures::ALPHA_PASS);
-                        }
-                        match brush_kind {
-                            BrushBatchKind::LinearGradient => &mut self.brush_linear_gradient,
-                            _ => panic!(),
-                        }
-                    }
                     BrushBatchKind::YuvImage(image_buffer_kind, ..) => {
                         let shader_index =
                             Self::get_compositing_shader_index(image_buffer_kind);
@@ -1255,15 +1278,10 @@ impl Shaders {
     pub fn cs_border_segment(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_segment) }
     pub fn cs_border_solid(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_border_solid) }
     pub fn cs_line_decoration(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_line_decoration) }
-    pub fn cs_fast_linear_gradient(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_fast_linear_gradient) }
-    pub fn cs_linear_gradient(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_linear_gradient) }
-    pub fn cs_radial_gradient(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_radial_gradient) }
-    pub fn cs_conic_gradient(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_conic_gradient) }
     pub fn cs_svg_filter_node(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_svg_filter_node) }
-    pub fn cs_clip_rectangle_slow(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_clip_rectangle_slow) }
-    pub fn cs_clip_rectangle_fast(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_clip_rectangle_fast) }
-    pub fn cs_clip_box_shadow(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.cs_clip_box_shadow) }
-    pub fn ps_quad_textured(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_quad_textured) }
+    pub fn ps_quad_textured(&mut self) -> &mut LazilyCompiledShader {
+        self.loader.get(self.ps_quad_textured)
+    }
     pub fn ps_mask(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_mask) }
     pub fn ps_mask_fast(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_mask_fast) }
     pub fn ps_clear(&mut self) -> &mut LazilyCompiledShader { self.loader.get(self.ps_clear) }

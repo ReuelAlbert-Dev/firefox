@@ -8,6 +8,8 @@
 #include "IUnknownImpl.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/Mutex.h"
+#include "nsISupportsImpl.h"
 #include "nsString.h"
 
 #include <oleacc.h>
@@ -140,10 +142,11 @@ class LazyInstantiator final : public IAccessible,
   static already_AddRefed<T> GetRoot(HWND aHwnd);
 
  private:
-  mozilla::a11y::AutoRefCnt mRefCnt;
+  nsAutoRefCnt mRefCnt;
   HWND mHwnd;
   bool mAllowBlindAggregation;
   RefPtr<IUnknown> mRealRootUnk;
+  Mutex mTransplantLock{"a11y::LazyInstantiator::mTransplantLock"};
   RefPtr<IUnknown> mStdDispatch;
   /**
    * mWeakMsaaRoot, mWeakAccessible and mWeakDispatch are weak because they

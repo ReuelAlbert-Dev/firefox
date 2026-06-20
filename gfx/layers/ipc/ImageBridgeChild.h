@@ -113,7 +113,7 @@ class ImageBridgeChild final : public PImageBridgeChild,
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(ImageBridgeChild, override);
 
-  TextureForwarder* GetTextureForwarder() override { return this; }
+  RefPtr<TextureForwarder> GetTextureForwarder() override { return this; }
   LayersIPCActor* GetLayersIPCActor() override { return this; }
 
   /**
@@ -167,13 +167,11 @@ class ImageBridgeChild final : public PImageBridgeChild,
   void SyncWithCompositor(
       const Maybe<uint64_t>& aWindowID = Nothing()) override;
 
-  PTextureChild* AllocPTextureChild(
+  already_AddRefed<PTextureChild> AllocPTextureChild(
       const SurfaceDescriptor& aSharedData, ReadLockDescriptor& aReadLock,
       const LayersBackend& aLayersBackend, const TextureFlags& aFlags,
       const uint64_t& aSerial,
       const wr::MaybeExternalImageId& aExternalImageId);
-
-  bool DeallocPTextureChild(PTextureChild* actor);
 
   PMediaSystemResourceManagerChild* AllocPMediaSystemResourceManagerChild();
   bool DeallocPMediaSystemResourceManagerChild(
@@ -304,7 +302,7 @@ class ImageBridgeChild final : public PImageBridgeChild,
    */
   bool DeallocShmem(mozilla::ipc::Shmem& aShmem) override;
 
-  PTextureChild* CreateTexture(
+  already_AddRefed<PTextureChild> CreateTexture(
       const SurfaceDescriptor& aSharedData, ReadLockDescriptor&& aReadLock,
       LayersBackend aLayersBackend, TextureFlags aFlags,
       const dom::ContentParentId& aContentId, uint64_t aSerial,

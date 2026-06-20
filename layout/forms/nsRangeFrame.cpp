@@ -8,6 +8,7 @@
 #include "gfxContext.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/ServoStyleSet.h"
 #include "mozilla/TouchEvents.h"
 #include "mozilla/dom/Document.h"
@@ -409,13 +410,9 @@ nsTArray<Decimal> nsRangeFrame::TickMarks() {
   }
   auto min = input.GetMinimum();
   auto max = input.GetMaximum();
-  auto* options = list->Options();
-  nsAutoString label;
-  for (uint32_t i = 0; i < options->Length(); ++i) {
-    auto* item = options->Item(i);
-    auto* option = HTMLOptionElement::FromNode(item);
-    MOZ_ASSERT(option);
-    if (option->Disabled()) {
+  for (nsINode* n = list->GetFirstChild(); n; n = n->GetNextNode(list)) {
+    auto* option = HTMLOptionElement::FromNode(n);
+    if (!option || option->Disabled()) {
       continue;
     }
     nsAutoString str;

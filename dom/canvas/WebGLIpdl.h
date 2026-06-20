@@ -10,9 +10,6 @@
 #include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtils.h"
 #include "mozilla/GfxMessageUtils.h"
-#include "mozilla/ParamTraits_IsEnumCase.h"
-#include "mozilla/ParamTraits_STL.h"
-#include "mozilla/ParamTraits_TiedFields.h"
 #include "mozilla/dom/BindingIPCUtils.h"
 #include "mozilla/ipc/Shmem.h"
 #include "mozilla/layers/LayersSurfaces.h"
@@ -232,16 +229,11 @@ struct ParamTraits<mozilla::dom::PredefinedColorSpace> final
     : public mozilla::dom::WebIDLEnumSerializer<
           mozilla::dom::PredefinedColorSpace> {};
 
-// -
-// ParamTraits_IsEnumCase
-
-#define USE_IS_ENUM_CASE(T) \
-  template <>               \
-  struct ParamTraits<T> : public ParamTraits_IsEnumCase<T> {};
-
-USE_IS_ENUM_CASE(mozilla::webgl::OptionalRenderableFormatBits)
-
-#undef USE_IS_ENUM_CASE
+template <>
+struct ParamTraits<mozilla::webgl::OptionalRenderableFormatBits> final
+    : public BitFlagsEnumSerializer<
+          mozilla::webgl::OptionalRenderableFormatBits,
+          mozilla::webgl::kAllOptionalRenderableFormatBits> {};
 
 // -
 // ParamTraits_TiedFields
@@ -483,13 +475,12 @@ struct ParamTraits<mozilla::webgl::GetUniformData> final {
   using T = mozilla::webgl::GetUniformData;
 
   static void Write(MessageWriter* const writer, const T& in) {
-    ParamTraits<decltype(in.data)>::Write(writer, in.data);
+    WriteParam(writer, in.data);
     WriteParam(writer, in.type);
   }
 
   static bool Read(MessageReader* const reader, T* const out) {
-    return ParamTraits<decltype(out->data)>::Read(reader, &out->data) &&
-           ReadParam(reader, &out->type);
+    return ReadParam(reader, &out->data) && ReadParam(reader, &out->type);
   }
 };
 

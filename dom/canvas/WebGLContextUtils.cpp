@@ -412,13 +412,13 @@ std::string EnumString(const GLenum val) {
   }
 
   const nsPrintfCString hex("<enum 0x%04x>", val);
-  return hex.BeginReading();
+  return std::string(hex.View());
 }
 
 void WebGLContext::ErrorInvalidEnumArg(const char* const argName,
                                        const GLenum val) const {
   const auto info = nsPrintfCString("Bad `%s`", argName);
-  ErrorInvalidEnumInfo(info.BeginReading(), val);
+  ErrorInvalidEnumInfo(info.get(), val);
 }
 
 void WebGLContext::ErrorInvalidEnumInfo(const char* const info,
@@ -431,8 +431,7 @@ void WebGLContext::ErrorInvalidEnumInfo(const char* const info,
     hint = " (Did you typo `gl.SOMETHINGG` and pass `undefined`?)";
   }
 
-  ErrorInvalidEnum("%s: Invalid enum value %s%s", info, name.BeginReading(),
-                   hint);
+  ErrorInvalidEnum("%s: Invalid enum value %s%s", info, name.get(), hint);
 }
 
 #ifdef DEBUG

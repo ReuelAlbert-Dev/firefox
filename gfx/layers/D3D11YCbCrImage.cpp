@@ -79,13 +79,14 @@ already_AddRefed<TextureClient> DXGIYCbCrTextureAllocationHelper::Allocate(
   hr = mDevice->CreateTexture2D(&newDesc, nullptr, getter_AddRefs(textureCr));
   NS_ENSURE_TRUE(SUCCEEDED(hr), nullptr);
 
-  TextureForwarder* forwarder =
+  RefPtr<TextureForwarder> forwarder =
       aAllocator ? aAllocator->GetTextureForwarder() : nullptr;
 
   return TextureClient::CreateWithData(
-      DXGIYCbCrTextureData::Create(
-          textureY, textureCb, textureCr, mData.mPictureRect.Size(), ySize,
-          cbcrSize, mData.mColorDepth, mData.mYUVColorSpace, mData.mColorRange),
+      DXGIYCbCrTextureData::Create(textureY, textureCb, textureCr,
+                                   mData.mPictureRect.Size(), ySize, cbcrSize,
+                                   mData.mColorDepth, mData.mYUVColorSpace,
+                                   mData.mColorRange, mData.mTransferFunction),
       mTextureFlags, forwarder);
 }
 

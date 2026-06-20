@@ -181,7 +181,7 @@ int r_log_register(const char *facility_name,int *log_facility)
     i=log_type_ct;
 
     /* Initial registration completed, increment log_type_ct */
-    log_types[i].facility_name=r_strdup(facility_name);
+    log_types[i].facility_name=strdup(facility_name);
     *log_facility=log_type_ct;
     log_type_ct++;
 
@@ -221,7 +221,7 @@ int r_log_register(const char *facility_name,int *log_facility)
     _status=0;
   abort:
     if(_status)
-      RFREE(buf);
+      free(buf);
     return(_status);
   }
 
@@ -302,7 +302,7 @@ int r_dump(int facility,int level,const char *name,const char *data,int len)
     if(!r_logging(facility,level))
       return(0);
 
-    hex=(char*)RMALLOC((len*2)+1);
+    hex=(char*)malloc((len*2)+1);
     if (!hex)
       return(R_FAILED);
 
@@ -314,7 +314,7 @@ int r_dump(int facility,int level,const char *name,const char *data,int len)
     else
       r_log(facility,level,"%s",hex);
 
-    RFREE(hex);
+    free(hex);
     return(0);
   }
 

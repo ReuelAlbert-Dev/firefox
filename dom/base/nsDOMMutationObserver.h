@@ -13,7 +13,6 @@
 #include "mozilla/dom/Nullable.h"
 #include "nsCOMArray.h"
 #include "nsClassHashtable.h"
-#include "nsContentList.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsGlobalWindowInner.h"
 #include "nsIMutationObserver.h"
@@ -30,24 +29,27 @@ using mozilla::dom::MutationObservingInfo;
 namespace mozilla::dom {
 class Animation;
 class Element;
+class NodeList;
+class SimpleContentList;
 }  // namespace mozilla::dom
 
 class nsDOMMutationRecord final : public nsISupports, public nsWrapperCache {
-  virtual ~nsDOMMutationRecord();
+  ~nsDOMMutationRecord();
 
  public:
   using AnimationArray = nsTArray<RefPtr<mozilla::dom::Animation>>;
+  using NodeList = mozilla::dom::NodeList;
 
   nsDOMMutationRecord(nsAtom* aType, nsISupports* aOwner);
 
   nsISupports* GetParentObject() const { return mOwner; }
 
-  virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aGivenProto) override {
+  JSObject* WrapObject(JSContext* aCx,
+                       JS::Handle<JSObject*> aGivenProto) override {
     return mozilla::dom::MutationRecord_Binding::Wrap(aCx, this, aGivenProto);
   }
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(nsDOMMutationRecord)
 
   void GetType(mozilla::dom::DOMString& aRetVal) const {
@@ -56,9 +58,9 @@ class nsDOMMutationRecord final : public nsISupports, public nsWrapperCache {
 
   nsINode* GetTarget() const { return mTarget; }
 
-  nsINodeList* AddedNodes();
+  NodeList* AddedNodes();
 
-  nsINodeList* RemovedNodes();
+  NodeList* RemovedNodes();
 
   nsINode* GetPreviousSibling() const { return mPreviousSibling; }
 
@@ -86,8 +88,8 @@ class nsDOMMutationRecord final : public nsISupports, public nsWrapperCache {
   RefPtr<nsAtom> mAttrName;
   nsString mAttrNamespace;
   nsString mPrevValue;
-  RefPtr<nsSimpleContentList> mAddedNodes;
-  RefPtr<nsSimpleContentList> mRemovedNodes;
+  RefPtr<mozilla::dom::SimpleContentList> mAddedNodes;
+  RefPtr<mozilla::dom::SimpleContentList> mRemovedNodes;
   nsCOMPtr<nsINode> mPreviousSibling;
   nsCOMPtr<nsINode> mNextSibling;
   AnimationArray mAddedAnimations;
@@ -265,7 +267,7 @@ class nsMutationReceiverBase : public nsStubAnimationObserver {
 
 class nsMutationReceiver : public nsMutationReceiverBase {
  protected:
-  virtual ~nsMutationReceiver() { Disconnect(false); }
+  ~nsMutationReceiver() { Disconnect(false); }
 
  public:
   static nsMutationReceiver* Create(nsINode* aTarget,
@@ -401,7 +403,7 @@ class nsDOMMutationObserver final : public nsISupports, public nsWrapperCache {
         mWaitingForRun(false),
         mMergeAttributeRecords(false),
         mId(++sCount) {}
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(nsDOMMutationObserver)
   NS_INLINE_DECL_STATIC_IID(NS_DOM_MUTATION_OBSERVER_IID)
 

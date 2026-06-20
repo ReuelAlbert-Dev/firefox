@@ -844,7 +844,7 @@ bool WebGLProgram::ValidateForLink() {
 
   nsCString errInfo;
   if (!fragInfo.CanLinkTo(vertInfo, &errInfo)) {
-    mLinkLog = errInfo.BeginReading();
+    mLinkLog = errInfo.get();
     return false;
   }
 
@@ -1052,7 +1052,7 @@ bool WebGLProgram::ValidateAfterTentativeLink(
                              "Attrib \"%s\" aliases locations used by"
                              " attrib \"%s\".",
                              aliasingName.c_str(), existingName.c_str())
-                             .BeginReading();
+                             .get();
           return false;
         }
       }
@@ -1100,7 +1100,7 @@ bool WebGLProgram::ValidateAfterTentativeLink(
                            " pushed `componentsForIndex` over the"
                            " limit of %u.",
                            cur.name.c_str(), maxComponentsPerIndex)
-                           .BeginReading();
+                           .get();
         return false;
       }
     }

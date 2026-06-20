@@ -19,32 +19,47 @@ appmenuitem-banner-update-unsupported =
 appmenuitem-banner-update-restart =
     .label = Update available — restart now
 
+# Fresh Firefox refers to the new updated UI
+appmenu-nova-update-promo =
+    .message = Get a fresh { -brand-short-name }. Keep all your tabs.
+
+appmenu-nova-update-link = Restart to update
+
+appmenu-nova-fxa-sign-in = Sign in
+
+appmenu-nova-switch-device-promo =
+    .message = Getting a new device soon? Take { -brand-short-name } with you!
+
+appmenu-nova-switch-device-link = How to migrate your data
+
 appmenuitem-new-tab =
-    .label = New tab
+    .label = New Tab
 appmenuitem-new-window =
-    .label = New window
+    .label = New Window
 appmenuitem-new-private-window =
-    .label = New private window
+    .label = New Private Window
 appmenuitem-history =
   .label = History
+appmenuitem-tab-groups =
+  .label = Tab groups
 appmenuitem-downloads =
   .label = Downloads
 appmenuitem-passwords =
     .label = Passwords
 appmenuitem-extensions-and-themes =
-    .label = Extensions and themes
+    .label = Extensions and Themes
 appmenuitem-extensions =
     .label = Extensions
 appmenuitem-print =
   .label = Print…
 appmenuitem-find-in-page =
-    .label = Find in page…
+    .label = Find in Page…
 appmenuitem-translate =
-    .label = Translate page…
+    .label = Translate Page…
 appmenuitem-zoom =
     .value = Zoom
 appmenuitem-more-tools =
-    .label = More tools
+    .label = More Tools
 appmenuitem-help =
     .label = Help
 appmenuitem-exit2 =
@@ -68,11 +83,11 @@ appmenuitem-settings =
 ## Zoom and Fullscreen Controls
 
 appmenuitem-zoom-enlarge =
-  .label = Zoom in
+  .label = Zoom In
 appmenuitem-zoom-reduce =
-  .label = Zoom out
+  .label = Zoom Out
 appmenuitem-fullscreen =
-  .label = Full screen
+  .label = Full Screen
 
 ## Firefox Account toolbar button and Sync panel in App menu.
 
@@ -124,7 +139,7 @@ appmenu-fxa-setup-sync =
     .label = Turn On Syncing…
 appmenu-fxa-setup-sync-new = Turn On
 appmenuitem-save-page =
-    .label = Save page as…
+    .label = Save Page As…
 
 appmenuitem-fxa-sync-off-title = Sync is off
 appmenuitem-fxa-sync-off-description = Protect and access your bookmarks, passwords, and more anywhere.
@@ -300,12 +315,14 @@ appmenu-help-not-deceptive =
 
 appmenu-customizetoolbar =
     .label = Customize toolbar…
+appmenu-abouttranslations =
+    .label = Translate…
 
 appmenu-developer-tools-subheader = Browser tools
 appmenu-developer-tools-extensions =
     .label = Extensions for developers
 appmenuitem-report-broken-site =
-  .label = Report broken site
+  .label = Report Broken Site
 
 ## Panel for privacy and security products
 

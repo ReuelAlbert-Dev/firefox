@@ -5,7 +5,6 @@
 #ifndef mozilla_net_SocketProcessBridgeChild_h
 #define mozilla_net_SocketProcessBridgeChild_h
 
-#include <functional>
 #include "mozilla/net/PSocketProcessBridgeChild.h"
 #include "nsIObserver.h"
 
@@ -40,7 +39,7 @@ class SocketProcessBridgeChild final : public PSocketProcessBridgeChild,
 
   static StaticRefPtr<SocketProcessBridgeChild> sSocketProcessBridgeChild;
   bool mShuttingDown;
-  ProcessId mSocketProcessPid;
+  ProcessId mSocketProcessPid = 0;
 };
 
 }  // namespace net

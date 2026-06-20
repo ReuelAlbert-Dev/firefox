@@ -180,7 +180,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, intentUrl, mock(), null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -241,7 +241,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, intentUrl, appIntent, null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -278,7 +278,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, intentUrl, appIntent, null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -302,7 +302,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, intentUrl, mock(), null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -327,7 +327,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, intentUrl, mock(), null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -372,6 +372,26 @@ class AppLinksFeatureTest {
     }
 
     @Test
+    fun `WHEN url or fallback url scheme is supported THEN dismiss redirect will load it`() {
+        val tab = createTab(webUrl, private = true)
+
+        feature.dismissRedirect(tab, intentUrl, null)
+        verify(mockLoadUrlUseCase, never()).invoke(anyString(), anyString(), any(), any(), any())
+
+        feature.dismissRedirect(tab, intentUrl, intentUrl)
+        verify(mockLoadUrlUseCase, never()).invoke(anyString(), anyString(), any(), any(), any())
+
+        feature.dismissRedirect(tab, webUrl, null)
+        verify(mockLoadUrlUseCase, times(1)).invoke(anyString(), anyString(), any(), any(), any())
+
+        feature.dismissRedirect(tab, aboutUrl, null)
+        verify(mockLoadUrlUseCase, times(2)).invoke(anyString(), anyString(), any(), any(), any())
+
+        feature.dismissRedirect(tab, intentUrl, aboutUrl)
+        verify(mockLoadUrlUseCase, times(3)).invoke(anyString(), anyString(), any(), any(), any())
+    }
+
+    @Test
     fun `WHEN url scheme is a wallet scheme THEN wallet prompt is shown even if shouldPrompt is false`() {
         feature = spy(
             AppLinksFeature(
@@ -397,7 +417,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, walletUrl, appIntent, null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test
@@ -428,7 +448,7 @@ class AppLinksFeatureTest {
         feature.handleAppIntent(tab, nonWalletUrl, appIntent, null, null)
 
         verify(mockDialog).showNow(eq(mockFragmentManager), anyString())
-        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), any())
+        verify(mockOpenRedirect, never()).invoke(any(), anyBoolean(), anyBoolean(), any())
     }
 
     @Test

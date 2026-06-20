@@ -61,6 +61,7 @@ static void UpdateSystemCaretFor(Accessible* aAccessible) {
 }
 
 void a11y::PlatformInit() {
+  Compatibility::Init();
   nsWinUtils::MaybeStartWindowEmulation();
   ia2AccessibleText::InitTextChangeData();
 }
@@ -311,6 +312,10 @@ bool a11y::GetInstantiator(nsIFile** aOutInstantiator) {
   }
 
   return NS_SUCCEEDED(gInstantiator->Clone(aOutInstantiator));
+}
+
+void a11y::GetHumanReadableInstantiatorStr(nsAString& aResult) {
+  a11y::Compatibility::GetHumanReadableConsumersStr(aResult);
 }
 
 uint64_t a11y::GetCacheDomainsForKnownClients(uint64_t aCacheDomains) {

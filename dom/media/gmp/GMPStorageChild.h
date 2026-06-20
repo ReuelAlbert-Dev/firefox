@@ -5,10 +5,10 @@
 #ifndef GMPStorageChild_h_
 #define GMPStorageChild_h_
 
-#include <queue>
-
 #include "gmp-platform.h"
 #include "gmp-storage.h"
+#include "mozilla/Mutex.h"
+#include "mozilla/RecursiveMutex.h"
 #include "mozilla/gmp/PGMPStorageChild.h"
 #include "nsRefPtrHashtable.h"
 #include "nsTHashtable.h"
@@ -18,12 +18,14 @@ namespace mozilla::gmp {
 class GMPChild;
 class GMPStorageChild;
 
-class GMPRecordImpl : public GMPRecord {
+class GMPRecordImpl final : public GMPRecord {
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPRecordImpl)
 
   GMPRecordImpl(GMPStorageChild* aOwner, const nsCString& aName,
                 GMPRecordClient* aClient);
+
+  void DestroyOwner();
 
   // GMPRecord.
   GMPErr Open() override;
@@ -38,17 +40,20 @@ class GMPRecordImpl : public GMPRecord {
   void WriteComplete(GMPErr aStatus);
 
  private:
+  RefPtr<GMPStorageChild> GetOwner();
+
   ~GMPRecordImpl() = default;
+  RecursiveMutex mMutex{"GMPRecordImpl"};
   const nsCString mName;
-  GMPRecordClient* const mClient;
-  GMPStorageChild* const mOwner;
+  GMPRecordClient* mClient MOZ_GUARDED_BY(mMutex);
+  GMPStorageChild* mOwner MOZ_GUARDED_BY(mMutex);
 };
 
-class GMPStorageChild : public PGMPStorageChild {
+class GMPStorageChild final : public PGMPStorageChild {
   friend class PGMPStorageChild;
 
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPStorageChild)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GMPStorageChild, final)
 
   explicit GMPStorageChild(GMPChild* aPlugin);
 
@@ -64,8 +69,10 @@ class GMPStorageChild : public PGMPStorageChild {
 
   GMPErr Close(const nsCString& aRecordName);
 
+  void ActorDestroy(ActorDestroyReason aWhy) override;
+
  private:
-  bool HasRecord(const nsCString& aRecordName);
+  bool HasRecord(const nsCString& aRecordName) MOZ_REQUIRES(mMutex);
   already_AddRefed<GMPRecordImpl> GetRecord(const nsCString& aRecordName);
 
  protected:
@@ -82,10 +89,11 @@ class GMPStorageChild : public PGMPStorageChild {
   mozilla::ipc::IPCResult RecvShutdown();
 
  private:
-  Monitor mMonitor MOZ_UNANNOTATED;
-  nsRefPtrHashtable<nsCStringHashKey, GMPRecordImpl> mRecords;
+  Mutex mMutex{"GMPStorageChild"};
+  nsRefPtrHashtable<nsCStringHashKey, GMPRecordImpl> mRecords
+      MOZ_GUARDED_BY(mMutex);
   GMPChild* mPlugin;
-  bool mShutdown;
+  bool mShutdown MOZ_GUARDED_BY(mMutex) = false;
 };
 
 }  // namespace mozilla::gmp

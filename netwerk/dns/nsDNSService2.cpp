@@ -291,9 +291,7 @@ nsDNSRecord::GetNextAddrAsString(nsACString& result) {
     return rv;
   }
 
-  char buf[kIPv6CStrBufSize];
-  if (addr.ToStringBuffer(buf, sizeof(buf))) {
-    result.Assign(buf);
+  if (addr.ToString(result)) {
     return NS_OK;
   }
   NS_ERROR("NetAddrToString failed unexpectedly");
@@ -309,12 +307,14 @@ nsDNSRecord::HasMore(bool* result) {
 
   nsTArray<NetAddr>::const_iterator iterCopy = mIter;
   int iterGenCntCopy = mIterGenCnt;
+  RefPtr<AddrInfo> addrInfoCopy = mAddrInfo;
 
   NetAddr addr;
   *result = NS_SUCCEEDED(GetNextAddr(0, &addr));
 
   mIter = iterCopy;
   mIterGenCnt = iterGenCntCopy;
+  mAddrInfo = std::move(addrInfoCopy);
   mDone = false;
 
   return NS_OK;

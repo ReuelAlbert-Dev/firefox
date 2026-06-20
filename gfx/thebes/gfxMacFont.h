@@ -24,7 +24,7 @@ class gfxMacFont final : public gfxFont {
   RunMetrics Measure(const gfxTextRun* aTextRun, uint32_t aStart, uint32_t aEnd,
                      BoundingBoxType aBoundingBoxType,
                      DrawTarget* aDrawTargetForTightBoundingBox,
-                     Spacing* aSpacing,
+                     Spacing* aSpacing, nscoord aLetterSpacing,
                      mozilla::gfx::ShapedTextFlags aOrientation) override;
 
   // We need to provide hinted (non-linear) glyph widths if using a font
@@ -59,10 +59,9 @@ class gfxMacFont final : public gfxFont {
   const Metrics& GetHorizontalMetrics() const override { return mMetrics; }
 
   // override to prefer CoreText shaping with fonts that depend on AAT
-  bool ShapeText(DrawTarget* aDrawTarget, const char16_t* aText,
-                 uint32_t aOffset, uint32_t aLength, Script aScript,
-                 nsAtom* aLanguage, bool aVertical, RoundingFlags aRounding,
-                 gfxShapedText* aShapedText) override;
+  bool ShapeText(const char16_t* aText, uint32_t aOffset, uint32_t aLength,
+                 Script aScript, nsAtom* aLanguage, bool aVertical,
+                 RoundingFlags aRounding, gfxShapedText* aShapedText) override;
 
   void InitMetrics();
   void InitMetricsFromPlatform();

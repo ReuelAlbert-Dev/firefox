@@ -17,12 +17,24 @@ import kotlinx.coroutines.flow.StateFlow
  */
 sealed interface LlmProvider {
     /**
+     * Non-user-facing identifier of a specific model served by an [LlmProvider]. Used for
+     * telemetry and logging.
+     *
+     * @property value The raw model identifier string (e.g. "moz-summarization").
+     */
+    @JvmInline
+    value class ModelID(val value: String) {
+        companion object
+    }
+
+    /**
      * Metadata about an [LlmProvider].
      *
      * @property nameRes A string resource ID representing the display name of the provider.
      * @property iconRes A drawable resource ID representing the icon of the provider if present.
+     * @property modelId Non-user-facing identifier of the model this provider serves.
      */
-    data class Info(val nameRes: Int, val iconRes: Int? = null)
+    data class Info(val nameRes: Int, val iconRes: Int? = null, val modelId: ModelID? = null)
 
     /**
      * Metadata about this provider, including its display name.
@@ -50,8 +62,10 @@ interface CloudLlmProvider : LlmProvider {
 
         /**
          * Indicates that the cloud provider is unavailable.
+         *
+         * @property exception The exception that caused the provider to become unavailable, if known.
          */
-        object Unavailable : State
+        data class Unavailable(val exception: Llm.Exception) : State
 
         /**
          * Indicates that the cloud LLM is fully initialized and ready for use.

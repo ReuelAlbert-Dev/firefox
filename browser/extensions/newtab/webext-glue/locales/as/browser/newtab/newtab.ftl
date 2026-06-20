@@ -14,6 +14,14 @@ newtab-personalize-icon-label =
 newtab-personalize-dialog-label =
     .aria-label = ব্যক্তিগতকৰণ কৰক
 
+## Firefox Home content
+
+# Dropdown option shown when an extension replaces the contents of new windows or tabs.
+# Variables:
+#   $extension (string) - Name of the extension
+home-prefs-homepage-extension-option =
+    .label = এক্সটেনশ্যন ({ $extension })
+
 ## Search box component.
 
 # "Search" is a verb/action
@@ -201,6 +209,15 @@ newtab-error-fallback-refresh-link = পুনৰ চেষ্টা কৰি�
 ## Customization Menu
 
 newtab-custom-shortcuts-subtitle = আপুনি সাঁচি থোৱা বা দৰ্শন কৰা ছাইটসমূহ
+# Variables
+#   $num (number) - Number of rows to display
+#  (developer note): @nova-cleanup(remove-string): Remove string once Nova lands. We won't be using "row"/"rows" anymore for the dropdown
+newtab-custom-row-selector2 =
+    .label =
+        { $num ->
+            [one] { $num }টা শাৰী
+           *[other] { $num }টা শাৰী
+        }
 # Variables
 #   $num (number) - Number of rows to display
 newtab-custom-row-selector =

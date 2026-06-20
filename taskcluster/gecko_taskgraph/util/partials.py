@@ -85,7 +85,8 @@ def get_partials_artifacts_from_params(release_history, platform, locale):
     platform = _sanitize_platform(platform)
     return [
         (artifact, details.get("previousVersion", None))
-        for artifact, details in release_history.get(platform, {})
+        for artifact, details in release_history
+        .get(platform, {})
         .get(locale, {})
         .items()
     ]
@@ -164,7 +165,7 @@ def _get_balrog_api_root(branch):
         scope = BALROG_SERVER_SCOPES["default"]
 
     if scope == "balrog:server:dep":
-        return "https://stage.balrog.nonprod.cloudops.mozgcp.net/api/v1"
+        return "https://stage.balrog.nonprod.webservices.mozgcp.net/api/v1"
     return "https://aus5.mozilla.org/api/v1"
 
 

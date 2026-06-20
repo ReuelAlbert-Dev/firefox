@@ -36,7 +36,7 @@ function getSecurityConnectionBG() {
   // Get the background image of the security connection.
   document.getElementById("identity-icon-box").click();
   gIdentityHandler.refreshIdentityPopup();
-  return gBrowser.ownerGlobal
+  return gBrowser.documentGlobal
     .getComputedStyle(
       document
         .getElementById("identity-popup-mainView")
@@ -53,7 +53,7 @@ async function getReaderModeURL() {
   let headerSpan = document.getElementById(
     "identity-popup-mainView-panel-header-span"
   );
-  await BrowserTestUtils.waitForCondition(() =>
+  await TestUtils.waitForCondition(() =>
     headerSpan.innerHTML.includes("example.com")
   );
   return headerSpan.innerHTML;

@@ -15,13 +15,15 @@ const { Chat } = ChromeUtils.importESModule(
 const { MemoryStore } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/services/MemoryStore.sys.mjs"
 );
-const { MODEL_FEATURES } = ChromeUtils.importESModule(
+const { MODEL_FEATURES, SERVICE_TYPES, PURPOSES } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs"
 );
 
 const { PlacesTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/PlacesTestUtils.sys.mjs"
 );
+
+const TEST_MODEL = "test-model";
 
 function getLastAssistantResponse(conversation) {
   return conversation.messages
@@ -50,9 +52,15 @@ add_task(async function test_chat_streams_end_to_end() {
       conversation.addAssistantMessage("text", "");
 
       // withServer sets up the mock HTTP server, so use the real engine
-      const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
-
-      await Chat.fetchWithHistory(conversation, engineInstance);
+      const engine = await openAIEngine.build({
+        model: TEST_MODEL,
+        serviceType: SERVICE_TYPES.AI,
+        purpose: PURPOSES.CHAT,
+        flowId: null,
+        feature: MODEL_FEATURES.CHAT,
+      });
+      conversation.engine = engine;
+      await Chat.fetchWithHistory({ conversation });
 
       Assert.equal(
         getLastAssistantResponse(conversation).content.body,
@@ -130,18 +138,24 @@ add_task(async function test_chat_tool_call_get_open_tabs() {
         followupChunks: ["Here are your tabs."],
       },
       async () => {
-        const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
-
+        const engine = await openAIEngine.build({
+          model: TEST_MODEL,
+          serviceType: SERVICE_TYPES.AI,
+          purpose: PURPOSES.CHAT,
+          flowId: null,
+          feature: MODEL_FEATURES.CHAT,
+        });
         const conversation = new ChatConversation({
           title: "chat title",
           description: "chat desc",
           pageUrl: new URL("https://example.com"),
           pageMeta: {},
         });
+        conversation.engine = engine;
         conversation.addUserMessage("List tabs", "https://example.com", 0);
         conversation.addAssistantMessage("text", "");
 
-        await Chat.fetchWithHistory(conversation, engineInstance);
+        await Chat.fetchWithHistory({ conversation });
 
         Assert.equal(
           getLastAssistantResponse(conversation).content.body,
@@ -205,9 +219,15 @@ add_task(async function test_chat_tool_call_search_browsing_history() {
         conversation.addUserMessage("Search history", "https://example.com", 0);
         conversation.addAssistantMessage("text", "");
 
-        const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
-
-        await Chat.fetchWithHistory(conversation, engineInstance);
+        const engine = await openAIEngine.build({
+          model: TEST_MODEL,
+          serviceType: SERVICE_TYPES.AI,
+          purpose: PURPOSES.CHAT,
+          flowId: null,
+          feature: MODEL_FEATURES.CHAT,
+        });
+        conversation.engine = engine;
+        await Chat.fetchWithHistory({ conversation });
 
         Assert.equal(
           getLastAssistantResponse(conversation).content.body,
@@ -219,10 +239,10 @@ add_task(async function test_chat_tool_call_search_browsing_history() {
           message => message.role === MESSAGE_ROLE.TOOL
         );
         Assert.equal(toolMessages.length, 1, "Tool result recorded");
-        const parsed = JSON.parse(toolMessages[0].content.body);
-        info("got history: " + toolMessages[0].content.body);
+        const toolResult = toolMessages[0].content.body;
+        info("got history: " + JSON.stringify(toolResult));
         Assert.greaterOrEqual(
-          parsed.results.length,
+          toolResult.results.length,
           1,
           "History tool returns stored visits"
         );
@@ -257,9 +277,15 @@ add_task(async function test_chat_tool_call_get_page_content() {
         conversation.addUserMessage("Read page", "https://example.com", 0);
         conversation.addAssistantMessage("text", "");
 
-        const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
-
-        await Chat.fetchWithHistory(conversation, engineInstance);
+        const engine = await openAIEngine.build({
+          model: TEST_MODEL,
+          serviceType: SERVICE_TYPES.AI,
+          purpose: PURPOSES.CHAT,
+          flowId: null,
+          feature: MODEL_FEATURES.CHAT,
+        });
+        conversation.engine = engine;
+        await Chat.fetchWithHistory({ conversation });
 
         Assert.equal(
           getLastAssistantResponse(conversation).content.body,
@@ -286,6 +312,87 @@ add_task(async function test_chat_tool_call_get_page_content() {
     window.document.documentElement.removeAttribute("ai-window");
     BrowserTestUtils.removeTab(tab);
     await new Promise(resolve => pageServer.stop(resolve));
+  }
+});
+
+add_task(async function test_chat_tool_call_get_navigation_info() {
+  const { SmartWindowNavigationInfo } = ChromeUtils.importESModule(
+    "moz-src:///browser/components/aiwindow/models/SmartWindowNavigationInfo.sys.mjs"
+  );
+
+  const FAKE_NAV_RESULTS = [
+    {
+      url: "about:preferences#manageMemories",
+      label: "Manage memories",
+      breadcrumb: "Settings > AI Controls > Smart Window > Manage memories",
+      description: "Memories are what Smart Window learns from your activity.",
+      similarity: 0.85,
+    },
+  ];
+
+  const sb = sinon.createSandbox();
+  sb.stub(SmartWindowNavigationInfo, "getRelevantNavigation").resolves(
+    FAKE_NAV_RESULTS
+  );
+
+  try {
+    await withServer(
+      {
+        toolCall: {
+          name: "get_navigation_info",
+          args: JSON.stringify({ query: "manage memories" }),
+        },
+        followupChunks: ["Navigation ready."],
+      },
+      async () => {
+        const conversation = new ChatConversation({
+          title: "chat title",
+          description: "chat desc",
+          pageUrl: new URL("https://example.com"),
+          pageMeta: {},
+        });
+        conversation.addUserMessage(
+          "How do I manage memories?",
+          "https://example.com",
+          0
+        );
+        conversation.addAssistantMessage("text", "");
+
+        const engine = await openAIEngine.build({
+          model: TEST_MODEL,
+          serviceType: SERVICE_TYPES.AI,
+          purpose: PURPOSES.CHAT,
+          flowId: null,
+          feature: MODEL_FEATURES.CHAT,
+        });
+        conversation.engine = engine;
+        await Chat.fetchWithHistory({ conversation });
+
+        Assert.equal(
+          getLastAssistantResponse(conversation).content.body,
+          "Navigation ready.",
+          "Assistant should stream follow-up text"
+        );
+
+        const toolMessages = conversation.messages.filter(
+          message => message.role === MESSAGE_ROLE.TOOL
+        );
+        Assert.equal(toolMessages.length, 1, "Tool result recorded");
+
+        const navResults = toolMessages[0].content.body;
+        info("got nav results: " + JSON.stringify(navResults));
+        Assert.equal(navResults.length, 1, "Returns the stubbed nav entry");
+        Assert.equal(
+          navResults[0].url,
+          "about:preferences#manageMemories",
+          "Nav entry url flows through"
+        );
+        Assert.ok(navResults[0].label, "Nav entry has label");
+        Assert.ok(navResults[0].breadcrumb, "Nav entry has breadcrumb");
+      }
+    );
+  } finally {
+    sb.restore();
   }
 });
 
@@ -340,9 +447,15 @@ add_task(async function test_chat_tool_call_get_user_memories() {
         );
         conversation.addAssistantMessage("text", "");
 
-        const engineInstance = await openAIEngine.build(MODEL_FEATURES.CHAT);
-
-        await Chat.fetchWithHistory(conversation, engineInstance);
+        const engine = await openAIEngine.build({
+          model: TEST_MODEL,
+          serviceType: SERVICE_TYPES.AI,
+          purpose: PURPOSES.CHAT,
+          flowId: null,
+          feature: MODEL_FEATURES.CHAT,
+        });
+        conversation.engine = engine;
+        await Chat.fetchWithHistory({ conversation });
 
         Assert.equal(
           getLastAssistantResponse(conversation).content.body,

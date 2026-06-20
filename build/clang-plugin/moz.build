@@ -14,9 +14,12 @@ HOST_SOURCES += [
     "CustomTypeAnnotation.cpp",
     "DanglingOnTemporaryChecker.cpp",
     "DiagnosticsMatcher.cpp",
+    "EnumSerializerChecker.cpp",
     "ExplicitImplicitChecker.cpp",
     "ExplicitOperatorBoolChecker.cpp",
+    "FinalCycleCollectingIsupportsChecker.cpp",
     "GlobalVariableInitializationChecker.cpp",
+    "IntToEnumCastChecker.cpp",
     "JSHandleRootedTypedefChecker.cpp",
     "KnownLiveChecker.cpp",
     "KungFuDeathGripChecker.cpp",
@@ -33,6 +36,7 @@ HOST_SOURCES += [
     "NonMemMovableMemberChecker.cpp",
     "NonMemMovableTemplateArgChecker.cpp",
     "NonParamInsideFunctionDeclChecker.cpp",
+    "NonTerminatedStringChecker.cpp",
     "NonTrivialTypeInFfiChecker.cpp",
     "NoPrincipalGetURI.cpp",
     "NoUsingNamespaceMozillaJavaChecker.cpp",
@@ -44,6 +48,7 @@ HOST_SOURCES += [
     "RefCountedThisInsideConstructorChecker.cpp",
     "ScopeChecker.cpp",
     "SprintfLiteralChecker.cpp",
+    "SupportsWeakPtrCycleCollectionChecker.cpp",
     "TrivialCtorDtorChecker.cpp",
     "TrivialDtorChecker.cpp",
     "VariableUsageHelpers.cpp",
@@ -53,6 +58,7 @@ HOST_SOURCES += [
 if CONFIG["OS_ARCH"] == "WINNT":
     HOST_DEFINES["TARGET_IS_WINDOWS"] = True
     HOST_SOURCES += [
+        "EmptyBasesChecker.cpp",
         "FopenUsageChecker.cpp",
         "LoadLibraryUsageChecker.cpp",
     ]

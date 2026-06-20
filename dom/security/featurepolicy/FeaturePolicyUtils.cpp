@@ -42,12 +42,14 @@ static FeatureMap sSupportedFeatures[] = {
      FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"publickey-credentials-get",
      FeaturePolicyUtils::FeaturePolicyValue::eSelf},
+    {"serial", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"speaker-selection", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"storage-access", FeaturePolicyUtils::FeaturePolicyValue::eAll},
     {"screen-wake-lock", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"loopback-network", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"local-network", FeaturePolicyUtils::FeaturePolicyValue::eSelf},
     {"aria-notify", FeaturePolicyUtils::FeaturePolicyValue::eAll},
+    {"picture-in-picture", FeaturePolicyUtils::FeaturePolicyValue::eAll},
 };
 
 /*

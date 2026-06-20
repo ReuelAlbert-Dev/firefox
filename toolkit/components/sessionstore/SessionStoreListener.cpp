@@ -104,7 +104,7 @@ void ContentSessionStore::SetSHistoryChanged() { mSHistoryChanged = true; }
 void ContentSessionStore::OnDocumentStart() {
   nsCString caps = CollectDocShellCapabilities();
   if (!mDocCaps.Equals(caps)) {
-    mDocCaps = caps;
+    mDocCaps = std::move(caps);
     mDocCapChanged = true;
   }
 
@@ -282,17 +282,16 @@ NS_IMETHODIMP TabListener::OnStateChange(nsIWebProgress* aWebProgress,
 
 NS_IMETHODIMP
 TabListener::HandleEvent(Event* aEvent) {
-  EventTarget* target = aEvent->GetTarget();
-  if (!target) {
+  nsINode* node = nsINode::FromEventTargetOrNull(aEvent->GetTarget());
+  if (!node) {
     return NS_OK;
   }
 
-  nsPIDOMWindowOuter* outer = target->GetOwnerGlobalForBindingsInternal();
-  if (!outer || !outer->GetDocShell()) {
+  if (!node->OwnerDoc()->GetDocShell()) {
     return NS_OK;
   }
 
-  RefPtr<BrowsingContext> context = outer->GetBrowsingContext();
+  RefPtr<BrowsingContext> context = node->OwnerDoc()->GetBrowsingContext();
   if (!context || context->CreatedDynamically()) {
     return NS_OK;
   }
@@ -474,15 +473,14 @@ void TabListener::RemoveListeners() {
   RemoveEventListeners();
 
   if (mPrefObserverRegistered) {
-    nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    if (!obs) {
+    nsCOMPtr<nsIPrefBranch> prefBranch =
+        do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (!prefBranch) {
       return;
     }
-    if (mPrefObserverRegistered) {
-      obs->RemoveObserver(this, kTimeOutDisable);
-      obs->RemoveObserver(this, kPrefInterval);
-      mPrefObserverRegistered = false;
-    }
+    prefBranch->RemoveObserver(kTimeOutDisable, this);
+    prefBranch->RemoveObserver(kPrefInterval, this);
+    mPrefObserverRegistered = false;
   }
 }
 

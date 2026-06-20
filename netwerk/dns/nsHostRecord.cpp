@@ -8,7 +8,6 @@
 #include "DNSLogging.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/glean/NetwerkDnsMetrics.h"
-#include "mozilla/ThreadSafety.h"
 #include "TRRService.h"
 #include "mozilla/ProfilerMarkers.h"
 
@@ -86,8 +85,8 @@ bool nsHostKey::operator==(const nsHostKey& other) const {
 }
 
 PLDHashNumber nsHostKey::Hash() const {
-  return AddToHash(HashString(host.get()), HashString(mTrrServer.get()), type,
-                   RES_KEY_FLAGS(flags), af, HashString(originSuffix.get()));
+  return AddToHash(HashString(host), HashString(mTrrServer), type,
+                   RES_KEY_FLAGS(flags), af, HashString(originSuffix));
 }
 
 size_t nsHostKey::SizeOfExcludingThis(
@@ -223,13 +222,13 @@ void AddrHostRecord::ReportUnusable(const NetAddr* aAddress) {
        "used trr=%d\n",
        host.get(), this, mTRRSuccess));
 
-  char buf[kIPv6CStrBufSize];
-  if (aAddress->ToStringBuffer(buf, sizeof(buf))) {
+  nsCString item;
+  if (aAddress->ToString(item)) {
     LOG(
         ("Successfully adding address [%s] to blocklist for host "
          "[%s].\n",
-         buf, host.get()));
-    mUnusableItems.AppendElement(nsCString(buf));
+         item.get(), host.get()));
+    mUnusableItems.AppendElement(item);
   }
 }
 
@@ -245,21 +244,31 @@ size_t AddrHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
 
   n += nsHostKey::SizeOfExcludingThis(mallocSizeOf);
   n += SizeOfResolveHostCallbackListExcludingHead(mCallbacks, mallocSizeOf);
-
-  n += addr_info ? addr_info->SizeOfIncludingThis(mallocSizeOf) : 0;
   n += mallocSizeOf(addr.get());
 
-  n += mUnusableItems.ShallowSizeOfExcludingThis(mallocSizeOf);
-  for (size_t i = 0; i < mUnusableItems.Length(); i++) {
-    n += mUnusableItems[i].SizeOfExcludingThisIfUnshared(mallocSizeOf);
+  {
+    MutexAutoLock lock(addr_info_lock);
+    n += addr_info ? addr_info->SizeOfIncludingThis(mallocSizeOf) : 0;
+    n += mUnusableItems.ShallowSizeOfExcludingThis(mallocSizeOf);
+    for (size_t i = 0; i < mUnusableItems.Length(); i++) {
+      n += mUnusableItems[i].SizeOfExcludingThisIfUnshared(mallocSizeOf);
+    }
   }
   return n;
 }
 
 bool AddrHostRecord::HasUsableResultInternal(
     const mozilla::TimeStamp& now, nsIDNSService::DNSFlags queryFlags) const {
-  // don't use cached negative results for high priority queries.
-  if (negative && IsHighPriority(queryFlags)) {
+  // Normally we don't use cached negative results for high priority queries, so
+  // that user-facing lookups get a fresh answer. Happy Eyeballs, however,
+  // issues high priority per-family (A and AAAA) lookups, so this rule would
+  // force a re-resolution of a permanently-negative family on every connection
+  // (e.g. the AAAA lookup on an IPv4-only network), tanking the DNS cache hit
+  // rate. When HE is enabled, reuse the negative result instead; a background
+  // refresh still runs, so a host that gains the missing family is picked up on
+  // a later lookup.
+  if (negative && IsHighPriority(queryFlags) &&
+      !StaticPrefs::network_http_happy_eyeballs_enabled()) {
     return false;
   }
 
@@ -271,6 +280,7 @@ bool AddrHostRecord::HasUsableResultInternal(
     return true;
   }
 
+  MutexAutoLock lock(addr_info_lock);
   return addr_info || addr;
 }
 
@@ -506,10 +516,8 @@ bool TypeHostRecord::HasUsableResultInternal(
     return true;
   }
 
-  MOZ_PUSH_IGNORE_THREAD_SAFETY
-  // To avoid locking in a const method
+  MutexAutoLock lock(mResultsLock);
   return !mResults.is<Nothing>();
-  MOZ_POP_THREAD_SAFETY
 }
 
 bool TypeHostRecord::RefreshForNegativeResponse() const { return false; }
@@ -688,9 +696,14 @@ void TypeHostRecord::ResolveComplete() {
         .AccumulateSingleSample(static_cast<uint32_t>(mTRRSkippedReason));
   }
 
+  // Record the lookup time, keyed by whether it was resolved over DoH/TRR or
+  // natively; failed lookups go to a separate metric.
   if (mTRRSuccess) {
-    glean::dns::by_type_succeeded_lookup_time.AccumulateRawDuration(
+    glean::dns::https_rr_lookup_time.Get("doh"_ns).AccumulateRawDuration(
         mTrrDuration);
+  } else if (mNativeSuccess) {
+    glean::dns::https_rr_lookup_time.Get("native"_ns)
+        .AccumulateRawDuration(mNativeDuration);
   } else {
     glean::dns::by_type_failed_lookup_time.AccumulateRawDuration(mTrrDuration);
   }

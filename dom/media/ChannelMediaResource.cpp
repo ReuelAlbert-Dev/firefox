@@ -4,6 +4,8 @@
 
 #include "ChannelMediaResource.h"
 
+#include <limits>
+
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/net/OpaqueResponseUtils.h"
@@ -27,6 +29,27 @@ mozilla::LazyLogModule gMediaResourceLog("MediaResource");
   DDMOZ_LOG(gMediaResourceLog, mozilla::LogLevel::Debug, msg, ##__VA_ARGS__)
 
 namespace mozilla {
+
+namespace {
+
+bool IsContentRangeWithinMediaCacheLimits(int64_t aRangeStart,
+                                          int64_t aRangeEnd,
+                                          int64_t aRangeTotal) {
+  if (!MediaCacheStream::IsOffsetAllowed(aRangeStart) ||
+      !MediaCacheStream::IsOffsetAllowed(aRangeEnd)) {
+    return false;
+  }
+
+  // MediaCache advances to the next write position after consuming a range.
+  if (aRangeEnd == std::numeric_limits<int64_t>::max() ||
+      !MediaCacheStream::IsOffsetAllowed(aRangeEnd + 1)) {
+    return false;
+  }
+
+  return aRangeTotal == -1 || MediaCacheStream::IsOffsetAllowed(aRangeTotal);
+}
+
+}  // namespace
 
 ChannelMediaResource::ChannelMediaResource(MediaResourceCallback* aCallback,
                                            nsIChannel* aChannel, nsIURI* aURI,
@@ -60,7 +83,8 @@ nsresult ChannelMediaResource::Listener::OnStartRequest(nsIRequest* aRequest) {
   AssertIsOnMainThread();
   mLock.NoteOnMainThread();
   if (!mResource) return NS_OK;
-  return mResource->OnStartRequest(aRequest, mOffset);
+  RefPtr<ChannelMediaResource> resource = mResource;
+  return resource->OnStartRequest(aRequest, mOffset);
 }
 
 nsresult ChannelMediaResource::Listener::OnStopRequest(nsIRequest* aRequest,
@@ -68,7 +92,8 @@ nsresult ChannelMediaResource::Listener::OnStopRequest(nsIRequest* aRequest,
   AssertIsOnMainThread();
   mLock.NoteOnMainThread();
   if (!mResource) return NS_OK;
-  return mResource->OnStopRequest(aRequest, aStatus);
+  RefPtr<ChannelMediaResource> resource = mResource;
+  return resource->OnStopRequest(aRequest, aStatus);
 }
 
 nsresult ChannelMediaResource::Listener::OnDataAvailable(
@@ -221,6 +246,13 @@ nsresult ChannelMediaResource::OnStartRequest(nsIRequest* aRequest,
       int64_t rangeTotal = 0;
       rv = ParseContentRangeHeader(hc, rangeStart, rangeEnd, rangeTotal);
 
+      if (NS_FAILED(rv) && rv != NS_ERROR_NOT_AVAILABLE) {
+        mCallback->NotifyNetworkError(
+            MediaResult(NS_ERROR_FAILURE, "invalid Content-Range"));
+        CloseChannel();
+        return NS_OK;
+      }
+
       // We received 'Content-Range', so the server accepts range requests.
       bool gotRangeHeader = NS_SUCCEEDED(rv);
 
@@ -259,6 +291,17 @@ nsresult ChannelMediaResource::OnStartRequest(nsIRequest* aRequest,
   } else {
     // Not an HTTP channel. Assume data will be sent from position zero.
     startOffset = 0;
+
+    // Pick up the content length the channel reports up front (data:, jar:,
+    // resource:, ...). Without this, the resource is treated as a live
+    // stream of unknown size and demuxers that estimate duration from the
+    // stream length (e.g. CBR mp3 with no Xing/Info header) report
+    // Infinity.
+    int64_t channelLength = -1;
+    if (NS_SUCCEEDED(mChannel->GetContentLength(&channelLength)) &&
+        channelLength >= 0) {
+      length = channelLength;
+    }
   }
 
   // Update principals before OnDataAvailable() putting the data in the cache.
@@ -321,6 +364,14 @@ nsresult ChannelMediaResource::ParseContentRangeHeader(
   aRangeStart = std::get<0>(rangeOrErr.inspect());
   aRangeEnd = std::get<1>(rangeOrErr.inspect());
   aRangeTotal = std::get<2>(rangeOrErr.inspect());
+
+  if (!IsContentRangeWithinMediaCacheLimits(aRangeStart, aRangeEnd,
+                                            aRangeTotal)) {
+    LOG("Rejecting bytes [%" PRId64 "] to [%" PRId64 "] of [%" PRId64
+        "] for decoder[%p] due to media cache limits",
+        aRangeStart, aRangeEnd, aRangeTotal, mCallback.get());
+    return NS_ERROR_ILLEGAL_VALUE;
+  }
 
   LOG("Received bytes [%" PRId64 "] to [%" PRId64 "] of [%" PRId64
       "] for decoder[%p]",

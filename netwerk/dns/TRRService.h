@@ -5,6 +5,7 @@
 #ifndef TRRService_h_
 #define TRRService_h_
 
+#include "mozilla/Atomics.h"
 #include "mozilla/DataMutex.h"
 #include "nsHostResolver.h"
 #include "nsIObserver.h"
@@ -64,7 +65,9 @@ class TRRService : public TRRServiceBase,
   bool IsTemporarilyBlocked(const nsACString& aHost,
                             const nsACString& aOriginSuffix,
                             bool aPrivateBrowsing, bool aParentsToo);
-  bool IsExcludedFromTRR(const nsACString& aHost);
+  bool IsExcludedFromTRR(
+      const nsACString& aHost,
+      nsIRequest::TRRMode aRequestMode = nsIRequest::TRR_DEFAULT_MODE);
 
   bool MaybeBootstrap(const nsACString& possible, nsACString& result);
   void RecordTRRStatus(TRR* aTrrRequest);
@@ -123,7 +126,9 @@ class TRRService : public TRRServiceBase,
 
   bool IsDomainBlocked(const nsACString& aHost, const nsACString& aOriginSuffix,
                        bool aPrivateBrowsing);
-  bool IsExcludedFromTRR_unlocked(const nsACString& aHost) MOZ_REQUIRES(mLock);
+  bool IsExcludedFromTRR_unlocked(const nsACString& aHost,
+                                  nsIRequest::TRRMode aRequestMode)
+      MOZ_REQUIRES(mLock);
 
   void RebuildSuffixList(nsTArray<nsCString>&& aSuffixList);
 
@@ -136,6 +141,7 @@ class TRRService : public TRRServiceBase,
   // or false if mPrivateURI already had that value.
   bool MaybeSetPrivateURI(const nsACString& aURI) override;
   void ClearEntireCache();
+  void MaybeSpeculativeConnectToTRR();
 
   virtual void ReadEtcHostsFile() override;
   void AddEtcHosts(const nsTArray<nsCString>&);
@@ -369,7 +375,7 @@ class TRRService : public TRRServiceBase,
 
   ConfirmationWrapper mConfirmation;
 
-  bool mParentalControlEnabled{false};
+  Atomic<bool, Relaxed> mParentalControlEnabled{false};
   // This is used to track whether a confirmation was triggered by a URI change,
   // so we don't trigger another one just because other prefs have changed.
   bool mConfirmationTriggered{false};

@@ -25,7 +25,7 @@ class Lock final : public PromiseNativeHandler, public nsWrapperCache {
   friend class LockManager;
 
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(Lock)
 
   Lock(nsIGlobalObject* aGlobal,
@@ -37,7 +37,7 @@ class Lock final : public PromiseNativeHandler, public nsWrapperCache {
   ~Lock() = default;
 
  public:
-  nsIGlobalObject* GetParentObject() const { return mOwner; };
+  nsIGlobalObject* GetParentObject() const { return mGlobal; };
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -55,7 +55,7 @@ class Lock final : public PromiseNativeHandler, public nsWrapperCache {
                                 ErrorResult& aRv) override;
 
  private:
-  nsCOMPtr<nsIGlobalObject> mOwner;
+  nsCOMPtr<nsIGlobalObject> mGlobal;
   WeakPtr<locks::LockRequestChild> mLockRequestChild;
 
   nsString mName;

@@ -11,6 +11,7 @@ XPIDL_SOURCES += [
     "nsIDebug2.idl",
     "nsIException.idl",
     "nsIInterfaceRequestor.idl",
+    "nsIKeyedUUIDMapper.idl",
     "nsIMemoryInfoDumper.idl",
     "nsIMemoryReporter.idl",
     "nsISecurityConsoleMessage.idl",
@@ -65,6 +66,7 @@ XPCOM_MANIFESTS += [
 EXPORTS += [
     "!ErrorList.h",
     "!ErrorNamesInternal.h",
+    "!extra_xpc_msg.h",
     "CodeAddressService.h",
     "nsAlgorithm.h",
     "nsAutoRef.h",
@@ -175,6 +177,7 @@ UNIFIED_SOURCES += [
     "GkRustUtils.cpp",
     "HoldDropJSObjects.cpp",
     "JSObjectHolder.cpp",
+    "KeyedUUIDMapper.cpp",
     "LogCommandLineHandler.cpp",
     "Logging.cpp",
     "LogModulePrefWatcher.cpp",
@@ -266,6 +269,12 @@ GeneratedFile(
     entry_point="error_list_json",
     inputs=extra_errors,
 )
+GeneratedFile(
+    "extra_xpc_msg.h",
+    script="ErrorList.py",
+    entry_point="extra_xpc_msg",
+    inputs=extra_errors,
+)
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
     SOURCES += [
@@ -289,7 +298,6 @@ FINAL_LIBRARY = "xul"
 
 LOCAL_INCLUDES += [
     "../build",
-    "/dom/base",
     "/mfbt",
     "/netwerk/base",
     "/xpcom/ds",
@@ -307,5 +315,14 @@ if CONFIG["MOZ_PHC"]:
 
     UNIFIED_SOURCES += ["PHCManager.cpp"]
 
+with Files("nsCycleCollect*"):
+    BUG_COMPONENT = ("Core", "Cycle Collector")
+
+with Files("*CycleCollector*"):
+    BUG_COMPONENT = ("Core", "Cycle Collector")
+
 with Files("PHCManager.*"):
     BUG_COMPONENT = ("Core", "Memory Allocator")
+
+with Files("*KeyedUUIDMapper*"):
+    BUG_COMPONENT = ("WebExtensions", "General")

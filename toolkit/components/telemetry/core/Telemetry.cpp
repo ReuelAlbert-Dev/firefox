@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -182,8 +180,8 @@ class TelemetryImpl final : public nsITelemetry,
   friend class nsFetchTelemetryData;
 };
 
-MOZ_RELEASE_CONSTINIT StaticDataMutex<TelemetryImpl*> TelemetryImpl::sTelemetry(
-    nullptr, nullptr);
+constinit StaticDataMutex<TelemetryImpl*> TelemetryImpl::sTelemetry(nullptr,
+                                                                    nullptr);
 
 MOZ_DEFINE_MALLOC_SIZE_OF(TelemetryMallocSizeOf)
 
@@ -506,7 +504,7 @@ bool TelemetryImpl::ReflectSQL(const SlowSQLEntryType* entry, const Stat* stat,
                                JSContext* cx, JS::Handle<JSObject*> obj) {
   if (stat->hitCount == 0) return true;
 
-  const nsACString& sql = entry->GetKey();
+  nsPromiseFlatCString sql(entry->GetKey());
 
   JS::Rooted<JSObject*> arrayObj(cx, JS::NewArrayObject(cx, 0));
   if (!arrayObj) {
@@ -515,8 +513,7 @@ bool TelemetryImpl::ReflectSQL(const SlowSQLEntryType* entry, const Stat* stat,
   return (
       JS_DefineElement(cx, arrayObj, 0, stat->hitCount, JSPROP_ENUMERATE) &&
       JS_DefineElement(cx, arrayObj, 1, stat->totalTime, JSPROP_ENUMERATE) &&
-      JS_DefineProperty(cx, obj, sql.BeginReading(), arrayObj,
-                        JSPROP_ENUMERATE));
+      JS_DefineProperty(cx, obj, sql.get(), arrayObj, JSPROP_ENUMERATE));
 }
 
 bool TelemetryImpl::ReflectMainThreadSQL(SlowSQLEntryType* entry, JSContext* cx,

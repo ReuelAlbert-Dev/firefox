@@ -312,7 +312,7 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mUpdatedDimensions(false),
       mSizeMode(nsSizeMode_Normal),
       mCreatingWindow(false),
-      mMarkedDestroying(false),
+      mHoldingGroupKeepAlive(false),
       mIsDestroyed(false),
       mRemoteTargetSetsCursor(false),
       mIsPreservingLayers(false),
@@ -497,7 +497,7 @@ already_AddRefed<nsIWidget> BrowserParent::GetDocWidget() const {
       nsContentUtils::WidgetForDocument(mFrameElement->OwnerDoc()));
 }
 
-nsIXULBrowserWindow* BrowserParent::GetXULBrowserWindow() {
+already_AddRefed<nsIXULBrowserWindow> BrowserParent::GetXULBrowserWindow() {
   if (!mFrameElement) {
     return nullptr;
   }
@@ -520,7 +520,7 @@ nsIXULBrowserWindow* BrowserParent::GetXULBrowserWindow() {
 
   nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow;
   window->GetXULBrowserWindow(getter_AddRefs(xulBrowserWindow));
-  return xulBrowserWindow;
+  return xulBrowserWindow.forget();
 }
 
 uint32_t BrowserParent::GetMaxTouchPoints(Element* aElement) {
@@ -581,7 +581,7 @@ ParentShowInfo BrowserParent::GetShowInfo() {
     mFrameElement->GetAttr(nsGkAtoms::name, name);
   }
   return ParentShowInfo(name, false, IsTransparent(), mDPI, mRounding,
-                        mDefaultScale.scale);
+                        mDefaultScale.scale, mDesktopToDeviceScale.scale);
 }
 
 already_AddRefed<nsIPrincipal> BrowserParent::GetContentPrincipal() const {
@@ -708,6 +708,13 @@ void BrowserParent::Deactivated() {
   }
   UnlockNativePointer();
   UnsetTopLevelWebFocus(this);
+  if (sFocus == this) {
+    sFocus = sTopLevelWebFocus;
+    LOGBROWSERFOCUS(
+        ("Deactivated moved focus to top-level web; old: %p, new: %p", this,
+         sFocus));
+    IMEStateManager::OnFocusMovedBetweenBrowsers(this, sFocus);
+  }
   UnsetLastMouseRemoteTarget(this);
   PointerLockManager::ReleaseLockedRemoteTarget(this);
   PointerEventHandler::ReleasePointerCaptureRemoteTarget(this);
@@ -760,15 +767,14 @@ void BrowserParent::Destroy() {
   mContentParentKeepAlive = nullptr;
 #endif
 
-  // This `AddKeepAlive` will be cleared if `mMarkedDestroying` is set in
+  // This `AddKeepAlive` will be cleared if `mHoldingGroupKeepAlive` is set in
   // `ActorDestroy`. Out of caution, we don't add the `KeepAlive` if our IPC
   // actor has somehow already been destroyed, as that would mean `ActorDestroy`
   // won't be called.
-  if (CanRecv()) {
+  if (CanSend()) {
     mBrowsingContext->Group()->AddKeepAlive();
+    mHoldingGroupKeepAlive = true;
   }
-
-  mMarkedDestroying = true;
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvDidUnsuppressPainting() {
@@ -845,10 +851,9 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
     }
   }
 
-  // If we were shutting down normally, we held a reference to our
-  // BrowsingContextGroup in `BrowserParent::Destroy`. Clear that reference
-  // here.
-  if (mMarkedDestroying) {
+  // Release the reference to our `BrowsingContextGroup` we took in
+  // `BrowserParent::Destroy`.
+  if (mHoldingGroupKeepAlive) {
     mBrowsingContext->Group()->RemoveKeepAlive();
   }
 
@@ -1011,6 +1016,8 @@ void BrowserParent::InitRendering() {
   RefPtr<nsIWidget> widget = GetTopLevelWidget();
   if (widget) {
     (void)SendSafeAreaInsetsChanged(widget->GetSafeAreaInsets());
+    (void)SendInitSupportsUnadjustedMovement(
+        widget->SupportsUnadjustedMovement());
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
@@ -1132,7 +1139,6 @@ void BrowserParent::UpdateDimensions(const LayoutDeviceIntRect& rect,
     mChromeOffset = chromeOffset;
 
     (void)SendUpdateDimensions(GetDimensionInfo());
-    UpdateNativePointerLockCenter(widget);
   }
 }
 
@@ -1141,14 +1147,6 @@ DimensionInfo BrowserParent::GetDimensionInfo() {
   CSSSize unscaledSize = mDimensions / mDefaultScale;
   return DimensionInfo(unscaledRect, unscaledSize, mClientOffset,
                        mChromeOffset);
-}
-
-void BrowserParent::UpdateNativePointerLockCenter(nsIWidget* aWidget) {
-  if (!mLockedNativePointer) {
-    return;
-  }
-  aWidget->SetNativePointerLockCenter(
-      LayoutDeviceIntRect(mChromeOffset, mDimensions).Center());
 }
 
 void BrowserParent::SizeModeChanged(const nsSizeMode& aSizeMode) {
@@ -1366,46 +1364,41 @@ IPCResult BrowserParent::RecvNewWindowGlobal(
   if (!browsingContext) {
     return IPC_FAIL(this, "Cannot create for missing BrowsingContext");
   }
+  if (!browsingContext->Group()->IsKnownForChildID(OtherChildID())) {
+    return IPC_FAIL(this, "Invalid BrowsingContextGroup for process");
+  }
   if (!aInit.principal()) {
     return IPC_FAIL(this, "Cannot create without valid principal");
   }
+  if (!aInit.documentURI()) {
+    return IPC_FAIL(this, "Cannot create without valid documentURI");
+  }
+
+  nsCOMPtr<nsIURI> docURI = aInit.documentURI();
+  WindowGlobalParent* parentWgp = browsingContext->GetParentWindowContext();
 
   // Ensure we never load a document with a content principal in
   // the wrong type of webIsolated process
+  // NOTE: Keep this in sync with the similar check in
+  // DocumentLoadListener::TriggerRedirectToRealChannel.
   EnumSet<ValidatePrincipalOptions> validationOptions = {};
-  nsCOMPtr<nsIURI> docURI = aInit.documentURI();
-  if (docURI->SchemeIs("blob") || docURI->SchemeIs("chrome")) {
-    // XXXckerschb TODO - Do not use SystemPrincipal for:
-    // Bug 1699385: Remove allowSystem for blobs
-    // Bug 1698087: chrome://devtools/content/shared/webextension-fallback.html
-    // chrome reftests, e.g.
-    //   * chrome://reftest/content/writing-mode/ua-style-sheet-button-1a-ref.html
-    //   * chrome://reftest/content/xul-document-load/test003.xhtml
-    //   * chrome://reftest/content/forms/input/text/centering-1.xhtml
-    validationOptions = {ValidatePrincipalOptions::AllowSystem};
+  // FIXME(bug 1699385): Remove allowSystem for blobs
+  // FIXME(bug 1698087): chrome://devtools/**/webextension-fallback.html
+  // Automation-Only: chrome://reftest/** + blank subframes
+  if (docURI->SchemeIs("blob") || docURI->SchemeIs("chrome") ||
+      (xpc::IsInAutomation() && NS_IsAboutBlank(docURI) && parentWgp &&
+       parentWgp->Manager() == this &&
+       parentWgp->DocumentPrincipal()->IsSystemPrincipal())) {
+    validationOptions += ValidatePrincipalOptions::AllowSystem;
   }
-
-  // Some reftests have frames inside their chrome URIs and those load
-  // about:blank:
-  if (xpc::IsInAutomation() && docURI->SchemeIs("about")) {
-    WindowGlobalParent* wgp = browsingContext->GetParentWindowContext();
-    nsAutoCString spec;
-    NS_ENSURE_SUCCESS(docURI->GetSpec(spec),
-                      IPC_FAIL(this, "Should have spec for about: URI"));
-    if (spec.Equals("about:blank") && wgp &&
-        wgp->DocumentPrincipal()->IsSystemPrincipal()) {
-      validationOptions = {ValidatePrincipalOptions::AllowSystem};
-    }
-  }
-
   if (!Manager()->ValidatePrincipal(aInit.principal(), validationOptions)) {
-    ContentParent::LogAndAssertFailedPrincipalValidationInfo(aInit.principal(),
-                                                             __func__);
+    return ContentParent::PrincipalValidationIpcFail(aInit.principal(), this,
+                                                     __func__);
   }
 
   // Construct our new WindowGlobalParent, bind, and initialize it.
   RefPtr<WindowGlobalParent> wgp =
-      WindowGlobalParent::CreateDisconnected(aInit);
+      WindowGlobalParent::CreateDisconnected(aInit, Manager());
   BindPWindowGlobalEndpoint(std::move(aEndpoint), wgp);
   wgp->Init();
   return IPC_OK();
@@ -1463,7 +1456,7 @@ void BrowserParent::MouseEnterIntoWidget() {
   mIsMouseEnterIntoWidgetEventSuppressed = true;
 }
 
-void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
+void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aMouseOrPointerEvent) {
   if (mIsDestroyed) {
     return;
   }
@@ -1472,8 +1465,8 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
   // process directly (see
   // https://bugzilla.mozilla.org/show_bug.cgi?id=1549355), we probably don't
   // need to check mReason then.
-  if (aEvent.mReason == WidgetMouseEvent::eReal) {
-    if (aEvent.mMessage == eMouseExitFromWidget) {
+  if (aMouseOrPointerEvent.mReason == WidgetMouseEvent::eReal) {
+    if (aMouseOrPointerEvent.mMessage == eMouseExitFromWidget) {
       // Since we are leaving this remote target, so don't need to update
       // sLastMouseRemoteTarget, and if we are sLastMouseRemoteTarget, reset it
       // to null.
@@ -1485,7 +1478,7 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
     }
   }
 
-  aEvent.mRefPoint = TransformParentToChild(aEvent);
+  aMouseOrPointerEvent.mRefPoint = TransformParentToChild(aMouseOrPointerEvent);
 
   if (const nsCOMPtr<nsIWidget> widget = GetWidget()) {
     // When we mouseenter the remote target, the remote target's cursor should
@@ -1493,44 +1486,50 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
     // XXX We update cursor even for non-mouse pointer moves in
     // EventStateManager.  Thus, we might not be able to manage it only with
     // eMouseEnterIntoWidget and eMouseExitFromWidget.
-    if (eMouseEnterIntoWidget == aEvent.mMessage) {
+    if (eMouseEnterIntoWidget == aMouseOrPointerEvent.mMessage) {
       mRemoteTargetSetsCursor = true;
       MOZ_LOG_DEBUG_ONLY(
           EventStateManager::MouseCursorUpdateLogRef(), LogLevel::Debug,
-          ("BrowserParent::SendRealMouseEvent(aEvent={pointerId=%u, source=%s, "
-           "message=%s, reason=%s}): Got the rights to update cursor (%p, "
-           "widget=%p)",
-           aEvent.pointerId, InputSourceToString(aEvent.mInputSource).get(),
-           ToChar(aEvent.mMessage), RealOrSynthesized(aEvent.IsReal()), this,
+          ("BrowserParent::SendRealMouseEvent(aMouseOrPointerEvent={pointerId=%"
+           "u, source=%s, message=%s, reason=%s}): Got the rights to update "
+           "cursor (%p, widget=%p)",
+           aMouseOrPointerEvent.pointerId,
+           InputSourceToString(aMouseOrPointerEvent.mInputSource).get(),
+           ToChar(aMouseOrPointerEvent.mMessage),
+           RealOrSynthesized(aMouseOrPointerEvent.IsReal()), this,
            widget.get()));
       if (!EventStateManager::CursorSettingManagerHasLockedCursor()) {
         widget->SetCursor(mCursor);
         EventStateManager::ClearCursorSettingManager();
         MOZ_LOG_DEBUG_ONLY(
             EventStateManager::MouseCursorUpdateLogRef(), LogLevel::Info,
-            ("BrowserParent::SendRealMouseEvent(aEvent={pointerId=%u, "
-             "source=%s, message=%s, reason=%s): Updated cursor to the pending "
-             "one (%p, widget=%p)",
-             aEvent.pointerId, InputSourceToString(aEvent.mInputSource).get(),
-             ToChar(aEvent.mMessage), RealOrSynthesized(aEvent.IsReal()), this,
+            ("BrowserParent::SendRealMouseEvent(aMouseOrPointerEvent={"
+             "pointerId=%u, source=%s, message=%s, reason=%s): Updated cursor "
+             "to the pending one (%p, widget=%p)",
+             aMouseOrPointerEvent.pointerId,
+             InputSourceToString(aMouseOrPointerEvent.mInputSource).get(),
+             ToChar(aMouseOrPointerEvent.mMessage),
+             RealOrSynthesized(aMouseOrPointerEvent.IsReal()), this,
              widget.get()));
       }
-    } else if (eMouseExitFromWidget == aEvent.mMessage) {
+    } else if (eMouseExitFromWidget == aMouseOrPointerEvent.mMessage) {
       mRemoteTargetSetsCursor = false;
       MOZ_LOG_DEBUG_ONLY(
           EventStateManager::MouseCursorUpdateLogRef(), LogLevel::Debug,
-          ("BrowserParent::SendRealMouseEvent(aEvent={pointerId=%u, source=%s, "
-           "message=%s, reason=%s}): Lost the rights to update cursor (%p, "
-           "widget=%p)",
-           aEvent.pointerId, InputSourceToString(aEvent.mInputSource).get(),
-           ToChar(aEvent.mMessage), RealOrSynthesized(aEvent.IsReal()), this,
+          ("BrowserParent::SendRealMouseEvent(aMouseOrPointerEvent={pointerId=%"
+           "u, source=%s, message=%s, reason=%s}): Lost the rights to update "
+           "cursor (%p, widget=%p)",
+           aMouseOrPointerEvent.pointerId,
+           InputSourceToString(aMouseOrPointerEvent.mInputSource).get(),
+           ToChar(aMouseOrPointerEvent.mMessage),
+           RealOrSynthesized(aMouseOrPointerEvent.IsReal()), this,
            widget.get()));
     }
   }
   if (!mIsReadyToHandleInputEvents) {
-    if (eMouseEnterIntoWidget == aEvent.mMessage) {
+    if (eMouseEnterIntoWidget == aMouseOrPointerEvent.mMessage) {
       mIsMouseEnterIntoWidgetEventSuppressed = true;
-    } else if (eMouseExitFromWidget == aEvent.mMessage) {
+    } else if (eMouseExitFromWidget == aMouseOrPointerEvent.mMessage) {
       mIsMouseEnterIntoWidgetEventSuppressed = false;
     }
     return;
@@ -1547,72 +1546,84 @@ void BrowserParent::SendRealMouseEvent(WidgetMouseEvent& aEvent) {
     // due to its corresponding BrowserChild wasn't ready to handle it, we have
     // to resend it when the BrowserChild is ready.
     mIsMouseEnterIntoWidgetEventSuppressed = false;
-    WidgetMouseEvent localEvent(aEvent);
-    localEvent.mMessage = eMouseEnterIntoWidget;
-    DebugOnly<bool> ret =
-        isInputPriorityEventEnabled
-            ? SendRealMouseEnterExitWidgetEvent(localEvent, guid, blockId)
-            : SendNormalPriorityRealMouseEnterExitWidgetEvent(localEvent, guid,
-                                                              blockId);
+    WidgetMouseEvent mouseEnterIntoWidgetEvent =
+        WidgetMouseEvent::MakeLossyCopy(aMouseOrPointerEvent,
+                                        eMouseEnterIntoWidget);
+    DebugOnly<bool> ret = isInputPriorityEventEnabled
+                              ? SendRealMouseEnterExitWidgetEvent(
+                                    mouseEnterIntoWidgetEvent, guid, blockId)
+                              : SendNormalPriorityRealMouseEnterExitWidgetEvent(
+                                    mouseEnterIntoWidgetEvent, guid, blockId);
     NS_WARNING_ASSERTION(ret, "SendRealMouseEnterExitWidgetEvent() failed");
-    MOZ_ASSERT(!ret || localEvent.HasBeenPostedToRemoteProcess());
+    MOZ_ASSERT(!ret ||
+               mouseEnterIntoWidgetEvent.HasBeenPostedToRemoteProcess());
   }
 
-  if (eMouseMove == aEvent.mMessage) {
-    if (aEvent.mReason == WidgetMouseEvent::eSynthesized) {
+  if (eMouseMove == aMouseOrPointerEvent.mMessage) {
+    if (aMouseOrPointerEvent.mReason == WidgetMouseEvent::eSynthesized) {
       DebugOnly<bool> ret =
           isInputPriorityEventEnabled
-              ? SendSynthMouseMoveEvent(aEvent, guid, blockId)
-              : SendNormalPrioritySynthMouseMoveEvent(aEvent, guid, blockId);
+              ? SendSynthMouseMoveEvent(aMouseOrPointerEvent, guid, blockId)
+              : SendNormalPrioritySynthMouseMoveEvent(aMouseOrPointerEvent,
+                                                      guid, blockId);
       NS_WARNING_ASSERTION(ret, "SendSynthMouseMoveEvent() failed");
-      MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+      MOZ_ASSERT(!ret || aMouseOrPointerEvent.HasBeenPostedToRemoteProcess());
       return;
     }
 
-    if (!aEvent.mFlags.mIsSynthesizedForTests) {
+    // Don't compress mousemove events:
+    // - Every event is important for tests, since synthesized input events
+    //   may occur faster than real user interactions.
+    // - If the platform provides movement data, avoid compression to prevent
+    //   losing that data.
+    if (aMouseOrPointerEvent.mFlags.mIsSynthesizedForTests ||
+        aMouseOrPointerEvent.mMovement) {
       DebugOnly<bool> ret =
           isInputPriorityEventEnabled
-              ? SendRealMouseMoveEvent(aEvent, guid, blockId)
-              : SendNormalPriorityRealMouseMoveEvent(aEvent, guid, blockId);
-      NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEvent() failed");
-      MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+              ? SendRealMouseMoveEventNoCompress(aMouseOrPointerEvent, guid,
+                                                 blockId)
+              : SendNormalPriorityRealMouseMoveEventNoCompress(
+                    aMouseOrPointerEvent, guid, blockId);
+      NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEventNoCompress() failed");
+      MOZ_ASSERT(!ret || aMouseOrPointerEvent.HasBeenPostedToRemoteProcess());
       return;
     }
 
     DebugOnly<bool> ret =
         isInputPriorityEventEnabled
-            ? SendRealMouseMoveEventForTests(aEvent, guid, blockId)
-            : SendNormalPriorityRealMouseMoveEventForTests(aEvent, guid,
-                                                           blockId);
-    NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEventForTests() failed");
-    MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+            ? SendRealMouseMoveEvent(aMouseOrPointerEvent, guid, blockId)
+            : SendNormalPriorityRealMouseMoveEvent(aMouseOrPointerEvent, guid,
+                                                   blockId);
+    NS_WARNING_ASSERTION(ret, "SendRealMouseMoveEvent() failed");
+    MOZ_ASSERT(!ret || aMouseOrPointerEvent.HasBeenPostedToRemoteProcess());
     return;
   }
 
-  if (eMouseEnterIntoWidget == aEvent.mMessage ||
-      eMouseExitFromWidget == aEvent.mMessage) {
-    DebugOnly<bool> ret =
-        isInputPriorityEventEnabled
-            ? SendRealMouseEnterExitWidgetEvent(aEvent, guid, blockId)
-            : SendNormalPriorityRealMouseEnterExitWidgetEvent(aEvent, guid,
-                                                              blockId);
+  if (eMouseEnterIntoWidget == aMouseOrPointerEvent.mMessage ||
+      eMouseExitFromWidget == aMouseOrPointerEvent.mMessage) {
+    DebugOnly<bool> ret = isInputPriorityEventEnabled
+                              ? SendRealMouseEnterExitWidgetEvent(
+                                    aMouseOrPointerEvent, guid, blockId)
+                              : SendNormalPriorityRealMouseEnterExitWidgetEvent(
+                                    aMouseOrPointerEvent, guid, blockId);
     NS_WARNING_ASSERTION(ret, "SendRealMouseEnterExitWidgetEvent() failed");
-    MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+    MOZ_ASSERT(!ret || aMouseOrPointerEvent.HasBeenPostedToRemoteProcess());
     return;
   }
 
   DebugOnly<bool> ret =
       isInputPriorityEventEnabled
-          ? aEvent.mClass == ePointerEventClass
-                ? SendRealPointerButtonEvent(*aEvent.AsPointerEvent(), guid,
-                                             blockId)
-                : SendRealMouseButtonEvent(aEvent, guid, blockId)
-      : aEvent.mClass == ePointerEventClass
-          ? SendNormalPriorityRealPointerButtonEvent(*aEvent.AsPointerEvent(),
-                                                     guid, blockId)
-          : SendNormalPriorityRealMouseButtonEvent(aEvent, guid, blockId);
+          ? aMouseOrPointerEvent.mClass == ePointerEventClass
+                ? SendRealPointerButtonEvent(
+                      *aMouseOrPointerEvent.AsPointerEvent(), guid, blockId)
+                : SendRealMouseButtonEvent(aMouseOrPointerEvent, guid, blockId)
+      : aMouseOrPointerEvent.mClass == ePointerEventClass
+          ? SendNormalPriorityRealPointerButtonEvent(
+                *aMouseOrPointerEvent.AsPointerEvent(), guid, blockId)
+          : SendNormalPriorityRealMouseButtonEvent(aMouseOrPointerEvent, guid,
+                                                   blockId);
   NS_WARNING_ASSERTION(ret, "SendRealMouseButtonEvent() failed");
-  MOZ_ASSERT(!ret || aEvent.HasBeenPostedToRemoteProcess());
+  MOZ_ASSERT(!ret || aMouseOrPointerEvent.HasBeenPostedToRemoteProcess());
 }
 
 LayoutDeviceToCSSScale BrowserParent::GetLayoutDeviceToCSSScale() {
@@ -1808,23 +1819,12 @@ mozilla::ipc::IPCResult BrowserParent::RecvDispatchTouchEvent(
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
-    const uint32_t& aType, const WidgetKeyboardEvent& aEvent,
+    const NativeKeyBindingsType& aType, const WidgetKeyboardEvent& aEvent,
     nsTArray<CommandInt>* aCommands) {
   MOZ_ASSERT(aCommands);
   MOZ_ASSERT(aCommands->IsEmpty());
 
   NS_ENSURE_TRUE(xpc::IsInAutomation(), IPC_FAIL(this, "Unexpected event"));
-
-  NativeKeyBindingsType keyBindingsType =
-      static_cast<NativeKeyBindingsType>(aType);
-  switch (keyBindingsType) {
-    case NativeKeyBindingsType::SingleLineEditor:
-    case NativeKeyBindingsType::MultiLineEditor:
-    case NativeKeyBindingsType::RichTextEditor:
-      break;
-    default:
-      return IPC_FAIL(this, "Invalid aType value");
-  }
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
@@ -1843,8 +1843,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvRequestNativeKeyBindings(
           widget->GetTextEventDispatcher()) {
     writingMode = dispatcher->MaybeQueryWritingModeAtSelection();
   }
-  if (localEvent.InitEditCommandsFor(keyBindingsType, writingMode)) {
-    *aCommands = localEvent.EditCommandsConstRef(keyBindingsType).Clone();
+  if (localEvent.InitEditCommandsFor(aType, writingMode)) {
+    *aCommands = localEvent.EditCommandsConstRef(aType).Clone();
   }
 
   return IPC_OK();
@@ -1913,8 +1913,9 @@ NS_IMPL_ISUPPORTS(SynthesizedEventCallback, nsISynthesizedEventCallback)
 
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeKeyEvent(
     const int32_t& aNativeKeyboardLayout, const int32_t& aNativeKeyCode,
-    const uint32_t& aModifierFlags, const nsString& aCharacters,
-    const nsString& aUnmodifiedCharacters, const Maybe<uint64_t>& aCallbackId) {
+    const nsIWidget::NativeModifiers& aModifierFlags,
+    const nsString& aCharacters, const nsString& aUnmodifiedCharacters,
+    const Maybe<uint64_t>& aCallbackId) {
   NS_ENSURE_TRUE(xpc::IsInAutomation(), IPC_FAIL(this, "Unexpected event"));
 
   nsCOMPtr<nsISynthesizedEventCallback> callback =
@@ -1928,22 +1929,18 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeKeyEvent(
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeMouseEvent(
-    const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
-    const int16_t& aButton, const uint32_t& aModifierFlags,
+    const LayoutDeviceIntPoint& aPoint,
+    const nsIWidget::NativeMouseMessage& aNativeMessage,
+    const mozilla::MouseButton& aButton,
+    const nsIWidget::NativeModifiers& aModifierFlags,
     const Maybe<uint64_t>& aCallbackId) {
   NS_ENSURE_TRUE(xpc::IsInAutomation(), IPC_FAIL(this, "Unexpected event"));
-
-  const uint32_t last =
-      static_cast<uint32_t>(nsIWidget::NativeMouseMessage::LeaveWindow);
-  NS_ENSURE_TRUE(aNativeMessage <= last, IPC_FAIL(this, "Bogus message"));
 
   nsCOMPtr<nsISynthesizedEventCallback> callback =
       SynthesizedEventCallback::MaybeCreate(this, aCallbackId);
   if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
-    widget->SynthesizeNativeMouseEvent(
-        aPoint, static_cast<nsIWidget::NativeMouseMessage>(aNativeMessage),
-        static_cast<mozilla::MouseButton>(aButton),
-        static_cast<nsIWidget::Modifiers>(aModifierFlags), callback);
+    widget->SynthesizeNativeMouseEvent(aPoint, aNativeMessage, aButton,
+                                       aModifierFlags, callback);
   }
   return IPC_OK();
 }
@@ -1963,8 +1960,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeMouseMove(
 mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeMouseScrollEvent(
     const LayoutDeviceIntPoint& aPoint, const uint32_t& aNativeMessage,
     const double& aDeltaX, const double& aDeltaY, const double& aDeltaZ,
-    const uint32_t& aModifierFlags, const uint32_t& aAdditionalFlags,
-    const Maybe<uint64_t>& aCallbackId) {
+    const nsIWidget::NativeModifiers& aModifierFlags,
+    const uint32_t& aAdditionalFlags, const Maybe<uint64_t>& aCallbackId) {
   NS_ENSURE_TRUE(xpc::IsInAutomation(), IPC_FAIL(this, "Unexpected event"));
 
   nsCOMPtr<nsISynthesizedEventCallback> callback =
@@ -2062,11 +2059,11 @@ mozilla::ipc::IPCResult BrowserParent::RecvSynthesizeNativeTouchpadPan(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserParent::RecvLockNativePointer() {
+mozilla::ipc::IPCResult BrowserParent::RecvLockNativePointer(
+    const nsIWidget::NativePointerLockMode& aNativePointerLockMode) {
   if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
-    mLockedNativePointer = true;  // do before updating the center
-    UpdateNativePointerLockCenter(widget);
-    widget->LockNativePointer();
+    mLockedNativePointer = true;
+    widget->LockNativePointer(aNativePointerLockMode);
   }
   return IPC_OK();
 }
@@ -2083,6 +2080,14 @@ void BrowserParent::UnlockNativePointer() {
 
 mozilla::ipc::IPCResult BrowserParent::RecvUnlockNativePointer() {
   UnlockNativePointer();
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserParent::RecvSetNativePointerLockMode(
+    const nsIWidget::NativePointerLockMode& aNativePointerLockMode) {
+  if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
+    widget->SetNativePointerLockMode(aNativePointerLockMode);
+  }
   return IPC_OK();
 }
 
@@ -2296,6 +2301,12 @@ bool BrowserParent::SendHandleTap(
                                     nsIFocusManager::FLAG_NOSCROLL);
         }
       }
+    }
+    // SetFocus may have run script (blur handlers) that destroyed this
+    // actor. Callers hold a strong reference to us to reading
+    // mIsDestroyed is safe, but do not send an IPC message in that case.
+    if (mIsDestroyed) {
+      return false;
     }
   }
   return Manager()->IsInputPriorityEventEnabled()
@@ -3561,6 +3572,8 @@ void BrowserParent::TryCacheDPIAndScale() {
   mRounding = widget ? widget->RoundsWidgetCoordinatesTo() : 1;
   mDefaultScale =
       widget ? widget->GetDefaultScale() : nsIWidget::GetFallbackDefaultScale();
+  mDesktopToDeviceScale = widget ? widget->GetDesktopToDeviceScale()
+                                 : DesktopToLayoutDeviceScale(1.0);
 
   if (mDefaultScale != oldDefaultScale) {
     // The change of the default scale factor will affect the child dimensions
@@ -3706,7 +3719,8 @@ void BrowserParent::NotifyResolutionChanged() {
   // We don't want to send that value to content. Just send -1 for it too in
   // that case.
   (void)SendUIResolutionChanged(mDPI, mRounding,
-                                mDPI < 0 ? -1.0 : mDefaultScale.scale);
+                                mDPI < 0 ? -1.0 : mDefaultScale.scale,
+                                mDesktopToDeviceScale.scale);
 }
 
 void BrowserParent::NotifyTransparencyChanged() {
@@ -3812,11 +3826,11 @@ void BrowserParent::SuppressDisplayport(bool aEnabled) {
 
 #ifdef DEBUG
   if (aEnabled) {
-    mActiveSupressDisplayportCount++;
+    mActiveSuppressDisplayportCount++;
   } else {
-    mActiveSupressDisplayportCount--;
+    mActiveSuppressDisplayportCount--;
   }
-  MOZ_ASSERT(mActiveSupressDisplayportCount >= 0);
+  MOZ_ASSERT(mActiveSuppressDisplayportCount >= 0);
 #endif
 
   (void)SendSuppressDisplayport(aEnabled);
@@ -4197,8 +4211,8 @@ mozilla::ipc::IPCResult BrowserParent::RecvMaybeFireEmbedderLoadEvents(
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvScrollRectIntoView(
-    const nsRect& aRect, const ScrollAxis& aVertical,
-    const ScrollAxis& aHorizontal, const ScrollFlags& aScrollFlags,
+    const nsRect& aRect, const AxisScrollParams& aVertical,
+    const AxisScrollParams& aHorizontal, const ScrollFlags& aScrollFlags,
     const int32_t& aAppUnitsPerDevPixel) {
   BrowserBridgeParent* bridge = GetBrowserBridgeParent();
   if (!bridge || !bridge->CanSend()) {

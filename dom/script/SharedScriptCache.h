@@ -66,9 +66,6 @@ class ScriptHashKey : public PLDHashEntryHdr {
 
   ScriptHashKey(ScriptLoader* aLoader,
                 const JS::loader::ScriptLoadRequest* aRequest,
-                const JS::loader::LoadedScript* aLoadedScript);
-  ScriptHashKey(ScriptLoader* aLoader,
-                const JS::loader::ScriptLoadRequest* aRequest,
                 mozilla::dom::ReferrerPolicy aReferrerPolicy,
                 const JS::loader::ScriptFetchOptions* aFetchOptions,
                 const nsCOMPtr<nsIURI> aURI);
@@ -157,10 +154,11 @@ class ScriptLoadData final
       public nsISupports,
       public SharedSubResourceCacheLoadingValueBase<ScriptLoadData> {
  protected:
-  ~ScriptLoadData() {}
+  ~ScriptLoadData() = default;
 
  public:
   ScriptLoadData(ScriptLoader* aLoader, JS::loader::ScriptLoadRequest* aRequest,
+                 CacheExpirationTime aExpirationTime,
                  JS::loader::LoadedScript* aLoadedScript);
 
   NS_DECL_ISUPPORTS
@@ -278,11 +276,17 @@ class SharedScriptCache final
 
   bool ShouldIgnoreMemoryPressure() override;
 
+  void ClearInProcessForMemoryPressure() override;
+
  private:
   bool EnsureEverHitMap();
   void OnContentShutdown(nsISupports* aSubject);
   void OnProfileBeforeChange();
   void AccumulateEverHitTelemetry(uint32_t aRate);
+
+  void SetDiskCacheTimer();
+  void ClearDiskCacheTimer();
+  void OnDiskCacheTimer();
 
   class EncodeItem {
    public:
@@ -309,6 +313,11 @@ class SharedScriptCache final
   //
   // This field is used only on the parent process.
   bool mPreparedEverHitMap = false;
+
+  // True if the disk cache timer should be rescheduled.
+  // This is set to true if another activity happens during the timer
+  // is set.
+  bool mRetryDiskCacheTimer = false;
 
   // The initial value for mLastEverHitRatio, which is outside of the
   // valid range.
@@ -342,6 +351,8 @@ class SharedScriptCache final
 
   Mutex mEncodeMutex{"SharedScriptCache::mEncodeMutex"};
   Vector<EncodeItem> mEncodeItems MOZ_GUARDED_BY(mEncodeMutex);
+
+  nsCOMPtr<nsITimer> mDiskCacheTimer;
 };
 
 }  // namespace dom

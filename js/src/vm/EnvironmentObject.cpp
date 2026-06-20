@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -33,6 +31,7 @@
 #include "gc/Marking-inl.h"
 #include "gc/StableCellHasher-inl.h"
 #include "gc/WeakMap-inl.h"
+#include "vm/ArgumentsObject-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/Stack-inl.h"
 
@@ -366,16 +365,7 @@ const ObjectOps ModuleEnvironmentObject::objectOps_ = {
 };
 
 const JSClassOps ModuleEnvironmentObject::classOps_ = {
-    nullptr,                                // addProperty
-    nullptr,                                // delProperty
-    nullptr,                                // enumerate
-    ModuleEnvironmentObject::newEnumerate,  // newEnumerate
-    nullptr,                                // resolve
-    nullptr,                                // mayResolve
-    nullptr,                                // finalize
-    nullptr,                                // call
-    nullptr,                                // construct
-    nullptr,                                // trace
+    .newEnumerate = ModuleEnvironmentObject::newEnumerate,
 };
 
 const JSClass ModuleEnvironmentObject::class_ = {
@@ -504,6 +494,39 @@ ModuleEnvironmentObject* ModuleEnvironmentObject::createSynthetic(
   MOZ_ASSERT(env->hasFlag(ObjectFlag::NotExtensible));
   MOZ_ASSERT(!env->inDictionaryMode());
 #endif
+
+  return env;
+}
+
+/* static */
+ModuleEnvironmentObject* ModuleEnvironmentObject::createForWasmModule(
+    JSContext* cx, Handle<ModuleObject*> module) {
+  // Wasm source-phase modules have no JavaScript bindings, so the environment
+  // has no property slots.
+  Rooted<SharedPropMap*> map(cx);
+  uint32_t mapLength = 0;
+  uint32_t numSlots = JSSLOT_FREE(&class_);
+  uint32_t numFixed = gc::GetGCKindSlots(gc::GetGCObjectKind(numSlots));
+  Rooted<SharedShape*> shape(
+      cx, SharedShape::getInitialOrPropMapShape(cx, &class_, cx->realm(),
+                                                TaggedProto(nullptr), numFixed,
+                                                map, mapLength, OBJECT_FLAGS));
+  if (!shape) {
+    return nullptr;
+  }
+  MOZ_ASSERT(shape->getObjectClass() == &class_);
+
+  ModuleEnvironmentObject* env =
+      CreateEnvironmentObject<ModuleEnvironmentObject>(cx, shape,
+                                                       TenuredObject);
+  if (!env) {
+    return nullptr;
+  }
+
+  env->initReservedSlot(MODULE_SLOT, ObjectValue(*module));
+  env->initEnclosingEnvironment(&cx->global()->lexicalEnvironment());
+  MOZ_ASSERT(env->hasFlag(ObjectFlag::NotExtensible));
+  MOZ_ASSERT(!env->inDictionaryMode());
 
   return env;
 }
@@ -2191,6 +2214,15 @@ class DebugEnvironmentProxyHandler : public NurseryAllocableProxyHandler {
     return true;
   }
 
+  static bool argumentsElementIsOptimizedOut(Handle<ArgumentsObject*> argsObj) {
+    for (uint32_t i = 0; i < argsObj->initialLength(); i++) {
+      if (argsObj->element(i).isMagic(JS_OPTIMIZED_OUT)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool getMissingArgumentsPropertyDescriptor(
       JSContext* cx, Handle<DebugEnvironmentProxy*> debugEnv,
       EnvironmentObject& env,
@@ -2203,6 +2235,12 @@ class DebugEnvironmentProxyHandler : public NurseryAllocableProxyHandler {
     if (!argsObj) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_DEBUG_NOT_ON_STACK, "Debugger scope");
+      return false;
+    }
+
+    if (argumentsElementIsOptimizedOut(argsObj)) {
+      RootedId id(cx, NameToId(cx->names().arguments));
+      reportOptimizedOut(cx, id);
       return false;
     }
 
@@ -2281,6 +2319,12 @@ class DebugEnvironmentProxyHandler : public NurseryAllocableProxyHandler {
       return false;
     }
 
+    if (argumentsElementIsOptimizedOut(argsObj)) {
+      RootedId id(cx, NameToId(cx->names().arguments));
+      reportOptimizedOut(cx, id);
+      return false;
+    }
+
     vp.setObject(*argsObj);
     return true;
   }
@@ -2352,7 +2396,9 @@ class DebugEnvironmentProxyHandler : public NurseryAllocableProxyHandler {
     if (!createMissingArguments(cx, env, &argsObj)) {
       return false;
     }
-    vp.set(argsObj ? ObjectValue(*argsObj) : MagicValue(JS_MISSING_ARGUMENTS));
+    bool optimizedOut = !argsObj || argumentsElementIsOptimizedOut(argsObj);
+    vp.set(optimizedOut ? MagicValue(JS_MISSING_ARGUMENTS)
+                        : ObjectValue(*argsObj));
     return true;
   }
 
@@ -3021,8 +3067,7 @@ void DebugEnvironments::takeFrameSnapshot(
   Rooted<ArrayObject*> snapshot(
       cx, NewDenseCopiedArray(cx, vec.length(), vec.begin()));
   if (!snapshot) {
-    MOZ_ASSERT(cx->isThrowingOutOfMemory() || cx->isThrowingOverRecursed());
-    cx->clearPendingException();
+    cx->recoverFromResourceExhaustion();
     return;
   }
 

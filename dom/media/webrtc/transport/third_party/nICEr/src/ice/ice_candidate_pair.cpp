@@ -143,7 +143,7 @@ int nr_ice_candidate_pair_create(nr_ice_peer_ctx *pctx, nr_ice_candidate *lcand,
                                       &rcand->addr, RTO, flags,
                                       &pair->stun_client))
       ABORT(r);
-    if(!(pair->stun_client->params.ice_binding_request.username=r_strdup(rcand->stream->l2r_user)))
+    if(!(pair->stun_client->params.ice_binding_request.username=strdup(rcand->stream->l2r_user)))
       ABORT(R_NO_MEMORY);
     if(r=r_data_copy(&pair->stun_client->params.ice_binding_request.password,
       &rcand->stream->l2r_pass))
@@ -180,12 +180,12 @@ int nr_ice_candidate_pair_destroy(nr_ice_cand_pair **pairp)
       nr_accumulate_count(&(pair->local->ctx->stats.stun_retransmits), pair->stun_client->retransmit_ct);
     }
 
-    RFREE(pair->as_string);
-    RFREE(pair->foundation);
+    free(pair->as_string);
+    free(pair->foundation);
     nr_ice_socket_deregister(pair->local->isock,pair->stun_client_handle);
     if (pair->stun_client) {
-      RFREE(pair->stun_client->params.ice_binding_request.username);
-      RFREE(pair->stun_client->params.ice_binding_request.password.data);
+      free(pair->stun_client->params.ice_binding_request.username);
+      free(pair->stun_client->params.ice_binding_request.password.data);
       nr_stun_client_ctx_destroy(&pair->stun_client);
     }
 
@@ -193,7 +193,7 @@ int nr_ice_candidate_pair_destroy(nr_ice_cand_pair **pairp)
     NR_async_timer_cancel(pair->restart_role_change_cb_timer);
     NR_async_timer_cancel(pair->restart_nominated_cb_timer);
 
-    RFREE(pair);
+    free(pair);
     return(0);
   }
 
@@ -272,7 +272,16 @@ static void nr_ice_candidate_pair_stun_cb(NR_SOCKET s, int how, void *cb_arg)
           pair->stun_client->rtt_ms = 0;
         }
 
-        if(strlen(pair->stun_client->results.ice_binding_response.mapped_addr.as_string)==0){
+        if (pair->local->type == RELAYED) {
+          /* For a relay candidate pair, there may be address translation
+           * between the TURN server and the remote peer, so we cannot trust
+           * XOR-MAPPED-ADDRESS to match our relay address. Traffic continues
+           * to flow via the TURN relay regardless, so just accept the
+           * response as proof that the path works. A peer reflexive
+           * candidate would be wrong here -- it would bypass the relay. */
+          nr_ice_candidate_pair_set_state(pair->pctx,pair,NR_ICE_PAIR_STATE_SUCCEEDED);
+        }
+        else if(strlen(pair->stun_client->results.ice_binding_response.mapped_addr.as_string)==0){
           /* we're using the mapped_addr returned by the server to lookup our
            * candidate, but if the server fails to do that we can't perform
            * the lookup -- this may be a BUG because if we've gotten here

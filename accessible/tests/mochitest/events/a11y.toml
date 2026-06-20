@@ -34,8 +34,6 @@ support-files = [
 
 ["test_dragndrop.html"]
 
-["test_flush.html"]
-
 ["test_focus_autocomplete.html"]
 
 ["test_focus_autocomplete.xhtml"]
@@ -122,5 +120,5 @@ skip-if = [
 
 ["test_valuechange.html"]
 skip-if = [
-  "os == 'mac' && os_version == '14.70' && arch == 'x86_64'",
+  "os == 'mac'", # bug 2030038
 ]

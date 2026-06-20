@@ -24,7 +24,6 @@
 //   ValueForCache() and ExpirationTime() members. For style, this is the
 //   SheetLoadData.
 
-#include "mozilla/MemoryReporting.h"
 #include "mozilla/PrincipalHashKey.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/StaticPtr.h"
@@ -35,7 +34,6 @@
 #include "mozilla/dom/CacheablePerformanceTimingData.h"
 #include "mozilla/dom/Document.h"
 #include "nsContentUtils.h"
-#include "nsIMemoryReporter.h"
 #include "nsISupportsImpl.h"
 #include "nsRefPtrHashtable.h"
 #include "nsTHashMap.h"
@@ -65,7 +63,7 @@ void RemoveMemoryPressureObserver(nsIObserver* aObserver);
 // SharedSubResourceCache::Result::mNetworkMetadata and use it for notifying
 // the observers once the necessary data becomes ready.
 // This struct is ref-counted in order to allow this usage.
-class SubResourceNetworkMetadataHolder {
+class SubResourceNetworkMetadataHolder final {
  public:
   SubResourceNetworkMetadataHolder() = delete;
 
@@ -210,7 +208,7 @@ class SharedSubResourceCache {
 
  public:
   struct Result {
-    Value* mCompleteValue = nullptr;
+    RefPtr<Value> mCompleteValue;
     RefPtr<SubResourceNetworkMetadataHolder> mNetworkMetadata;
 
     LoadingValue* mLoadingOrPendingValue = nullptr;
@@ -311,12 +309,10 @@ class SharedSubResourceCache {
     return NS_OK;
   }
 
- private:
-  void ClearInProcessForMemoryPressure() {
+  virtual void ClearInProcessForMemoryPressure() {
     ClearInProcess(Nothing(), Nothing(), Nothing(), Nothing(), Nothing());
   }
 
- protected:
   void CancelPendingLoadsForLoader(Loader&);
 
   void WillStartPendingLoad(LoadingValue&);
@@ -336,7 +332,6 @@ class SharedSubResourceCache {
   // eviction as described in RegisterLoader / UnregisterLoader.
   nsTHashMap<PrincipalHashKey, uint32_t> mLoaderPrincipalRefCnt;
 
- protected:
   // Lazily created in the first Get() call.
   // The singleton should be deleted by DeleteSingleton() during shutdown.
   inline static MOZ_GLOBINIT StaticRefPtr<Derived> sSingleton;

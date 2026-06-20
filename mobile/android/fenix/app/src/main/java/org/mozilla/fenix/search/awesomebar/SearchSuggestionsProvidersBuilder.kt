@@ -6,6 +6,7 @@ package org.mozilla.fenix.search.awesomebar
 
 import android.net.Uri
 import androidx.annotation.VisibleForTesting
+import kotlinx.coroutines.CoroutineScope
 import mozilla.components.browser.state.search.SearchEngine
 import mozilla.components.browser.state.state.searchEngines
 import mozilla.components.concept.awesomebar.AwesomeBar
@@ -13,6 +14,7 @@ import mozilla.components.concept.engine.Engine
 import mozilla.components.feature.awesomebar.provider.BookmarksStorageSuggestionProvider
 import mozilla.components.feature.awesomebar.provider.CombinedHistorySuggestionProvider
 import mozilla.components.feature.awesomebar.provider.DEFAULT_RECENT_SEARCH_SUGGESTION_LIMIT
+import mozilla.components.feature.awesomebar.provider.FlightsOnlineSuggestionProvider
 import mozilla.components.feature.awesomebar.provider.HistoryStorageSuggestionProvider
 import mozilla.components.feature.awesomebar.provider.RecentSearchSuggestionsProvider
 import mozilla.components.feature.awesomebar.provider.SearchActionProvider
@@ -24,8 +26,7 @@ import mozilla.components.feature.awesomebar.provider.SportsOnlineSuggestionProv
 import mozilla.components.feature.awesomebar.provider.StocksOnlineSuggestionProvider
 import mozilla.components.feature.awesomebar.provider.TrendingSearchProvider
 import mozilla.components.feature.fxsuggest.FxSuggestSuggestionProvider
-import mozilla.components.feature.fxsuggest.MockedSportsSuggestionDataSource
-import mozilla.components.feature.fxsuggest.MockedStocksSuggestionDataSource
+import mozilla.components.feature.fxsuggest.datasource.CombinedOnlineSuggestionDataSource
 import mozilla.components.feature.search.SearchUseCases
 import mozilla.components.feature.session.SessionUseCases.LoadUrlUseCase
 import mozilla.components.feature.syncedtabs.DeviceIndicators
@@ -48,6 +49,7 @@ import org.mozilla.fenix.search.SearchEngineSource
 @Suppress("LongParameterList")
 class SearchSuggestionsProvidersBuilder(
     private val components: Components,
+    private val scope: CoroutineScope,
     private val browsingModeManager: BrowsingModeManager,
     private val includeSelectedTab: Boolean,
     private val loadUrlUseCase: LoadUrlUseCase,
@@ -55,19 +57,17 @@ class SearchSuggestionsProvidersBuilder(
     private val selectTabUseCase: TabsUseCases.SelectTabUseCase,
     private val suggestionsStringsProvider: SuggestionsStringsProvider,
     private val suggestionIconProvider: SuggestionIconProvider,
-    onSearchEngineShortcutSelected: (searchEngine: SearchEngine) -> Unit,
     onSearchEngineSuggestionSelected: (searchEngine: SearchEngine) -> Unit,
-    onSearchEngineSettingsClicked: () -> Unit,
 ) {
     val engineForSpeculativeConnects: Engine?
     val defaultHistoryStorageProvider: HistoryStorageSuggestionProvider
     val defaultCombinedHistoryProvider: CombinedHistorySuggestionProvider
-    val shortcutsEnginePickerProvider: ShortcutsSuggestionProvider
     val defaultSearchSuggestionProvider: SearchSuggestionProvider
     val defaultTrendingSearchProvider: TrendingSearchProvider
     val defaultSearchActionProvider: SearchActionProvider
     var searchEngineSuggestionProvider: SearchEngineSuggestionProvider?
     val searchSuggestionProviderMap: MutableMap<SearchEngine, List<AwesomeBar.SuggestionProvider>>
+    val combinedOnlineDataSource: CombinedOnlineSuggestionDataSource = CombinedOnlineSuggestionDataSource(scope = scope)
 
     init {
         engineForSpeculativeConnects = when (browsingModeManager.mode) {
@@ -130,15 +130,6 @@ class SearchSuggestionsProvidersBuilder(
                 icon = searchBitmap,
                 showDescription = false,
                 suggestionsHeader = suggestionsStringsProvider.forSearchEngineSuggestion(),
-            )
-
-        shortcutsEnginePickerProvider =
-            ShortcutsSuggestionProvider(
-                store = components.core.store,
-                settingsIcon = suggestionIconProvider.getSettingsIconBitmap(),
-                searchShortcutsSettingsTitle = suggestionsStringsProvider.searchShortcutsSettingsTitle(),
-                selectShortcutEngine = onSearchEngineShortcutSelected,
-                selectShortcutEngineSettings = onSearchEngineSettingsClicked,
             )
 
         searchEngineSuggestionProvider =
@@ -270,7 +261,7 @@ class SearchSuggestionsProvidersBuilder(
             providersToAdd.add(
                 StocksOnlineSuggestionProvider(
                     searchUseCase = searchUseCase,
-                    dataSource = MockedStocksSuggestionDataSource(),
+                    dataSource = combinedOnlineDataSource,
                     suggestionsHeader = suggestionsStringsProvider.firefoxSuggestOnlineHeader,
                 ),
             )
@@ -279,8 +270,19 @@ class SearchSuggestionsProvidersBuilder(
         if (state.showSportsSuggestions) {
             providersToAdd.add(
                 SportsOnlineSuggestionProvider(
+                    icons = components.core.icons,
                     searchUseCase = searchUseCase,
-                    dataSource = MockedSportsSuggestionDataSource(),
+                    dataSource = combinedOnlineDataSource,
+                    suggestionsHeader = suggestionsStringsProvider.firefoxSuggestOnlineHeader,
+                ),
+            )
+        }
+
+        if (state.showFlightsSuggestions) {
+            providersToAdd.add(
+                FlightsOnlineSuggestionProvider(
+                    loadUrlUseCase = loadUrlUseCase,
+                    dataSource = combinedOnlineDataSource,
                     suggestionsHeader = suggestionsStringsProvider.firefoxSuggestOnlineHeader,
                 ),
             )
@@ -524,7 +526,6 @@ class SearchSuggestionsProvidersBuilder(
     /**
      * Data based on which the search suggestions providers list should be built.
      *
-     * @property showSearchShortcuts Whether to show the search shortcuts.
      * @property showSearchTermHistory Whether to show the search term history.
      * @property showHistorySuggestionsForCurrentEngine Whether to show history suggestions
      * for the current search engine.
@@ -542,13 +543,13 @@ class SearchSuggestionsProvidersBuilder(
      * @property showSponsoredSuggestions Whether to show sponsored suggestions.
      * @property showNonSponsoredSuggestions Whether to show non-sponsored suggestions.
      * @property showStocksSuggestions Whether to show optimized search suggestion stock cards.
-     * @property showSportsSuggestions Whether to show optimized search suggestion sports cards.
+     * @property showSportsSuggestions Whether to show optimized search suggestion sport cards.
+     * @property showFlightsSuggestions Whether to show optimized search suggestion flight cards.
      * @property showTrendingSearches Whether to show trending searches.
      * @property showRecentSearches Whether to show recent searches.
      * @property searchEngineSource Hoe the current search engine was selected.
      */
     data class SearchProviderState(
-        val showSearchShortcuts: Boolean,
         val showSearchTermHistory: Boolean,
         val showHistorySuggestionsForCurrentEngine: Boolean,
         val showAllHistorySuggestions: Boolean,
@@ -563,6 +564,7 @@ class SearchSuggestionsProvidersBuilder(
         val showNonSponsoredSuggestions: Boolean,
         val showStocksSuggestions: Boolean,
         val showSportsSuggestions: Boolean,
+        val showFlightsSuggestions: Boolean,
         val showTrendingSearches: Boolean,
         val showRecentSearches: Boolean,
         val searchEngineSource: SearchEngineSource,

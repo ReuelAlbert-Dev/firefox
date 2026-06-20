@@ -6,6 +6,7 @@ with Files("**"):
     BUG_COMPONENT = ("Core", "Graphics: WebGPU")
 
 MOCHITEST_MANIFESTS += [
+    "tests/mochitest/mochitest-disabled.toml",
     "tests/mochitest/mochitest-no-pref.toml",
     "tests/mochitest/mochitest-resistfingerprinting.toml",
     "tests/mochitest/mochitest.toml",
@@ -106,8 +107,14 @@ if CONFIG["MOZ_DXCOMPILER"] and not CONFIG["MOZ_ARTIFACT_BUILDS"]:
     ]
 
 if CONFIG["CC_TYPE"] in ("clang", "clang-cl"):
-    CXXFLAGS += ["-Werror=implicit-int-conversion", "-Wno-shorten-64-to-32"]
-    CXXFLAGS += ["-Werror=switch"]
+    # Errors on all implicit int conversion except 64-to-32.
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += [
+        "-Werror=implicit-int-conversion",
+        "-Wno-shorten-64-to-32",
+    ]
+    COMPILE_FLAGS["WARNINGS_CXXFLAGS"] += [
+        "-Werror=switch",
+    ]
 
 include("/ipc/chromium/chromium-config.mozbuild")
 

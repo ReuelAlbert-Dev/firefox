@@ -4,12 +4,32 @@
 
 package mozilla.components.feature.summarize.settings
 
+import mozilla.components.lib.shake.ShakeSensitivity
 import mozilla.components.lib.state.Action
 
 /**
  * Actions for the summarize settings screen.
  */
 sealed interface SummarizeSettingsAction : Action
+
+/**
+ * The Settings have appeared in the view tree.
+ */
+data object ViewAppeared : SummarizeSettingsAction
+
+/**
+ * The settings have been loaded from disk.
+ */
+data class SettingsLoaded(
+    val isFeatureEnabled: Boolean,
+    val isGestureEnabled: Boolean,
+    val shakeSensitivity: ShakeSensitivity,
+) : SummarizeSettingsAction
+
+/**
+ * The shake sensitivity has been changed
+ */
+data class ShakeSensitivityChanged(val value: ShakeSensitivity) : SummarizeSettingsAction
 
 /**
  * The user toggled the summarize pages preference.

@@ -1,5 +1,3 @@
-/* -*- tab-width: 2; indent-tabs-mode: nil; js-indent-level: 2 -*- */
-/* vim: set ts=2 sw=2 sts=2 et tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,6 +5,8 @@
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AIWindow:
+    "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   BrowserSearchTelemetry:
     "moz-src:///browser/components/search/BrowserSearchTelemetry.sys.mjs",
   BrowserUtils: "resource://gre/modules/BrowserUtils.sys.mjs",
@@ -23,12 +23,15 @@ ChromeUtils.defineESModuleGetters(lazy, {
   NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
-  ScreenshotsUtils: "resource:///modules/ScreenshotsUtils.sys.mjs",
+  ScreenshotsUtils:
+    "moz-src:///browser/components/screenshots/ScreenshotsUtils.sys.mjs",
   SearchService: "moz-src:///toolkit/components/search/SearchService.sys.mjs",
   SearchUIUtils: "moz-src:///browser/components/search/SearchUIUtils.sys.mjs",
   SearchUtils: "moz-src:///toolkit/components/search/SearchUtils.sys.mjs",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
   TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
+  TranslationsUtils:
+    "chrome://global/content/translations/TranslationsUtils.mjs",
   WebsiteFilter: "resource:///modules/policies/WebsiteFilter.sys.mjs",
 });
 
@@ -113,7 +116,7 @@ export class nsContextMenu {
   #newFeatureBadgeL10nString;
 
   constructor(aXulMenu, aIsShift) {
-    this.window = aXulMenu.ownerGlobal;
+    this.window = aXulMenu.documentGlobal;
     this.document = aXulMenu.ownerDocument;
 
     // Get contextual info.
@@ -278,7 +281,7 @@ export class nsContextMenu {
 
       this.browser = this.ownerDoc.defaultView.docShell.chromeEventHandler;
       this.selectionInfo = SelectionUtils.getSelectionDetails(
-        this.browser.ownerGlobal
+        this.browser.documentGlobal
       );
       this.actor =
         this.browser.browsingContext.currentWindowGlobal.getActor(
@@ -499,10 +502,15 @@ export class nsContextMenu {
       "browser.tabs.splitView.enabled"
     );
     let currentTabInSplitView = !!window.gBrowser?.selectedTab?.splitview;
+    let showSmartWindow = lazy.AIWindow.isAIWindowEnabled();
     this.showItem("context-openlink", shouldShow && !isWindowPrivate);
     this.showItem(
       "context-openlinkprivate",
       shouldShow && lazy.PrivateBrowsingUtils.enabled
+    );
+    this.showItem(
+      "context-openlinksmartwindow",
+      shouldShow && showSmartWindow && !isWindowPrivate
     );
     this.showItem("context-openlinkintab", shouldShow && !inContainer);
     this.showItem("context-openlinkincontainertab", shouldShow && inContainer);
@@ -516,9 +524,14 @@ export class nsContextMenu {
       lazy.LinkPreview.shouldShowContextMenu(this)
     );
     let isHiddenTab = !!window.gBrowser?.getTabForBrowser(this.browser)?.hidden;
+    let isPinnedTab = !!window.gBrowser?.getTabForBrowser(this.browser)?.pinned;
     this.showItem(
       "context-openlinkinsplitview",
-      shouldShow && showSplitViews && !currentTabInSplitView && !isHiddenTab
+      shouldShow &&
+        showSplitViews &&
+        !currentTabInSplitView &&
+        !isHiddenTab &&
+        !isPinnedTab
     );
   }
 
@@ -709,10 +722,9 @@ export class nsContextMenu {
       );
     }
 
-    // Copy image contents depends on whether we're on an image.
     // Note: the element doesn't exist on all platforms, but showItem() takes
     // care of that by itself.
-    this.showItem("context-copyimage-contents", this.onImage);
+    this.showItem("context-copyimage-contents", this.onImage || this.onCanvas);
 
     // Copy image location depends on whether we're on an image.
     this.showItem("context-copyimage", this.onImage || showBGImage);
@@ -750,8 +762,8 @@ export class nsContextMenu {
 
     this.showAndFormatVisualSearchContextItem();
 
-    // Set as Desktop background depends on whether an image was clicked on,
-    // and only works if we have a shell service.
+    // Set as Desktop background depends on whether an image or canvas was
+    // clicked on, and only works if we have a shell service.
     var haveSetDesktopBackground = false;
 
     if (
@@ -765,12 +777,12 @@ export class nsContextMenu {
       }
     }
 
-    this.showItem(
-      "context-setDesktopBackground",
-      haveSetDesktopBackground && this.onLoadedImage
-    );
+    let canSetDesktopBackground =
+      haveSetDesktopBackground && (this.onLoadedImage || this.onCanvas);
 
-    if (haveSetDesktopBackground && this.onLoadedImage) {
+    this.showItem("context-setDesktopBackground", canSetDesktopBackground);
+
+    if (canSetDesktopBackground) {
       this.document.getElementById("context-setDesktopBackground").disabled =
         this.contentData.disableSetDesktopBackground;
     }
@@ -1265,7 +1277,10 @@ export class nsContextMenu {
       }
     };
 
-    const onViewSource = this.browser.currentURI.schemeIs("view-source");
+    const onViewSource =
+      !!this.browser.browsingContext.currentWindowGlobal?.documentURI?.schemeIs(
+        "view-source"
+      );
 
     showViewSourceItem("goToLine", () => false, true);
     showViewSourceItem("wrapLongLines", () =>
@@ -1480,6 +1495,16 @@ export class nsContextMenu {
     );
   }
 
+  // Open linked-to URL in a new smart window.
+  openLinkInSmartWindow() {
+    const params = this._getGlobalHistoryOptions();
+    this.window.openLinkIn(
+      this.linkURL,
+      "window",
+      this._openLinkInParameters({ ...params, aiWindow: true })
+    );
+  }
+
   // Open linked-to URL in a new tab.
   openLinkInTab(event) {
     let params = {
@@ -1679,6 +1704,12 @@ export class nsContextMenu {
     return this.actor.canvasToBlobURL(targetIdentifier);
   }
 
+  copyCanvasImage() {
+    this.actor.copyCanvasImage(this.targetIdentifier).then(arrayBuffer => {
+      lazy.BrowserUtils.copyImageToClipboard(arrayBuffer);
+    }, console.error);
+  }
+
   // Change current window to the URL of the image, video, or audio.
   viewMedia(e) {
     let where = lazy.BrowserUtils.whereToOpenLink(e, false, false);
@@ -1852,9 +1883,6 @@ export class nsContextMenu {
     linkDownload,
     isContentWindowPrivate
   ) {
-    // canonical def in nsURILoader.h
-    const NS_ERROR_SAVE_LINK_AS_TIMEOUT = 0x805d0020;
-
     // an object to proxy the data through to
     // nsIExternalHelperAppService.doContent, which will wait for the
     // appropriate MIME-type headers and then prompt the user with a
@@ -1870,7 +1898,7 @@ export class nsContextMenu {
         // if the timer fired, the error status will have been caused by that,
         // and we'll be restarting in onStopRequest, so no reason to notify
         // the user
-        if (aRequest.status == NS_ERROR_SAVE_LINK_AS_TIMEOUT) {
+        if (aRequest.status == Cr.NS_ERROR_SAVE_LINK_AS_TIMEOUT) {
           return;
         }
 
@@ -1924,7 +1952,7 @@ export class nsContextMenu {
       },
 
       onStopRequest: function saveLinkAs_onStopRequest(aRequest, aStatusCode) {
-        if (aStatusCode == NS_ERROR_SAVE_LINK_AS_TIMEOUT) {
+        if (aStatusCode == Cr.NS_ERROR_SAVE_LINK_AS_TIMEOUT) {
           // do it the old fashioned way, which will pick the best filename
           // it can without waiting.
           this._window.saveURL(
@@ -1971,7 +1999,7 @@ export class nsContextMenu {
           // and save as dialog would appear on the screen as we fall back to
           // the old fashioned way after the timeout.
           timer.cancel();
-          channel.cancel(NS_ERROR_SAVE_LINK_AS_TIMEOUT);
+          channel.cancel(Cr.NS_ERROR_SAVE_LINK_AS_TIMEOUT);
         }
         throw Components.Exception("", Cr.NS_ERROR_NO_INTERFACE);
       },
@@ -1983,7 +2011,7 @@ export class nsContextMenu {
     function timerCallback() {}
     timerCallback.prototype = {
       notify: function sLA_timer_notify() {
-        channel.cancel(NS_ERROR_SAVE_LINK_AS_TIMEOUT);
+        channel.cancel(Cr.NS_ERROR_SAVE_LINK_AS_TIMEOUT);
       },
     };
 
@@ -2578,10 +2606,23 @@ export class nsContextMenu {
    * @returns {Promise<void>}
    */
   async localizeTranslateSelectionItem(translateSelectionItem) {
-    const { targetLanguage } = await this.#translationsLangPairPromise;
+    const { sourceLanguage, targetLanguage } =
+      await this.#translationsLangPairPromise;
 
     if (targetLanguage) {
-      // A valid to-language exists, so localize the menuitem for that language.
+      if (
+        lazy.TranslationsUtils.langTagsMatch(sourceLanguage, targetLanguage)
+      ) {
+        translateSelectionItem.removeAttribute("target-language");
+        this.document.l10n.setAttributes(
+          translateSelectionItem,
+          this.isTextSelected
+            ? "main-context-menu-translate-selection"
+            : "main-context-menu-translate-link-text"
+        );
+        return;
+      }
+
       let displayName;
 
       try {

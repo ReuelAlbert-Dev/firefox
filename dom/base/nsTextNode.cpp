@@ -29,7 +29,7 @@ class nsAttributeTextNode final : public nsTextNode,
  public:
   NS_DECL_ISUPPORTS_INHERITED
 
-  nsAttributeTextNode(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
+  nsAttributeTextNode(already_AddRefed<mozilla::dom::NodeInfo> aNodeInfo,
                       int32_t aNameSpaceID, nsAtom* aAttrName,
                       nsAtom* aFallback)
       : nsTextNode(std::move(aNodeInfo)),
@@ -98,7 +98,7 @@ already_AddRefed<CharacterData> nsTextNode::CloneDataNode(
   if (aCloneText) {
     it->mBuffer = mBuffer;
   }
-
+  it->SetFlags(GetFlags() & NS_MAYBE_MASKED);
   return it.forget();
 }
 
@@ -181,11 +181,15 @@ nsresult nsAttributeTextNode::BindToTree(BindContext& aContext,
   NS_ENSURE_SUCCESS(rv, rv);
 
   NS_ASSERTION(!mOriginatingElement, "We were already bound!");
-  mOriginatingElement = aParent.GetParent()->AsElement();
-  while (PseudoStyle::IsPseudoElement(
-      mOriginatingElement->GetPseudoElementType())) {
-    mOriginatingElement = mOriginatingElement->GetParent()->AsElement();
+  Element* elem = aParent.GetParent()->AsElement();
+  while (PseudoStyle::IsPseudoElement(elem->GetPseudoElementType())) {
+    nsINode* node = elem->GetClosestNativeAnonymousSubtreeRootParentOrHost();
+    if (!node || !node->IsElement()) {
+      return NS_ERROR_UNEXPECTED;
+    }
+    elem = node->AsElement();
   }
+  mOriginatingElement = elem;
   mOriginatingElement->AddMutationObserver(this);
 
   // Note that there is no need to notify here, since we have no

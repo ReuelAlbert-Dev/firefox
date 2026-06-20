@@ -49,7 +49,7 @@ stun_getaddrs_filtered(nr_local_addr addrs[], int maxaddrs, int *count)
 
     /* According to MSDN (see above) we have try GetAdapterAddresses() multiple times */
     for (n = 0; n < 5; n++) {
-      AdapterAddresses = (PIP_ADAPTER_ADDRESSES) RMALLOC(buflen);
+      AdapterAddresses = (PIP_ADAPTER_ADDRESSES) malloc(buflen);
       if (AdapterAddresses == NULL) {
         r_log(NR_LOG_STUN, LOG_ERR, "Error allocating buf for GetAdaptersAddresses()");
         ABORT(R_NO_MEMORY);
@@ -60,7 +60,7 @@ stun_getaddrs_filtered(nr_local_addr addrs[], int maxaddrs, int *count)
         break;
       }
       r_log(NR_LOG_STUN, LOG_ERR, "GetAdaptersAddresses() returned error (%d)", r);
-      RFREE(AdapterAddresses);
+      free(AdapterAddresses);
       AdapterAddresses = NULL;
     }
 
@@ -131,7 +131,7 @@ stun_getaddrs_filtered(nr_local_addr addrs[], int maxaddrs, int *count)
     _status = 0;
 
   abort:
-    RFREE(AdapterAddresses);
+    free(AdapterAddresses);
     return _status;
 }
 

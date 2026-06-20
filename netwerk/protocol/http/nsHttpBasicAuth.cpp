@@ -67,7 +67,7 @@ nsHttpBasicAuth::GenerateCredentials(
     const nsAString& password, nsISupports** sessionState,
     nsISupports** continuationState, uint32_t* aFlags, nsACString& creds) {
   LOG(("nsHttpBasicAuth::GenerateCredentials [challenge=%s]\n",
-       aChallenge.BeginReading()));
+       PromiseFlatCString(aChallenge).get()));
 
   *aFlags = 0;
 

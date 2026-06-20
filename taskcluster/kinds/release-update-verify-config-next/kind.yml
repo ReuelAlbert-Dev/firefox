@@ -45,7 +45,7 @@ task-defaults:
                 production: null
         aus-server:
             by-release-level:
-                staging: "https://stage.balrog.nonprod.cloudops.mozgcp.net"
+                staging: "https://stage.balrog.nonprod.webservices.mozgcp.net"
                 production: "https://aus5.mozilla.org"
         override-certs:
             by-release-level:
@@ -108,3 +108,4 @@ tasks:
             build_platform: win64-aarch64-shippable
         extra:
             platform: win64-aarch64
+            last-watershed: "140.0esr"

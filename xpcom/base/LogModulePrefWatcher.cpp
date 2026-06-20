@@ -74,7 +74,7 @@ static void LoadPrefValue(const char* aName) {
         prefValue.AppendLiteral(MOZ_LOG_PID_TOKEN);
       }
 
-      LogModule::SetLogFile(prefValue.BeginReading());
+      LogModule::SetLogFile(prefValue.get());
     } else if (prefName.EqualsLiteral(kLoggingPrefAddTimestamp)) {
       bool addTimestamp = Preferences::GetBool(aName, false);
       LogModule::SetAddTimestamp(addTimestamp);

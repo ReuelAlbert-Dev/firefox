@@ -12,7 +12,7 @@
 #include "mozilla/dom/IntegrityViolationReportBody.h"
 #include "mozilla/dom/ReportingUtils.h"
 #include "mozilla/dom/WindowGlobalChild.h"
-#include "mozilla/net/SFVService.h"
+#include "mozilla/net/SFV.h"
 #include "nsCSPParser.h"
 #include "nsContentUtils.h"
 #include "nsIScriptError.h"
@@ -26,9 +26,10 @@ using mozilla::waict::gWaictLog;
 NS_IMPL_ISUPPORTS(IntegrityPolicyWAICT, nsIStreamLoaderObserver)
 
 IntegrityPolicyWAICT::IntegrityPolicyWAICT(Document* aDocument)
+    // do_GetWeakReference internally guards against null aDocument.
     : mDocument(do_GetWeakReference(aDocument)),
-      mDocumentURI(aDocument->GetDocumentURI()),
-      mPrincipal(aDocument->NodePrincipal()) {}
+      mDocumentURI(aDocument ? aDocument->GetDocumentURI() : nullptr),
+      mPrincipal(aDocument ? aDocument->NodePrincipal() : nullptr) {}
 
 IntegrityPolicyWAICT::~IntegrityPolicyWAICT() {
   if (mPromise) {
@@ -148,18 +149,12 @@ already_AddRefed<IntegrityPolicyWAICT> IntegrityPolicyWAICT::Create(
 }
 
 nsresult IntegrityPolicyWAICT::ParseHeader(const nsACString& aHeader) {
-  nsCOMPtr<nsISFVService> sfv = net::GetSFVService();
-  if (!sfv) {
-    return NS_ERROR_FAILURE;
-  }
-
-  nsCOMPtr<nsISFVDictionary> dict;
-  nsresult rv = sfv->ParseDictionary(aHeader, getter_AddRefs(dict));
-  if (NS_FAILED(rv)) {
+  auto dict = net::SFV::ParseDict(aHeader);
+  if (!dict.IsValid()) {
     nsTArray<nsString> params = {NS_ConvertUTF8toUTF16(aHeader)};
     ReportMessage(nsIScriptError::errorFlag, "WAICT"_ns,
                   "WAICTHeaderParseError", params);
-    return rv;
+    return NS_ERROR_FAILURE;
   }
 
   auto destinationsResult =
@@ -190,7 +185,7 @@ nsresult IntegrityPolicyWAICT::ParseHeader(const nsACString& aHeader) {
     nsTArray<nsString> params = {NS_ConvertUTF8toUTF16(aHeader), u"max-age"_ns};
     ReportMessage(nsIScriptError::errorFlag, "WAICT"_ns,
                   "WAICTHeaderFieldParseError", params);
-    return rv;
+    return maxAgeResult.unwrapErr();
   }
   mMaxAge = maxAgeResult.unwrap();
 
@@ -200,7 +195,7 @@ nsresult IntegrityPolicyWAICT::ParseHeader(const nsACString& aHeader) {
     ReportMessage(nsIScriptError::errorFlag, "WAICT"_ns,
                   "WAICTHeaderFieldParseError", params);
 
-    return rv;
+    return modeResult.unwrapErr();
   }
   mEnforce = modeResult.unwrap() == waict::WaictMode::Enforce;
 
@@ -212,7 +207,7 @@ nsresult IntegrityPolicyWAICT::ParseHeader(const nsACString& aHeader) {
     ReportMessage(nsIScriptError::errorFlag, "WAICT"_ns,
                   "WAICTHeaderManifestParseError", params);
 
-    return rv;
+    return manifestURLResult.unwrapErr();
   }
   mManifestURL = manifestURLResult.unwrap();
 
@@ -407,7 +402,7 @@ void IntegrityPolicyWAICT::FlushConsoleMessages() {
 
   for (const auto& elem : mConsoleMsgQueue) {
     nsContentUtils::ReportToConsole(elem.mErrorFlags, elem.mCategory, doc,
-                                    nsContentUtils::eSECURITY_PROPERTIES,
+                                    PropertiesFile::SECURITY_PROPERTIES,
                                     elem.mMessageName.get(), elem.mParams);
   }
   mConsoleMsgQueue.Clear();
@@ -432,7 +427,7 @@ void IntegrityPolicyWAICT::ReportMessage(uint32_t aErrorFlags,
   }
 
   nsContentUtils::ReportToConsole(aErrorFlags, aCategory, doc,
-                                  nsContentUtils::eSECURITY_PROPERTIES,
+                                  PropertiesFile::SECURITY_PROPERTIES,
                                   aMessageName, aParams);
 }
 

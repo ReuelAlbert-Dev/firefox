@@ -5,11 +5,14 @@
 #ifndef mozilla_layout_ScrollSnapInfo_h_
 #define mozilla_layout_ScrollSnapInfo_h_
 
+#include <iosfwd>
+
 #include "mozilla/AppUnits.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScrollSnapTargetId.h"
 #include "mozilla/ScrollTypes.h"
 #include "mozilla/ServoStyleConsts.h"
+#include "mozilla/WritingModes.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "nsPoint.h"
 
@@ -35,10 +38,53 @@ struct SnapPoint {
 
   Maybe<nscoord> mX;
   Maybe<nscoord> mY;
+
+  const Maybe<nscoord>& I(WritingMode aWM) const {
+    return aWM.IsVertical() ? mY : mX;
+  }
+  const Maybe<nscoord>& B(WritingMode aWM) const {
+    return aWM.IsVertical() ? mX : mY;
+  }
+};
+
+struct ScrollSnapRange {
+  using ScrollDirection = layers::ScrollDirection;
+  ScrollSnapRange() = default;
+
+  ScrollSnapRange(const nsRect& aSnapArea, ScrollDirection aDirection,
+                  ScrollSnapTargetId aTargetId)
+      : mSnapArea(aSnapArea), mDirection(aDirection), mTargetId(aTargetId) {}
+
+  nsRect mSnapArea;
+  ScrollDirection mDirection;
+  ScrollSnapTargetId mTargetId;
+
+  bool operator==(const ScrollSnapRange& aOther) const = default;
+
+  nscoord Start() const {
+    return mDirection == ScrollDirection::eHorizontal ? mSnapArea.X()
+                                                      : mSnapArea.Y();
+  }
+
+  nscoord End() const {
+    return mDirection == ScrollDirection::eHorizontal ? mSnapArea.XMost()
+                                                      : mSnapArea.YMost();
+  }
+
+  // Returns true if |aPoint| is a valid snap position in this range.
+  bool IsValid(nscoord aPoint, nscoord aSnapportSize) const {
+    MOZ_ASSERT(End() - Start() > aSnapportSize);
+    return Start() <= aPoint && aPoint <= End();
+  }
+
+  // Returns the scroll offset nearest to |aDestination| that keeps the snapport
+  // (of size |aSnapportSize|) within this range's snap area.
+  nscoord FindNearestSnapPoint(nscoord aDestination,
+                               nscoord aSnapportSize) const;
 };
 
 struct ScrollSnapInfo {
-  using ScrollDirection = layers::ScrollDirection;
+  using ScrollSnapRange = mozilla::ScrollSnapRange;
   ScrollSnapInfo();
 
   bool operator==(const ScrollSnapInfo&) const = default;
@@ -52,6 +98,13 @@ struct ScrollSnapInfo {
   // The scroll frame's scroll-snap-type.
   StyleScrollSnapStrictness mScrollSnapStrictnessX;
   StyleScrollSnapStrictness mScrollSnapStrictnessY;
+
+  StyleScrollSnapStrictness StrictnessInline(WritingMode aWM) const {
+    return aWM.IsVertical() ? mScrollSnapStrictnessY : mScrollSnapStrictnessX;
+  }
+  StyleScrollSnapStrictness StrictnessBlock(WritingMode aWM) const {
+    return aWM.IsVertical() ? mScrollSnapStrictnessX : mScrollSnapStrictnessY;
+  }
 
   struct SnapTarget {
     // The scroll positions corresponding to scroll-snap-align values.
@@ -87,38 +140,6 @@ struct ScrollSnapInfo {
       const nsPoint& aDestination,
       const std::function<bool(const SnapTarget&)>& aFunc) const;
 
-  struct ScrollSnapRange {
-    ScrollSnapRange() = default;
-
-    ScrollSnapRange(const nsRect& aSnapArea, ScrollDirection aDirection,
-                    ScrollSnapTargetId aTargetId)
-        : mSnapArea(aSnapArea), mDirection(aDirection), mTargetId(aTargetId) {}
-
-    nsRect mSnapArea;
-    ScrollDirection mDirection;
-    ScrollSnapTargetId mTargetId;
-
-    bool operator==(const ScrollSnapRange& aOther) const = default;
-
-    nscoord Start() const {
-      return mDirection == ScrollDirection::eHorizontal ? mSnapArea.X()
-                                                        : mSnapArea.Y();
-    }
-
-    nscoord End() const {
-      return mDirection == ScrollDirection::eHorizontal ? mSnapArea.XMost()
-                                                        : mSnapArea.YMost();
-    }
-
-    // Returns true if |aPoint| is a valid snap position in this range.
-    bool IsValid(nscoord aPoint, nscoord aSnapportSize) const {
-      MOZ_ASSERT(End() - Start() > aSnapportSize);
-      const nscoord tolerance = StaticPrefs::layout_disable_pixel_alignment()
-                                    ? 0
-                                    : CSSPixel::ToAppUnits(CSSCoord(0.5f));
-      return Start() <= aPoint && aPoint <= End() - aSnapportSize + tolerance;
-    }
-  };
   // An array of the range that the target element is larger than the snapport
   // on the axis.
   // Snap positions in this range will be valid snap positions in the case where
@@ -133,6 +154,15 @@ struct ScrollSnapInfo {
   // Note: This snapport size has been already deflated by scroll-padding.
   nsSize mSnapportSize;
 };
+
+std::ostream& operator<<(std::ostream& aStream,
+                         const ScrollSnapInfo::SnapTarget& aTarget);
+
+// For convenience, allow printing a pointer to a SnapTarget without
+// explicitly dereferencing it. This makes it easier to print an
+// array of pointers.
+std::ostream& operator<<(std::ostream& aStream,
+                         const ScrollSnapInfo::SnapTarget* aTarget);
 
 }  // namespace mozilla
 

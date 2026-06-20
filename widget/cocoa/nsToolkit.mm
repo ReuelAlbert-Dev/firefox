@@ -4,7 +4,6 @@
 
 #include "nsToolkit.h"
 
-#include <ctype.h>
 #include <stdlib.h>
 
 #include <mach/mach_port.h>
@@ -24,7 +23,6 @@ extern "C" {
 #include "nsCocoaUtils.h"
 #include "nsObjCExceptions.h"
 
-#include "nsGkAtoms.h"
 #include "nsIRollupListener.h"
 #include "nsIWidget.h"
 #include "nsIWidget.h"
@@ -101,7 +99,7 @@ nsresult nsToolkit::RegisterForSleepWakeNotifications() {
   NS_ASSERTION(!mSleepWakeNotificationRLS, "Already registered for sleep/wake");
 
   gRootPort = ::IORegisterForSystemPower(
-      0, &notifyPortRef, ToolkitSleepWakeCallback, &mPowerNotifier);
+      nullptr, &notifyPortRef, ToolkitSleepWakeCallback, &mPowerNotifier);
   if (gRootPort == MACH_PORT_NULL) {
     NS_ERROR("IORegisterForSystemPower failed");
     return NS_ERROR_FAILURE;
@@ -221,7 +219,7 @@ nsToolkit* nsToolkit::GetToolkit() {
   NS_OBJC_END_TRY_BLOCK_RETURN(nullptr);
 }
 
-// An alternative to [NSObject poseAsClass:] that isn't deprecated on OS X
+// An alternative to [NSObject poseAsClass:] that isn't deprecated on macOS
 // Leopard and is available to 64-bit binaries on Leopard and above.  Based on
 // ideas and code from http://www.cocoadev.com/index.pl?MethodSwizzling.
 // Since the Method type becomes an opaque type as of Objective-C 2.0, we'll

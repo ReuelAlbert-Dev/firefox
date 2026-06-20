@@ -169,10 +169,8 @@ nsresult ErrorAccordingToNSPR(PRErrorCode errorCode) {
       break;
     case PR_CONNECT_ABORTED_ERROR:
     case PR_CONNECT_RESET_ERROR:
+    case PR_END_OF_FILE_ERROR:  // unexpected EOF is treated the same as reset
       rv = NS_ERROR_NET_RESET;
-      break;
-    case PR_END_OF_FILE_ERROR:  // XXX document this correlation
-      rv = NS_ERROR_NET_INTERRUPT;
       break;
     case PR_CONNECT_REFUSED_ERROR:
     // We lump the following NSPR codes in with PR_CONNECT_REFUSED_ERROR. We
@@ -736,9 +734,15 @@ nsresult nsSocketTransport::Init(const nsTArray<nsCString>& types,
   if (dnsRecord) {
     mExternalDNSResolution = true;
     mDNSRecord = do_QueryInterface(dnsRecord);
-    mDNSRecord->IsTRR(&mResolvedByTRR);
-    mDNSRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
-    mDNSRecord->GetTrrSkipReason(&mTRRSkipReason);
+    bool resolvedByTRR;
+    mDNSRecord->IsTRR(&resolvedByTRR);
+    mResolvedByTRR = resolvedByTRR;
+    nsIRequest::TRRMode effectiveTRRMode;
+    mDNSRecord->GetEffectiveTRRMode(&effectiveTRRMode);
+    mEffectiveTRRMode = effectiveTRRMode;
+    nsITRRSkipReason::value trrSkipReason;
+    mDNSRecord->GetTrrSkipReason(&trrSkipReason);
+    mTRRSkipReason = trrSkipReason;
   }
 
   // init socket type info
@@ -866,9 +870,7 @@ nsresult nsSocketTransport::InitWithConnectedSocket(PRFileDesc* fd,
                                                     const NetAddr* addr) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  char buf[kNetAddrMaxCStrBufSize];
-  addr->ToStringBuffer(buf, sizeof(buf));
-  mHost.Assign(buf);
+  addr->ToString(mHost);
 
   uint16_t port;
   if (addr->raw.family == AF_INET) {
@@ -1334,20 +1336,12 @@ nsresult nsSocketTransport::InitiateSocket() {
   // connected - Bug 853423.
   if (mConnectionFlags & nsISocketTransport::DISABLE_RFC1918 &&
       mNetAddr.IsIPAddrLocal()) {
-    if (SOCKET_LOG_ENABLED()) {
-      nsAutoCString netAddrCString;
-      netAddrCString.SetLength(kIPv6CStrBufSize);
-      if (!mNetAddr.ToStringBuffer(netAddrCString.BeginWriting(),
-                                   kIPv6CStrBufSize)) {
-        netAddrCString = "<IP-to-string failed>"_ns;
-      }
-      SOCKET_LOG(
-          ("nsSocketTransport::InitiateSocket skipping "
-           "speculative connection for host [%s:%d] proxy "
-           "[%s:%d] with Local IP address [%s]",
-           mHost.get(), mPort, mProxyHost.get(), mProxyPort,
-           netAddrCString.get()));
-    }
+    SOCKET_LOG(
+        ("nsSocketTransport::InitiateSocket skipping "
+         "speculative connection for host [%s:%d] proxy "
+         "[%s:%d] with Local IP address [%s]",
+         mHost.get(), mPort, mProxyHost.get(), mProxyPort,
+         mNetAddr.ToString().get()));
     mCondition = NS_ERROR_CONNECTION_REFUSED;
     OnSocketDetached(nullptr);
     return mCondition;
@@ -1546,27 +1540,20 @@ nsresult nsSocketTransport::InitiateSocket() {
   mState = STATE_CONNECTING;
   SendStatus(NS_NET_STATUS_CONNECTING_TO);
 
-  if (SOCKET_LOG_ENABLED()) {
-    char buf[kNetAddrMaxCStrBufSize];
-    mNetAddr.ToStringBuffer(buf, sizeof(buf));
-    SOCKET_LOG(("  trying address: %s\n", buf));
-  }
+  SOCKET_LOG(("  trying address: %s\n", mNetAddr.ToString().get()));
 
   //
   // Initiate the connect() to the host...
   //
   PRNetAddr prAddr;
   memset(&prAddr, 0, sizeof(prAddr));
-  {
-    if (mBindAddr) {
-      MutexAutoLock lock(mLock);
-      NetAddrToPRNetAddr(mBindAddr.get(), &prAddr);
-      status = PR_Bind(fd, &prAddr);
-      if (status != PR_SUCCESS) {
-        return NS_ERROR_FAILURE;
-      }
-      mBindAddr = nullptr;
+  if (mBindAddr) {
+    NetAddrToPRNetAddr(mBindAddr.get(), &prAddr);
+    status = PR_Bind(fd, &prAddr);
+    if (status != PR_SUCCESS) {
+      return NS_ERROR_FAILURE;
     }
+    mBindAddr = nullptr;
   }
 
   NetAddrToPRNetAddr(&mNetAddr, &prAddr);
@@ -1586,10 +1573,15 @@ nsresult nsSocketTransport::InitiateSocket() {
 #endif
 
   if (mTLSSocketControl) {
-    if (!mEchConfig.IsEmpty() &&
+    nsCString echConfig;
+    {
+      MutexAutoLock lock(mLock);
+      echConfig = mEchConfig;
+    }
+    if (!echConfig.IsEmpty() &&
         !(mConnectionFlags & (DONT_TRY_ECH | BE_CONSERVATIVE))) {
       SOCKET_LOG(("nsSocketTransport::InitiateSocket set echconfig."));
-      rv = mTLSSocketControl->SetEchConfig(mEchConfig);
+      rv = mTLSSocketControl->SetEchConfig(echConfig);
       if (NS_FAILED(rv)) {
         return rv;
       }
@@ -1779,9 +1771,17 @@ bool nsSocketTransport::RecoverFromError() {
   // try next ip address only if past the resolver stage...
   if (mState == STATE_CONNECTING && mDNSRecord) {
     nsresult rv = mDNSRecord->GetNextAddr(SocketPort(), &mNetAddr);
-    mDNSRecord->IsTRR(&mResolvedByTRR);
-    mDNSRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
-    mDNSRecord->GetTrrSkipReason(&mTRRSkipReason);
+    {
+      bool resolvedByTRR;
+      mDNSRecord->IsTRR(&resolvedByTRR);
+      mResolvedByTRR = resolvedByTRR;
+      nsIRequest::TRRMode effectiveTRRMode;
+      mDNSRecord->GetEffectiveTRRMode(&effectiveTRRMode);
+      mEffectiveTRRMode = effectiveTRRMode;
+      nsITRRSkipReason::value trrSkipReason;
+      mDNSRecord->GetTrrSkipReason(&trrSkipReason);
+      mTRRSkipReason = trrSkipReason;
+    }
     if (NS_SUCCEEDED(rv)) {
       SOCKET_LOG(("  trying again with next ip address\n"));
       tryAgain = true;
@@ -2087,9 +2087,15 @@ void nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status,
 
       if (mDNSRecord) {
         mDNSRecord->GetNextAddr(SocketPort(), &mNetAddr);
-        mDNSRecord->IsTRR(&mResolvedByTRR);
-        mDNSRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
-        mDNSRecord->GetTrrSkipReason(&mTRRSkipReason);
+        bool resolvedByTRR;
+        mDNSRecord->IsTRR(&resolvedByTRR);
+        mResolvedByTRR = resolvedByTRR;
+        nsIRequest::TRRMode effectiveTRRMode;
+        mDNSRecord->GetEffectiveTRRMode(&effectiveTRRMode);
+        mEffectiveTRRMode = effectiveTRRMode;
+        nsITRRSkipReason::value trrSkipReason;
+        mDNSRecord->GetTrrSkipReason(&trrSkipReason);
+        mTRRSkipReason = trrSkipReason;
       }
       // status contains DNS lookup status
       if (NS_FAILED(status)) {
@@ -2339,6 +2345,10 @@ void nsSocketTransport::OnSocketDetached(PRFileDesc* fd) {
   {
     MutexAutoLock lock(mLock);
     if (mFD.IsInitialized()) {
+      auto callback = std::move(mFDDetachCallback);
+      if (callback) {
+        callback(mFD);
+      }
       ReleaseFD_Locked(mFD);
       // flag mFD as unusable; this prevents other consumers from
       // acquiring a reference to mFD.
@@ -2657,7 +2667,6 @@ NS_IMETHODIMP
 nsSocketTransport::Bind(NetAddr* aLocalAddr) {
   NS_ENSURE_ARG(aLocalAddr);
 
-  MutexAutoLock lock(mLock);
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   if (mAttached) {
     return NS_ERROR_FAILURE;
@@ -2749,7 +2758,7 @@ nsSocketTransport::SetQoSBits(uint8_t aQoSBits) {
 
 NS_IMETHODIMP
 nsSocketTransport::GetQoSBits(uint8_t* aQoSBits) {
-  *aQoSBits = mQoSBits;
+  *aQoSBits = static_cast<uint8_t>(mQoSBits);
   return NS_OK;
 }
 
@@ -2828,9 +2837,15 @@ nsSocketTransport::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
   }
 
   if (nsCOMPtr<nsIDNSAddrRecord> addrRecord = do_QueryInterface(rec)) {
-    addrRecord->IsTRR(&mResolvedByTRR);
-    addrRecord->GetEffectiveTRRMode(&mEffectiveTRRMode);
-    addrRecord->GetTrrSkipReason(&mTRRSkipReason);
+    bool resolvedByTRR;
+    addrRecord->IsTRR(&resolvedByTRR);
+    mResolvedByTRR = resolvedByTRR;
+    nsIRequest::TRRMode effectiveTRRMode;
+    addrRecord->GetEffectiveTRRMode(&effectiveTRRMode);
+    mEffectiveTRRMode = effectiveTRRMode;
+    nsITRRSkipReason::value trrSkipReason;
+    addrRecord->GetTrrSkipReason(&trrSkipReason);
+    mTRRSkipReason = trrSkipReason;
   }
 
   // flag host lookup complete for the benefit of the ResolveHost method.
@@ -2911,12 +2926,6 @@ nsSocketTransport::SetConnectionFlags(uint32_t value) {
       ("nsSocketTransport::SetConnectionFlags %p flags=%u", this, value));
 
   mConnectionFlags = value;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSocketTransport::SetIsPrivate(bool aIsPrivate) {
-  mIsPrivate = aIsPrivate;
   return NS_OK;
 }
 
@@ -3200,11 +3209,11 @@ static void LogNSPRError(const char* aPrefix, const void* aObjPtr) {
     errStr.SetLength(errLen);
     PR_GetErrorText(errStr.BeginWriting());
   }
-  NS_WARNING(
-      nsPrintfCString("%s [%p] NSPR error[0x%x] %s.",
-                      aPrefix ? aPrefix : "nsSocketTransport", aObjPtr, errCode,
-                      errLen > 0 ? errStr.BeginReading() : "<no error text>")
-          .get());
+  NS_WARNING(nsPrintfCString("%s [%p] NSPR error[0x%x] %s.",
+                             aPrefix ? aPrefix : "nsSocketTransport", aObjPtr,
+                             errCode,
+                             errLen > 0 ? errStr.get() : "<no error text>")
+                 .get());
 #endif
 }
 
@@ -3382,6 +3391,7 @@ nsSocketTransport::GetEchConfigUsed(bool* aEchConfigUsed) {
 
 NS_IMETHODIMP
 nsSocketTransport::SetEchConfig(const nsACString& aEchConfig) {
+  MutexAutoLock lock(mLock);
   mEchConfig = aEchConfig;
   return NS_OK;
 }

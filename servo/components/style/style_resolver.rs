@@ -19,6 +19,7 @@ use log::Level::Trace;
 use selectors::matching::{
     MatchingContext, MatchingForInvalidation, MatchingMode, NeedsSelectorFlags, VisitedHandlingMode,
 };
+#[cfg(feature = "gecko")]
 use selectors::parser::PseudoElement as PseudoElementTrait;
 use servo_arc::Arc;
 
@@ -149,23 +150,14 @@ fn eager_pseudo_is_definitely_not_generated(
         return false;
     }
 
-    if !style
+    if style
         .flags
-        .intersects(ComputedValueFlags::DISPLAY_DEPENDS_ON_INHERITED_STYLE)
-        && style.get_box().clone_display() == Display::None
+        .intersects(ComputedValueFlags::DISPLAY_OR_CONTENT_DEPEND_ON_INHERITED_STYLE)
     {
-        return true;
+        return false;
     }
 
-    if !style
-        .flags
-        .intersects(ComputedValueFlags::CONTENT_DEPENDS_ON_INHERITED_STYLE)
-        && style.ineffective_content_property()
-    {
-        return true;
-    }
-
-    false
+    style.get_box().clone_display() == Display::None || style.ineffective_content_property()
 }
 
 impl<'a, 'ctx, 'le, E> StyleResolverForElement<'a, 'ctx, 'le, E>
@@ -239,8 +231,7 @@ where
             let cached = self.context.thread_local.sharing_cache.lookup_by_rules(
                 self.context.shared,
                 parent_style.unwrap(),
-                inputs.rules.as_ref().unwrap(),
-                inputs.visited_rules.as_ref(),
+                &inputs,
                 self.element,
             );
             if let Some(mut primary_style) = cached {
@@ -360,7 +351,7 @@ where
         let values = self.context.shared.stylist.cascade_style_and_visited(
             Some(self.element),
             pseudo,
-            inputs,
+            &inputs,
             &self.context.shared.guards,
             parent_style,
             layout_parent_style,
@@ -368,12 +359,14 @@ where
             /* try_tactic = */ &Default::default(),
             Some(&self.context.thread_local.rule_cache),
             &mut conditions,
+            &mut self.context.thread_local.tree_counting_caches,
         );
 
         self.context.thread_local.rule_cache.insert_if_possible(
             &self.context.shared.guards,
             &values,
             pseudo,
+            &inputs,
             &conditions,
         );
 
@@ -500,9 +493,6 @@ where
             &mut applicable_declarations,
             &mut matching_context,
         );
-
-        // FIXME(emilio): This is a hack for animations, and should go away.
-        self.element.unset_dirty_style_attribute();
 
         let rule_node = stylist
             .rule_tree()

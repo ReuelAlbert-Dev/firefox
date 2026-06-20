@@ -22,7 +22,6 @@ from mozharness.base.python import (
 from mozharness.lib.python.authentication import get_credentials
 from mozharness.mozilla.automation import TBPL_WARNING, AutomationMixin
 from mozharness.mozilla.structuredlog import StructuredOutputParser
-from mozharness.mozilla.testing.try_tools import TryToolsMixin, try_config_options
 from mozharness.mozilla.testing.unittest import DesktopUnittestOutputParser
 from mozharness.mozilla.testing.verify_tools import (
     VerifyToolsMixin,
@@ -42,7 +41,7 @@ INSTALLER_SUFFIXES = (
     ".zip",  # Windows
 )
 
-# https://searchfox.org/mozilla-central/source/testing/config/tooltool-manifests
+# https://searchfox.org/firefox-main/source/testing/config/tooltool-manifests
 TOOLTOOL_PLATFORM_DIR = {
     "linux": "linux32",
     "linux64": "linux64",
@@ -137,9 +136,17 @@ testing_config_options = (
                 "help": "Instruct the test harness to terminate on failure and restart where it left off",
             },
         ],
+        [
+            ["--restart-between-tests"],
+            {
+                "action": "store_true",
+                "default": False,
+                "dest": "restartBetweenTests",
+                "help": "Restart the browser between each test to identify tests with undocumented dependencies",
+            },
+        ],
     ]
     + copy.deepcopy(virtualenv_config_options)
-    + copy.deepcopy(try_config_options)
     + copy.deepcopy(verify_config_options)
 )
 
@@ -150,7 +157,6 @@ class TestingMixin(
     AutomationMixin,
     ResourceMonitoringMixin,
     TooltoolMixin,
-    TryToolsMixin,
     VerifyToolsMixin,
 ):
     """

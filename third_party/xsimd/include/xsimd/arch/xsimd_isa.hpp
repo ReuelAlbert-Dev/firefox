@@ -13,8 +13,7 @@
 #define XSIMD_ISA_HPP
 
 #include "../config/xsimd_arch.hpp"
-
-#include "./xsimd_generic_fwd.hpp"
+#include "./xsimd_common_fwd.hpp"
 
 #if XSIMD_WITH_EMULATED
 #include "./xsimd_emulated.hpp"
@@ -49,7 +48,11 @@
 #endif
 
 #if XSIMD_WITH_AVX
+// clang-format off
+// _128 first: avx half-fold recursive call needs avx_128 visible at parse time.
+#include "./xsimd_avx_128.hpp"
 #include "./xsimd_avx.hpp"
+// clang-format on
 #endif
 
 #if XSIMD_WITH_FMA3_AVX
@@ -61,7 +64,10 @@
 #endif
 
 #if XSIMD_WITH_AVX2
+// clang-format off
+#include "./xsimd_avx2_128.hpp"
 #include "./xsimd_avx2.hpp"
+// clang-format on
 #endif
 
 #if XSIMD_WITH_FMA3_AVX2
@@ -70,6 +76,16 @@
 
 #if XSIMD_WITH_AVX512F
 #include "./xsimd_avx512f.hpp"
+#endif
+
+#if XSIMD_WITH_AVX512VL
+#include "./xsimd_avx512vl.hpp"
+#include "./xsimd_avx512vl_128.hpp"
+#include "./xsimd_avx512vl_256.hpp"
+#endif
+
+#if XSIMD_WITH_AVX512DQ
+#include "./xsimd_avx512dq.hpp"
 #endif
 
 #if XSIMD_WITH_AVX512BW
@@ -84,6 +100,10 @@
 #include "./xsimd_avx512pf.hpp"
 #endif
 
+#if XSIMD_WITH_AVX512VL
+#include "./xsimd_avx512pf.hpp"
+#endif
+
 #if XSIMD_WITH_AVX512IFMA
 #include "./xsimd_avx512ifma.hpp"
 #endif
@@ -92,12 +112,16 @@
 #include "./xsimd_avx512vbmi.hpp"
 #endif
 
+#if XSIMD_WITH_AVX512VBMI2
+#include "./xsimd_avx512vbmi2.hpp"
+#endif
+
 #if XSIMD_WITH_AVX512VNNI_AVX512BW
 #include "./xsimd_avx512vnni_avx512bw.hpp"
 #endif
 
-#if XSIMD_WITH_AVX512VNNI_AVX512VBMI
-#include "./xsimd_avx512vnni_avx512vbmi.hpp"
+#if XSIMD_WITH_AVX512VNNI_AVX512VBMI2
+#include "./xsimd_avx512vnni_avx512vbmi2.hpp"
 #endif
 
 #if XSIMD_WITH_NEON
@@ -124,7 +148,15 @@
 #include "./xsimd_wasm.hpp"
 #endif
 
+#if XSIMD_WITH_VSX
+#include "./xsimd_vsx.hpp"
+#endif
+
+#if XSIMD_WITH_VXE
+#include "./xsimd_vxe.hpp"
+#endif
+
 // Must come last to have access to all conversion specializations.
-#include "./xsimd_generic.hpp"
+#include "./xsimd_common.hpp"
 
 #endif

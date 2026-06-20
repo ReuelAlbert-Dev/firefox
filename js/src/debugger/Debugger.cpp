@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -112,6 +110,7 @@
 #include "wasm/WasmInstance.h"    // for Instance
 #include "wasm/WasmJS.h"          // for WasmInstanceObject
 #include "wasm/WasmRealm.h"       // for Realm
+#include "wasm/WasmStacks.h"      // for ContStack
 #include "wasm/WasmTypeDecls.h"   // for WasmInstanceObjectVector
 
 #include "debugger/DebugAPI-inl.h"
@@ -133,6 +132,7 @@
 #include "vm/ObjectOperations-inl.h"  // for GetProperty, HasProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 #include "vm/Stack-inl.h"             // for AbstractFramePtr::script
+#include "wasm/WasmInstance-inl.h"    // for Instance::codeMeta()
 
 namespace js {
 
@@ -556,6 +556,9 @@ Debugger::Debugger(JSContext* cx, NativeObject* dbg)
       allocationsLogOverflowed(false),
       frames(cx->zone()),
       generatorFrames(cx),
+#ifdef ENABLE_WASM_JSPI
+      wasmContFrames(cx->zone()),
+#endif
       scripts(cx),
       sources(cx),
       objects(cx),
@@ -713,6 +716,17 @@ bool Debugger::getFrame(JSContext* cx, const FrameIter& iter,
       ReportOutOfMemory(cx);
       return false;
     }
+
+#ifdef ENABLE_WASM_JSPI
+    if (frame->isWasmContFrame()) {
+      if (!wasmContFrames.append(referent)) {
+        // terminateDebuggerFrameGuard is still armed and will remove the
+        // entry from `frames` on return.
+        ReportOutOfMemory(cx);
+        return false;
+      }
+    }
+#endif
 
     terminateDebuggerFrameGuard.release();
   }
@@ -1219,7 +1233,7 @@ bool DebugAPI::slowPathOnLeaveFrame(JSContext* cx, AbstractFramePtr frame,
         // Debugger's D.Fs in that global. This means that one D.F's onPop can
         // kill the next D.F. So we have to check whether frameobj is still "on
         // the stack".
-        if (frameobj->isOnStack() && frameobj->onPopHandler()) {
+        if (frameobj->isOnStack(cx) && frameobj->onPopHandler()) {
           OnPopHandler* handler = frameobj->onPopHandler();
 
           bool result = dbg->enterDebuggerHook(cx, [&]() -> bool {
@@ -2559,35 +2573,55 @@ void DebugAPI::onNewScript(JSContext* cx, HandleScript script) {
       });
 }
 
-/* static */
-void DebugAPI::onSuspendWasmFrame(JSContext* cx, wasm::DebugFrame* debugFrame) {
-  AbstractFramePtr frame = AbstractFramePtr(debugFrame);
-  JS::AutoAssertNoGC nogc;
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers(nogc)) {
-    Debugger* dbg = entry.dbg;
-    if (Debugger::FrameMap::Ptr p = dbg->frames.lookup(frame)) {
-      DebuggerFrame* frameObj = p->value();
-      frameObj->suspendWasmFrame(cx->gcContext());
-    }
+#ifdef ENABLE_WASM_JSPI
+// Returns true if `addr` falls within `resumeBase` or any child stack in the
+// chain that will be freed by ContStack::freeSuspended(resumeBase).
+static bool ContStackChainHasAddress(wasm::ContStack* resumeBase,
+                                     uintptr_t addr) {
+  if (resumeBase->hasStackAddress(addr)) {
+    return true;
   }
-}
-
-/* static */
-void DebugAPI::onResumeWasmFrame(JSContext* cx, const FrameIter& iter) {
-  AbstractFramePtr frame = iter.abstractFramePtr();
-  MOZ_RELEASE_ASSERT(frame.isWasmDebugFrame());
-  JS::AutoAssertNoGC nogc;
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers(nogc)) {
-    Debugger* dbg = entry.dbg;
-    if (Debugger::FrameMap::Ptr p = dbg->frames.lookup(frame)) {
-      DebuggerFrame* frameObj = p->value();
-      AutoEnterOOMUnsafeRegion oomUnsafe;
-      if (!frameObj->resume(iter)) {
-        oomUnsafe.crash("DebugAPI::onResumeWasmFrame");
+  // For nested continuations the intermediate and innermost stacks are still
+  // active (handlers_ set). Starting from the resume target's handlers_ we
+  // traverse the same chain that freeSuspended() walks.
+  wasm::ContStack* resumeTargetStack = resumeBase->resumeTargetStack();
+  if (resumeTargetStack) {
+    for (wasm::Handlers* h = resumeTargetStack->handlers(); h;
+         h = h->self->handlers()) {
+      if (h->child && h->child->hasStackAddress(addr)) {
+        return true;
       }
     }
   }
+  return false;
 }
+
+/* static */
+void DebugAPI::onLeaveWasmCont(JSContext* cx, wasm::ContStack* resumeBase) {
+  JS::GCContext* gcx = cx->gcContext();
+  JSRuntime* rt = cx->runtime();
+  for (Debugger* dbg = rt->debuggerList().getFirst(); dbg;
+       dbg = dbg->getNext()) {
+    for (auto iter = dbg->frames.modIter(); !iter.done(); iter.next()) {
+      DebuggerFrame* frameObj = iter.get().value();
+      JS::Value slot =
+          frameObj->getReservedSlot(DebuggerFrame::WASM_CONT_FRAME_PTR_SLOT);
+      if (slot.isUndefined()) {
+        continue;
+      }
+      AbstractFramePtr fp = AbstractFramePtr::fromRaw(slot.toPrivate());
+      if (!fp.isWasmDebugFrame()) {
+        continue;
+      }
+      uintptr_t addr = reinterpret_cast<uintptr_t>(fp.asWasmDebugFrame());
+      if (!ContStackChainHasAddress(resumeBase, addr)) {
+        continue;
+      }
+      Debugger::terminateDebuggerFrame(gcx, dbg, frameObj, fp, &iter, nullptr);
+    }
+  }
+}
+#endif  // ENABLE_WASM_JSPI
 
 void DebugAPI::slowPathOnNewWasmInstance(
     JSContext* cx, Handle<WasmInstanceObject*> wasmInstance) {
@@ -2762,7 +2796,7 @@ bool DebugAPI::onSingleStep(JSContext* cx) {
         MOZ_ASSERT(&frameObj.unwrappedGenerator() == &genObj);
 
         // Live Debugger.Frames were already counted in dbg->frames loop.
-        if (frameObj.isOnStack()) {
+        if (frameObj.isOnStack(cx)) {
           continue;
         }
 
@@ -3417,7 +3451,7 @@ void Debugger::forEachOnStackDebuggerFrame(AbstractFramePtr frame,
 
 template <typename FrameFn>
 /* static */
-void Debugger::forEachOnStackOrSuspendedDebuggerFrame(
+void Debugger::forEachOnStackOrSuspendedGeneratorDebuggerFrame(
     JSContext* cx, AbstractFramePtr frame, const JS::AutoRequireNoGC& nogc,
     FrameFn fn) {
   Rooted<AbstractGeneratorObject*> genObj(
@@ -4052,7 +4086,7 @@ void Debugger::traceObject(JSTracer* trc, JSObject* obj) {
 void Debugger::trace(JSTracer* trc) {
   TraceEdge(trc, &object, "Debugger Object");
 
-  TraceNullableEdge(trc, &uncaughtExceptionHook, "hooks");
+  TraceEdge(trc, &uncaughtExceptionHook, "hooks");
 
   // Mark Debugger.Frame objects. Since the Debugger is reachable, JS could call
   // getNewestFrame and then walk the stack, so these are all reachable from JS.
@@ -4116,6 +4150,34 @@ void DebugAPI::sweepAll(JS::GCContext* gcx) {
                                            nullptr, &iter);
         }
       }
+
+#ifdef ENABLE_WASM_JSPI
+      // Wasm continuation frames whose wasm instance is dying must be
+      // terminated here, before finalization. Without this,
+      // ContObject::finalize would call onLeaveWasmCont ->
+      // DebuggerFrame::terminate, which would call
+      // IsAboutToBeFinalizedUnbarriered on the instance object - forbidden
+      // during finalization. Terminating those frames now removes them from
+      // dbg->frames so that onLeaveWasmCont will skip them.
+      for (size_t i = 0; i < dbg->wasmContFrames.length();) {
+        AbstractFramePtr fp = dbg->wasmContFrames[i];
+        wasm::Instance* inst = fp.asWasmDebugFrame()->instance();
+        if (!IsAboutToBeFinalizedUnbarriered(inst->objectUnbarriered())) {
+          i++;
+          continue;
+        }
+        auto p = dbg->frames.lookup(fp);
+        MOZ_ASSERT(p);
+        // terminateDebuggerFrame erases fp from wasmContFrames, shifting any
+        // later entries down into index i, so we don't advance i here. Assert
+        // it removed exactly the entry at i so the loop makes progress and
+        // cannot spin forever.
+        mozilla::DebugOnly<size_t> lengthBefore = dbg->wasmContFrames.length();
+        Debugger::terminateDebuggerFrame(gcx, dbg, p->value(), fp, nullptr,
+                                         nullptr);
+        MOZ_ASSERT(dbg->wasmContFrames.length() == lengthBefore - 1);
+      }
+#endif
     }
 
     // Detach dying debuggers and debuggees from each other. Since this
@@ -4190,16 +4252,7 @@ bool DebuggerWeakMap<UnbarrieredKey, Wrapper,
 }
 
 const JSClassOps DebuggerInstanceObject::classOps_ = {
-    nullptr,                // addProperty
-    nullptr,                // delProperty
-    nullptr,                // enumerate
-    nullptr,                // newEnumerate
-    nullptr,                // resolve
-    nullptr,                // mayResolve
-    nullptr,                // finalize
-    nullptr,                // call
-    nullptr,                // construct
-    Debugger::traceObject,  // trace
+    .trace = Debugger::traceObject,
 };
 
 const JSClass DebuggerInstanceObject::class_ = {
@@ -5635,6 +5688,9 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
     // unconditionally consider all wasm toplevel instance scripts.
     for (auto iter = debugger->allDebuggees(); !iter.done(); iter.next()) {
       for (wasm::Instance* instance : iter.get()->realm()->wasm.instances()) {
+        if (instance->codeMeta().isSelfHostedModule()) {
+          continue;
+        }
         consider(instance->object());
         if (oom) {
           ReportOutOfMemory(cx);
@@ -6077,6 +6133,9 @@ class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
     // unconditionally consider all wasm toplevel instance scripts.
     for (auto iter = debugger->allDebuggees(); !iter.done(); iter.next()) {
       for (wasm::Instance* instance : iter.get()->realm()->wasm.instances()) {
+        if (instance->codeMeta().isSelfHostedModule()) {
+          continue;
+        }
         consider(instance->object());
         if (oom) {
           ReportOutOfMemory(cx);
@@ -6747,7 +6806,7 @@ bool Debugger::CallData::adoptFrame() {
   }
 
   Rooted<DebuggerFrame*> adoptedFrame(cx);
-  if (frameObj->isOnStack()) {
+  if (frameObj->isOnStack(cx)) {
     FrameIter iter = frameObj->getFrameIter(cx);
     if (!dbg->observesFrame(iter)) {
       JS_ReportErrorASCII(cx, "Debugger.Frame's global is not a debuggee");
@@ -6756,7 +6815,7 @@ bool Debugger::CallData::adoptFrame() {
     if (!dbg->getFrame(cx, iter, &adoptedFrame)) {
       return false;
     }
-  } else if (frameObj->isSuspended()) {
+  } else if (frameObj->isSuspendedGeneratorFrame()) {
     Rooted<AbstractGeneratorObject*> gen(cx, &frameObj->unwrappedGenerator());
     if (!dbg->observesGlobal(&gen->global())) {
       JS_ReportErrorASCII(cx, "Debugger.Frame's global is not a debuggee");
@@ -7072,33 +7131,19 @@ bool Debugger::observesWasm(wasm::Instance* instance) const {
 }
 
 /* static */
-bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
+void Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
                                 AbstractFramePtr to, ScriptFrameIter& iter) {
   MOZ_ASSERT(from != to);
+  AutoEnterOOMUnsafeRegion unsafe;
 
   // Rekey missingScopes to maintain Debugger.Environment identity and
   // forward liveScopes to point to the new frame.
   DebugEnvironments::forwardLiveFrame(cx, from, to);
 
-  // If we hit an OOM anywhere in here, we need to make sure there aren't any
-  // Debugger.Frame objects left partially-initialized.
-  auto terminateDebuggerFramesOnExit = MakeScopeExit([&] {
-    terminateDebuggerFrames(cx, from);
-    terminateDebuggerFrames(cx, to);
-
-    MOZ_ASSERT(!DebugAPI::inFrameMaps(from));
-    MOZ_ASSERT(!DebugAPI::inFrameMaps(to));
-  });
-
   // Forward live Debugger.Frame objects.
   Rooted<DebuggerFrameVector> frames(cx);
   if (!getDebuggerFrames(from, &frames)) {
-    // An OOM here means that all Debuggers' frame maps still contain
-    // entries for 'from' and no entries for 'to'. Since the 'from' frame
-    // will be gone, they are removed by terminateDebuggerFramesOnExit
-    // above.
-    ReportOutOfMemory(cx);
-    return false;
+    unsafe.crash("replaceFrameGuts");
   }
 
   for (size_t i = 0; i < frames.length(); i++) {
@@ -7107,13 +7152,12 @@ bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
 
     // Update frame object's ScriptFrameIter::data pointer.
     if (!frameobj->replaceFrameIterData(cx, iter)) {
-      return false;
+      unsafe.crash("replaceFrameGuts");
     }
 
     // Add the frame object with |to| as key.
     if (!dbg->frames.putNew(to, frameobj)) {
-      ReportOutOfMemory(cx);
-      return false;
+      unsafe.crash("replaceFrameGuts");
     }
 
     // Remove the old frame entry after all fallible operations are completed
@@ -7121,12 +7165,8 @@ bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
     dbg->frames.remove(from);
   }
 
-  // All frames successfuly replaced, cancel the rollback.
-  terminateDebuggerFramesOnExit.release();
-
   MOZ_ASSERT(!DebugAPI::inFrameMaps(from));
   MOZ_ASSERT_IF(!frames.empty(), DebugAPI::inFrameMaps(to));
-  return true;
 }
 
 /* static */
@@ -7156,7 +7196,7 @@ void Debugger::suspendGeneratorDebuggerFrames(JSContext* cx,
         MOZ_ASSERT(p->value() == dbgFrame);
 #endif
 
-        dbgFrame->suspend(gcx);
+        dbgFrame->suspendGeneratorFrame(gcx);
       });
 }
 
@@ -7165,7 +7205,7 @@ void Debugger::terminateDebuggerFrames(JSContext* cx, AbstractFramePtr frame) {
   JS::GCContext* gcx = cx->gcContext();
 
   JS::AutoAssertNoGC nogc;
-  forEachOnStackOrSuspendedDebuggerFrame(
+  forEachOnStackOrSuspendedGeneratorDebuggerFrame(
       cx, frame, nogc, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
         Debugger::terminateDebuggerFrame(gcx, dbg, dbgFrame, frame);
       });
@@ -7197,6 +7237,10 @@ void Debugger::terminateDebuggerFrame(
     } else {
       dbg->frames.remove(frame);
     }
+#ifdef ENABLE_WASM_JSPI
+    dbg->wasmContFrames.eraseIf(
+        [&frame](const AbstractFramePtr& fp) { return fp == frame; });
+#endif
   }
 
   if (dbgFrame->hasGeneratorInfo()) {
@@ -7230,15 +7274,15 @@ const JSClass DebuggerDebuggeeLink::class_ = {
 };
 
 /* static */
-bool DebugAPI::handleBaselineOsr(JSContext* cx, InterpreterFrame* from,
+void DebugAPI::handleBaselineOsr(JSContext* cx, InterpreterFrame* from,
                                  jit::BaselineFrame* to) {
   ScriptFrameIter iter(cx);
   MOZ_ASSERT(iter.abstractFramePtr() == to);
-  return Debugger::replaceFrameGuts(cx, from, to, iter);
+  Debugger::replaceFrameGuts(cx, from, to, iter);
 }
 
 /* static */
-bool DebugAPI::handleIonBailout(JSContext* cx, jit::RematerializedFrame* from,
+void DebugAPI::handleIonBailout(JSContext* cx, jit::RematerializedFrame* from,
                                 jit::BaselineFrame* to) {
   // When we return to a bailed-out Ion real frame, we must update all
   // Debugger.Frames that refer to its inline frames. However, since we
@@ -7252,7 +7296,7 @@ bool DebugAPI::handleIonBailout(JSContext* cx, jit::RematerializedFrame* from,
   while (iter.abstractFramePtr() != to) {
     ++iter;
   }
-  return Debugger::replaceFrameGuts(cx, from, to, iter);
+  Debugger::replaceFrameGuts(cx, from, to, iter);
 }
 
 /* static */

@@ -106,9 +106,7 @@ class HTMLEditUtils final {
    * native anonymous node or something.
    */
   static bool IsNeverElementContentsEditableByUser(const nsIContent& aContent) {
-    return aContent.IsElement() &&
-           // XXX I think we should not treat <button> contents as editable
-           !aContent.IsHTMLElement(nsGkAtoms::button) &&
+    return aContent.IsElement() && !aContent.IsHTMLElement(nsGkAtoms::button) &&
            (!HTMLEditUtils::IsContainerNode(aContent) ||
             HTMLEditUtils::IsReplacedElement(*aContent.AsElement()) ||
             aContent.IsAnyOfHTMLElements(nsGkAtoms::applet, nsGkAtoms::colgroup,
@@ -471,12 +469,6 @@ class HTMLEditUtils final {
   [[nodiscard]] static bool IsNonVoidReplacedElement(const Element& aElement) {
     return IsReplacedElement(aElement) && IsContainerNode(aElement);
   }
-
-  /**
-   * Return true if aElement is a form widget, i.e., a replaced element for the
-   * <form>.
-   */
-  [[nodiscard]] static bool IsFormWidgetElement(const nsIContent& aContent);
 
   /**
    * Return true if aContent is an element which can ahve `align` attribute.
@@ -2580,8 +2572,8 @@ class HTMLEditUtils final {
   static Maybe<uint32_t> GetPreviousNonCollapsibleCharOffset(
       const EditorDOMPointBase<PT, CT>& aPoint,
       const WalkTextOptions& aWalkTextOptions = {}) {
-    static_assert(std::is_same<PT, RefPtr<Text>>::value ||
-                  std::is_same<PT, Text*>::value);
+    static_assert(std::is_same_v<PT, RefPtr<Text>> ||
+                  std::is_same_v<PT, Text*>);
     MOZ_ASSERT(aPoint.IsSetAndValid());
     return GetPreviousNonCollapsibleCharOffset(
         *aPoint.template ContainerAs<Text>(), aPoint.Offset(),
@@ -2639,8 +2631,8 @@ class HTMLEditUtils final {
   static Maybe<uint32_t> GetInclusiveNextNonCollapsibleCharOffset(
       const EditorDOMPointBase<PT, CT>& aPoint,
       const WalkTextOptions& aWalkTextOptions = {}) {
-    static_assert(std::is_same<PT, RefPtr<Text>>::value ||
-                  std::is_same<PT, Text*>::value);
+    static_assert(std::is_same_v<PT, RefPtr<Text>> ||
+                  std::is_same_v<PT, Text*>);
     MOZ_ASSERT(aPoint.IsSetAndValid());
     return GetInclusiveNextNonCollapsibleCharOffset(
         *aPoint.template ContainerAs<Text>(), aPoint.Offset(),
@@ -2683,8 +2675,8 @@ class HTMLEditUtils final {
   static uint32_t GetFirstWhiteSpaceOffsetCollapsedWith(
       const EditorDOMPointBase<PT, CT>& aPoint,
       const WalkTextOptions& aWalkTextOptions = {}) {
-    static_assert(std::is_same<PT, RefPtr<Text>>::value ||
-                  std::is_same<PT, Text*>::value);
+    static_assert(std::is_same_v<PT, RefPtr<Text>> ||
+                  std::is_same_v<PT, Text*>);
     MOZ_ASSERT(aPoint.IsSetAndValid());
     MOZ_ASSERT(!aPoint.IsEndOfContainer());
     MOZ_ASSERT_IF(

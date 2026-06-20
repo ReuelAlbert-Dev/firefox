@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -610,11 +608,10 @@ struct JSStructuredCloneWriter {
   void extractBuffer(JSStructuredCloneData* newData) {
     out.extractBuffer(newData);
   }
-
- private:
   JSStructuredCloneWriter() = delete;
   JSStructuredCloneWriter(const JSStructuredCloneWriter&) = delete;
 
+ private:
   JSContext* context() { return out.context(); }
 
   bool writeHeader();
@@ -1595,6 +1592,7 @@ bool JSStructuredCloneWriter::writeSharedWasmMemory(HandleObject obj) {
 
   Rooted<WasmMemoryObject*> memoryObj(context(),
                                       &obj->unwrapAs<WasmMemoryObject>());
+  JSAutoRealm ar(context(), memoryObj);
 
   if (!out.writePair(SCTAG_SHARED_WASM_MEMORY_OBJECT, 0) ||
       !out.writePair(SCTAG_BOOLEAN, memoryObj->isHuge())) {
@@ -2549,7 +2547,7 @@ bool JSStructuredCloneWriter::write(HandleValue v) {
 
         if (found) {
 #if FUZZING_JS_FUZZILLI
-          // supress calls into user code
+          // suppress calls into user code
           if (js::SupportDifferentialTesting()) {
             fprintf(stderr, "Differential testing: cannot call GetProperty\n");
             return false;
@@ -2695,8 +2693,11 @@ BigInt* JSStructuredCloneReader::readBigInt(uint32_t data) {
   if (!result) {
     return nullptr;
   }
-  if (!in.readArray(result->digits().data(), length)) {
-    return nullptr;
+  {
+    auto digits = result->unguardedDigits();
+    if (!in.readArray(digits.data(), length)) {
+      return nullptr;
+    }
   }
   return JS::BigInt::destructivelyTrimHighZeroDigits(context(), result);
 }
@@ -3019,6 +3020,10 @@ bool JSStructuredCloneReader::readSharedWasmMemory(uint32_t nbytes,
     return false;
   }
 
+  // Reserve a slot in allObjs for this WasmMemoryObject before reading the
+  // embedded SAB.  The writer calls startObject() on the memory first, so the
+  // memory occupies writer-index N while the SAB occupies N+1.  Mirroring that
+  // order here keeps back-reference indices consistent.
   uint32_t placeholderIndex = allObjs.length();
   if (!allObjs.append(UndefinedValue())) {
     return false;
@@ -3027,6 +3032,12 @@ bool JSStructuredCloneReader::readSharedWasmMemory(uint32_t nbytes,
   // Read the isHuge flag
   RootedValue isHuge(cx);
   if (!startRead(&isHuge)) {
+    return false;
+  }
+  if (!isHuge.isBoolean()) {
+    JS_ReportErrorNumberASCII(context(), GetErrorMessage, nullptr,
+                              JSMSG_SC_BAD_SERIALIZED_DATA,
+                              "isHuge must be a boolean");
     return false;
   }
 
@@ -3045,8 +3056,9 @@ bool JSStructuredCloneReader::readSharedWasmMemory(uint32_t nbytes,
     return false;
   }
 
-  Rooted<ArrayBufferObjectMaybeShared*> sab(
+  Rooted<SharedArrayBufferObject*> sab(
       cx, &payload.toObject().as<SharedArrayBufferObject>());
+  MOZ_RELEASE_ASSERT(sab->isWasm());
 
   // Construct the memory.
   RootedObject proto(
@@ -3901,7 +3913,13 @@ JSObject* JSStructuredCloneReader::readErrorHeader(uint32_t type) {
   if (!startRead(&val)) {
     return nullptr;
   }
-  bool hasCause = ToBoolean(val);
+  if (!val.isBoolean()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_SC_BAD_SERIALIZED_DATA,
+                              "hasCause must be a boolean");
+    return nullptr;
+  }
+  bool hasCause = val.toBoolean();
   Rooted<Maybe<Value>> cause(cx, mozilla::Nothing());
   if (hasCause) {
     cause = mozilla::Some(BooleanValue(true));
@@ -3967,6 +3985,12 @@ bool JSStructuredCloneReader::readErrorFields(Handle<ErrorObject*> errorObj,
   }
 
   if (errorObj->type() == JSEXN_AGGREGATEERR) {
+    if (!errors.isObject() || !errors.toObject().is<ArrayObject>()) {
+      JS_ReportErrorNumberASCII(
+          cx, GetErrorMessage, nullptr, JSMSG_SC_BAD_SERIALIZED_DATA,
+          "AggregateError 'errors' field must be an Array");
+      return false;
+    }
     if (!DefineDataProperty(context(), errorObj, cx->names().errors, errors,
                             0)) {
       return false;
@@ -4034,8 +4058,8 @@ bool JSStructuredCloneReader::readObjectField(HandleObject obj,
   // corrupt or malicious data.
   if (id.isString() && obj->is<PlainObject>() &&
       MOZ_LIKELY(!obj->as<PlainObject>().contains(context(), id))) {
-    return AddDataPropertyToPlainObject(context(), obj.as<PlainObject>(), id,
-                                        val);
+    return AddDataPropertyToNativeObjectNoHooks(context(),
+                                                obj.as<PlainObject>(), id, val);
   }
 
   // Fast path for adding an array element. The index shouldn't exceed the
@@ -4436,8 +4460,8 @@ JS_PUBLIC_API bool JS_ReadTypedArray(JSStructuredCloneReader* r,
   return false;
 }
 
-JS_PUBLIC_API bool JS_WriteUint32Pair(JSStructuredCloneWriter* w, uint32_t tag,
-                                      uint32_t data) {
+JS_PUBLIC_API bool JS_WriteUint32PairUnchecked(JSStructuredCloneWriter* w,
+                                               uint32_t tag, uint32_t data) {
   return w->output().writePair(tag, data);
 }
 

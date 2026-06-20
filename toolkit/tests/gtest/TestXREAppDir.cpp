@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -38,6 +36,12 @@ using namespace mozilla;
 class BaseXREAppDir : public ::testing::Test {
  protected:
   void SetUp() override {
+    // Get a Clone() of gDataDirProfileLocal / gDataDirProfile
+    // They will get restored in TearDown()
+    nsresult rv = nsXREDirProvider::ClearUserDataProfileDirectoryFromGTest(
+        getter_AddRefs(mDataDirProfileLocal), getter_AddRefs(mDataDirProfile));
+    EXPECT_NS_SUCCEEDED(rv);
+
 // There is no need to mock on macOS because nsXREDirProvider relies on macOS
 // level APIs, see below
 #if defined(XP_UNIX) && !defined(XP_MACOSX)
@@ -54,14 +58,14 @@ class BaseXREAppDir : public ::testing::Test {
     mFakeAppData.vendor = "Mozilla";
 
 #if defined(XP_WIN)
-    nsresult rv = GetShellFolderPath(FOLDERID_RoamingAppData, mRoamingHome);
+    rv = GetShellFolderPath(FOLDERID_RoamingAppData, mRoamingHome);
     EXPECT_NS_SUCCEEDED(rv);
     rv = GetShellFolderPath(FOLDERID_LocalAppData, mLocalHome);
     EXPECT_NS_SUCCEEDED(rv);
 #endif
 
 #if defined(XP_MACOSX)
-    nsresult rv = FindFolder(kApplicationSupportFolderType, mAppSupport);
+    rv = FindFolder(kApplicationSupportFolderType, mAppSupport);
     EXPECT_NS_SUCCEEDED(rv);
     rv = FindFolder(kCachedDataFolderType, mAppCache);
     EXPECT_NS_SUCCEEDED(rv);
@@ -107,11 +111,11 @@ class BaseXREAppDir : public ::testing::Test {
 #endif
 
   void TearDown() override {
-#if defined(XP_UNIX) && !defined(XP_MACOSX)
     nsresult rv = nsXREDirProvider::RestoreUserDataProfileDirectoryFromGTest(
         mDataDirProfileLocal, mDataDirProfile);
     EXPECT_NS_SUCCEEDED(rv);
 
+#if defined(XP_UNIX) && !defined(XP_MACOSX)
     for (auto& entry : mRestoreEnv) {
       PR_SetEnv(ToNewCString(entry.GetKey() + "="_ns + entry.GetData()));
     }
@@ -226,12 +230,6 @@ class BaseXREAppDir : public ::testing::Test {
     rv = mMockedHome->CreateUnique(nsIFile::DIRECTORY_TYPE, 0700);
     EXPECT_NS_SUCCEEDED(rv);
 
-    // Get a Clone() of gDataDirProfileLocal / gDataDirProfile
-    // They will get restored in TearDown()
-    rv = nsXREDirProvider::ClearUserDataProfileDirectoryFromGTest(
-        getter_AddRefs(mDataDirProfileLocal), getter_AddRefs(mDataDirProfile));
-    EXPECT_NS_SUCCEEDED(rv);
-
     nsCString homedir = mMockedHome->NativePath();
     SetEnv("HOME", homedir.get());
     return homedir;
@@ -273,9 +271,6 @@ class BaseXREAppDir : public ::testing::Test {
 
 #if defined(XP_UNIX) && !defined(XP_MACOSX)
   nsCOMPtr<nsIFile> mMockedHome;
-  nsCOMPtr<nsIFile> mDataDirProfileLocal;
-  nsCOMPtr<nsIFile> mDataDirProfile;
-
   nsCString mMockedHomeDir;
 #endif
 
@@ -292,6 +287,8 @@ class BaseXREAppDir : public ::testing::Test {
 #endif
 
   const XREAppData* mOriginalAppData = nullptr;
+  nsCOMPtr<nsIFile> mDataDirProfileLocal;
+  nsCOMPtr<nsIFile> mDataDirProfile;
   XREAppData mFakeAppData{};
 };
 
@@ -1305,11 +1302,11 @@ TEST_F(ExistentLegacyXREAppDir_NoEnv_AppDataProfile, GetUserAppDataDirectory) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1320,11 +1317,11 @@ TEST_F(ExistentLegacyXREAppDir_BadEnv_AppDataProfile, GetUserAppDataDirectory) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1336,11 +1333,11 @@ TEST_F(ExistentLegacyXREAppDir_GoodEnv_AppDataProfile,
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1352,11 +1349,11 @@ TEST_F(NonExistentLegacyXREAppDir_NoEnv_AppDataProfile,
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1368,11 +1365,11 @@ TEST_F(NonExistentLegacyXREAppDir_BadEnv_AppDataProfile,
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1384,11 +1381,11 @@ TEST_F(NonExistentLegacyXREAppDir_GoodEnv_AppDataProfile,
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1399,11 +1396,11 @@ TEST_F(XDGXREAppDir_NoEnv_AppDataProfile, GetUserAppDataDirectory) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1414,11 +1411,11 @@ TEST_F(XDGXREAppDir_InvalidEnv_AppDataProfile, GetUserAppDataDirectory) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1429,11 +1426,11 @@ TEST_F(XDGXREAppDir_Env_AppDataProfile, GetUserAppDataDirectory) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox"_ns)
+      nsCString(mAppSupport + "/fooprofile"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox"_ns)
+      nsCString(mRoamingHome + "\\fooprofile"_ns)
 #endif
           ,
       GetUserAppDataDirectory());
@@ -1694,11 +1691,11 @@ TEST_F(XDGXREAppDir_NoEnv_AppDataProfile, GetUserProfilesRootDir) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox/Profiles"_ns)
+      nsCString(mAppSupport + "/fooprofile/Profiles"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox\\Profiles"_ns)
+      nsCString(mRoamingHome + "\\fooprofile\\Profiles"_ns)
 #endif
           ,
       GetUserProfilesRootDir());
@@ -1709,11 +1706,11 @@ TEST_F(XDGXREAppDir_InvalidEnv_AppDataProfile, GetUserProfilesRootDir) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox/Profiles"_ns)
+      nsCString(mAppSupport + "/fooprofile/Profiles"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox\\Profiles"_ns)
+      nsCString(mRoamingHome + "\\fooprofile\\Profiles"_ns)
 #endif
           ,
       GetUserProfilesRootDir());
@@ -1724,11 +1721,11 @@ TEST_F(XDGXREAppDir_Env_AppDataProfile, GetUserProfilesRootDir) {
 #if defined(ANDROID)
       nsCString(mMockedHomeDir + "/mozilla"_ns)
 #elif defined(XP_MACOSX)
-      nsCString(mAppSupport + "/Firefox/Profiles"_ns)
+      nsCString(mAppSupport + "/fooprofile/Profiles"_ns)
 #elif defined(XP_UNIX)
       nsCString(mMockedHomeDir + "/.fooprofile"_ns)
 #elif defined(XP_WIN)
-      nsCString(mRoamingHome + "\\Mozilla\\Firefox\\Profiles"_ns)
+      nsCString(mRoamingHome + "\\fooprofile\\Profiles"_ns)
 #endif
           ,
       GetUserProfilesRootDir());

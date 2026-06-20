@@ -16,20 +16,11 @@ add_task(
       }
     );
 
-    await aboutTranslationsTestUtils.assertIsVisible({
-      pageHeader: true,
-      mainUserInterface: true,
-      sourceLanguageSelector: true,
-      targetLanguageSelector: true,
-      copyButton: true,
-      swapLanguagesButton: true,
-      sourceSectionTextArea: true,
-      targetSectionTextArea: true,
-      unsupportedInfoMessage: false,
-      policyDisabledInfoMessage: false,
-      featureBlockedInfoMessage: true,
-      languageLoadErrorMessage: false,
-    });
+    await aboutTranslationsTestUtils.assertIsVisible(
+      aboutTranslationsVisibilityExpectations({
+        featureBlockedInfoMessage: true,
+      })
+    );
 
     await TestTranslationsTelemetry.assertEvent(
       Glean.translationsAboutTranslationsPage.open,
@@ -95,7 +86,7 @@ add_task(async function test_about_translations_telemetry_unblock_feature() {
       ],
     },
     async () => {
-      await aboutTranslationsTestUtils.clickUnblockFeatureButton();
+      await aboutTranslationsTestUtils.invokeUnblockFeatureButton();
     }
   );
 

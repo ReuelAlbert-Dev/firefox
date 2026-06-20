@@ -17,11 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,18 +29,20 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.theme.AcornTheme
 import mozilla.components.concept.llm.LlmProvider
 import mozilla.components.feature.summarize.R
 import mozilla.components.ui.richtext.RichText
+import mozilla.components.ui.richtext.ir.RichDocument
 import mozilla.components.ui.icons.R as iconsR
 
 /**
- *  Content being shown after the page summary has been generated
+ * Content being shown after the page summary has been generated
  */
 @Composable
 internal fun SummaryContentLoaded(
-    text: String,
+    document: RichDocument,
     info: LlmProvider.Info,
     onSettingsClicked: () -> Unit = {},
 ) {
@@ -54,7 +54,7 @@ internal fun SummaryContentLoaded(
         SummarizationHeader(info, onSettingsClicked = onSettingsClicked)
         Spacer(Modifier.height(AcornTheme.layout.space.static200))
         SummarizedContent(
-            text = text,
+            document = document,
             modifier = Modifier
                 .weight(1f, fill = true)
                 .fillMaxWidth()
@@ -82,12 +82,13 @@ internal fun SummarizationHeader(
 
         IconButton(
             onClick = onSettingsClicked,
+            contentDescription = stringResource(
+                id = R.string.mozac_summarize_settings_button_content_description,
+            ),
         ) {
             Icon(
                 painter = painterResource(id = iconsR.drawable.mozac_ic_settings_24),
-                contentDescription = stringResource(
-                    id = R.string.mozac_summarize_settings_button_content_description,
-                ),
+                contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -104,7 +105,7 @@ private fun ModelInformation(
             .fillMaxHeight()
             .background(
                 color = MaterialTheme.colorScheme.secondaryContainer,
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.small,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -128,7 +129,7 @@ private fun ModelInformation(
                 stringResource(info.nameRes),
             ),
             fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
         )
 
         Spacer(Modifier.width(8.dp))
@@ -136,9 +137,9 @@ private fun ModelInformation(
 }
 
 @Composable
-private fun SummarizedContent(text: String, modifier: Modifier = Modifier) {
+private fun SummarizedContent(document: RichDocument, modifier: Modifier = Modifier) {
     SelectionContainer(modifier = modifier) {
-        RichText(text = text)
+        RichText(document = document)
     }
 }
 
@@ -150,6 +151,6 @@ private fun DisclaimerMessage() {
         modifier = Modifier
             .height(24.dp)
             .width(AcornTheme.layout.size.containerMaxWidth),
-        color = AcornTheme.colors.iconPrimaryInactive,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }

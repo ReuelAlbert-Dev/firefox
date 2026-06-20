@@ -88,7 +88,7 @@ mozilla::ipc::IPCResult SandboxTestingParent::RecvReportTestResults(
                 u", \"message\" : \""_ns +
                 NS_ConvertUTF8toUTF16(resultMessage) + u"\" }"_ns;
         observerService->NotifyObservers(nullptr, "sandbox-test-result",
-                                         json.BeginReading());
+                                         json.get());
       }));
   return IPC_OK();
 }

@@ -8,18 +8,26 @@
  * This file contains LLM tool abstractions and tool definitions.
  */
 
-/** @import { SecurityProperties } from "moz-src:///browser/components/aiwindow/models/SecurityProperties.sys.mjs" */
+/**
+ * @import { ChatConversation } from "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
+ */
 
 import { searchBrowsingHistory as implSearchBrowsingHistory } from "moz-src:///browser/components/aiwindow/models/SearchBrowsingHistory.sys.mjs";
+import { closeTabsAction } from "moz-src:///browser/components/aiwindow/models/ManageTabs.sys.mjs";
+import { WCSMerinoClient } from "moz-src:///browser/components/aiwindow/models/WCSMerinoClient.sys.mjs";
 import { PageExtractorParent } from "resource://gre/actors/PageExtractorParent.sys.mjs";
 import {
   ChatStore,
   MESSAGE_ROLE,
 } from "moz-src:///browser/components/aiwindow/ui/modules/ChatStore.sys.mjs";
 import {
-  truncateUntrustedMetadata,
+  sanitizeUntrustedContent,
   isNewPageUrl,
 } from "moz-src:///browser/components/aiwindow/models/ChatUtils.sys.mjs";
+import {
+  FEATURE_MAJOR_VERSIONS,
+  MODEL_FEATURES,
+} from "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs";
 
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -30,10 +38,21 @@ ChromeUtils.defineESModuleGetters(lazy, {
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
   MemoriesManager:
     "moz-src:///browser/components/aiwindow/models/memories/MemoriesManager.sys.mjs",
+  SmartWindowNavigationInfo:
+    "moz-src:///browser/components/aiwindow/models/SmartWindowNavigationInfo.sys.mjs",
+  ToolUITelemetry:
+    "moz-src:///browser/components/aiwindow/ui/modules/ToolUITelemetry.sys.mjs",
   // @todo Bug 2009194
   // PageDataService:
   //   "moz-src:///browser/components/pagedata/PageDataService.sys.mjs",
 });
+
+ChromeUtils.defineLazyGetter(lazy, "console", () =>
+  console.createInstance({
+    prefix: "Conversation",
+    maxLogLevelPref: "browser.smartwindow.conversation.logLevel",
+  })
+);
 
 // Important! Changing or removing this value requires a security review.
 //
@@ -74,11 +93,21 @@ function isAllowedURL(url) {
 // through prompt injection could leak the contents of a user's entire history.
 const MAX_HISTORY_RESULTS = 15;
 
-const GET_OPEN_TABS = "get_open_tabs";
-const SEARCH_BROWSING_HISTORY = "search_browsing_history";
-const GET_PAGE_CONTENT = "get_page_content";
-const RUN_SEARCH = "run_search";
-const GET_USER_MEMORIES = "get_user_memories";
+export const GET_OPEN_TABS = "get_open_tabs";
+export const SEARCH_BROWSING_HISTORY = "search_browsing_history";
+export const GET_PAGE_CONTENT = "get_page_content";
+export const RUN_SEARCH = "run_search";
+export const GET_USER_MEMORIES = "get_user_memories";
+export const GET_NAVIGATION_INFO = "get_navigation_info";
+export const MANAGE_TABS = "manage_tabs";
+export const WORLD_CUP_MATCHES = "world_cup_matches";
+export const WORLD_CUP_LIVE = "world_cup_live";
+export const ADD_MEMORY = "add_memory";
+
+// Tools gated behind a feature pref. Filtered out of the model's tool list
+// in Chat.sys.mjs when the pref is off.
+export const WORLD_CUP_TOOLS = new Set([WORLD_CUP_MATCHES, WORLD_CUP_LIVE]);
+export const WORLD_CUP_PREF = "browser.smartwindow.worldcup.enabled";
 
 export const TOOLS = [
   GET_OPEN_TABS,
@@ -86,6 +115,11 @@ export const TOOLS = [
   GET_PAGE_CONTENT,
   RUN_SEARCH,
   GET_USER_MEMORIES,
+  GET_NAVIGATION_INFO,
+  MANAGE_TABS,
+  WORLD_CUP_MATCHES,
+  WORLD_CUP_LIVE,
+  ADD_MEMORY,
 ];
 
 export const RUN_SEARCH_VERBATIM_QUERY_DESCRIPTION =
@@ -180,7 +214,7 @@ export const toolsConfig = [
     function: {
       name: GET_PAGE_CONTENT,
       description:
-        "Retrieve cleaned text content of all the provided browser page URLs in the list.",
+        "Retrieve cleaned text content of all the provided browser page URL Tokens in the list.",
       parameters: {
         type: "object",
         properties: {
@@ -189,12 +223,11 @@ export const toolsConfig = [
             items: {
               type: "string",
               description:
-                "The complete URL of the page to fetch content from. This must exactly match " +
-                "a URL from the current conversation context. Use the full URL including " +
-                "protocol (http/https). Example: 'https://www.example.com/article'.",
+                "A URL token that appeared in the conversation, formatted as §url_token: DOMAIN_TLD_PATH_n§. " +
+                "Do NOT fabricate tokens. Only use tokens from user messages and tool results.",
             },
             minItems: 1,
-            description: "List of URLs to fetch content from.",
+            description: "List of URL tokens to fetch content from.",
           },
         },
         required: ["url_list"],
@@ -202,6 +235,28 @@ export const toolsConfig = [
     },
   },
   RUN_SEARCH_TOOL_CONFIG_VERBATIM_QUERY,
+  {
+    type: "function",
+    function: {
+      name: GET_NAVIGATION_INFO,
+      description:
+        "Find relevant Firefox preferences pages based on a user query. " +
+        "Use this when the user asks where to find a setting, how to configure something in " +
+        "Firefox, or where to manage Smart Window features like memories.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "A natural-language description of what the user is looking for, " +
+              "e.g. 'where to manage memories' or 'privacy settings'.",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -214,26 +269,160 @@ export const toolsConfig = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: WORLD_CUP_MATCHES,
+      description:
+        "Retrieve World Cup soccer matches in a 14-day window centered on a date. " +
+        "Returns matches grouped into previous (older), current (on the date), and " +
+        "next (newer). Use this for questions about results, fixtures, schedules, " +
+        "scores from a recent or upcoming day, or how a specific team is doing. " +
+        "Prefer this over a web search for World Cup match data.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: {
+            type: "string",
+            description:
+              "Center of the +/-7 day window as RFC date 'YYYY-MM-DD'. " +
+              "Omit to default to today (UTC).",
+          },
+          teams: {
+            type: "string",
+            description:
+              "Comma-separated 3-letter team keys to filter on, e.g. 'BRA,ARG'. " +
+              "Omit to include all teams.",
+          },
+          limit: {
+            type: "integer",
+            description:
+              "Maximum number of matches to return across the three buckets. " +
+              "Omit unless the user asks for a small number.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: WORLD_CUP_LIVE,
+      description:
+        "Retrieve World Cup soccer matches that are currently in progress. " +
+        "Use this when the user asks what's playing now, the live score, or " +
+        "what's happening right now in the World Cup.",
+      parameters: {
+        type: "object",
+        properties: {
+          teams: {
+            type: "string",
+            description:
+              "Comma-separated 3-letter team keys to filter on, e.g. 'BRA,ARG'. " +
+              "Omit to include all live matches.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: MANAGE_TABS,
+      description:
+        "Perform a management action on a list of selected open tabs. You can " +
+        "set ask_confirmation to true to request user confirmation and allow " +
+        "them to confirm the selected list before the action is finalized.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "The action to be performed on the tabs.",
+            enum: ["close_tabs"],
+          },
+          ask_confirmation: {
+            type: "boolean",
+            description:
+              "Whether to show the user the list of tabs and require their confirmation " +
+              "before executing the action. Default to true. Only set to false when " +
+              "the user's request unambiguously identifies the specific tabs to act on, " +
+              "and the action does not close all (or nearly all) of the user's open tabs. " +
+              "When in doubt, set to true.",
+          },
+          url_tokens: {
+            type: "array",
+            items: {
+              type: "string",
+              description: "A URL token corresponding to an open tab",
+            },
+            minItems: 1,
+            description:
+              "List of URL tokens identifying the tabs the action should be taken on.",
+          },
+        },
+        required: ["action", "ask_confirmation", "url_tokens"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: ADD_MEMORY,
+      description:
+        "Save a memory when the user explicitly asks to be remembered something " +
+        '(e.g. "remember that I prefer Walmart for shopping"). Transform the ' +
+        "request into a concise third-person summary of the preference or fact " +
+        '(e.g. "Prefers Walmart for shopping"). Do NOT save personally ' +
+        "identifiable or financial information such as names, addresses, phone " +
+        "numbers, emails, SSNs, account or card numbers.",
+      parameters: {
+        type: "object",
+        properties: {
+          memorySummary: {
+            type: "string",
+            maxLength: 100,
+            description:
+              "A concise summary of what to remember, transformed from the user's request.",
+          },
+          containsPersonallyIdentifiableInfo: {
+            type: "boolean",
+            description:
+              "True if the request contains personally identifiable or financial " +
+              "information (names, addresses, phone numbers, emails, SSNs, account " +
+              "or card numbers, etc.).",
+          },
+        },
+        required: ["memorySummary", "containsPersonallyIdentifiableInfo"],
+      },
+    },
+  },
 ];
 
 /**
- * Retrieves a list of the latest open tabs from the current active browser window.
- * Only includes tabs with http/https URLs.
- * TODO: Ignores chat-only pages (FE to implement isSidebarMode flag).
+ * Metadata about a Tab used in chat conversations.
  *
- * @param {object} _params
- * @param {SecurityProperties} securityProperties
- * @returns {Promise<Array<object>>}
- *  A promise resolving to an array of tab metadata objects, each containing:
- *  - url {string}: The tab's current URL
- *  - title {string}: The tab's title
- *  - description {string}: Optional description (empty string if not available)
- *  - lastAccessed {number}: Last accessed timestamp in milliseconds
- *  Tabs are sorted by most recently accessed and limited to MAX_TABS results.
+ * @typedef {object} TabInfo
+ * @property {string} url - The url of the tab.
+ * @property {string} title - Title of the tab.
+ * @property {number} lastAccessed - When the tab was last accessed in milliseconds.
  */
-export async function getOpenTabs(_params, securityProperties) {
+
+/**
+ * Retrieves a list of the latest open tabs from the current active browser window.
+ * Tabs are sorted by most recently accessed and limited to MAX_TABS results.
+ * Only includes tabs with http/https URLs.
+ *
+ * @param {ChatConversation} conversation
+ * @returns {Promise<Array<TabInfo>>}
+ */
+export async function getOpenTabs(conversation) {
   // No security check needed. The security checks prevent data exfiltration,
   // which requires external communication. This tool makes no external requests.
+
+  const startTime = ChromeUtils.now();
+
+  /** @type {Array<TabInfo>} */
   const tabs = [];
 
   for (const win of lazy.BrowserWindowTracker.orderedWindows) {
@@ -250,7 +439,7 @@ export async function getOpenTabs(_params, securityProperties) {
         if (isAllowedURL(url) && !isNewPageUrl(url)) {
           tabs.push({
             url,
-            title: truncateUntrustedMetadata(title),
+            title: sanitizeUntrustedContent(title),
             lastAccessed: tab.lastAccessed,
           });
         }
@@ -260,32 +449,22 @@ export async function getOpenTabs(_params, securityProperties) {
 
   tabs.sort((a, b) => b.lastAccessed - a.lastAccessed);
 
-  const topTabs = tabs.slice(0, MAX_TABS);
+  const recentTabs = tabs.slice(0, MAX_TABS);
 
-  const result = await Promise.all(
-    topTabs.map(async ({ url, title, lastAccessed }) => {
-      let description = "";
-      if (url) {
-        // @todo Bug 2009194
-        // PageDataService halts code execution even in try/catch
-        //
-        // try {
-        //   description =
-        //     lazy.PageDataService.getCached(url)?.description ||
-        //     (await lazy.PageDataService.fetchPageData(url))?.description ||
-        //     "";
-        // } catch (e) {
-        //   console.log(e);
-        //   description = "";
-        // }
-      }
-      return { url, title, description, lastAccessed };
-    })
-  );
   // Tab titles are truncated to 100 characters and therefore not expected to
   // contain enough untrusted data for a prompt injection attack.
-  securityProperties.setPrivateData();
-  return result;
+  conversation.securityProperties.setPrivateData();
+  lazy.console.log("[Tool] getOpenTabs", recentTabs);
+
+  conversation.addSeenUrls(recentTabs.map(({ url }) => url));
+
+  ChromeUtils.addProfilerMarker(
+    "SmartWindow",
+    { startTime },
+    `Tool:get_open_tabs(${recentTabs.length})`
+  );
+
+  return recentTabs;
 }
 
 /**
@@ -308,13 +487,13 @@ export async function getOpenTabs(_params, securityProperties) {
  *  Optional local ISO-8601 end timestamp (e.g. "2025-11-07T09:00:00").
  * @param {number} toolParams.historyLimit
  *  Maximum number of history results to return.
- * @param {SecurityProperties} securityProperties
+ * @param {ChatConversation} conversation
  * @returns {Promise<object>}
  *  A promise resolving to an object with the search term and history results.
  *  Includes `count` when matches exist, a `message` when none are found, or an
  *  `error` string on failure.
  */
-export async function searchBrowsingHistory(toolParams, securityProperties) {
+export async function searchBrowsingHistory(toolParams, conversation) {
   // No security check, always allowed because it makes no external requests.
   const params = toolParams && typeof toolParams === "object" ? toolParams : {};
 
@@ -326,43 +505,39 @@ export async function searchBrowsingHistory(toolParams, securityProperties) {
     endTs,
     historyLimit: MAX_HISTORY_RESULTS,
   });
-  securityProperties.setPrivateData();
+
+  conversation.addSeenUrls(result.results.map(({ url }) => url));
+  // Set history result on convsersation so it can be
+  // sent to the content page.
+  conversation.addHistoryResults(
+    result.results.map(
+      ({ url, title, favicon, thumbnail, visitDate, visitCount }) => ({
+        url,
+        title,
+        favicon,
+        thumbnail,
+        visitDate,
+        visitCount,
+      })
+    )
+  );
+
+  // The model only needs link metadata. thumbnail is a heavy, page-controlled
+  // field the UI renders from the history grid above, so keep it out of the
+  // model-facing payload.
+  result.results = result.results.map(
+    ({ url, title, visitDate, visitCount, relevanceScore }) => ({
+      url,
+      title,
+      visitDate,
+      visitCount,
+      relevanceScore,
+    })
+  );
+
+  conversation.securityProperties.setPrivateData();
+  lazy.console.log("[Tool] searchBrowsingHistory", result);
   return result;
-}
-
-/**
- * Strips heavy or unnecessary fields from a browser history search result.
- *
- * @param {string} result
- *  A JSON string representing the history search response.
- * @returns {string}
- *  The sanitized JSON string with large fields (e.g., favicon, thumbnail)
- *  removed, or the original string if parsing fails.
- */
-export function stripSearchBrowsingHistoryFields(result) {
-  try {
-    const data = JSON.parse(result);
-    if (
-      data.error ||
-      !Array.isArray(data.results) ||
-      data.results.length === 0
-    ) {
-      return result;
-    }
-
-    // Remove large or unnecessary fields to save tokens
-    const OMIT_KEYS = ["favicon", "thumbnail"];
-    for (const item of data.results) {
-      if (item && typeof item === "object") {
-        for (const k of OMIT_KEYS) {
-          delete item[k];
-        }
-      }
-    }
-    return JSON.stringify(data);
-  } catch {
-    return result;
-  }
 }
 
 /**
@@ -372,10 +547,11 @@ export function stripSearchBrowsingHistoryFields(result) {
 export class RunSearch {
   static NAVIGATION_TIMEOUT_MS = 15000;
   static CONTENT_SETTLE_MS = 2000;
+  static MAX_CHARACTERS = 15000;
 
   static #ensureTabSelected(tab) {
     if (!tab.selected) {
-      tab.ownerGlobal.gBrowser.selectedTab = tab;
+      tab.documentGlobal.gBrowser.selectedTab = tab;
     }
   }
 
@@ -421,12 +597,11 @@ export class RunSearch {
 
   /**
    * @param {object} [toolParams]
-   * @param {object} [context]
-   * @param {BrowsingContext} [context.browsingContext]
-   * @param {SecurityProperties} securityProperties
+   * @param {BrowsingContext} browsingContext
+   * @param {ChatConversation} conversation
    * @returns {Promise<string>}
    */
-  static async runSearch(toolParams, context = {}, securityProperties) {
+  static async runSearch(toolParams, browsingContext, conversation) {
     // No security check, always allowed because we assume that the search
     // provider is trusted.
 
@@ -449,17 +624,17 @@ export class RunSearch {
       return "Error: a non-empty search query is required.";
     }
 
-    if (!context.browsingContext) {
+    if (!browsingContext) {
       return "Error: no browsingContext provided to perform search.";
     }
 
-    const win = context.browsingContext.topChromeWindow;
+    const win = browsingContext.topChromeWindow;
     if (!win || win.closed) {
       return "Error: associated browser window not available or closed.";
     }
 
     // Get the original tab from the browsing context, not the currently selected tab
-    const originalBrowser = context.browsingContext.embedderElement;
+    const originalBrowser = browsingContext.embedderElement;
     let targetTab =
       originalBrowser && win.gBrowser?.getTabForBrowser(originalBrowser);
 
@@ -483,7 +658,7 @@ export class RunSearch {
     let result;
     try {
       await RunSearch.#performSearchAndWait(win, originalBrowser, query.trim());
-      result = RunSearch.#extractSerpContent(originalBrowser);
+      result = RunSearch.#extractSerpContent(originalBrowser, conversation);
     } catch (e) {
       console.error("[RunSearch] search failed:", e);
       result = `Error performing search for "${query}": ${e.message}`;
@@ -491,8 +666,19 @@ export class RunSearch {
       RunSearch.#showSearchingIndicator(win, false, null);
     }
 
-    securityProperties.setPrivateData();
-    securityProperties.setUntrustedInput();
+    // Mark the SERP entry as having user interaction so Back doesn't skip it
+    // (browser.navigation.requireUserInteraction). The user asked for this
+    // navigation via the assistant even if they never gesture on the SERP.
+    const sh = originalBrowser.browsingContext?.sessionHistory;
+    const entry = sh && sh.index >= 0 ? sh.getEntryAtIndex(sh.index) : null;
+    if (entry) {
+      entry.hasUserInteraction = true;
+    }
+
+    conversation.securityProperties.setPrivateData();
+    conversation.securityProperties.setUntrustedInput();
+
+    lazy.console.log("[Tool] runSearch", result);
     return result;
   }
 
@@ -570,56 +756,49 @@ export class RunSearch {
 
     await lazy.AIWindow.performSearch(query, win);
     await navigationPromise;
+    await lazy.AIWindow.focusSidebar(win);
 
     // Allow JS rendering to settle
     await new Promise(r => lazy.setTimeout(r, RunSearch.CONTENT_SETTLE_MS));
   }
 
-  static async #extractSerpContent(browser) {
+  /**
+   * Run PageExtractor on the search engine page.
+   *
+   * @param {MozBrowser} browser
+   * @param {ChatConversation} conversation
+   * @returns {string}
+   */
+  static async #extractSerpContent(browser, conversation) {
     const windowContext = browser.browsingContext?.currentWindowContext;
     if (!windowContext) {
       return "Error: could not access search results page content.";
     }
 
+    /** @type {string} */
+    let text;
+    /** @type {PageExtractorParent} */
     const pageExtractor = await windowContext.getActor("PageExtractor");
-    let extraction;
     try {
-      extraction = await pageExtractor.getReaderModeContent();
+      const result = await pageExtractor.getText({
+        sufficientLength: RunSearch.MAX_CHARACTERS,
+        cleanWhitespace: true,
+        removeBoilerplate: false,
+        sourceUrl: browser.currentURI?.spec,
+      });
+      if (!result) {
+        return "No content could be extracted from the search results page.";
+      }
+      text = result.text;
+      conversation.addSeenUrls(result.links);
+      conversation.addSerpUrlsForAnonymousFetch(result.links);
     } catch {
-      // Fall back to full text extraction
-    }
-
-    let text = extraction?.text ?? "";
-    if (!text) {
-      try {
-        extraction = await pageExtractor.getText();
-        text = extraction?.text ?? "";
-      } catch {
-        return "Error: failed to extract search results content.";
-      }
-    }
-
-    if (!text) {
-      return "No content could be extracted from the search results page.";
-    }
-
-    let cleanContent = text
-      .replace(/\s+/g, " ")
-      .replace(/\n\s*\n/g, "\n")
-      .trim();
-
-    const MAX_CHARS = 15000;
-    if (cleanContent.length > MAX_CHARS) {
-      const truncatePoint = cleanContent.lastIndexOf(".", MAX_CHARS);
-      if (truncatePoint > MAX_CHARS - 100) {
-        cleanContent = cleanContent.substring(0, truncatePoint + 1);
-      } else {
-        cleanContent = cleanContent.substring(0, MAX_CHARS) + "...";
-      }
+      return "Error: failed to extract search results content.";
     }
 
     const url = browser.currentURI?.spec || "unknown";
-    return `Search results from ${url}:\n\n${cleanContent}`;
+
+    return `Search results from ${url}:\n\n${text}`;
   }
 }
 
@@ -634,39 +813,49 @@ export class GetPageContent {
    *
    * @param {object} toolParams
    * @param {string[]} toolParams.url_list
-   * @param {Set<string>} mentionedUrls
-   * @param {SecurityProperties} securityProperties
+   * @param {ChatConversation} conversation
    * @returns {Promise<Array<string>>}
    *  A promise resolving to a string containing the extracted page content
    *  with a descriptive header, or an error message if extraction fails.
    */
-  static async getPageContent({ url_list }, mentionedUrls, securityProperties) {
+  static async getPageContent({ url_list }, conversation) {
     // This is a decision table for allowing and blocking fetches on the configuration of the
     // SecurityProperties and the URLs. Tab URLs don't do any new page loads. Mention urls
-    // have been added by the user so they should be allowed. And all other URLs are
-    // restricted when both private and untrusted data has been seen.
+    // have been added by the user so they should be allowed. SERP urls came from a
+    // trusted search provider's SERP and are eligible for an anonymous fetch.
+    // All other URLs are restricted when both private and untrusted data has been seen.
     //
-    // │ Flags               │ tab urls │ mention urls │ any urls │
-    // ├─────────────────────┼──────────┼──────────────┼──────────┤
-    // │ Private only        │ ALLOW    │ ALLOW        │ ALLOW    │
-    // │ Untrusted only      │ ALLOW    │ ALLOW        │ ALLOW    │
-    // │ Private + Untrusted │ ALLOW    │ ALLOW        │ BLOCK    │
+    // │ Flags               │ tab urls │ mention urls │ serp urls          │ any urls │
+    // ├─────────────────────┼──────────┼──────────────┼────────────────────┼──────────┤
+    // │ Private only        │ ALLOW    │ ALLOW        │ ALLOW              │ ALLOW    │
+    // │ Untrusted only      │ ALLOW    │ ALLOW        │ ALLOW              │ ALLOW    │
+    // │ Private + Untrusted │ ALLOW    │ ALLOW        │ ALLOW (anonymous)  │ BLOCK    │
 
     // Sanitize the inputs from the language model:
     if (!Array.isArray(url_list)) {
-      throw new Error("The url list must be an array of stirngs");
+      return "Error: the url_list argument must be an array of strings.";
     }
 
-    return Promise.all(
+    // Collect these one time before the loop below since it must iterate through
+    // all of the conversations and collect a new Set of mentions.
+    const mentionedUrls = conversation.getAllMentionURLs();
+
+    const results = await Promise.all(
       url_list.map(async (url, index) => {
         if (!isAllowedURL(url)) {
           return "This URL is not allowed: " + url;
         }
+        const startTime = ChromeUtils.now();
         try {
           const text = await GetPageContent.#getPageContentsForSingleURL(
             url,
             mentionedUrls,
-            securityProperties
+            conversation
+          );
+          ChromeUtils.addProfilerMarker(
+            "SmartWindow",
+            { startTime },
+            `Tool:get_page_content(${url})`
           );
           return text;
         } catch (error) {
@@ -675,6 +864,9 @@ export class GetPageContent {
         }
       })
     );
+    lazy.console.log("[Tool] getPageContent", results);
+
+    return results;
   }
 
   /**
@@ -702,15 +894,11 @@ export class GetPageContent {
   /**
    * @param {string} url
    * @param {Set<string>} mentionedUrls
-   * @param {object} securityProperties
+   * @param {ChatConversation} conversation
    *
    * @returns {Promise<string>}
    */
-  static async #getPageContentsForSingleURL(
-    url,
-    mentionedUrls,
-    securityProperties
-  ) {
+  static async #getPageContentsForSingleURL(url, mentionedUrls, conversation) {
     // First try to get the contents from an existing tab. This is always allowed from
     // a security perspective as it doesn't involve a network request, so there is
     // no risk for data exfiltration.
@@ -721,9 +909,7 @@ export class GetPageContent {
         tab.linkedBrowser.browsingContext?.currentWindowContext;
 
       if (!currentWindowContext) {
-        // The tab may still be loading or is not accessible. Just tell the language
-        // model that the content is not accessible to not confuse it.
-        return `Cannot access content from the tab "${truncateUntrustedMetadata(tab.label)}" at ${url}.`;
+        return `Cannot access content from the following webpage:\n - Title: ${sanitizeUntrustedContent(tab.label)}\n - URL: ${url}.`;
       }
 
       // Extract page content using PageExtractor
@@ -732,77 +918,404 @@ export class GetPageContent {
 
       return GetPageContent.#runExtraction(
         pageExtractor,
-        securityProperties,
-        `"${truncateUntrustedMetadata(tab.label)}" (${url})`
+        conversation,
+        `${sanitizeUntrustedContent(tab.label)} (${url})`,
+        url
       );
     }
 
     // Fetch the page headlessly since it's not loaded as a tab. This requires elevated
     // security permissions since an external network request is required, and is a
     // risk for the exfiltration of private data. If the URL is mentioned by the user
-    // then the security properties check is bypassed here.
+    // then the security properties check is bypassed here. URLs in the serp URL
+    // ledger get a anonymous fetch path that does not carry user identity.
+
+    let label = url; // For headless fetches, use the URL as the label since we don't have a tab title.
     if (
       !mentionedUrls.has(url) &&
-      securityProperties.untrustedInput &&
-      securityProperties.privateData
+      conversation.securityProperties.untrustedInput &&
+      conversation.securityProperties.privateData
     ) {
+      if (conversation.serpUrlsForAnonymousFetch.has(url)) {
+        return PageExtractorParent.getHeadlessExtractor({
+          urlString: url,
+          callback: pageExtractor =>
+            GetPageContent.#runExtraction(
+              pageExtractor,
+              conversation,
+              label,
+              url
+            ),
+          anonymousFetch: true,
+        });
+      }
       return (
         `Access is not allowed for ${url} because of untrusted and private content ` +
         "in the conversation."
       );
     }
 
-    return PageExtractorParent.getHeadlessExtractor(url, pageExtractor =>
-      GetPageContent.#runExtraction(pageExtractor, securityProperties, url)
-    );
+    return PageExtractorParent.getHeadlessExtractor({
+      urlString: url,
+      callback: pageExtractor =>
+        GetPageContent.#runExtraction(pageExtractor, conversation, label, url),
+    });
   }
 
   /**
    * Main extraction function.
    * label is of form `{tab.title} ({tab.url})`.
    *
-   * @param {PageExtractor} pageExtractor
-   * @param {SecurityProperties} securityProperties
+   * @param {PageExtractorParent} pageExtractor
+   * @param {ChatConversation} conversation
    * @param {string} label
+   * @param {string} sourceUrl
    * @returns {Promise<string>}
    *  A promise resolving to a formatted string containing the page content
    *  with mode and label information, or an error message if no content is available.
    */
-  static async #runExtraction(pageExtractor, securityProperties, label) {
-    const { text } = await pageExtractor.getText({
+  static async #runExtraction(pageExtractor, conversation, label, sourceUrl) {
+    const extraction = await pageExtractor.getText({
       sufficientLength: GetPageContent.MAX_CHARACTERS,
       cleanWhitespace: true,
       removeBoilerplate: true,
+      sourceUrl,
     });
 
-    if (!text) {
+    if (!extraction) {
       return `get_page_content returned no content for ${label}.`;
     }
+
+    const { text, links } = extraction;
+    conversation.addSeenUrls(links);
 
     // If an extraction succeeds set the security properties.
     // The page content is private since it uses a web page load that has credentials.
     // The information is untrusted since it's arbitrary web content.
-    securityProperties.setPrivateData();
-    securityProperties.setUntrustedInput();
+    conversation.securityProperties.setPrivateData();
+    conversation.securityProperties.setUntrustedInput();
 
     return `Content from ${label}:\n\n${text}`;
   }
 }
 
 /**
+ * Returns Firefox settings navigation entries semantically relevant to the query.
+ * No conversation parameter is needed.
+ *
+ * @param {object} toolParams
+ * @param {string} toolParams.query
+ * @returns {Promise<Array<{url, label, breadcrumb, description, similarity}>>}
+ */
+export async function getNavigationInfo(toolParams) {
+  const params = toolParams && typeof toolParams === "object" ? toolParams : {};
+  const { query = "" } = params;
+
+  if (!query.trim()) {
+    return [];
+  }
+
+  // No flags set: results are static browser UI metadata bundled with Firefox.
+  // No network requests are made and no user data is read, so there is no
+  // privacy risk and no untrusted content that could carry a prompt injection.
+  return lazy.SmartWindowNavigationInfo.getRelevantNavigation(query);
+}
+
+/**
  * Retrieves the summaries of all saved memories
  *
- * @param {object} _toolParams
- * @param {SecurityProperties} securityProperties
+ * @param {ChatConversation} conversation
  * @returns {Promise<Array<string>>}
  */
-export async function getUserMemories(_toolParams, securityProperties) {
+export async function getUserMemories(conversation) {
   // No security check, always allowed because it makes no external requests.
   const memories = await lazy.MemoriesManager.getAllMemories();
 
   const result = memories.map(memory => memory.memory_summary);
   // Memory summaries are private user data. They are truncated to 100
   // characters, so they are not considered untrusted input.
-  securityProperties.setPrivateData();
+  conversation.securityProperties.setPrivateData();
+  lazy.console.log("[Tool] getUserMemories", result);
   return result;
 }
+
+/**
+ * Saves a memory the user explicitly asked to be remembered. If the model-inferred
+ * containsPersonallyIdentifiableInfo flag is true, the memory will not be saved
+ *  and an error message will be returned.
+ *
+ * @param {object} toolParams
+ * @param {string} toolParams.memorySummary
+ * @param {boolean} toolParams.containsPersonallyIdentifiableInfo
+ * @param {ChatConversation} conversation
+ * @returns {Promise<string>}
+ */
+export async function addMemory(
+  { memorySummary, containsPersonallyIdentifiableInfo },
+  conversation
+) {
+  // Until UI confirmation is implemented, we will not allow saving memories when untrusted
+  //  input is present in the conversation. This is to mitigate writes of attacker-influenced content
+  // into durable storage that is later re-injected into the user's future conversations as trusted context.
+  if (conversation.securityProperties.untrustedInput) {
+    return "Memory cannot be saved when untrusted content is present in the conversation.";
+  }
+  if (containsPersonallyIdentifiableInfo) {
+    return "Error: Failed to save memory: Memory contains personally identifiable information.";
+  }
+  const result = await lazy.MemoriesManager.saveRequestedMemory(memorySummary);
+  if (!result.ok) {
+    return `Error: Failed to save memory: ${result.reason}`;
+  }
+
+  lazy.MemoriesManager.enrichExistingMemory(
+    result.memory.id,
+    memorySummary
+  ).catch(e => lazy.console.error("[Tool] addMemory classify failed", e));
+
+  lazy.console.log("[Tool] addMemory", result.memory, "Action:", result.action);
+  return `Memory ${result.action}: "${result.memory.memory_summary}"`;
+}
+
+/**
+ * Strips fields the language model doesn't need (icons, colors) from a
+ * single match payload.
+ *
+ * @param {object} match
+ * @returns {object}
+ */
+function trimWorldCupMatch(match) {
+  if (!match || typeof match !== "object") {
+    return match;
+  }
+  const trim = team => {
+    if (!team || typeof team !== "object") {
+      return team;
+    }
+    const out = { ...team };
+    delete out.icon_url;
+    delete out.colors;
+    return out;
+  };
+  return {
+    ...match,
+    home_team: trim(match.home_team),
+    away_team: trim(match.away_team),
+  };
+}
+
+/**
+ * Tool entrypoint for world_cup_matches. Returns the matches grouped by
+ * previous/current/next. Trims UI-only fields. On failure, returns an
+ * `{error}` object so the model can recover gracefully.
+ *
+ * @param {object} toolParams
+ * @param {string} [toolParams.date]
+ * @param {string} [toolParams.teams]
+ * @param {number} [toolParams.limit]
+ * @param {ChatConversation} conversation
+ * @returns {Promise<object>}
+ */
+export async function worldCupMatches(toolParams, conversation) {
+  const params = toolParams && typeof toolParams === "object" ? toolParams : {};
+  const { date, teams, limit } = params;
+
+  let result;
+  try {
+    result = await WCSMerinoClient.fetchMatches({ date, teams, limit });
+  } catch (error) {
+    lazy.console.log("[Tool] worldCupMatches error", error);
+    return { error: `Failed to retrieve World Cup matches: ${error.message}` };
+  }
+
+  const trimmed = {
+    previous: (result.previous || []).map(trimWorldCupMatch),
+    current: (result.current || []).map(trimWorldCupMatch),
+    next: (result.next || []).map(trimWorldCupMatch),
+  };
+
+  // Match data is public, server-provided, and not user data. We still
+  // mark it as untrusted because the response strings (team names, status
+  // text) flow into the model context.
+  conversation.securityProperties.setUntrustedInput();
+  lazy.console.log("[Tool] worldCupMatches", trimmed);
+  return trimmed;
+}
+
+/**
+ * Tool entrypoint for world_cup_live. Returns matches currently in play.
+ *
+ * @param {object} toolParams
+ * @param {string} [toolParams.teams]
+ * @param {ChatConversation} conversation
+ * @returns {Promise<object>}
+ */
+export async function worldCupLive(toolParams, conversation) {
+  const params = toolParams && typeof toolParams === "object" ? toolParams : {};
+  const { teams } = params;
+
+  let result;
+  try {
+    result = await WCSMerinoClient.fetchLive({ teams });
+  } catch (error) {
+    lazy.console.log("[Tool] worldCupLive error", error);
+    return {
+      error: `Failed to retrieve live World Cup matches: ${error.message}`,
+    };
+  }
+
+  const trimmed = {
+    matches: (result.matches || []).map(trimWorldCupMatch),
+  };
+
+  conversation.securityProperties.setUntrustedInput();
+  lazy.console.log("[Tool] worldCupLive", trimmed);
+  return trimmed;
+}
+
+/**
+ * Counts open http(s) tabs across all active AI windows. Used for
+ * browser_action_submit telemetry.
+ *
+ * @returns {number}
+ */
+function countOpenAIWindowTabs() {
+  let count = 0;
+  for (const win of lazy.BrowserWindowTracker.orderedWindows) {
+    if (!lazy.AIWindow.isAIWindowActive(win) || win.closed || !win.gBrowser) {
+      continue;
+    }
+    for (const tab of win.gBrowser.tabs) {
+      const url = tab.linkedBrowser?.currentURI?.spec;
+      if (isAllowedURL(url) && !isNewPageUrl(url)) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Determines the telemetry action_type for a manage_tabs invocation.
+ *
+ * @param {ChatConversation} conversation
+ * @param {string} action
+ * @returns {"unsupported" | "tab_mention" | "description"}
+ */
+function getActionType(conversation, action) {
+  if (action !== "close_tabs") {
+    return "unsupported";
+  }
+
+  const mentions = conversation.getLatestUserMentionCount();
+  return mentions > 0 ? "tab_mention" : "description";
+}
+
+/**
+ * Tool entrypoint for manage_tabs. Dispatches to a per-action handler
+ * based on `action`.
+ *
+ * @param {object} toolParams
+ * @param {ChatConversation} conversation
+ * @param {string} [mode] - Location/mode of the AI Window for telemetry
+ * @param {string} [model] - Identifier of the model that invoked the tool
+ * @returns {Promise<{ toolResult: object, uiData: ?object }>}
+ *   `toolResult` is appended as the body of the `role: "tool"` message sent
+ *   to the model. `uiData` is attached to the assistant message for UI
+ *   rendering, or `null` to skip the UI attachment.
+ */
+export async function manageTabs(
+  toolParams,
+  conversation,
+  mode = "",
+  model = ""
+) {
+  const params = toolParams && typeof toolParams === "object" ? toolParams : {};
+  const { action, ask_confirmation = true, url_tokens = [] } = params;
+
+  const actionType = getActionType(conversation, action);
+
+  if (conversation) {
+    conversation.lastBrowserActionType = actionType;
+  }
+
+  const promptVersion = String(FEATURE_MAJOR_VERSIONS[MODEL_FEATURES.CHAT]);
+
+  const baseTelemetryInfo = {
+    location: mode,
+    chat_id: conversation?.id || "",
+    message_seq: conversation?.messageCount ?? 0,
+    model,
+    prompt_version: promptVersion,
+    action_type: actionType,
+  };
+
+  lazy.ToolUITelemetry.recordBrowserActionSubmit({
+    ...baseTelemetryInfo,
+    tabs_open: countOpenAIWindowTabs(),
+    mentions: conversation.getLatestUserMentionCount(),
+    submit_type: conversation?.lastSubmitType || "",
+  });
+
+  if (!Array.isArray(url_tokens)) {
+    lazy.ToolUITelemetry.recordBrowserActionComplete({
+      ...baseTelemetryInfo,
+      result: "error",
+      tabs_affected: 0,
+      undo_available: false,
+      error: "invalid_url_tokens",
+    });
+    return {
+      toolResult: "Error: url_tokens must be an array.",
+      uiData: null,
+    };
+  }
+
+  const validUrls = new Set(
+    url_tokens.filter(u => typeof u === "string" && isAllowedURL(u))
+  );
+
+  if (!validUrls.size) {
+    lazy.ToolUITelemetry.recordBrowserActionComplete({
+      ...baseTelemetryInfo,
+      result: "no_match",
+      tabs_affected: 0,
+      undo_available: false,
+      error: "no_valid_urls",
+    });
+    return {
+      toolResult: "Error: No valid URLs were provided to manage_tabs.",
+      uiData: null,
+    };
+  }
+
+  if (action === "close_tabs") {
+    return closeTabsAction(
+      { validUrls, ask_confirmation, mode, model },
+      conversation
+    );
+  }
+
+  lazy.ToolUITelemetry.recordBrowserActionComplete({
+    ...baseTelemetryInfo,
+    result: "error",
+    tabs_affected: 0,
+    undo_available: false,
+    error: "unsupported_action",
+  });
+  return {
+    toolResult: `Error: Unsupported action for manage_tabs: ${action}`,
+    uiData: null,
+  };
+}
+
+export const toolFns = {
+  getOpenTabs,
+  searchBrowsingHistory,
+  getUserMemories,
+  getNavigationInfo,
+  worldCupMatches,
+  worldCupLive,
+  manageTabs,
+  addMemory,
+};

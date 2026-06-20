@@ -57,8 +57,8 @@ class ScriptErrorRunnable final : public mozilla::Runnable {
 
     nsAutoString localizedMessage;
     if (NS_WARN_IF(NS_FAILED(nsContentUtils::GetLocalizedString(
-            nsContentUtils::eDOM_PROPERTIES, aMessageName.BeginReading(),
-            localizedMessage)))) {
+            PropertiesFile::DOM_PROPERTIES,
+            PromiseFlatCString(aMessageName).get(), localizedMessage)))) {
       return;
     }
     Dump(localizedMessage, aCallingLocation, aSeverityFlag, aIsChrome,

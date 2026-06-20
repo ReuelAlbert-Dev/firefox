@@ -6,24 +6,31 @@
 #ifndef mozilla_dom_InspectorUtils_h
 #define mozilla_dom_InspectorUtils_h
 
-#include "mozilla/dom/InspectorUtilsBinding.h"
-#include "nsLayoutUtils.h"
+#include "Units.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/dom/InspectorUtilsBindingFwd.h"
+#include "nsTArray.h"
 
 class nsAtom;
 class nsINode;
-class nsINodeList;
 class nsRange;
 
 namespace mozilla {
+class ErrorResult;
 class StyleSheet;
 namespace css {
 class Rule;
 }  // namespace css
 namespace dom {
+class BrowsingContext;
+enum class InspectorPropertyType : uint8_t;
 class CharacterData;
 class Document;
 class Element;
+class GlobalObject;
 class InspectorFontFace;
+class NodeList;
+class OwningCSSRuleOrInspectorDeclaration;
 }  // namespace dom
 }  // namespace mozilla
 
@@ -136,6 +143,10 @@ class InspectorUtils {
   static bool IsValidCSSColor(GlobalObject& aGlobal,
                               const nsACString& aColorString);
 
+  // Check whether a given string is a valid CSS <image> value.
+  static bool IsValidCSSImage(GlobalObject& aGlobal,
+                              const nsACString& aImageString);
+
   // Utilities for obtaining information about a CSS property.
 
   // Get a list of the longhands corresponding to the given CSS property.  If
@@ -215,7 +226,7 @@ class InspectorUtils {
                                uint32_t aMaxRanges,  // max number of ranges to
                                                      // record for each face
                                bool aSkipCollapsedWhitespace,
-                               nsLayoutUtils::UsedFontFaceList& aResult,
+                               nsTArray<UniquePtr<InspectorFontFace>>& aResult,
                                ErrorResult& aRv);
 
   /**
@@ -250,7 +261,7 @@ class InspectorUtils {
                                  Nullable<nsTArray<uint32_t>>& aResult);
 
   MOZ_CAN_RUN_SCRIPT
-  static already_AddRefed<nsINodeList> GetOverflowingChildrenOfElement(
+  static already_AddRefed<NodeList> GetOverflowingChildrenOfElement(
       GlobalObject& aGlobal, Element& element);
 
   /**
@@ -320,6 +331,12 @@ class InspectorUtils {
                            Nullable<InspectorAnchorElement>&);
   static void GetAnchorNamesFor(GlobalObject& aGlobal, Element&,
                                 nsTArray<nsString>& aResult);
+  static void GetComputationStepsSupportedCSSFunctions(
+      GlobalObject& aGlobal, nsTArray<nsCString>& aResult);
+  static void GetComputationSteps(GlobalObject& aGlobal,
+                                  const nsAString& aExpression, Element&,
+                                  const nsAString& aPseudo,
+                                  nsTArray<nsString>& aResult);
 };
 
 }  // namespace mozilla::dom

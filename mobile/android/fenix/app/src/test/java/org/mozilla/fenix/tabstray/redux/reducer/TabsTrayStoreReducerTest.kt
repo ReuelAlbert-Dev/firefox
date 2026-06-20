@@ -4,86 +4,25 @@
 
 package org.mozilla.fenix.tabstray.redux.reducer
 
-import mozilla.components.browser.state.state.createTab
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mozilla.fenix.tabstray.data.TabsTrayItem
+import org.mozilla.fenix.tabstray.data.TabStorageUpdate
+import org.mozilla.fenix.tabstray.data.createTab
+import org.mozilla.fenix.tabstray.data.createTabGroup
 import org.mozilla.fenix.tabstray.navigation.TabManagerNavDestination
 import org.mozilla.fenix.tabstray.redux.action.TabsTrayAction
 import org.mozilla.fenix.tabstray.redux.state.TabSearchState
 import org.mozilla.fenix.tabstray.redux.state.TabsTrayState
+import org.mozilla.fenix.tabstray.redux.state.TabsTrayState.Mode
+import org.mozilla.fenix.tabstray.repository.uistate.data.PersistedUIState
 import org.mozilla.fenix.tabstray.syncedtabs.SyncedTabsListItem
 import org.mozilla.fenix.tabstray.syncedtabs.generateFakeTab
 import org.mozilla.fenix.tabstray.syncedtabs.getFakeSyncedTabList
-import kotlin.collections.listOf
+import kotlin.test.assertEquals
 
 class TabsTrayStoreReducerTest {
-
-    @Test
-    fun `WHEN UpdateInactiveTabs THEN inactive tabs are added`() {
-        val inactiveTabs = listOf(TabsTrayItem.Tab(tab = createTab("https://mozilla.org")))
-        val initialState = TabsTrayState()
-        val expectedState =
-            initialState.copy(inactiveTabs = TabsTrayState.InactiveTabsState(tabs = inactiveTabs))
-
-        val resultState = TabsTrayReducer.reduce(
-            initialState,
-            TabsTrayAction.UpdateInactiveTabs(inactiveTabs),
-        )
-
-        assertEquals(expectedState, resultState)
-    }
-
-    @Test
-    fun `GIVEN a new value for inactiveTabsExpanded WHEN UpdateInactiveExpanded is called THEN update the current value`() {
-        val initialState = TabsTrayState(
-            inactiveTabs = TabsTrayState.InactiveTabsState(isExpanded = true),
-        )
-
-        var updatedState = TabsTrayReducer.reduce(
-            initialState,
-            TabsTrayAction.UpdateInactiveExpanded(false),
-        )
-        assertFalse(updatedState.inactiveTabs.isExpanded)
-
-        updatedState =
-            TabsTrayReducer.reduce(updatedState, TabsTrayAction.UpdateInactiveExpanded(true))
-        assertTrue(updatedState.inactiveTabs.isExpanded)
-    }
-
-    @Test
-    fun `WHEN UpdateNormalTabs THEN normal tabs are added`() {
-        val normalTabs = listOf(TabsTrayItem.Tab(tab = createTab("https://mozilla.org")))
-        val initialState = TabsTrayState()
-        val expectedState = initialState.copy(normalTabs = normalTabs)
-
-        val resultState = TabsTrayReducer.reduce(
-            initialState,
-            TabsTrayAction.UpdateNormalTabs(normalTabs),
-        )
-
-        assertEquals(expectedState, resultState)
-    }
-
-    @Test
-    fun `WHEN UpdatePrivateTabs THEN private tabs are added`() {
-        val privateTabs = listOf(TabsTrayItem.Tab(tab = createTab("https://mozilla.org", private = true)))
-        val initialState = TabsTrayState()
-        val expectedState = initialState.copy(
-            privateBrowsing = TabsTrayState.PrivateBrowsingState(
-                tabs = privateTabs,
-            ),
-        )
-
-        val resultState = TabsTrayReducer.reduce(
-            initialState,
-            TabsTrayAction.UpdatePrivateTabs(privateTabs),
-        )
-
-        assertEquals(expectedState, resultState)
-    }
 
     @Test
     fun `WHEN UpdateSyncedTabs THEN synced tabs are added`() {
@@ -328,7 +267,7 @@ class TabsTrayStoreReducerTest {
         val initialState = TabsTrayState(
             tabSearchState = TabSearchState(
                 query = "mozilla",
-                searchResults = listOf(TabsTrayItem.Tab(tab = createTab("https://mozilla.org"))),
+                searchResults = listOf(createTab("https://mozilla.org")),
             ),
         )
 
@@ -345,6 +284,133 @@ class TabsTrayStoreReducerTest {
         val expectedState = inSearchState.copy(
             tabSearchState = TabSearchState(),
             backStack = listOf(TabManagerNavDestination.Root),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN navigating back from create tab group in multiselect mode THEN only the sheet is dismissed`() {
+        val initialState = TabsTrayState(
+            mode = Mode.Select(selectedTabs = setOf(createTab("https://mozilla.org"))),
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.AddToTabGroup,
+                TabManagerNavDestination.EditTabGroup,
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.NavigateBackInvoked,
+        )
+
+        val expectedState = initialState.copy(
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.AddToTabGroup,
+            ),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN navigating back from add to tab group in drag and drop mode then mode is set to normal`() {
+        val initialState = TabsTrayState(
+            mode = Mode.DragAndDrop(
+                sourceId = "123",
+                destinationId = "321",
+            ),
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.AddToTabGroup,
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.NavigateBackInvoked,
+        )
+
+        val expectedState = initialState.copy(
+            mode = Mode.Normal,
+            backStack = listOf(TabManagerNavDestination.Root),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN navigating back from edit tab group in drag and drop mode then mode is set to normal`() {
+        val initialState = TabsTrayState(
+            mode = Mode.DragAndDrop(
+                sourceId = "123",
+                destinationId = "321",
+            ),
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.EditTabGroup,
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.NavigateBackInvoked,
+        )
+
+        val expectedState = initialState.copy(
+            mode = Mode.Normal,
+            backStack = listOf(TabManagerNavDestination.Root),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN navigating back from add to tab group in multiselect mode THEN only the sheet is dismissed`() {
+        val initialState = TabsTrayState(
+            mode = Mode.Select(selectedTabs = setOf(createTab("https://mozilla.org"))),
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.AddToTabGroup,
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.NavigateBackInvoked,
+        )
+
+        val expectedState = initialState.copy(
+            backStack = listOf(TabManagerNavDestination.Root),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN navigating back from expanded tab group THEN only the sheet is dismissed`() {
+        val group = createTabGroup()
+        val initialState = TabsTrayState(
+            mode = Mode.Normal,
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.ExpandedTabGroup(group),
+                TabManagerNavDestination.EditTabGroup,
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.NavigateBackInvoked,
+        )
+
+        val expectedState = initialState.copy(
+            backStack = listOf(
+                TabManagerNavDestination.Root,
+                TabManagerNavDestination.ExpandedTabGroup(group),
+            ),
         )
 
         assertEquals(expectedState, resultState)
@@ -395,5 +461,384 @@ class TabsTrayStoreReducerTest {
         )
 
         assertFalse(resultState.inactiveTabs.showAutoCloseDialog)
+    }
+
+    @Test
+    fun `WHEN a tab data from storage has updated THEN the state receives the fresh data and marks the data as loaded`() {
+        val initialState = TabsTrayState()
+        val expectedId = "12345"
+        val tabGroup = createTabGroup()
+        val expectedNormalItems = listOf(createTab(url = "normal url"), tabGroup)
+        val expectedInactiveTabs = listOf(createTab(url = "inactive url"))
+        val expectedPrivateTabs = listOf(createTab(url = "private url"))
+        val expectedTabGroups = listOf(tabGroup)
+        val expectedSelectedNormalTabIndex = 5
+        val expectedSelectedPrivateTabIndex = 7
+        val expectedTabCount = 2
+        val action = TabsTrayAction.TabDataUpdateReceived(
+            tabStorageUpdate = TabStorageUpdate(
+                selectedTabId = expectedId,
+                normalItems = expectedNormalItems,
+                normalTabCount = expectedTabCount,
+                selectedNormalItemIndex = expectedSelectedNormalTabIndex,
+                inactiveTabs = expectedInactiveTabs,
+                privateTabs = expectedPrivateTabs,
+                selectedPrivateItemIndex = expectedSelectedPrivateTabIndex,
+                tabGroups = expectedTabGroups,
+            ),
+        )
+        val expectedState = TabsTrayState(
+            selectedTabId = expectedId,
+            normalTabsState = TabsTrayState.NormalTabsState(
+                items = expectedNormalItems,
+                selectedItemIndex = expectedSelectedNormalTabIndex,
+                tabCount = expectedTabCount,
+            ),
+            inactiveTabs = TabsTrayState.InactiveTabsState(tabs = expectedInactiveTabs),
+            privateBrowsing = TabsTrayState.PrivateBrowsingState(
+                tabs = expectedPrivateTabs,
+                selectedItemIndex = expectedSelectedPrivateTabIndex,
+            ),
+            tabGroupState = TabsTrayState.TabGroupState(groups = expectedTabGroups),
+            hasTabDataLoaded = true,
+        )
+        val resultState = TabsTrayReducer.reduce(state = initialState, action = action)
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN selecting a tab for multiselection THEN the selected tab groups are preserved`() {
+        val selectedTab = createTab(url = "")
+        val initialState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = emptySet(),
+                selectedTabGroups = setOf(createTabGroup()),
+            ),
+        )
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.AddSelectTab(tab = selectedTab),
+        )
+        val expectedState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = setOf(selectedTab),
+                selectedTabGroups = initialState.mode.selectedTabGroups,
+            ),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN removing a tab from multiselection THEN the selected tab groups are preserved`() {
+        val selectedTab = createTab(url = "")
+        val initialState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = setOf(selectedTab),
+                selectedTabGroups = setOf(createTabGroup()),
+            ),
+        )
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.RemoveSelectTab(tab = selectedTab),
+        )
+        val expectedState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = setOf(),
+                selectedTabGroups = initialState.mode.selectedTabGroups,
+            ),
+        )
+
+        assertEquals(expectedState, resultState)
+    }
+
+    @Test
+    fun `WHEN SelectAllTabs THEN all tabs and tab groups (including tabs within groups) are selected`() {
+        val tab1 = createTab(url = "https://mozilla.org/1", id = "tab-1")
+        val tab2 = createTab(url = "https://mozilla.org/2", id = "tab-2")
+        val tabInGroup1 = createTab(url = "https://mozilla.org/group1-1", id = "tab-g1-1")
+        val tabInGroup2 = createTab(url = "https://mozilla.org/group1-2", id = "tab-g1-2")
+        val group = createTabGroup(id = "group-1", tabs = mutableListOf(tabInGroup1, tabInGroup2))
+
+        val initialState = TabsTrayState(
+            normalTabsState = TabsTrayState.NormalTabsState(
+                items = listOf(tab1, group, tab2),
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.SelectAllNormalTabs,
+        )
+
+        val expectedMode = Mode.Select(
+            selectedTabs = setOf(tab1, tab2, tabInGroup1, tabInGroup2),
+            selectedTabGroups = setOf(group),
+        )
+
+        assertEquals(expectedMode, resultState.mode)
+    }
+
+    @Test
+    fun `WHEN SelectAllTabs with no groups THEN all individual tabs are selected`() {
+        val tab1 = createTab(url = "https://mozilla.org/1", id = "tab-1")
+        val tab2 = createTab(url = "https://mozilla.org/2", id = "tab-2")
+
+        val initialState = TabsTrayState(
+            normalTabsState = TabsTrayState.NormalTabsState(
+                items = listOf(tab1, tab2),
+            ),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.SelectAllNormalTabs,
+        )
+
+        val expectedMode = Mode.Select(
+            selectedTabs = setOf(tab1, tab2),
+            selectedTabGroups = emptySet(),
+        )
+
+        assertEquals(expectedMode, resultState.mode)
+    }
+
+    @Test
+    fun `WHEN SelectAllTabs with empty tray THEN selection is empty`() {
+        val initialState = TabsTrayState(
+            normalTabsState = TabsTrayState.NormalTabsState(items = emptyList()),
+        )
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.SelectAllNormalTabs,
+        )
+
+        val expectedMode = Mode.Select(
+            selectedTabs = emptySet(),
+            selectedTabGroups = emptySet(),
+        )
+
+        assertEquals(expectedMode, resultState.mode)
+    }
+
+    @Test
+    fun `WHEN ReorderTabsTrayItem is invoked THEN the state is not updated`() {
+        val initialState = TabsTrayState()
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.ReorderTabsTrayItem(
+                sourceId = "123",
+                destinationId = "321",
+                placeAfter = true,
+            ),
+        )
+        assertEquals(TabsTrayState(), resultState)
+    }
+
+    @Test
+    fun `WHEN tab drag is started THEN the focus state is disabled for normal tabs`() {
+        val initialState = TabsTrayState()
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragStart(
+                sourceId = "123",
+                preserveSelectMode = true,
+            ),
+        )
+        assertFalse(resultState.normalTabsState.itemFocusIndicatorEnabled)
+    }
+
+    @Test
+    fun `WHEN tab drag is cancelled THEN the focus state is re-enabled for normal tabs`() {
+        val initialState = TabsTrayState(
+            normalTabsState = TabsTrayState.NormalTabsState(itemFocusIndicatorEnabled = false),
+        )
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragCancel,
+        )
+        assertTrue(resultState.normalTabsState.itemFocusIndicatorEnabled)
+    }
+
+    @Test
+    fun `WHEN tab drag is started GIVEN preserveSelectMode is false GIVEN mode is Select THEN the mode is set to Normal`() {
+        val initialState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = setOf(
+                    createTab("www.mozilla.org"),
+                    createTab("www.example.com"),
+                ),
+            ),
+        )
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragStart(
+                sourceId = "123",
+                preserveSelectMode = false,
+            ),
+        )
+        assertEquals(resultState.mode, Mode.Normal)
+    }
+
+    @Test
+    fun `WHEN tab drag is started GIVEN preserveSelectMode is true GIVEN mode is Select THEN the mode is unchanged`() {
+        val initialState = TabsTrayState(
+            mode = Mode.Select(
+                selectedTabs = setOf(
+                    createTab("www.mozilla.org"),
+                    createTab("www.example.com"),
+                ),
+            ),
+        )
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragStart(
+                sourceId = "123",
+                preserveSelectMode = true,
+            ),
+        )
+        assertEquals(resultState.mode, initialState.mode)
+    }
+
+    @Test
+    fun `WHEN tab drag is started GIVEN preserveSelectMode is true GIVEN mode is Normal THEN the mode is unchanged`() {
+        val initialState = TabsTrayState(mode = Mode.Normal)
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragStart(
+                sourceId = "123",
+                preserveSelectMode = true,
+            ),
+        )
+
+        assertEquals(initialState.mode, resultState.mode)
+    }
+
+    @Test
+    fun `WHEN tab drag is started GIVEN preserveSelectMode is false GIVEN mode is Normal THEN the mode is unchanged`() {
+        val initialState = TabsTrayState(mode = Mode.Normal)
+
+        val resultState = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabDragStart(
+                sourceId = "123",
+                preserveSelectMode = false,
+            ),
+        )
+
+        assertEquals(initialState.mode, resultState.mode)
+    }
+
+    //region Tab
+
+    @Test
+    fun `GIVEN normal mode, WHEN TabItemLongClicked invoked with TabGroup, THEN select mode is entered`() {
+        val initialState = TabsTrayState(mode = Mode.Normal)
+        val tabGroup = createTabGroup(title = "TestGroup", tabs = mutableListOf(createTab(url = "example.com")))
+
+        val result = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabItemLongClicked(tabGroup),
+        )
+
+        assertEquals(
+            expected = Mode.Select(
+                selectedTabs = tabGroup.tabs.toSet(),
+                selectedTabGroups = setOf(tabGroup),
+            ),
+            actual = result.mode,
+        )
+    }
+
+    @Test
+    fun `GIVEN normal mode, WHEN TabItemLongClicked invoked with normal tab, THEN select mode is entered`() {
+        val tab = createTab(url = "mozilla.org", title = "TestTab", private = false)
+        val initialState = TabsTrayState(mode = Mode.Normal)
+
+        val result = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabItemLongClicked(tab),
+        )
+
+        assertEquals(
+            expected = Mode.Select(
+                selectedTabs = setOf(tab),
+                selectedTabGroups = emptySet(),
+            ),
+            actual = result.mode,
+        )
+    }
+
+    @Test
+    fun `GIVEN select mode with selected tabs, WHEN TabItemLongClicked invoked with tab, THEN select mode is retained`() {
+        val tab = createTab(title = "Test Tab", url = "mozilla.org")
+        val initialState = TabsTrayState(mode = Mode.Select(selectedTabs = setOf(tab)))
+
+        val result = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabItemLongClicked(tab),
+        )
+
+        assertEquals(
+            expected = initialState.mode,
+            actual = result.mode,
+        )
+    }
+
+    @Test
+    fun `GIVEN select mode with selected tabs, WHEN TabItemLongClicked invoked with TabGroup, THEN select mode is retained`() {
+        val tabGroup = createTabGroup(title = "TestGroup", tabs = mutableListOf(createTab(url = "example.com")))
+        val tab = createTab(title = "Test Tab", url = "mozilla.org")
+        val initialState = TabsTrayState(mode = Mode.Select(selectedTabs = setOf(tab)))
+
+        val result = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabItemLongClicked(tabGroup),
+        )
+
+        assertEquals(
+            expected = initialState.mode,
+            actual = result.mode,
+        )
+    }
+
+    @Test
+    fun `GIVEN normal mode, WHEN TabItemLongClicked invoked with private tab, THEN select mode is not entered`() {
+        val privateTab = createTab(url = "mozilla.org", title = "TestTab", private = true)
+        val initialState = TabsTrayState(mode = Mode.Normal)
+
+        val result = TabsTrayReducer.reduce(
+            state = initialState,
+            action = TabsTrayAction.TabItemLongClicked(privateTab),
+        )
+
+        assertEquals(
+            expected = initialState.mode,
+            actual = result.mode,
+        )
+    }
+
+    @Test
+    fun `WHEN the persisted UI state updates THEN the data is passed to the State`() {
+        val expectedState = TabsTrayState.TabGroupState(
+            hasUserDismissedTabGroupOnboarding = true,
+            tabGroupOnboardingImpressionCount = 10,
+            hasUserEverHadOneTabGroup = true,
+        )
+        val result = TabsTrayReducer.reduce(
+            state = TabsTrayState(),
+            action = TabsTrayAction.PersistedUiStateUpdateReceived(
+                update = PersistedUIState(
+                    hasUserDismissedTabGroupOnboarding = expectedState.hasUserDismissedTabGroupOnboarding,
+                    tabGroupOnboardingImpressionCount = expectedState.tabGroupOnboardingImpressionCount,
+                    hasUserEverHadOneTabGroup = expectedState.hasUserEverHadOneTabGroup,
+                ),
+            ),
+        )
+
+        assertEquals(expectedState, result.tabGroupState)
     }
 }

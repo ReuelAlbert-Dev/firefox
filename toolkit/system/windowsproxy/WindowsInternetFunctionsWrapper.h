@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,6 +8,7 @@
 #include <windows.h>
 
 #include "mozilla/Atomics.h"
+#include "mozilla/Mutex.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WeakPtr.h"
 #include "nsCOMPtr.h"
@@ -38,6 +37,7 @@ class WindowsInternetFunctionsWrapper : public mozilla::SupportsWeakPtr {
   void Shutdown();
   virtual nsresult ReadInternetOption(uint32_t aOption, uint32_t& aFlags,
                                       nsAString& aValue);
+  uint32_t GetCachedFlags() const { return mAtomicFlags; }
 
  protected:
   virtual ~WindowsInternetFunctionsWrapper();
@@ -45,20 +45,26 @@ class WindowsInternetFunctionsWrapper : public mozilla::SupportsWeakPtr {
  private:
   friend class NetworkLinkObserver;
 
-  nsresult ReadAllOptionsLocked(DWORD aConnFlags, const nsString& aConnName);
+  nsresult ReadAllOptionsLocked(DWORD aConnFlags, const nsString& aConnName)
+      MOZ_REQUIRES(mMutex);
+
+  mozilla::Mutex mMutex{"WindowsInternetFunctionsWrapper"};
 
   // Connection state cache, invalidated by NS_NETWORK_LINK_TOPIC.
-  mozilla::Atomic<bool> mConnCacheValid{false};
-  DWORD mCachedConnFlags{0};
+  bool mConnCacheValid MOZ_GUARDED_BY(mMutex){false};
+  DWORD mCachedConnFlags MOZ_GUARDED_BY(mMutex){0};
   // Empty string means LAN/WiFi; non-empty stores the modem connection name.
-  nsString mCachedConnName;
+  nsString mCachedConnName MOZ_GUARDED_BY(mMutex);
 
   // Proxy options cache, invalidated by registry key changes.
-  mozilla::Atomic<bool> mCacheValid{false};
-  uint32_t mCachedFlags = 0;
-  nsString mCachedProxyServer;
-  nsString mCachedProxyBypass;
-  nsString mCachedAutoConfigUrl;
+  bool mCacheValid MOZ_GUARDED_BY(mMutex){false};
+  uint32_t mCachedFlags MOZ_GUARDED_BY(mMutex) = 0;
+  // Atomic mirror of mCachedFlags, readable from any thread without mMutex.
+  // UINT32_MAX means "not yet cached or currently invalidated".
+  mozilla::Atomic<uint32_t, mozilla::Relaxed> mAtomicFlags{UINT32_MAX};
+  nsString mCachedProxyServer MOZ_GUARDED_BY(mMutex);
+  nsString mCachedProxyBypass MOZ_GUARDED_BY(mMutex);
+  nsString mCachedAutoConfigUrl MOZ_GUARDED_BY(mMutex);
 
   mozilla::UniquePtr<mozilla::widget::WinRegistry::KeyWatcher> mKeyWatcher;
   nsCOMPtr<nsIObserver> mNetworkLinkObserver;

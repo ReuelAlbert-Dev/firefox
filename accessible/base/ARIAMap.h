@@ -295,6 +295,13 @@ bool IsRoleMapIndexValid(uint8_t aRoleMapIndex);
 uint64_t UniversalStatesFor(dom::Element* aElement);
 
 /**
+ * Map an ARIA state rule only if it is listed in the provided role map entry.
+ */
+void MapToStateIfInRoleMapEntry(const nsRoleMapEntry* aRoleMapEntry,
+                                EStateRule aRule, dom::Element* aElement,
+                                uint64_t* aState);
+
+/**
  * Get the ARIA attribute characteristics for a given ARIA attribute.
  *
  * @param aAtom  ARIA attribute
@@ -336,6 +343,10 @@ class AttrIterator {
  public:
   explicit AttrIterator(nsIContent* aContent);
 
+  AttrIterator() = delete;
+  AttrIterator(const AttrIterator&) = delete;
+  AttrIterator& operator=(const AttrIterator&) = delete;
+
   bool Next();
 
   nsAtom* AttrName() const;
@@ -349,10 +360,6 @@ class AttrIterator {
   bool ExposeAttr(AccAttributes* aTargetAttrs) const;
 
  private:
-  AttrIterator() = delete;
-  AttrIterator(const AttrIterator&) = delete;
-  AttrIterator& operator=(const AttrIterator&) = delete;
-
   dom::Element* mElement;
 
   bool mIteratingDefaults;
@@ -370,17 +377,17 @@ class AttrWithCharacteristicsIterator {
   explicit AttrWithCharacteristicsIterator(uint8_t aCharacteristics)
       : mIdx(-1), mCharacteristics(aCharacteristics) {}
 
-  bool Next();
-
-  nsStaticAtom* AttrName() const;
-
- private:
   AttrWithCharacteristicsIterator() = delete;
   AttrWithCharacteristicsIterator(const AttrWithCharacteristicsIterator&) =
       delete;
   AttrWithCharacteristicsIterator& operator=(
       const AttrWithCharacteristicsIterator&) = delete;
 
+  bool Next();
+
+  nsStaticAtom* AttrName() const;
+
+ private:
   int32_t mIdx;
   uint8_t mCharacteristics;
 };

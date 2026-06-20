@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -94,7 +92,7 @@ void js::gc::TraceIncomingCCWs(JSTracer* trc,
 // CC parlance, traverse -- a Shape. The CC does not care about Shapes,
 // BaseShapes or PropMaps themselves, only things held live by them that can
 // participate in cycles.
-void gc::TraceCycleCollectorChildren(JS::CallbackTracer* trc, Shape* shape) {
+void gc::TraceCycleCollectorChildren(JSTracer* trc, Shape* shape) {
   shape->base()->traceChildren(trc);
 
   // TODO: Trace symbols reachable from |shape|. Shapes can entrain symbols via
@@ -233,6 +231,21 @@ void js::gc::GetTraceThingInfo(char* buf, size_t bufsize, void* thing,
             *buf++ = ' ';
             bufsize--;
             PutEscapedString(buf, bufsize, fun->maybePartialDisplayAtom(), 0);
+          }
+        } else if (obj->is<NativeObject>()) {
+          uint32_t nslots = JSCLASS_RESERVED_SLOTS(obj->getClass());
+          if (nslots > 0) {
+            for (uint32_t ix = 0; ix < nslots; ix++) {
+              JS::Value slot = obj->as<NativeObject>().getReservedSlot(0);
+              // PrivateValues are aliased with doubles
+              if (!slot.isDouble()) continue;
+              int written = snprintf(buf, bufsize, " %u:Private(%p)", ix,
+                                     slot.toPrivateUnchecked());
+              buf += written;
+              bufsize -= written;
+            }
+          } else {
+            snprintf(buf, bufsize, " <unknown object>");
           }
         } else {
           snprintf(buf, bufsize, " <unknown object>");

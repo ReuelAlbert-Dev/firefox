@@ -10,6 +10,7 @@
 #include "MediaContainerType.h"
 #include "mozilla/InputStreamLengthHelper.h"
 #include "mozilla/dom/BlobImpl.h"
+#include "mozilla/dom/BlobURLChannel.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #include "nsDebug.h"
@@ -19,6 +20,7 @@
 #include "nsIFileChannel.h"
 #include "nsIInputStream.h"
 #include "nsNetUtil.h"
+#include "nsQueryObject.h"
 
 namespace mozilla {
 
@@ -53,15 +55,22 @@ already_AddRefed<BaseMediaResource> BaseMediaResource::Create(
 
   int64_t streamLength = -1;
 
-  RefPtr<mozilla::dom::BlobImpl> blobImpl;
-  if (dom::IsBlobURI(uri) &&
-      NS_SUCCEEDED(NS_GetBlobForBlobURI(uri, getter_AddRefs(blobImpl))) &&
-      blobImpl) {
-    IgnoredErrorResult rv;
+  RefPtr<dom::BlobURLChannel> blobChan = do_QueryObject(aChannel);
+  if (blobChan) {
+    // All callers to BaseMediaResource::Create are performed from within an
+    // OnStartRequest callback for aChannel, meaning that the backing BlobImpl
+    // should be available in our process already.
+    RefPtr<dom::BlobImpl> blobImpl;
+    rv = blobChan->GetBackingBlob(getter_AddRefs(blobImpl));
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return nullptr;
+    }
+
+    IgnoredErrorResult error;
 
     nsCOMPtr<nsIInputStream> stream;
-    blobImpl->CreateInputStream(getter_AddRefs(stream), rv);
-    if (NS_WARN_IF(rv.Failed())) {
+    blobImpl->CreateInputStream(getter_AddRefs(stream), error);
+    if (NS_WARN_IF(error.Failed())) {
       return nullptr;
     }
 
@@ -79,8 +88,8 @@ already_AddRefed<BaseMediaResource> BaseMediaResource::Create(
 
     // Also if the stream doesn't know its own size synchronously, we can still
     // read the length from the blob.
-    uint64_t size = blobImpl->GetSize(rv);
-    if (NS_WARN_IF(rv.Failed())) {
+    uint64_t size = blobImpl->GetSize(error);
+    if (NS_WARN_IF(error.Failed())) {
       return nullptr;
     }
 
@@ -139,27 +148,30 @@ void BaseMediaResource::SetLoadInBackground(bool aLoadInBackground) {
 }
 
 nsresult BaseMediaResource::ModifyLoadFlags(nsLoadFlags aFlags) {
+  RefPtr<BaseMediaResource> kungFuDeathGrip(this);
+  nsCOMPtr<nsIChannel> channel = mChannel;
+
   nsCOMPtr<nsILoadGroup> loadGroup;
-  nsresult rv = mChannel->GetLoadGroup(getter_AddRefs(loadGroup));
+  nsresult rv = channel->GetLoadGroup(getter_AddRefs(loadGroup));
   MOZ_ASSERT(NS_SUCCEEDED(rv), "GetLoadGroup() failed!");
 
   bool inLoadGroup = false;
   if (loadGroup) {
     nsresult status;
-    mChannel->GetStatus(&status);
+    channel->GetStatus(&status);
 
-    rv = loadGroup->RemoveRequest(mChannel, nullptr, status);
+    rv = loadGroup->RemoveRequest(channel, nullptr, status);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
     }
     inLoadGroup = true;
   }
 
-  rv = mChannel->SetLoadFlags(aFlags);
+  rv = channel->SetLoadFlags(aFlags);
   MOZ_ASSERT(NS_SUCCEEDED(rv), "SetLoadFlags() failed!");
 
   if (inLoadGroup) {
-    rv = loadGroup->AddRequest(mChannel, nullptr);
+    rv = loadGroup->AddRequest(channel, nullptr);
     MOZ_ASSERT(NS_SUCCEEDED(rv), "AddRequest() failed!");
   }
 

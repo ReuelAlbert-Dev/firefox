@@ -19,14 +19,17 @@ enum class RFPTarget : uint64_t;
 
 // Script "screen" object
 class nsScreen : public mozilla::DOMEventTargetHelper {
- public:
+ private:
   explicit nsScreen(nsPIDOMWindowInner* aWindow);
+
+ public:
+  static already_AddRefed<nsScreen> Create(nsPIDOMWindowInner* aWindow);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsScreen,
                                            mozilla::DOMEventTargetHelper)
 
-  nsIGlobalObject* GetParentObject() const { return GetOwnerGlobal(); }
+  nsIGlobalObject* GetParentObject() const { return GetRelevantGlobal(); }
 
   nsPIDOMWindowOuter* GetOuter() const;
 

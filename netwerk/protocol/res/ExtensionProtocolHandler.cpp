@@ -7,6 +7,8 @@
 #include "mozilla/BinarySearch.h"
 #include "mozilla/Components.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/StaticMutex.h"
+#include "nsThreadUtils.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/Promise-inl.h"
 #include "mozilla/ExtensionPolicyService.h"
@@ -18,6 +20,7 @@
 #include "mozilla/Omnijar.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ResultExtensions.h"
+#include "mozilla/SyncRunnable.h"
 #include "mozilla/Try.h"
 
 #include "FileDescriptorFile.h"
@@ -117,7 +120,7 @@ class ExtensionStreamGetter final : public nsICancelable {
   // To use when getting an FD for a packed extension JAR file
   // in order to load a resource.
   ExtensionStreamGetter(nsIURI* aURI, nsILoadInfo* aLoadInfo,
-                        already_AddRefed<nsIJARChannel>&& aJarChannel,
+                        already_AddRefed<nsIJARChannel> aJarChannel,
                         nsIFile* aJarFile)
       : mURI(aURI),
         mLoadInfo(aLoadInfo),
@@ -383,9 +386,24 @@ NS_IMPL_RELEASE_INHERITED(ExtensionProtocolHandler, SubstitutingProtocolHandler)
 
 already_AddRefed<ExtensionProtocolHandler>
 ExtensionProtocolHandler::GetSingleton() {
+  static StaticMutex sMutex;
+  StaticMutexAutoLock lock(sMutex);
   if (!sSingleton) {
-    sSingleton = new ExtensionProtocolHandler();
-    ClearOnShutdown(&sSingleton);
+    if (NS_IsMainThread()) {
+      sSingleton = new ExtensionProtocolHandler();
+      ClearOnShutdown(&sSingleton);
+    } else {
+      StaticMutexAutoUnlock unlock(sMutex);
+      RefPtr<nsIRunnable> r = NS_NewRunnableFunction(
+          "ExtensionProtocolHandler::GetSingleton", []() {
+            StaticMutexAutoLock lock(sMutex);
+            if (!sSingleton) {
+              sSingleton = new ExtensionProtocolHandler();
+              ClearOnShutdown(&sSingleton);
+            }
+          });
+      SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(), r);
+    }
   }
   return do_AddRef(sSingleton);
 }
@@ -626,20 +644,32 @@ Result<bool, nsresult> ExtensionProtocolHandler::DevRepoContains(
   MOZ_ASSERT(!mozilla::IsPackagedBuild());
   MOZ_ASSERT(!IsNeckoChild());
 
-  // On the first invocation, set mDevRepo
+  // On the first invocation, set mDevRepo and mDevObjDir
   if (!mAlreadyCheckedDevRepo) {
     mAlreadyCheckedDevRepo = true;
     MOZ_TRY(nsMacUtilsImpl::GetRepoDir(getter_AddRefs(mDevRepo)));
+    nsresult rv = nsMacUtilsImpl::GetObjDir(getter_AddRefs(mDevObjDir));
+    if (NS_FAILED(rv)) {
+      // GetObjDir is never expected to fail, but if it does, don't let it
+      // trip the handling of mDevRepo.
+      LOG("GetObjDir() failed: %x", static_cast<uint32_t>(rv));
+    }
     if (MOZ_LOG_TEST(gExtProtocolLog, LogLevel::Debug)) {
       nsAutoCString repoPath;
       (void)mDevRepo->GetNativePath(repoPath);
       LOG("Repo path: %s", repoPath.get());
+      nsAutoCString objdirPath;
+      (void)mDevObjDir->GetNativePath(objdirPath);
+      LOG("objdir path: %s", objdirPath.get());
     }
   }
 
   bool result = false;
   if (mDevRepo) {
     MOZ_TRY(mDevRepo->Contains(aRequestedFile, &result));
+  }
+  if (!result && mDevObjDir) {
+    MOZ_TRY(mDevObjDir->Contains(aRequestedFile, &result));
   }
   return result;
 }
@@ -655,6 +685,10 @@ Result<bool, nsresult> ExtensionProtocolHandler::AppDirContains(
   if (!mAlreadyCheckedAppDir) {
     mAlreadyCheckedAppDir = true;
     MOZ_TRY(NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(mAppDir)));
+    nsresult rv = mAppDir->Normalize();
+    if (NS_FAILED(rv)) {
+      LOG("Failed to normalize AppDir: %x", static_cast<uint32_t>(rv));
+    }
     if (MOZ_LOG_TEST(gExtProtocolLog, LogLevel::Debug)) {
       nsAutoCString appDirPath;
       (void)mAppDir->GetNativePath(appDirPath);

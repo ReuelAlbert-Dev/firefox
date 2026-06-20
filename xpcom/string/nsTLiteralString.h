@@ -73,12 +73,7 @@ class nsTLiteralString : public mozilla::detail::nsTStringRepr<T> {
   };
 #endif
 
-  /**
-   * Prohibit get() on temporaries as in "x"_ns.get().
-   * These should be written as just "x", using a string literal directly.
-   */
-  constexpr const typename raw_type<T, int>::type get() const&& = delete;
-  constexpr const typename raw_type<T, int>::type get() const& {
+  constexpr const typename raw_type<T, int>::type get() const {
     return this->mData;
   }
 

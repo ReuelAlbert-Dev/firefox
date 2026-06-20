@@ -855,6 +855,10 @@ typedef struct PARTITION_SPEED_FEATURES {
   // Disables 8x8 and below partitions for low quantizers.
   int disable_8x8_part_based_on_qidx;
 
+  // Disables either of PARTITION_HORZ_4 or PARTITION_VERT_4 using SSE from
+  // simple motion search.
+  bool prune_h_or_v_4part_using_sms_info;
+
   // Decoder side speed feature to add penalty for use of smaller partitions.
   // Takes values 0 - 2, 0 indicating no penalty and higher level indicating
   // increased penalty.
@@ -1023,19 +1027,22 @@ typedef struct INTER_MODE_SPEED_FEATURES {
   int alt_ref_search_fp;
 
   // Prune reference frames for single prediction modes based on temporal
-  // distance and pred MV SAD. Feasible values are 0, 1, 2. The feature is
+  // distance and pred MV SAD. Feasible values are 0-4. The feature is
   // disabled for 0. An increasing value indicates more aggressive pruning
   // threshold.
   int prune_single_ref;
 
   // Prune compound reference frames
   // 0 no pruning
-  // 1 prune compound references which do not satisfy the two conditions:
+  // 1 prune based on temporal distance and pred_mv_sad. However, disallow
+  //   pruning of important reference frame pairs decided based on temporal
+  //   distance and quality.
+  // 2 prune compound references which do not satisfy the two conditions:
   //   a) The references are at a nearest distance from the current frame in
   //   both past and future direction.
   //   b) The references have minimum pred_mv_sad in both past and future
   //   direction.
-  // 2 prune compound references except the one with nearest distance from the
+  // 3 prune compound references except the one with nearest distance from the
   //   current frame in both past and future direction.
   int prune_comp_ref_frames;
 
@@ -1239,6 +1246,15 @@ typedef struct INTER_MODE_SPEED_FEATURES {
   // that encoder decisions are biased against local obmc, favoring low
   // complexity modes.
   float bias_obmc_mode_rd_scale_pct;
+
+  // Avoid further evaluation of compound modes using top estimate RD Costs of
+  // compound average.
+  // Values are 0 (not used),1 - 3 with progressively increasing
+  // aggressiveness, i.e., decreasing number of top candidates.
+  int skip_cmp_using_top_cmp_avg_est_rd_lvl;
+
+  // Skip interinter wedge search based on MSE between the two predictors.
+  int skip_interinter_wedge_search_based_on_mse;
 } INTER_MODE_SPEED_FEATURES;
 
 typedef struct INTERP_FILTER_SPEED_FEATURES {
@@ -1267,6 +1283,13 @@ typedef struct INTERP_FILTER_SPEED_FEATURES {
   // Forces interpolation filter to EIGHTTAP_REGULAR and skips interpolation
   // filter search.
   int skip_interp_filter_search;
+
+  // Bias towards sharp filter
+  int use_more_sharp_interp;
+
+  // Skip model RD evaluation of chroma planes during interpolation filter
+  // search.
+  int skip_model_rd_uv;
 } INTERP_FILTER_SPEED_FEATURES;
 
 typedef struct INTRA_MODE_SPEED_FEATURES {
@@ -1460,6 +1483,15 @@ typedef struct TX_SPEED_FEATURES {
   // for speed 3, 4, 5, 6, 7 and 8 on a typical image dataset with coding
   // performance change less than 0.004%.
   bool use_rd_based_breakout_for_intra_tx_search;
+
+  // Prune RD evaluation of transform split using RD Costs of transform no-split
+  // of inter modes that are evaluated so far.
+  // Values are 0 (not used),  1 - 2 with progressively increasing
+  // aggressiveness, i.e., decreasing number of top candidates
+  int prune_inter_tx_split_rd_eval_lvl;
+
+  // If 1, use a trellis rd multiplier that favors chroma plane more.
+  int use_chroma_trellis_rd_mult;
 } TX_SPEED_FEATURES;
 
 typedef struct RD_CALC_SPEED_FEATURES {
@@ -1585,6 +1617,13 @@ typedef struct LOOP_FILTER_SPEED_FEATURES {
   // done as CDEF is a relatively-expensive filter to compute during decode.
   // This speed feature is only enabled in all intra mode.
   bool zero_low_cdef_strengths;
+
+  // Decoder side speed feature for adaptive CDEF control based on MSE
+  // 0 : Enable CDEF for all planes
+  // 1 : Disable CDEF for chroma planes and disable for luma adaptively based on
+  //     current frame's pyramid level and improvement in MSE after CDEF
+  //     filtering.
+  int adaptive_cdef_mode;
 
   // Decoder side speed feature to add penalty for use of dual-sgr filters.
   // Takes values 0 - 10, 0 indicating no penalty and each additional level

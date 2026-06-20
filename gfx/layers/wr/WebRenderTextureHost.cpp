@@ -22,7 +22,7 @@ namespace mozilla::layers {
 
 class ScheduleHandleRenderTextureOps : public wr::NotificationHandler {
  public:
-  explicit ScheduleHandleRenderTextureOps() {}
+  explicit ScheduleHandleRenderTextureOps() = default;
 
   virtual void Notify(wr::Checkpoint aCheckpoint) override {
     if (aCheckpoint == wr::Checkpoint::FrameTexturesUpdated) {
@@ -92,6 +92,10 @@ gfx::YUVColorSpace WebRenderTextureHost::GetYUVColorSpace() const {
 
 gfx::ColorRange WebRenderTextureHost::GetColorRange() const {
   return mWrappedTextureHost->GetColorRange();
+}
+
+gfx::TransferFunction WebRenderTextureHost::GetTransferFunction() const {
+  return mWrappedTextureHost->GetTransferFunction();
 }
 
 gfx::IntSize WebRenderTextureHost::GetSize() const {

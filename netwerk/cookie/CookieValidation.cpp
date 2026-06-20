@@ -141,6 +141,12 @@ void CookieValidation::ValidateForHostInternal(nsIURI* aHostURI,
     return;
   }
 
+  if ((mCookieData.schemeMap() & nsICookie::SCHEME_FILE) &&
+      !mCookieData.host().IsEmpty()) {
+    mResult = eRejectedInvalidDomain;
+    return;
+  }
+
   // if the new cookie is httponly, make sure we're not coming from script
   if (!aFromHttp && mCookieData.isHttpOnly()) {
     mResult = eRejectedHttpOnlyButFromScript;
@@ -449,7 +455,7 @@ CookieValidation::GetErrorString(nsAString& aResult) {
   RetrieveErrorLogData(&flags, category, key, params);
 
   return nsContentUtils::FormatLocalizedString(
-      nsContentUtils::eNECKO_PROPERTIES_en_US, key.get(), params, aResult);
+      PropertiesFile::NECKO_PROPERTIES_en_US, key.get(), params, aResult);
 }
 
 // static
@@ -462,6 +468,11 @@ bool CookieValidation::CheckNameAndValueSize(const CookieStruct& aCookieData) {
 bool CookieValidation::CheckName(const CookieStruct& aCookieData) {
   if (!aCookieData.name().IsEmpty() && (aCookieData.name().First() == 0x20 ||
                                         aCookieData.name().Last() == 0x20)) {
+    return false;
+  }
+
+  if (StaticPrefs::network_cookie_valueless_cookie() &&
+      aCookieData.name().IsEmpty()) {
     return false;
   }
 

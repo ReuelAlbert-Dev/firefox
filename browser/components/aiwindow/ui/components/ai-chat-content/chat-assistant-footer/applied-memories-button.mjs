@@ -4,6 +4,10 @@
 
 import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
 import { html, nothing } from "chrome://global/content/vendor/lit.all.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://global/content/elements/moz-box-group.mjs";
+// eslint-disable-next-line import/no-unassigned-import
+import "chrome://global/content/elements/moz-box-item.mjs";
 
 /**
  * AppliedMemoriesButton
@@ -62,15 +66,18 @@ export class AppliedMemoriesButton extends MozLitElement {
     this.showCallout = false;
 
     this._onDocumentClick = this._onDocumentClick.bind(this);
+    this._onKeyDown = this._onKeyDown.bind(this);
   }
 
   connectedCallback() {
     super.connectedCallback();
     document.addEventListener("click", this._onDocumentClick);
+    this.addEventListener("keydown", this._onKeyDown);
   }
 
   disconnectedCallback() {
     document.removeEventListener("click", this._onDocumentClick);
+    this.removeEventListener("keydown", this._onKeyDown);
     super.disconnectedCallback();
   }
 
@@ -97,6 +104,7 @@ export class AppliedMemoriesButton extends MozLitElement {
 
     this.open = true;
     this.toggleAttribute("data-open", true);
+    this.updateComplete.then(() => this.#focusDeleteButtonAt(0));
     this.#dispatchToggleAppliedMemories({ isOpen: true });
   }
 
@@ -133,6 +141,10 @@ export class AppliedMemoriesButton extends MozLitElement {
     }
     this.toggleAttribute("data-open", this.open);
 
+    if (this.open) {
+      this.updateComplete.then(() => this.#focusDeleteButtonAt(0));
+    }
+
     this.#dispatchToggleAppliedMemories({ isOpen: this.open });
   }
 
@@ -144,6 +156,81 @@ export class AppliedMemoriesButton extends MozLitElement {
     if (!this.open) {
       return;
     }
+    this.#closePopover();
+  }
+
+  _onKeyDown(event) {
+    if (!this.open) {
+      return;
+    }
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        event.stopPropagation();
+        this.#closePopover();
+        this.shadowRoot.querySelector(".memories-trigger")?.focus();
+        break;
+      case "Tab":
+        if (
+          !event.shiftKey &&
+          this.shadowRoot.activeElement ===
+            this.shadowRoot.querySelector(".retry-without-memories-button")
+        ) {
+          this.#closePopover();
+        }
+        break;
+      case "ArrowDown":
+        event.preventDefault();
+        this.#moveDeleteFocus(1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        this.#moveDeleteFocus(-1);
+        break;
+      case "Home":
+        event.preventDefault();
+        this.#focusDeleteButtonAt(0);
+        break;
+      case "End":
+        event.preventDefault();
+        this.#focusDeleteButtonAt(-1);
+        break;
+    }
+  }
+
+  get #deleteButtons() {
+    const popover = this.shadowRoot.querySelector(".popover");
+    return popover
+      ? [...popover.querySelectorAll(".memories-remove-button")]
+      : [];
+  }
+
+  #moveDeleteFocus(direction) {
+    const items = this.#deleteButtons;
+    if (!items.length) {
+      return;
+    }
+    const active = this.shadowRoot.activeElement;
+    const currentIndex = items.indexOf(active);
+    const nextIndex = (currentIndex + direction + items.length) % items.length;
+    this.#focusDeleteButtonAt(nextIndex);
+  }
+
+  #focusDeleteButtonAt(index) {
+    const items = this.#deleteButtons;
+    if (!items.length) {
+      return;
+    }
+    if (index < 0) {
+      index = items.length + index;
+    }
+    items.forEach((item, i) => {
+      item.tabIndex = i === index ? 0 : -1;
+    });
+    items[index].focus();
+  }
+
+  #closePopover() {
     this.open = false;
     this.#showCalloutState = false;
     this.toggleAttribute("data-open", false);
@@ -199,6 +286,7 @@ export class AppliedMemoriesButton extends MozLitElement {
         ></p>
         <button
           class="memories-callout-learn-more"
+          data-focusable
           data-l10n-id="aiwindow-memories-learn-more"
           @click=${() => {
             this.dispatchEvent(
@@ -224,35 +312,46 @@ export class AppliedMemoriesButton extends MozLitElement {
     return html`
       <div
         class="popover ${isOpen ? "open" : ""}"
-        role="region"
-        aria-hidden=${!isOpen}
+        role="dialog"
+        data-l10n-id="aiwindow-applied-memories-popover"
+        data-l10n-attrs="aria-label"
+        ?inert=${!isOpen}
         @click=${event => this._onPopoverClick(event)}
       >
         ${this.#showCalloutState ? this.renderCallout() : nothing}
 
-        <ul class="memories-list">
+        <moz-box-group
+          class="memories-list"
+          role="list"
+          data-l10n-id="aiwindow-applied-memories-list"
+          data-l10n-attrs="aria-label"
+        >
           ${visibleMemories.map(memory => {
-            // @todo Bug 2010069
-            // Localize aria-label
             return html`
-              <li class="memories-list-item">
-                <span class="memories-list-label"
-                  >${memory.memory_summary}</span
-                >
+              <moz-box-item
+                class="memories-list-item"
+                role="listitem"
+                .label=${memory.memory_summary}
+              >
                 <moz-button
                   class="memories-remove-button"
+                  tabindex="-1"
                   type="ghost"
                   size="small"
-                  iconsrc="chrome://global/skin/icons/close.svg"
-                  aria-label="Remove this memory"
+                  iconsrc="chrome://global/skin/icons/delete.svg"
+                  data-l10n-id="aiwindow-delete-memory-button"
+                  data-l10n-args=${JSON.stringify({
+                    summary: memory.memory_summary,
+                  })}
                   @click=${event => this._onRemoveMemory(event, memory)}
+                  slot="actions"
                 ></moz-button>
-              </li>
+              </moz-box-item>
             `;
           })}
-        </ul>
+        </moz-box-group>
 
-        <div class="popover-action-row">
+        <div id="manage-memories-row" class="popover-action-row">
           <moz-button
             type="ghost"
             size="default"
@@ -265,7 +364,7 @@ export class AppliedMemoriesButton extends MozLitElement {
           ></moz-button>
         </div>
 
-        <div class="popover-action-row">
+        <div id="retry-without-memories-row" class="popover-action-row">
           <moz-button
             type="ghost"
             size="default"

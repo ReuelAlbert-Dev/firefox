@@ -29,8 +29,6 @@ var gExceptionPaths = [
   "chrome://activity-stream/content/data/content/tippytop/images/",
   "chrome://activity-stream/content/data/content/tippytop/favicons/",
   // These resources are referenced by messages delivered through Remote Settings
-  "chrome://activity-stream/content/data/content/assets/mobile-download-qr-new-user-cn.svg",
-  "chrome://activity-stream/content/data/content/assets/mobile-download-qr-existing-user-cn.svg",
   "chrome://activity-stream/content/data/content/assets/mr-amo-collection.svg",
   "chrome://activity-stream/content/data/content/assets/person-typing.svg",
   "chrome://activity-stream/content/data/content/assets/tabs-side-zap-transparent.svg",
@@ -49,21 +47,22 @@ var gExceptionPaths = [
   "chrome://browser/content/asrouter/assets/desktop-to-mobile-banner.svg",
   "chrome://browser/content/asrouter/assets/desktop-to-mobile-non-eu-QR.svg",
   "chrome://browser/content/asrouter/assets/desktop-to-mobile-eu-QR.svg",
+  "chrome://activity-stream/content/data/content/assets/fox-doodle-backup-restore.svg",
+  "chrome://browser/content/asrouter/assets/kit-peek-bottom.svg",
+  "chrome://browser/content/asrouter/assets/kit-peek.svg",
 
   // toolkit/components/pdfjs/content/build/pdf.js
   "resource://pdf.js/web/images/",
-  // This file is only loaded in using a dynamic import in pdf.js in case wasm
-  // is not available.
+  // These files are only loaded in using a dynamic import in pdf.js in case
+  // wasm is not available.
   "resource://pdf.js/web/wasm/openjpeg_nowasm_fallback.js",
+  "resource://pdf.js/web/wasm/jbig2_nowasm_fallback.js",
 
   // Exclude the form autofill path that has been moved out of the extensions to
   // toolkit, see bug 1691821.
   "resource://gre-resources/autofill/",
   // Localization file added programatically in FormAutofillUtils.sys.mjs
   "resource://gre/localization/en-US/toolkit/formautofill",
-
-  // Exclude all search-extensions because they aren't referenced by filename
-  "resource://search-extensions/",
 
   // Exclude all services-automation because they are used through webdriver
   "resource://gre/modules/services-automation/",
@@ -108,6 +107,9 @@ var gExceptionPaths = [
 
   // The profile avatars are directly referenced.
   "chrome://browser/content/profiles/assets/",
+
+  // The custom model choice icon is referenced programatically in input-model-select.mjs.
+  "chrome://browser/content/aiwindow/assets/model-choice-0.svg",
 
   // The picture-in-picture add-on.
   "resource://builtin-addons/pictureinpicture/",
@@ -181,7 +183,7 @@ var allowlist = [
 
   // devtools/client/inspector/bin/dev-server.js
   {
-    file: "chrome://devtools/content/inspector/markup/markup.xhtml",
+    file: "chrome://devtools/content/inspector/markup/markup.html",
     isFromDevTools: true,
   },
 
@@ -191,18 +193,10 @@ var allowlist = [
   // extensions/pref/autoconfig/src/nsReadConfig.cpp
   { file: "resource://gre/defaults/autoconfig/prefcalls.js" },
 
-  // browser/extensions/newtab/actors/AboutNewTabChild.sys.mjs constructs the
-  // URL dynamically: `chrome://global/content/vendor/react${debugString}.js`
-  { file: "chrome://global/content/vendor/react-dev.js" },
-  { file: "chrome://global/content/vendor/react-dom-dev.js" },
-
   // browser/components/preferences/moreFromMozilla.js
   // These files URLs are constructed programatically at run time.
   {
     file: "chrome://browser/content/preferences/more-from-mozilla-qr-code-simple.svg",
-  },
-  {
-    file: "chrome://browser/content/preferences/more-from-mozilla-qr-code-simple-cn.svg",
   },
 
   { file: "resource://gre/greprefs.js" },
@@ -247,6 +241,8 @@ var allowlist = [
   { file: "resource://builtin-addons/ipp-activator/breakages/tab.json" },
 
   // Starting from here, files in the allowlist are bugs that need fixing.
+  // Bug 2042933 - consumed by PermissionUI.sys.mjs in a follow-up patch.
+  { file: "resource://app/modules/PermissionPromptTargeting.sys.mjs" },
   // Bug 1339424 (wontfix?)
   {
     file: "chrome://browser/locale/taskbar.properties",
@@ -341,6 +337,17 @@ var allowlist = [
   {
     file: "chrome://global/content/autocomplete-row-item/autocomplete-row-item.mjs",
   },
+
+  // Bug 2041770: MemoriesSessions is introduced ahead of its production
+  // Remove this entry once the consumer lands.
+  {
+    file: "moz-src:///browser/components/aiwindow/models/memories/MemoriesSessions.sys.mjs",
+  },
+
+  // Referenced dynamically in newtab components via template literals:
+  // `chrome://global/skin/icons/shaft-arrow-${isRTL ? "right" : "left"}.svg`
+  { file: "chrome://global/skin/icons/shaft-arrow-left.svg" },
+  { file: "chrome://global/skin/icons/shaft-arrow-right.svg" },
 ];
 
 if (AppConstants.NIGHTLY_BUILD) {
@@ -348,6 +355,15 @@ if (AppConstants.NIGHTLY_BUILD) {
     // A debug tool that is only available in Nightly builds, and is accessed
     // directly by developers via the chrome URI (bug 1888491)
     { file: "chrome://browser/content/backup/debug.html" }
+  );
+}
+
+if (!AppConstants.RELEASE_OR_BETA) {
+  allowlist.push(
+    // browser/extensions/newtab/actors/AboutNewTabChild.sys.mjs constructs the
+    // URL dynamically: `chrome://global/content/vendor/react${debugString}.js`
+    { file: "chrome://global/content/vendor/react-dev.js" },
+    { file: "chrome://global/content/vendor/react-dom-dev.js" }
   );
 }
 

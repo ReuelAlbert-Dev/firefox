@@ -38,7 +38,7 @@ class ImageDecoder final : public nsISupports,
                            public nsWrapperCache,
                            public media::ShutdownConsumer {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS_FINAL
   NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(ImageDecoder)
 
  public:
@@ -80,6 +80,8 @@ class ImageDecoder final : public nsISupports,
   void QueueSelectTrackMessage(uint32_t aSelectedIndex);
   void ProcessControlMessageQueue();
 
+  void ResetWithoutRef(const MediaResult& aResult);
+
  private:
   ~ImageDecoder();
 
@@ -104,9 +106,8 @@ class ImageDecoder final : public nsISupports,
 
   void Initialize(const GlobalObject& aGLobal, const ImageDecoderInit& aInit,
                   ErrorResult& aRv);
-  void Destroy();
-  void Reset(const MediaResult& aResult);
   void Close(const MediaResult& aResult);
+  void CloseWithoutRef(const MediaResult& aResult);
 
   void QueueConfigureMessage(const Maybe<gfx::IntSize>& aOutputSize,
                              ColorSpaceConversion aColorSpaceConversion);

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -44,6 +42,7 @@
 #include "vm/Opcodes.h"
 #include "vm/RealmFuses.h"
 #include "vm/RuntimeFuses.h"
+#include "vm/StringFlags.h"
 #include "wasm/WasmAnyRef.h"
 
 // [SMDOC] MacroAssembler multi-platform overview
@@ -261,8 +260,6 @@ enum class CheckUnsafeCallWithABI {
 // as an ABI function signature.
 template <typename Sig>
 static inline DynFn DynamicFunction(Sig fun);
-
-enum class CharEncoding { Latin1, TwoByte };
 
 constexpr uint32_t WasmCallerInstanceOffsetBeforeCall =
     wasm::FrameWithInstances::callerInstanceOffsetWithoutFrame();
@@ -2030,6 +2027,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
                               Label* label) PER_SHARED_ARCH;
 
   inline void branchTestMagic(Condition cond, const Address& valaddr,
+                              JSWhyMagic why, Label* label) PER_ARCH;
+  inline void branchTestMagic(Condition cond, const BaseIndex& valaddr,
                               JSWhyMagic why, Label* label) PER_ARCH;
 
   inline void branchTestMagicValue(Condition cond, const ValueOperand& val,
@@ -3804,16 +3803,16 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // Scalar::Int64.
   void wasmLoad(const wasm::MemoryAccessDesc& access, Register memoryBase,
                 Register ptr, Register ptrScratch, AnyRegister output)
-      DEFINED_ON(arm, loong64, riscv64, mips64);
+      DEFINED_ON(arm, loong64, mips64);
   void wasmLoadI64(const wasm::MemoryAccessDesc& access, Register memoryBase,
                    Register ptr, Register ptrScratch, Register64 output)
-      DEFINED_ON(arm, mips64, loong64, riscv64);
+      DEFINED_ON(arm, mips64, loong64);
   void wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value,
                  Register memoryBase, Register ptr, Register ptrScratch)
-      DEFINED_ON(arm, loong64, riscv64, mips64);
+      DEFINED_ON(arm, loong64, mips64);
   void wasmStoreI64(const wasm::MemoryAccessDesc& access, Register64 value,
                     Register memoryBase, Register ptr, Register ptrScratch)
-      DEFINED_ON(arm, mips64, loong64, riscv64);
+      DEFINED_ON(arm, mips64, loong64);
 
   // These accept general memoryBase + ptr + offset (in `access`); the offset is
   // always smaller than the guard region.  They will insert an additional add
@@ -3821,13 +3820,14 @@ class MacroAssembler : public MacroAssemblerSpecific {
   // register for the offset if the offset is large, and instructions to set it
   // up.
   void wasmLoad(const wasm::MemoryAccessDesc& access, Register memoryBase,
-                Register ptr, AnyRegister output) DEFINED_ON(arm64);
+                Register ptr, AnyRegister output) DEFINED_ON(arm64, riscv64);
   void wasmLoadI64(const wasm::MemoryAccessDesc& access, Register memoryBase,
-                   Register ptr, Register64 output) DEFINED_ON(arm64);
+                   Register ptr, Register64 output) DEFINED_ON(arm64, riscv64);
   void wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value,
-                 Register memoryBase, Register ptr) DEFINED_ON(arm64);
+                 Register memoryBase, Register ptr) DEFINED_ON(arm64, riscv64);
   void wasmStoreI64(const wasm::MemoryAccessDesc& access, Register64 value,
-                    Register memoryBase, Register ptr) DEFINED_ON(arm64);
+                    Register memoryBase, Register ptr)
+      DEFINED_ON(arm64, riscv64);
 
   // `ptr` will always be updated.
   void wasmUnalignedLoad(const wasm::MemoryAccessDesc& access,
@@ -4236,10 +4236,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void emitPreBarrierFastPath(MIRType type, Register temp1, Register temp2,
                               Register temp3, Label* noBarrier);
-  void emitValueReadBarrierFastPath(ValueOperand value, Register cell,
-                                    Register temp1, Register temp2,
-                                    Register temp3, Register temp4,
-                                    Label* barrier);
+  void emitWeapMapBarrierFastPath(ValueOperand value, Register cell,
+                                  Register temp1, Register temp2,
+                                  Register temp3, Register temp4,
+                                  Label* barrier);
 
  private:
   void loadMarkBits(Register cell, Register chunk, Register markWord,
@@ -5906,6 +5906,10 @@ class MacroAssembler : public MacroAssemblerSpecific {
                                       ValueOperand output, Register scratch1,
                                       Register scratch2);
 
+  void timeClip(FloatRegister time, FloatRegister output);
+  void timeClip(FloatRegister time, FloatRegister output, Register scratch,
+                const LiveRegisterSet& liveRegs);
+
   void computeImplicitThis(Register env, ValueOperand output, Label* slowPath);
 
  private:
@@ -6052,6 +6056,22 @@ class MacroAssembler : public MacroAssemblerSpecific {
 
   void finish();
   void link(JitCode* code);
+
+  void assertUnreachable(const char* output);
+
+  void assert32Compare(Condition condition, Register lhs, Imm32 rhs,
+                       const char* output = nullptr);
+  void assert32Compare(Condition condition, Address lhs, Imm32 rhs,
+                       const char* output = nullptr);
+  void assertPtrCompare(Condition condition, Register lhs, ImmWord rhs,
+                        const char* output = nullptr);
+  void assertPtrCompare(Condition condition, Address lhs, ImmWord rhs,
+                        const char* output = nullptr);
+
+  void assertPtrZero(Address src, const char* output = nullptr);
+  void assertPtrZero(Register src, const char* output = nullptr);
+  void assertPtrNonZero(Address src, const char* output = nullptr);
+  void assertPtrNonZero(Register src, const char* output = nullptr);
 
   void assumeUnreachable(const char* output);
 

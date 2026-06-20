@@ -292,7 +292,8 @@ void RenderCompositorLayersSWGL::AttachExternalImage(
 #elif defined(ANDROID)
   MOZ_RELEASE_ASSERT(image->AsRenderAndroidHardwareBufferTextureHost() ||
                      image->AsRenderAndroidSurfaceTextureHost() ||
-                     image->AsRenderEGLImageTextureHost());
+                     image->AsRenderEGLImageTextureHost() ||
+                     image->AsRenderAndroidImageReaderImageTextureHost());
 #endif
 
   auto surfaceCursor = mSurfaces.find(aId);
@@ -365,7 +366,7 @@ class RenderSourceLMC : public profiler_screenshots::RenderSource {
   const auto& RenderTarget() { return mRT; }
 
  protected:
-  virtual ~RenderSourceLMC() {}
+  virtual ~RenderSourceLMC() = default;
 
   RefPtr<CompositingRenderTarget> mRT;
 };
@@ -403,7 +404,7 @@ class DownscaleTargetLMC : public profiler_screenshots::DownscaleTarget {
   }
 
  protected:
-  virtual ~DownscaleTargetLMC() {}
+  virtual ~DownscaleTargetLMC() = default;
 
   RefPtr<RenderSourceLMC> mRenderSource;
   Compositor* mCompositor;
@@ -427,7 +428,7 @@ class AsyncReadbackBufferLMC
   }
 
  protected:
-  virtual ~AsyncReadbackBufferLMC() {}
+  virtual ~AsyncReadbackBufferLMC() = default;
 
   RefPtr<mozilla::layers::AsyncReadbackBuffer> mARB;
   Compositor* mCompositor;

@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { SecurityProperties } = ChromeUtils.importESModule(
-  "moz-src:///browser/components/aiwindow/models/SecurityProperties.sys.mjs"
-);
-
 add_task(function test_securityProperties_flags_not_visible_before_commit() {
   const sp = new SecurityProperties();
   sp.setPrivateData();

@@ -23,12 +23,6 @@ namespace mozilla::dom {
  */
 class FileSystemUtils {
  public:
-  /*
-   * Return true if aDescendantPath is a descendant of aPath.
-   */
-  static bool IsDescendantPath(const nsAString& aPath,
-                               const nsAString& aDescendantPath);
-
   /**
    * Return true if this is valid DOMPath. It also splits the path in
    * subdirectories and stores them in aParts.
@@ -41,7 +35,7 @@ class FileSystemUtils {
    * used.
    */
   static nsresult DispatchRunnable(nsIGlobalObject* aGlobal,
-                                   already_AddRefed<nsIRunnable>&& aRunnable);
+                                   already_AddRefed<nsIRunnable> aRunnable);
 };
 
 }  // namespace mozilla::dom

@@ -5,10 +5,6 @@ features:
     description: A feature that shows the onboarding flow.
 
     variables:
-      use-onboarding-redesign:
-        description: If true, use the onboarding redesign.
-        type: Boolean
-        default: true
       conditions:
         description: >
           A collection of out the box conditional expressions to be
@@ -95,10 +91,37 @@ features:
               title: nova_onboarding_marketing_title
               image-res: nova_onboarding_marketing
               primary-button-label: nova_onboarding_continue_button
+              secondary-button-label: nova_onboarding_marketing_secondary_button_text
               extra-data:
                 marketing-data:
                   body-line-one-text: nova_onboarding_marketing_body
                   body-line-one-link-text: nova_onboarding_marketing_body_link_text
+    defaults:
+      - channel: nightly
+        value:
+          cards:
+            add-search-widget:
+              enabled: false
+            sync-sign-in:
+              enabled: false
+            notification-permission:
+              enabled: false
+            toolbar-placement:
+              enabled: false
+
+  continuous-onboarding:
+    description: >
+      Feature to enable the continuous onboarding flow. This feature reduces the number of upfront
+      onboarding cards and distributes the cards and other prompts progressively over a number of days.
+    variables:
+      enabled:
+        description: If true, the feature is enabled.
+        type: Boolean
+        default: false
+    defaults:
+      - channel: nightly
+        value:
+          enabled: true
 
 objects:
 
@@ -170,10 +193,6 @@ objects:
         description: >
           An optional list of toolbar placements for the toolbar placement card.
         default: []
-      customization-theme-data:
-        type: List<CustomizationThemeData>
-        description: An optional list of theme choices for the theme selection card.
-        default: []
       term-of-service-data:
         type: Option<TermsOfServiceData>
         description: >
@@ -201,27 +220,8 @@ objects:
       image-res:
         type: Image
         description: The resource id of toolbar placement image.
-        # Nova redesign does not use this field as the image is defined in the Composable.
+        # Not used. This field as the image is defined in the Composable.
         default: ic_onboarding_customize_toolbar
-
-  CustomizationThemeData:
-    description: Defines an option for theme selection.
-    fields:
-      theme-type:
-        type: ThemeType
-        description: The type of the theming option.
-        # This should never be defaulted.
-        default: theme-system
-      label:
-        type: Text
-        description: Display text for the theme option (e.g., "Light Theme").
-        # This should never be defaulted.
-        default: ""
-      image-res:
-        type: Image
-        description: The resource id of the image to be displayed.
-        # This should never be defaulted.
-        default: ic_pick_a_theme_system_auto
 
   TermsOfServiceData:
     description: An object to describe the terms of service onboarding card.
@@ -282,6 +282,10 @@ objects:
   MarketingData:
     description: An object to describe the marketing data onboarding card.
     fields:
+      marketing-card-variant:
+        description: Which marketing card variant to use.
+        type: MarketingCardVariant
+        default: default
       body-line-one-text:
         type: Text
         description: The text for line one of the body.
@@ -310,8 +314,6 @@ enums:
         description: Allows user to add search widget to homescreen.
       toolbar-placement:
         description: Allows user to choose the toolbar position.
-      theme-selection:
-        description: Allows user to choose between dark and light themes.
       terms-of-service:
         description: Page to display the terms of services.
       marketing-data:
@@ -325,12 +327,14 @@ enums:
       toolbar-bottom:
         description: Sets the toolbar placement on the bottom.
 
-  ThemeType:
-    description: An enum to describe a theme selection option.
+  MarketingCardVariant:
+    description: An enum to describe a marketing card variation.
     variants:
-      theme-system:
-        description: Adapts the theme to match the device's system setting.
-      theme-light:
-        description: Sets the theme to light mode.
-      theme-dark:
-        description: Sets the theme to dark mode.
+      default:
+        description: The default marketing card variation.
+      treatment-a:
+        description: The Treatment A marketing card variation.
+      treatment-b:
+        description: The Treatment B marketing card variation.
+      treatment-c:
+        description: The Treatment C marketing card variation.

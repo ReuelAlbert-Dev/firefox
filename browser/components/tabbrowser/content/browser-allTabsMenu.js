@@ -7,6 +7,7 @@ ChromeUtils.defineESModuleGetters(this, {
   GroupsPanel: "moz-src:///browser/components/tabbrowser/GroupsList.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   TabsPanel: "moz-src:///browser/components/tabbrowser/TabsList.sys.mjs",
+  UrlbarShared: "chrome://browser/content/urlbar/UrlbarShared.mjs",
 });
 
 var gTabsPanel = {
@@ -56,7 +57,7 @@ var gTabsPanel = {
     this.hiddenAudioTabsPopup = new TabsPanel({
       view: this.allTabsView,
       containerNode: this.hiddenAudioTabs,
-      filterFn: tab => tab.soundPlaying,
+      filterFn: tab => tab.soundPlaying || tab.muted,
       onlyHiddenTabs: true,
     });
     this.allTabsPanel = new TabsPanel({
@@ -86,20 +87,35 @@ var gTabsPanel = {
         !containersEnabled;
 
       const hasHiddenTabs = this.hasHiddenTabsExcludingFxView();
-      document.getElementById("allTabsMenu-hiddenTabsButton").hidden =
-        !hasHiddenTabs;
-      document.getElementById("allTabsMenu-hiddenTabsSeparator").hidden =
-        !hasHiddenTabs;
+      const hiddenTabsButton = document.getElementById(
+        "allTabsMenu-hiddenTabsButton"
+      );
+      const hiddenTabsSeparator = document.getElementById(
+        "allTabsMenu-hiddenTabsSeparator"
+      );
+      hiddenTabsButton.hidden = !hasHiddenTabs;
+
+      // When hidden tabs are playing audio, bump them to the top of the menu:
+      // the "Hidden tabs" button and the audio-playing hidden tabs are placed
+      // above the visible tab list, with a separator dividing them from the
+      // visible tabs. Otherwise the "Hidden tabs" button sits at the end of the
+      // scrollable tab list as an ordinary item, with no separator.
+      const hasHiddenAudioTabs = this.hiddenAudioTabs.hasChildNodes();
+      this.hiddenAudioTabs.hidden = !hasHiddenAudioTabs;
+      hiddenTabsSeparator.hidden = !hasHiddenAudioTabs;
+      if (hasHiddenAudioTabs) {
+        document
+          .getElementById("allTabsMenu-currentWindowHeader")
+          .after(hiddenTabsButton, this.hiddenAudioTabs, hiddenTabsSeparator);
+      } else {
+        this.allTabsViewTabs.append(hiddenTabsButton, this.hiddenAudioTabs);
+      }
 
       let closeDuplicateTabsItem = document.getElementById(
         "allTabsMenu-closeDuplicateTabs"
       );
-      closeDuplicateTabsItem.disabled =
+      closeDuplicateTabsItem.hidden =
         !gBrowser.getAllDuplicateTabsToClose().length;
-
-      let syncedTabs = document.getElementById("allTabsMenu-syncedTabs");
-      syncedTabs.hidden =
-        !PlacesUIUtils.shouldShowTabsFromOtherComputersMenuitem();
     });
 
     this.allTabsView.addEventListener("ViewShown", () =>
@@ -110,7 +126,7 @@ var gTabsPanel = {
 
     this.allTabsView.addEventListener("command", event => {
       let { target } = event;
-      let { PanelUI } = target.ownerGlobal;
+      let { PanelUI } = target.documentGlobal;
       switch (target.id) {
         case "allTabsMenu-searchTabs":
           Glean.browserUiInteraction.listAllTabsAction.search_tabs.add(1);
@@ -127,10 +143,6 @@ var gTabsPanel = {
           break;
         case "allTabsMenu-hiddenTabsButton":
           PanelUI.showSubView(this.kElements.hiddenTabsView, target);
-          break;
-        case "allTabsMenu-syncedTabs":
-          Glean.browserUiInteraction.listAllTabsAction.tabs_from_devices.add(1);
-          SidebarController.show("viewTabsSidebar");
           break;
         case "allTabsMenu-groupsViewShowMore":
           PanelUI.showSubView(this.kElements.groupsSubView, target);
@@ -243,7 +255,7 @@ var gTabsPanel = {
   },
 
   searchTabs() {
-    gURLBar.search(UrlbarTokenizer.RESTRICT.OPENPAGE, {
+    gURLBar.search(UrlbarShared.RESTRICT_TOKENS.OPENPAGE, {
       searchModeEntry: "tabmenu",
     });
   },

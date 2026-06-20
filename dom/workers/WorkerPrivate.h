@@ -44,7 +44,6 @@
 #include "mozilla/dom/workerinternals/Queue.h"
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/net/NeckoChannelParams.h"
-#include "nsContentUtils.h"
 #include "nsIChannel.h"
 #include "nsIContentPolicy.h"
 #include "nsID.h"
@@ -446,8 +445,8 @@ class WorkerPrivate final
                    JSErrorReport* aReport);
 
   static void ReportErrorToConsole(
-      uint32_t aErrorFlags, const nsCString& aCategory,
-      nsContentUtils::PropertiesFile aFile, const nsCString& aMessageName,
+      uint32_t aErrorFlags, const nsCString& aCategory, PropertiesFile aFile,
+      const nsCString& aMessageName,
       const nsTArray<nsString>& aParams = nsTArray<nsString>(),
       const mozilla::SourceLocation& aLocation =
           mozilla::JSCallingLocation::Get());
@@ -461,7 +460,14 @@ class WorkerPrivate final
   void UpdateContextOptionsInternal(JSContext* aCx,
                                     const JS::ContextOptions& aContextOptions);
 
+  void UpdateTimezoneOverrideInternal(JSContext* aCx,
+                                      const nsAString& aTimezone);
+
   void UpdateLanguagesInternal(const nsTArray<nsString>& aLanguages);
+
+  void UpdateLanguageOverrideInternal(
+      const nsCString& aLanguageOverride,
+      const nsTArray<nsString>& aResolvedLanguages);
 
   void UpdateJSWorkerMemoryParameterInternal(JSContext* aCx, JSGCParamKey key,
                                              Maybe<uint32_t> aValue);
@@ -734,6 +740,7 @@ class WorkerPrivate final
   void CopyJSSettings(workerinternals::JSSettings& aSettings) {
     mozilla::MutexAutoLock lock(mMutex);
     aSettings = mJSSettings;
+    aSettings.CopyOverrideStrings();
   }
 
   void CopyJSRealmOptions(JS::RealmOptions& aOptions) {
@@ -824,6 +831,14 @@ class WorkerPrivate final
 
   uint64_t AssociatedBrowsingContextID() const {
     return mLoadInfo.mAssociatedBrowsingContextID;
+  }
+
+  const nsTArray<nsString>& GetLanguageOverride() const {
+    return mLoadInfo.mLanguageOverride;
+  }
+
+  const nsCString& GetLanguageOverrideLocale() const {
+    return mLoadInfo.mLanguageOverrideLocale;
   }
 
   uint64_t ServiceWorkerID() const { return GetServiceWorkerDescriptor().Id(); }
@@ -953,7 +968,7 @@ class WorkerPrivate final
   nsresult SetCSPFromHeaderValues(const nsACString& aCSPHeaderValue,
                                   const nsACString& aCSPReportOnlyHeaderValue);
 
-  void StoreCSPOnClient();
+  void StorePolicyContainerArgsOnClient();
 
   const mozilla::ipc::CSPInfo& GetCSPInfo() const {
     return mLoadInfo.mCSPContext->CSPInfo();
@@ -1001,6 +1016,11 @@ class WorkerPrivate final
     return mLoadInfo.mUsingStorageAccess;
   }
 
+  bool SerialAllowed() const {
+    AssertIsOnWorkerThread();
+    return mLoadInfo.mSerialAllowed;
+  }
+
   nsICookieJarSettings* CookieJarSettings() const {
     // Any thread.
     MOZ_ASSERT(mLoadInfo.mCookieJarSettings);
@@ -1034,6 +1054,10 @@ class WorkerPrivate final
     return mLoadInfo.mIsOn3PCBExceptionList;
   }
 
+  const nsString& TimezoneOverride() const {
+    return mLoadInfo.mTimezoneOverride;
+  }
+
   RemoteWorkerChild* GetRemoteWorkerController();
 
   void SetRemoteWorkerController(RemoteWorkerChild* aController);
@@ -1047,8 +1071,6 @@ class WorkerPrivate final
   bool Thaw(const nsPIDOMWindowInner* aWindow);
 
   void PropagateStorageAccessPermissionGranted();
-
-  void NotifyStorageKeyUsed();
 
   void EnableDebugger();
 
@@ -1108,7 +1130,12 @@ class WorkerPrivate final
 
   void UpdateContextOptions(const JS::ContextOptions& aContextOptions);
 
+  void UpdateTimezoneOverride(const nsAString& aTimezone);
+
   void UpdateLanguages(const nsTArray<nsString>& aLanguages);
+
+  void UpdateLanguageOverride(const nsACString& aLanguageOverride,
+                              const nsTArray<nsString>& aResolvedLanguages);
 
   void UpdateJSWorkerMemoryParameter(JSGCParamKey key, Maybe<uint32_t> value);
 
@@ -1733,10 +1760,6 @@ class WorkerPrivate final
 
   // The flag indicates if the worke is idle for events in the main event loop.
   bool mWorkerLoopIsIdle MOZ_GUARDED_BY(mMutex){false};
-
-  // This flag is used to ensure we only call NotifyStorageKeyUsed once per
-  // global.
-  bool hasNotifiedStorageKeyUsed{false};
 
   RefPtr<WorkerParentRef> mParentRef;
 

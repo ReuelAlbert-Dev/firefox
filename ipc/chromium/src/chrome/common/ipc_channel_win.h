@@ -8,8 +8,6 @@
 #include "chrome/common/ipc_channel.h"
 #include "chrome/common/ipc_message.h"
 
-#include <atomic>
-
 #include "base/message_loop.h"
 #include "base/process.h"
 #include "base/task.h"
@@ -40,6 +38,8 @@ class ChannelWin : public Channel, public MessageLoopForIO::IOHandler {
   const ChannelKind* GetKind() const override { return &sKind; }
 
   static const ChannelKind sKind;
+
+  static bool IsAllowedHandleType(HANDLE handle);
 
  private:
   ~ChannelWin() {

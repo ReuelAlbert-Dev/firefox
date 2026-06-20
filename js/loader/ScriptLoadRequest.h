@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -105,6 +103,9 @@ class ScriptLoadRequest : public nsISupports,
 
   bool IsModuleRequest() const { return mKind == ScriptKind::eModule; }
   bool IsImportMapRequest() const { return mKind == ScriptKind::eImportMap; }
+  bool IsSpeculationRulesRequest() const {
+    return mKind == ScriptKind::eSpeculationRules;
+  }
 
   ModuleLoadRequest* AsModuleRequest();
   const ModuleLoadRequest* AsModuleRequest() const;
@@ -114,7 +115,7 @@ class ScriptLoadRequest : public nsISupports,
     // necko.  For in-memory cached, case, the
     // SharedSubResourceCache::CompleteSubResource::mExpirationTime field is
     // used instead.
-    MOZ_ASSERT(!IsCachedStencil());
+    MOZ_ASSERT(!IsRetrievedFromMemoryCache());
     return mExpirationTime;
   }
 
@@ -152,6 +153,21 @@ class ScriptLoadRequest : public nsISupports,
   // otherwise.
   bool IsFinished() const {
     return mState == State::Ready || mState == State::Canceled;
+  }
+
+  mozilla::dom::ReferrerPolicy ReferrerPolicy() const {
+    return FetchInfo()->ReferrerPolicy();
+  }
+
+  nsIURI* BaseURL() const { return FetchInfo()->BaseURL(); }
+  void SetBaseURL(nsIURI* aBaseURL) { FetchInfo()->SetBaseURL(aBaseURL); }
+  void SetBaseURLFromChannelAndOriginalURI(nsIChannel* aChannel,
+                                           nsIURI* aOriginalURI) {
+    FetchInfo()->SetBaseURLFromChannelAndOriginalURI(aChannel, aOriginalURI);
+  }
+
+  ScriptFetchOptions* FetchOptions() const {
+    return FetchInfo()->FetchOptions();
   }
 
   mozilla::dom::RequestPriority FetchPriority() const {
@@ -259,6 +275,11 @@ class ScriptLoadRequest : public nsISupports,
   const LoadedScript* getLoadedScript() const { return mLoadedScript.get(); }
   LoadedScript* getLoadedScript() { return mLoadedScript.get(); }
 
+  bool HasStencil() const { return !!mStencil; }
+  JS::Stencil* GetStencil() const { return mStencil; }
+  void SetStencil(JS::Stencil* aStencil) { mStencil = aStencil; }
+  void ClearStencil() { mStencil = nullptr; }
+
   bool HasSourceMapURL() const { return mHasSourceMapURL_; }
   const nsString& GetSourceMapURL() const {
     MOZ_ASSERT(mHasSourceMapURL_);
@@ -276,10 +297,53 @@ class ScriptLoadRequest : public nsISupports,
   bool HadPostponed() const { return mHadPostponed_; }
   void SetHadPostponed() { mHadPostponed_ = true; }
 
+  const ScriptFetchInfo* FetchInfo() const { return mFetchInfo; }
+  ScriptFetchInfo* FetchInfo() { return mFetchInfo; }
+
+  // Becomes true if the actual script data is retrieved from the
+  // SharedScriptCache.
+  // This becomes true in the following two situations:
+  //   * A valid cache is found when starting the request
+  //   * A dirty cache is found when starting the request, and the
+  //     cache is revived (becomes true only after revived)
+  //
+  // This is different than LoadedScript::IsCachedStencil, given that
+  // LoadedScript::IsCachedStencil can become true also when the
+  // script data is retrieved as text or serialized stencil and then
+  // converted to the cached stencil.
+  bool IsRetrievedFromMemoryCache() const {
+    return mIsRetrievedFromMemoryCache;
+  }
+
+  // Given that the LoadedScript::mDataType field used by
+  // LoadedScript::IsTextSource and LoadedScript::IsSerializedStencil be set to
+  // eCachedStencil or eInvalidatedCachedStencil after setting to
+  // others, the following accessors can be called only if one of the following
+  // conditions is met:
+  //   * while receiving the response from necko,
+  //     which means the cached case never reaches the code path
+  //   * before converting to cached stencil,
+  //     which means only text or serialized stencil cases can reach the code
+  //     path
+  //   * after filtering out the cached stencil cases
+  bool IsFetchedAsTextSource() const {
+    MOZ_ASSERT(!IsRetrievedFromMemoryCache());
+    MOZ_ASSERT(!getLoadedScript()->IsCachedStencil());
+    MOZ_ASSERT(!getLoadedScript()->IsInvalidatedCachedStencil());
+    return getLoadedScript()->IsTextSource();
+  }
+  bool IsRetrievedAsSerializedStencil() const {
+    MOZ_ASSERT(!IsRetrievedFromMemoryCache());
+    MOZ_ASSERT(!getLoadedScript()->IsCachedStencil());
+    MOZ_ASSERT(!getLoadedScript()->IsInvalidatedCachedStencil());
+    return getLoadedScript()->IsSerializedStencil();
+  }
+
  public:
   // Fields.
 
-  // Whether this is a classic script, a module script, or an import map.
+  // Whether this is a classic script, a module script, an import map, or a
+  // speculation rule set.
   const ScriptKind mKind;
 
   // Are we still waiting for a load to complete?
@@ -321,6 +385,8 @@ class ScriptLoadRequest : public nsISupports,
   CachingPlan mDiskCachingPlan : 2;
   CachingPlan mMemoryCachingPlan : 2;
 
+  bool mIsRetrievedFromMemoryCache : 1;
+
   CacheExpirationTime mExpirationTime = CacheExpirationTime::Never();
 
   RefPtr<mozilla::SubResourceNetworkMetadataHolder> mNetworkMetadata;
@@ -342,6 +408,14 @@ class ScriptLoadRequest : public nsISupports,
 
   // The loaded script holds the data which can be shared among similar requests
   RefPtr<LoadedScript> mLoadedScript;
+
+  // Either the result of compilation/decode, or the stencil retrieved from
+  // cache.
+  // Once this field is populated, it's is guaranteed to be valid until the
+  // stencil is instantiated.
+  RefPtr<JS::Stencil> mStencil;
+
+  RefPtr<ScriptFetchInfo> mFetchInfo;
 
   // LoadContext for augmenting the load depending on the loading
   // context (DOM, Worker, etc.)

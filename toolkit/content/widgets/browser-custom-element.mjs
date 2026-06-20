@@ -948,8 +948,8 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
   }
 
   getTabBrowser() {
-    if (this?.ownerGlobal?.gBrowser?.getTabForBrowser(this)) {
-      return this.ownerGlobal.gBrowser;
+    if (this?.documentGlobal?.gBrowser?.getTabForBrowser(this)) {
+      return this.documentGlobal.gBrowser;
     }
     return null;
   }
@@ -1500,6 +1500,8 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
       this._autoScrollPresShellId = presShellId;
     }
 
+    // Store the time at which the auto scroll begins.
+    this._autoScrollStartTime = performance.now();
     return { autoscrollEnabled: true, usingApz };
   }
 
@@ -1541,6 +1543,18 @@ export class MozBrowser extends MozElements.MozElementMixin(XULFrameElement) {
           break;
         }
         case "DOMMouseScroll": {
+          // Check if the time elapsed since the auto scroll began is 500ms.
+          // To avoid accidental cancellations of it.
+          const scrollCooldownMs = this.mPrefs.getIntPref(
+            "apz.autoscroll.scroll_wheel_cooldown"
+          );
+          if (
+            performance.now() - this._autoScrollStartTime <
+            scrollCooldownMs
+          ) {
+            aEvent.preventDefault();
+            break;
+          }
           this._autoScrollPopup.hidePopup();
           aEvent.preventDefault();
           break;

@@ -29,8 +29,8 @@ UniquePtr<SharedTextureMacIOSurface> SharedTextureMacIOSurface::Create(
     return nullptr;
   }
 
-  RefPtr<MacIOSurface> surface =
-      MacIOSurface::CreateIOSurface(aWidth, aHeight, true);
+  RefPtr<MacIOSurface> surface = MacIOSurface::CreateIOSurface(
+      aWidth, aHeight, MacIOSurface::AllowAlpha::Yes);
   if (!surface) {
     gfxCriticalNoteOnce << "Failed to create MacIOSurface: (" << aWidth << ", "
                         << aHeight << ")";
@@ -74,7 +74,8 @@ SharedTextureMacIOSurface::ToSurfaceDescriptor() {
 
   return Some(layers::SurfaceDescriptorMacIOSurface(
       mSurface->GetIOSurfaceID(), !mSurface->HasAlpha(),
-      mSurface->GetYUVColorSpace(), std::move(gpuFence)));
+      mSurface->GetYUVColorSpace(), mSurface->GetTransferFunction(),
+      std::move(gpuFence)));
 }
 
 void SharedTextureMacIOSurface::GetSnapshot(const ipc::Shmem& aDestShmem,

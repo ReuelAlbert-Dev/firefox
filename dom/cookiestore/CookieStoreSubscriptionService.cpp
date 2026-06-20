@@ -391,7 +391,8 @@ void CookieStoreSubscriptionService::ParseAndAddSubscription(
   Json::Value value;
   Json::Reader jsonReader;
 
-  MOZ_ASSERT(jsonReader.parse(aValue.BeginReading(), value, false));
+  MOZ_ASSERT(jsonReader.parse(aValue.BeginReading(), aValue.EndReading(), value,
+                              false));
   MOZ_ASSERT(value.isObject());
 
   for (Json::ValueConstIterator iter = value.begin(); iter != value.end();

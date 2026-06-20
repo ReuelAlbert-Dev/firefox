@@ -14,7 +14,6 @@
 #ifndef SHARED_SURFACE_H_
 #define SHARED_SURFACE_H_
 
-#include <queue>
 #include <stdint.h>
 
 #include "GLContext.h"  // Bug 1635644
@@ -66,10 +65,12 @@ struct PartialSharedSurfaceDesc {
 struct SharedSurfaceDesc : public PartialSharedSurfaceDesc {
   gfx::IntSize size = {};
   gfx::ColorSpace2 colorSpace = gfx::ColorSpace2::UNKNOWN;
+  gfx::TransferFunction transferFunction = gfx::TransferFunction::SRGB;
 
   bool operator==(const SharedSurfaceDesc& rhs) const {
     return PartialSharedSurfaceDesc::operator==(rhs) && size == rhs.size &&
-           colorSpace == rhs.colorSpace;
+           colorSpace == rhs.colorSpace &&
+           transferFunction == rhs.transferFunction;
   }
   bool operator!=(const SharedSurfaceDesc& rhs) const {
     return !(*this == rhs);

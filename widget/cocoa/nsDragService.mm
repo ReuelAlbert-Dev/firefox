@@ -43,7 +43,7 @@ extern bool gUserCancelledDrag;
 mozilla::StaticRefPtr<nsIArray> gDraggedTransferables;
 
 already_AddRefed<nsIDragSession> nsDragService::CreateDragSession() {
-  RefPtr<nsIDragSession> sess = new nsDragSession();
+  auto sess = MakeRefPtr<nsDragSession>();
   return sess.forget();
 }
 
@@ -134,7 +134,7 @@ NSImage* nsDragSession::ConstructDragImage(nsINode* aDOMNode,
                DrawOptions(1.0f, CompositionOp::OP_SOURCE));
 
   NSBitmapImageRep* imageRep =
-      [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+      [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:nullptr
                                               pixelsWide:width
                                               pixelsHigh:height
                                            bitsPerSample:8
@@ -384,6 +384,18 @@ nsDragSession::IsDataFlavorSupported(const char* aDataFlavor, bool* _retval) {
   if (availableType &&
       nsCocoaUtils::IsValidPasteboardType(availableType, allowFileURL)) {
     *_retval = true;
+  }
+
+  // Also accept files for kURLMime, which we convert to file:// URLs.
+  if (!*_retval && dataFlavor.EqualsLiteral(kURLMime)) {
+    NSString* fileType =
+        [UTIHelper stringFromPboardType:(NSString*)kUTTypeFileURL];
+    NSString* availableFileType =
+        [globalDragPboard availableTypeFromArray:@[ (id)fileType ]];
+    if (availableFileType &&
+        nsCocoaUtils::IsValidPasteboardType(availableFileType, true)) {
+      *_retval = true;
+    }
   }
 
   return NS_OK;

@@ -8,7 +8,6 @@
 #include "mozilla/StaticMutex.h"
 #include "mozilla/widget/DMABufFormats.h"
 #include <gbm.h>
-#include <mutex>
 
 #undef LOGDMABUF
 #ifdef MOZ_LOGGING
@@ -179,7 +178,7 @@ class GbmLib {
                                            uint32_t width, uint32_t height,
                                            uint32_t format, uint32_t flags) {
     if (!gbm) {
-      return 0;
+      return nullptr;
     }
     return sCreateSurface(gbm, width, height, format, flags);
   }
@@ -220,6 +219,8 @@ class DRMFormat;
 class DMABufDeviceLock;
 
 class DMABufDevice final {
+  friend class DMABufDeviceLock;
+
  public:
   bool Init();
 
@@ -258,6 +259,8 @@ class MOZ_RAII DMABufDeviceLock final {
  public:
   DMABufDeviceLock();
   ~DMABufDeviceLock();
+
+  static void Shutdown();
 
   gbm_device* GetGBMDevice() {
     sMutex.AssertCurrentThreadOwns();

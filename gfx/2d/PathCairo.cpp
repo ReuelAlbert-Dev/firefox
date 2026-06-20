@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "PathCairo.h"
-#include <math.h>
 #include "DrawTargetCairo.h"
 #include "Logging.h"
 #include "PathHelpers.h"
@@ -141,7 +140,7 @@ PathCairo::~PathCairo() {
 
 already_AddRefed<PathBuilder> PathCairo::CopyToBuilder(
     FillRule aFillRule) const {
-  RefPtr<PathBuilderCairo> builder = new PathBuilderCairo(aFillRule);
+  RefPtr builder = MakeRefPtr<PathBuilderCairo>(aFillRule);
 
   builder->mPathData = mPathData;
   builder->mCurrentPoint = mCurrentPoint;
@@ -152,7 +151,7 @@ already_AddRefed<PathBuilder> PathCairo::CopyToBuilder(
 
 already_AddRefed<PathBuilder> PathCairo::TransformedCopyToBuilder(
     const Matrix& aTransform, FillRule aFillRule) const {
-  RefPtr<PathBuilderCairo> builder = new PathBuilderCairo(aFillRule);
+  RefPtr builder = MakeRefPtr<PathBuilderCairo>(aFillRule);
 
   AppendPathToBuilder(builder, &aTransform);
   builder->mCurrentPoint = aTransform.TransformPoint(mCurrentPoint);

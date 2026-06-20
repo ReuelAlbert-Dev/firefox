@@ -525,7 +525,7 @@ nsMultiplexInputStream::Seek(int32_t aWhence, int64_t aOffset) {
 
       mStreams[i].mCurrentPos -= seek;
       mCurrentStream = i;
-      mStartedReadingCurrent = seek != -pos;
+      mStartedReadingCurrent = seek != pos;
 
       remaining -= seek;
     }
@@ -831,7 +831,7 @@ void nsMultiplexInputStream::AsyncWaitCompleted() {
 nsresult nsMultiplexInputStreamConstructor(REFNSIID aIID, void** aResult) {
   *aResult = nullptr;
 
-  RefPtr<nsMultiplexInputStream> inst = new nsMultiplexInputStream();
+  RefPtr inst = MakeRefPtr<nsMultiplexInputStream>();
 
   return inst->QueryInterface(aIID, aResult);
 }
@@ -1032,7 +1032,7 @@ nsMultiplexInputStream::Clone(nsIInputStream** aClone) {
     return NS_ERROR_FAILURE;
   }
 
-  RefPtr<nsMultiplexInputStream> clone = new nsMultiplexInputStream();
+  RefPtr clone = MakeRefPtr<nsMultiplexInputStream>();
 
   nsresult rv;
   uint32_t len = mStreams.Length();

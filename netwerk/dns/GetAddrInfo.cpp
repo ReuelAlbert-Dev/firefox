@@ -86,12 +86,12 @@ static MOZ_ALWAYS_INLINE nsresult _CallDnsQuery_A_Windows(
 
   auto callDnsQuery_A = [&](uint16_t reqFamily) {
     PDNS_RECORDA dnsData = nullptr;
-    DNS_STATUS status = DnsQuery_A(aHost.BeginReading(), reqFamily, aFlags,
-                                   nullptr, &dnsData, nullptr);
+    DNS_STATUS status = DnsQuery_A(PromiseFlatCString(aHost).get(), reqFamily,
+                                   aFlags, nullptr, &dnsData, nullptr);
     if (status == DNS_INFO_NO_RECORDS || status == DNS_ERROR_RCODE_NAME_ERROR ||
         !dnsData) {
       LOG("No DNS records found for %s. status=%lX. reqFamily = %X\n",
-          aHost.BeginReading(), status, reqFamily);
+          PromiseFlatCString(aHost).get(), status, reqFamily);
       return NS_ERROR_FAILURE;
     } else if (status != NOERROR) {
       LOG_WARNING("DnsQuery_A failed with status %lX.\n", status);
@@ -163,7 +163,7 @@ static MOZ_ALWAYS_INLINE nsresult _GetTTLData_Windows(const nsACString& aHost,
           ttl = std::min<unsigned int>(ttl, curRecord->dwTtl);
         } else {
           LOG("Received unexpected record type %u in response for %s.\n",
-              curRecord->wType, aHost.BeginReading());
+              curRecord->wType, PromiseFlatCString(aHost).get());
         }
       });
 
@@ -185,8 +185,9 @@ _DNSQuery_A_SingleLabel(const nsACString& aCanonHost, uint16_t aAddressFamily,
                        DNS_QUERY_ACCEPT_TRUNCATED_RESPONSE);
   nsTArray<NetAddr> addresses;
 
+  nsPromiseFlatCString canonHost(aCanonHost);
   _CallDnsQuery_A_Windows(
-      aCanonHost, aAddressFamily, flags, [&](PDNS_RECORDA curRecord) {
+      canonHost, aAddressFamily, flags, [&](PDNS_RECORDA curRecord) {
         MOZ_DIAGNOSTIC_ASSERT(curRecord->wType == DNS_TYPE_A ||
                               curRecord->wType == DNS_TYPE_AAAA);
         if (setCanonName) {
@@ -198,13 +199,12 @@ _DNSQuery_A_SingleLabel(const nsACString& aCanonHost, uint16_t aAddressFamily,
         addresses.AppendElement(addr);
       });
 
-  LOG("Query for: %s has %zu results", aCanonHost.BeginReading(),
-      addresses.Length());
+  LOG("Query for: %s has %zu results", canonHost.get(), addresses.Length());
   if (addresses.IsEmpty()) {
     return NS_ERROR_UNKNOWN_HOST;
   }
   RefPtr<AddrInfo> ai(new AddrInfo(
-      aCanonHost, canonName, DNSResolverType::Native, 0, std::move(addresses)));
+      canonHost, canonName, DNSResolverType::Native, 0, std::move(addresses)));
   ai.forget(aAddrInfo);
 
   return NS_OK;
@@ -267,16 +267,17 @@ _GetAddrInfo_Portable(const nsACString& aCanonHost, uint16_t aAddressFamily,
       // This is a single label name resolve without a dot.
       // We use DNSQuery_A for these.
       LOG("Resolving %s using DnsQuery_A (computername: %s)\n",
-          aCanonHost.BeginReading(), sDNSComputerName);
+          PromiseFlatCString(aCanonHost).get(), sDNSComputerName);
       return _DNSQuery_A_SingleLabel(aCanonHost, aAddressFamily, aFlags,
                                      aAddrInfo);
     }
   }
 #endif
 
-  LOG("Resolving %s using PR_GetAddrInfoByName", aCanonHost.BeginReading());
-  PRAddrInfo* prai =
-      PR_GetAddrInfoByName(aCanonHost.BeginReading(), aAddressFamily, prFlags);
+  LOG("Resolving %s using PR_GetAddrInfoByName",
+      PromiseFlatCString(aCanonHost).get());
+  PRAddrInfo* prai = PR_GetAddrInfoByName(PromiseFlatCString(aCanonHost).get(),
+                                          aAddressFamily, prFlags);
 
   if (!prai) {
     LOG("PR_GetAddrInfoByName returned null PR_GetError:%d PR_GetOSErrpr:%d",

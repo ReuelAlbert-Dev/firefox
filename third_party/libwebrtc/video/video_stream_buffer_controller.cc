@@ -28,7 +28,6 @@
 #include "api/video/encoded_frame.h"
 #include "api/video/frame_buffer.h"
 #include "api/video/video_content_type.h"
-#include "api/video/video_timing.h"
 #include "modules/video_coding/frame_helpers.h"
 #include "modules/video_coding/include/video_coding_defines.h"
 #include "modules/video_coding/timing/inter_frame_delay_variation_calculator.h"
@@ -112,7 +111,7 @@ VideoStreamBufferController::VideoStreamBufferController(
       buffer_(std::make_unique<FrameBuffer>(kMaxFramesBuffered,
                                             kMaxFramesHistory,
                                             field_trials)),
-      decode_timing_(clock_, timing_),
+      decode_timing_(clock_, timing_, field_trials_),
       timeout_tracker_(
           clock_,
           worker_queue,
@@ -167,8 +166,8 @@ std::optional<int64_t> VideoStreamBufferController::InsertFrame(
     if (!metadata.delayed_by_retransmission && metadata.receive_time &&
         (field_trials_.IsDisabled("WebRTC-IncomingTimestampOnMarkerBitOnly") ||
          metadata.is_last_spatial_layer)) {
-      timing_->IncomingTimestamp(metadata.rtp_timestamp,
-                                 *metadata.receive_time);
+      timing_->OnCompleteTemporalUnit(metadata.rtp_timestamp,
+                                      *metadata.receive_time);
     }
     if (complete_units < buffer_->GetTotalNumberOfContinuousTemporalUnits()) {
       TRACE_EVENT2("webrtc",
@@ -260,10 +259,7 @@ void VideoStreamBufferController::OnFrameReady(
                                        superframe_size);
     }
 
-    static constexpr float kRttMult = 0.9f;
-    static constexpr TimeDelta kRttMultAddCap = TimeDelta::Millis(200);
-    timing_->SetJitterDelay(
-        jitter_estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap));
+    timing_->SetMinimumDelay(jitter_estimator_.GetEstimate());
     timing_->UpdateCurrentDelay(render_time, now);
   } else {
     jitter_estimator_.FrameNacked();
@@ -273,12 +269,11 @@ void VideoStreamBufferController::OnFrameReady(
   UpdateDroppedFrames();
   UpdateDiscardedPackets();
   UpdateFrameBufferTimings(min_receive_time, now);
-  UpdateTimingFrameInfo();
 
   std::unique_ptr<EncodedFrame> frame =
       CombineAndDeleteFrames(std::move(frames));
 
-  timing_->SetLastDecodeScheduledTimestamp(now);
+  decode_timing_.SetLastDecodeScheduledTimestamp(now);
 
   decoder_ready_for_new_frame_ = false;
   receiver_->OnEncodedFrame(std::move(frame));
@@ -356,7 +351,7 @@ void VideoStreamBufferController::UpdateFrameBufferTimings(
   if (timings.num_decoded_frames) {
     stats_proxy_->OnFrameBufferTimingsUpdated(
         timings.estimated_max_decode_time.ms(), timings.current_delay.ms(),
-        timings.target_delay.ms(), timings.minimum_delay.ms(),
+        timings.stats_target_delay.ms(), timings.minimum_delay.ms(),
         timings.min_playout_delay.ms(), timings.render_delay.ms());
   }
 
@@ -371,14 +366,8 @@ void VideoStreamBufferController::UpdateFrameBufferTimings(
   // https://w3c.github.io/webrtc-stats/#dom-rtcinboundrtpstreamstats-jitterbufferdelay
   TimeDelta jitter_buffer_delay =
       std::max(TimeDelta::Zero(), now - min_receive_time);
-  stats_proxy_->OnDecodableFrame(jitter_buffer_delay, timings.target_delay,
-                                 timings.minimum_delay);
-}
-
-void VideoStreamBufferController::UpdateTimingFrameInfo() {
-  std::optional<TimingFrameInfo> info = timing_->GetTimingFrameInfo();
-  if (info)
-    stats_proxy_->OnTimingFrameInfoUpdated(*info);
+  stats_proxy_->OnDecodableFrame(
+      jitter_buffer_delay, timings.stats_target_delay, timings.minimum_delay);
 }
 
 bool VideoStreamBufferController::IsTooManyFramesQueued() const

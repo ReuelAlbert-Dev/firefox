@@ -92,7 +92,7 @@ static already_AddRefed<Element> MakeAnonButton(
 
   // Set the file picking button text depending on the current locale.
   nsAutoString buttonTxt;
-  nsContentUtils::GetMaybeLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
+  nsContentUtils::GetMaybeLocalizedString(PropertiesFile::FORMS_PROPERTIES,
                                           labelKey, aDoc, buttonTxt);
 
   auto* nim = aDoc->NodeInfoManager();
@@ -370,7 +370,8 @@ void nsFileControlFrame::SyncDisabledState() {
 
 void nsFileControlFrame::ElementStateChanged(ElementState aStates) {
   if (aStates.HasState(ElementState::DISABLED)) {
-    nsContentUtils::AddScriptRunner(new SyncDisabledStateEvent(this));
+    nsContentUtils::AddScriptRunner(
+        MakeAndAddRef<SyncDisabledStateEvent>(this));
   }
 }
 

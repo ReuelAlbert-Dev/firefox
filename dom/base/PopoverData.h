@@ -32,13 +32,15 @@ enum class PopoverVisibilityState : uint8_t {
 class PopoverToggleEventTask : public Runnable {
  public:
   explicit PopoverToggleEventTask(nsWeakPtr aElement, nsWeakPtr aSource,
-                                  PopoverVisibilityState aOldState);
+                                  PopoverVisibilityState aOldState,
+                                  PopoverVisibilityState aNewState);
 
   // MOZ_CAN_RUN_SCRIPT_BOUNDARY until Runnable::Run is MOZ_CAN_RUN_SCRIPT.  See
   // bug 1535398.
   MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHOD Run() override;
 
   PopoverVisibilityState GetOldState() const { return mOldState; }
+  PopoverVisibilityState GetNewState() const { return mNewState; }
 
   Element* GetSource() const;
 
@@ -46,6 +48,7 @@ class PopoverToggleEventTask : public Runnable {
   nsWeakPtr mElement;
   nsWeakPtr mSource;
   PopoverVisibilityState mOldState;
+  PopoverVisibilityState mNewState;
 };
 
 class PopoverData {
@@ -91,9 +94,9 @@ class PopoverData {
   void SetToggleEventTask(PopoverToggleEventTask* aTask) { mTask = aTask; }
   void ClearToggleEventTask() { mTask = nullptr; }
 
-  bool IsShowingOrHiding() const { return mIsShowingOrHiding; }
-  void SetIsShowingOrHiding(bool aIsShowingOrHiding) {
-    mIsShowingOrHiding = aIsShowingOrHiding;
+  bool IsPopoverHiding() const { return mIsPopoverHiding; }
+  void SetIsPopoverHiding(bool aIsPopoverHiding) {
+    mIsPopoverHiding = aIsPopoverHiding;
   }
 
  private:
@@ -111,7 +114,7 @@ class PopoverData {
   // this a weak reference, as if the element goes away it's necessarily not
   // connected to our document.
   nsWeakPtr mInvokerElement;
-  bool mIsShowingOrHiding = false;
+  bool mIsPopoverHiding = false;
   RefPtr<PopoverToggleEventTask> mTask;
 
   // This won't need to be cycle collected as CloseWatcher only has strong

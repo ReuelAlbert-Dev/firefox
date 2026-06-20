@@ -4,36 +4,44 @@
 
 package mozilla.components.feature.awesomebar.provider
 
+import android.graphics.Bitmap
 import androidx.annotation.VisibleForTesting
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import mozilla.components.browser.icons.BrowserIcons
+import mozilla.components.browser.icons.IconRequest
 import mozilla.components.concept.awesomebar.AwesomeBar
+import mozilla.components.concept.awesomebar.optimizedsuggestions.SportSuggestionCategory
 import mozilla.components.concept.awesomebar.optimizedsuggestions.SportSuggestionDate
 import mozilla.components.concept.awesomebar.optimizedsuggestions.SportSuggestionStatus
 import mozilla.components.concept.awesomebar.optimizedsuggestions.SportSuggestionStatusType
 import mozilla.components.concept.awesomebar.optimizedsuggestions.SportSuggestionTeam
+import mozilla.components.feature.awesomebar.facts.SuggestionCardType
+import mozilla.components.feature.awesomebar.facts.emitOptimizedSuggestionCardClickedFact
+import mozilla.components.feature.awesomebar.facts.emitOptimizedSuggestionCardDisplayedFact
 import mozilla.components.feature.search.SearchUseCases
 import java.time.DateTimeException
 import java.time.LocalDateTime
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
-import java.time.format.FormatStyle
 import java.util.Locale
 import java.util.UUID
 
-const val DEFAULT_SPORT_SUGGESTION_LIMIT = 1
+internal const val DEFAULT_SPORT_SUGGESTION_LIMIT = 1
 
 /**
  * [AwesomeBar.SuggestionProvider] implementation that provides suggestions based on online sports.
  *
- * @property dataSource the [AwesomeBar.SportsSuggestionDataSource] to be used.
+ * @property dataSource the [AwesomeBar.CombinedSuggestionsDataSource] to be used.
  * @property suggestionsHeader optional parameter to specify if the suggestion should have a header.
  * @property maxNumberOfSuggestions the maximum number of suggestions to be provided.
  */
 class SportsOnlineSuggestionProvider(
+    private val icons: BrowserIcons,
     private val searchUseCase: SearchUseCases.SearchUseCase,
-    private val dataSource: AwesomeBar.SportsSuggestionDataSource,
+    private val dataSource: AwesomeBar.CombinedSuggestionsDataSource,
     private val suggestionsHeader: String? = null,
     @get:VisibleForTesting internal val maxNumberOfSuggestions: Int = DEFAULT_SPORT_SUGGESTION_LIMIT,
 ) : AwesomeBar.SuggestionProvider {
@@ -50,20 +58,29 @@ class SportsOnlineSuggestionProvider(
     override suspend fun onInputChanged(text: String): List<AwesomeBar.SportSuggestion> {
         if (text.isBlank()) return emptyList()
 
-        delay(ARTIFICIAL_DELAY)
-
-        val results = dataSource.fetch(text)
-
-        return results
-            .asSequence()
-            .mapNotNull { it.toSuggestionOrNull() }
+        val items = dataSource.fetchSports(text)
+        val suggestions = items
+            .asFlow()
+            .mapNotNull { item ->
+                item.toSuggestionOrNull()?.let { it to item.sportCategory }
+            }
             .take(maxNumberOfSuggestions)
             .toList()
+
+        suggestions.forEach {
+            emitOptimizedSuggestionCardDisplayedFact(
+                cardType = SuggestionCardType.SPORTS,
+                extra = it.second.lowercase(),
+            )
+        }
+
+        return suggestions.map { it.first }
     }
 
-    private fun AwesomeBar.SportItem.toSuggestionOrNull(): AwesomeBar.SportSuggestion? {
+    private suspend fun AwesomeBar.SportItem.toSuggestionOrNull(): AwesomeBar.SportSuggestion? {
         val hasRequiredFields =
             query.isNotBlank() && sport.isNotBlank()
+        val sportCategory = parseSportCategory(sportCategory)
         val date = parseDate(date)
         val status = parseStatus(status)
         val statusType = parseStatusType(statusType)
@@ -73,11 +90,18 @@ class SportsOnlineSuggestionProvider(
 
         return if (hasRequiredFields && hasAllFields) {
             AwesomeBar.SportSuggestion(
-                onSuggestionClicked = { searchUseCase.invoke(query) },
+                onSuggestionClicked = {
+                    emitOptimizedSuggestionCardClickedFact(
+                        cardType = SuggestionCardType.SPORTS,
+                        extra = this.sportCategory.lowercase(),
+                    )
+                    searchUseCase.invoke(query)
+                },
                 provider = this@SportsOnlineSuggestionProvider,
                 score = Int.MAX_VALUE,
                 query = query,
                 sport = sport,
+                sportCategory = sportCategory,
                 date = date,
                 status = status,
                 statusType = statusType,
@@ -105,11 +129,7 @@ class SportsOnlineSuggestionProvider(
                     SportSuggestionDate.Today
                 }
                 tomorrow -> {
-                    val time = parsedDate.format(
-                        DateTimeFormatter
-                            .ofLocalizedTime(FormatStyle.SHORT)
-                            .withLocale(locale),
-                    )
+                    val time = formatShortTime(parsedDate, locale)
                     SportSuggestionDate.Tomorrow(time)
                 }
                 else -> {
@@ -126,15 +146,6 @@ class SportsOnlineSuggestionProvider(
         }
     }
 
-    private fun parseIsoDate(
-        date: String,
-        timeZone: ZoneId,
-    ): LocalDateTime? = try {
-        OffsetDateTime.parse(date).atZoneSameInstant(timeZone).toLocalDateTime()
-    } catch (_: DateTimeParseException) {
-        null
-    }
-
     @VisibleForTesting
     internal fun parseStatus(status: String): SportSuggestionStatus {
         return when (status) {
@@ -144,9 +155,10 @@ class SportsOnlineSuggestionProvider(
             "In Progress" -> SportSuggestionStatus.InProgress
             "Suspended" -> SportSuggestionStatus.Suspended
             "Canceled" -> SportSuggestionStatus.Canceled
-            "Final" -> SportSuggestionStatus.Final
-            "Final - Over Time" -> SportSuggestionStatus.FinalOverTime
-            "Final - Shoot Out" -> SportSuggestionStatus.FinalShootOut
+            "Final",
+            "Final - Over Time",
+            "Final - Shoot Out",
+            -> SportSuggestionStatus.Final
             "Forfeit" -> SportSuggestionStatus.Forfeit
             "Not Necessary" -> SportSuggestionStatus.NotNecessary
             else -> SportSuggestionStatus.Unknown
@@ -164,9 +176,42 @@ class SportsOnlineSuggestionProvider(
     }
 
     @VisibleForTesting
-    internal fun parseTeam(team: AwesomeBar.SportItem.Team): SportSuggestionTeam? {
+    internal suspend fun parseTeam(team: AwesomeBar.SportItem.Team): SportSuggestionTeam? {
+        val icon = fetchTeamIcon(icons, team.icon)
         return team.name.takeIf { it.isNotBlank() }?.let {
-            SportSuggestionTeam(it, team.score)
+            SportSuggestionTeam(it, team.score, icon)
         }
+    }
+
+    @VisibleForTesting
+    internal fun parseSportCategory(sportCategory: String): SportSuggestionCategory {
+        return when (sportCategory) {
+            "baseball" -> SportSuggestionCategory.BASEBALL
+            "basketball" -> SportSuggestionCategory.BASKETBALL
+            "hockey" -> SportSuggestionCategory.HOCKEY
+            "soccer" -> SportSuggestionCategory.SOCCER
+            "football" -> SportSuggestionCategory.FOOTBALL
+            "golf" -> SportSuggestionCategory.GOLF
+            "racing" -> SportSuggestionCategory.RACING
+            else -> SportSuggestionCategory.MISC
+        }
+    }
+
+    private suspend fun fetchTeamIcon(
+        icons: BrowserIcons,
+        url: String?,
+    ): Bitmap? {
+        if (url.isNullOrBlank()) return null
+
+        val resources = listOf(IconRequest.Resource(url, IconRequest.Resource.Type.IMAGE_SRC))
+        val request = IconRequest(
+            url = url,
+            size = IconRequest.Size.LAUNCHER_ADAPTIVE,
+            resources = resources,
+            isPrivate = true,
+        )
+
+        val icon = icons.loadIcon(request).await()
+        return icon.bitmap
     }
 }

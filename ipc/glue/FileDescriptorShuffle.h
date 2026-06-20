@@ -8,7 +8,6 @@
 #include "mozilla/Span.h"
 #include "nsTArray.h"
 
-#include <functional>
 #include <utility>
 
 // This class converts a set of file descriptor mapping, which may
@@ -33,6 +32,9 @@ class FileDescriptorShuffle {
   FileDescriptorShuffle() = default;
   ~FileDescriptorShuffle();
 
+  FileDescriptorShuffle(const FileDescriptorShuffle&) = delete;
+  void operator=(const FileDescriptorShuffle&) = delete;
+
   using MappingRef = mozilla::Span<const std::pair<int, int>>;
 
   // Translate the given mapping, creating temporary fds as needed.
@@ -55,9 +57,6 @@ class FileDescriptorShuffle {
   nsTArray<std::pair<int, int>> mMapping;
   nsTArray<int> mTempFds;
   int mMaxDst;
-
-  FileDescriptorShuffle(const FileDescriptorShuffle&) = delete;
-  void operator=(const FileDescriptorShuffle&) = delete;
 };
 
 }  // namespace ipc

@@ -10,6 +10,7 @@
 
 #include "mozilla/dom/NodeInfo.h"
 
+#include "AttrArray.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/dom/Document.h"
@@ -20,7 +21,6 @@
 #include "nsCRT.h"
 #include "nsContentUtils.h"
 #include "nsDOMString.h"
-#include "nsGkAtoms.h"
 #include "nsINode.h"
 #include "nsNameSpaceManager.h"
 #include "nsNodeInfoManager.h"
@@ -46,7 +46,8 @@ NodeInfo::NodeInfo(nsAtom* aName, nsAtom* aPrefix, int32_t aNamespaceID,
                    nsNodeInfoManager* aOwnerManager)
     : mDocument(aOwnerManager->GetDocument()),
       mInner(aName, aPrefix, aNamespaceID, aNodeType, aExtraName),
-      mOwnerManager(aOwnerManager) {
+      mOwnerManager(aOwnerManager),
+      mNameBloomHash(AttrArray::HashForBloomFilter(aName)) {
   CheckValidNodeInfo(aNodeType, aName, aNamespaceID, aExtraName);
 
   NS_IF_ADDREF(mInner.mName);
@@ -175,4 +176,12 @@ void NodeInfo::DeleteCycleCollectable() {
 bool NodeInfo::CanSkip() {
   return mDocument && nsCCUncollectableMarker::InGeneration(
                           mDocument->GetMarkedCCGeneration());
+}
+
+const Maybe<const nsHTMLTag>& NodeInfo::HTMLTag() const {
+  if (!mHTMLTag && mInner.mNodeType == nsINode::ELEMENT_NODE &&
+      mInner.mNamespaceID == kNameSpaceID_XHTML) {
+    mHTMLTag.emplace(nsHTMLTags::CaseSensitiveAtomTagToId(NameAtom()));
+  }
+  return mHTMLTag;
 }

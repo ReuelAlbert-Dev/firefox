@@ -166,6 +166,13 @@ class VideoOutput : public DirectMediaTrackListener {
     SendFramesEnsureLocked();
   }
   void NotifyRemoved(MediaTrackGraph* aGraph) override {
+    if (NS_IsMainThread()) {
+      mAttachment = State::Detached;
+    } else {
+      aGraph->DispatchToMainThreadStableState(NS_NewRunnableFunction(
+          "VideoOutput::NotifyRemoved",
+          [this, self = RefPtr(this)] { mAttachment = State::Detached; }));
+    }
     // Doesn't need locking by mMutex, since the direct listener is removed from
     // the track before we get notified.
     if (mFrames.Length() <= 1) {
@@ -245,6 +252,10 @@ class VideoOutput : public DirectMediaTrackListener {
   const RefPtr<VideoFrameContainer> mVideoFrameContainer;
   const RefPtr<AbstractThread> mMainThread;
   const ProducerID mProducerID = ImageContainer::AllocateProducerID();
+
+  // Main thread only.
+  enum class State : uint8_t { Attached, Detaching, Detached };
+  Watchable<State> mAttachment = {State::Detached, "VideoOutput::mAttachment"};
 };
 
 /**

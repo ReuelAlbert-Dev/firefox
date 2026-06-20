@@ -37,6 +37,7 @@ struct DocumentFrameCallbacks;
 
 namespace mozilla {
 class AnimationEventDispatcher;
+class PaintPendingHangAnnotator;
 class PresShell;
 class RefreshDriverTimer;
 class Runnable;
@@ -358,6 +359,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // paints to one per vsync (see CanDoExtraTick).
   void FinishedVsyncTick() { mAttemptedExtraTickSinceLastVsync = false; }
 
+  bool HasReasonsToTick() const;
+
  private:
   using RequestTable = nsTHashSet<RefPtr<imgIRequest>>;
   struct ImageStartData {
@@ -441,9 +444,6 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   void UpdateAnimatedImages(mozilla::TimeStamp aPreviousRefresh,
                             mozilla::TimeStamp aNowTime);
 
-  bool HasReasonsToTick() const {
-    return GetReasonsToTick() != TickReasons::None;
-  }
   TickReasons GetReasonsToTick() const;
   void AppendTickReasonsToString(TickReasons aReasons, nsACString& aStr) const;
 
@@ -537,6 +537,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   bool mHasImageAnimations : 1;
 
   bool mHasStartedTimerAtLeastOnce : 1;
+
+  mozilla::UniquePtr<mozilla::PaintPendingHangAnnotator> mHangAnnotator;
 
   mozilla::TimeStamp mMostRecentRefresh;
   mozilla::TimeStamp mTickStart;

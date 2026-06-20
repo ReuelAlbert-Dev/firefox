@@ -485,6 +485,8 @@ pub struct Loss {
     /// The factor by which the PTO period is reduced.
     /// This enables faster probing at a cost in additional lost packets.
     fast_pto: u8,
+    /// Snapshotted before input processing; see [`Self::note_timeout_type`].
+    pending_timer_type: Option<qlog::LossTimerType>,
 }
 
 impl Loss {
@@ -497,6 +499,7 @@ impl Loss {
             qlog: Qlog::default(),
             stats,
             fast_pto,
+            pending_timer_type: None,
         }
     }
 
@@ -787,6 +790,25 @@ impl Loss {
         }
     }
 
+    /// Snapshot which timer type is due before input processing, so that ACKs
+    /// in the same `process()` call cannot clear loss candidates and cause
+    /// [`Self::timeout`] to misattribute the expiry as PTO.
+    pub(crate) fn note_timeout_type(&mut self, path: &Path, now: Instant) {
+        if self.qlog.is_enabled() && self.pending_timer_type.is_none() {
+            self.pending_timer_type = self.expired_timer_type(path.rtt(), now);
+        }
+    }
+
+    fn expired_timer_type(&self, rtt: &RttEstimate, now: Instant) -> Option<qlog::LossTimerType> {
+        if self.earliest_loss_time(rtt).is_some_and(|t| t <= now) {
+            Some(qlog::LossTimerType::Ack)
+        } else if self.earliest_pto(rtt).is_some_and(|t| t <= now) {
+            Some(qlog::LossTimerType::Pto)
+        } else {
+            None
+        }
+    }
+
     /// Find when the earliest sent packet should be considered lost.
     fn earliest_loss_time(&self, rtt: &RttEstimate) -> Option<Instant> {
         self.spaces
@@ -859,7 +881,7 @@ impl Loss {
 
         if let Some(st) = &mut self.pto_state {
             st.count_pto(&mut self.stats.borrow_mut());
-            qlog::metrics_updated(&mut self.qlog, &[qlog::Metric::PtoCount(st.count())], now);
+            qlog::metrics_updated(&mut self.qlog, [qlog::Metric::PtoCount(st.count())], now);
         }
         qlog::loss_timer_set(&mut self.qlog, now);
     }
@@ -939,18 +961,13 @@ impl Loss {
         has_handshake_keys: bool,
     ) -> Vec<sent::Packet> {
         qtrace!("[{self}] timeout {now:?}");
-        let timer_type = {
-            let path = primary_path.borrow();
-            if self
-                .earliest_loss_time(path.rtt())
-                .is_some_and(|t| t <= now)
-            {
-                qlog::LossTimerType::Ack
-            } else {
-                qlog::LossTimerType::Pto
-            }
-        };
-        qlog::loss_timer_expired(&mut self.qlog, timer_type, now);
+        if let Some(timer_type) = self
+            .pending_timer_type
+            .take()
+            .or_else(|| self.expired_timer_type(primary_path.borrow().rtt(), now))
+        {
+            qlog::loss_timer_expired(&mut self.qlog, timer_type, now);
+        }
 
         let loss_delay = primary_path.borrow().rtt().loss_delay();
         let confirmed = self.confirmed();
@@ -1036,7 +1053,10 @@ mod tests {
     use neqo_common::qlog::Qlog;
     use test_fixture::{DEFAULT_ADDR, now};
 
-    use super::{FAST_PTO_SCALE, LossRecoverySpace, PacketNumberSpace, PtoState, SendProfile};
+    use super::{
+        ACK_ONLY_SIZE_LIMIT, FAST_PTO_SCALE, LossRecoverySpace, MIN_OUTSTANDING_UNACK,
+        PacketNumberSpace, PtoState, SendProfile,
+    };
     use crate::{
         ConnectionParameters, Token as Srt,
         cid::{ConnectionId, ConnectionIdEntry},
@@ -1083,6 +1103,10 @@ mod tests {
 
         pub fn timeout(&mut self, now: Instant) -> Vec<sent::Packet> {
             self.lr.timeout(&self.path, now, true)
+        }
+
+        pub fn note_timeout_type(&mut self, now: Instant) {
+            self.lr.note_timeout_type(&self.path.borrow(), now);
         }
 
         pub fn next_timeout(&self) -> Option<Instant> {
@@ -1964,6 +1988,119 @@ mod tests {
         (lr, contents, pto)
     }
 
+    fn send_non_ack_eliciting(lrs: &mut LossRecoverySpace, pkt_type: packet::Type) {
+        lrs.on_packet_sent(sent::Packet::new(
+            pkt_type,
+            0,
+            now(),
+            false,
+            recovery::Tokens::new(),
+            ON_SENT_SIZE,
+        ));
+    }
+
+    /// Non-ACK-eliciting packets in Initial/Handshake spaces set the PTO baseline,
+    /// but non-ACK-eliciting packets in `ApplicationData` space do not.
+    #[test]
+    fn pto_baseline_set_for_non_app_data_only() {
+        let mut lrs_init = LossRecoverySpace::new(PacketNumberSpace::Initial);
+        assert!(lrs_init.last_ack_eliciting.is_none());
+        send_non_ack_eliciting(&mut lrs_init, packet::Type::Initial);
+        assert!(
+            lrs_init.last_ack_eliciting.is_some(),
+            "Initial space must set PTO baseline for non-ack-eliciting packet"
+        );
+
+        let mut lrs_app = LossRecoverySpace::new(PacketNumberSpace::ApplicationData);
+        send_non_ack_eliciting(&mut lrs_app, packet::Type::Short);
+        assert!(
+            lrs_app.last_ack_eliciting.is_none(),
+            "ApplicationData must not set PTO baseline for non-ack-eliciting packet"
+        );
+    }
+
+    fn app_data_largest_acked_sent_time(lr: &Fixture) -> Option<Instant> {
+        lr.spaces
+            .get(PacketNumberSpace::ApplicationData)?
+            .largest_acked_sent_time
+    }
+
+    /// A duplicate ACK for the current largest acknowledged packet must not update the sent-time.
+    #[test]
+    fn duplicate_ack_does_not_update_largest_acked_sent_time() {
+        let mut lr = setup_lr(3); // sends 0..=2 and acks 0
+
+        ack(&mut lr, 2, TEST_RTT);
+        let first_sent_time = app_data_largest_acked_sent_time(&lr);
+        assert!(first_sent_time.is_some());
+
+        ack(&mut lr, 2, TEST_RTT);
+        assert_eq!(
+            app_data_largest_acked_sent_time(&lr),
+            first_sent_time,
+            "duplicate ACK must not update largest_acked_sent_time"
+        );
+    }
+
+    /// At the exact PTO expiry deadline, probing should not yet fire; one nanosecond past it
+    /// should.
+    #[test]
+    fn should_probe_exact_boundary() {
+        let mut lrs = LossRecoverySpace::new(PacketNumberSpace::ApplicationData);
+        let t = now();
+        let pto = ms(100);
+
+        // Add exactly MIN_OUTSTANDING_UNACK packets → n_pto = 2.
+        add_sent(&mut lrs, (MIN_OUTSTANDING_UNACK - 1) as u64);
+        assert_eq!(lrs.sent_packets.len(), MIN_OUTSTANDING_UNACK);
+
+        lrs.last_ack_eliciting = Some(t);
+
+        // At exactly t + pto*2: not yet past the deadline, should NOT probe.
+        assert!(!lrs.should_probe(pto, t + pto * 2));
+        // One nanosecond past the deadline: should probe.
+        assert!(lrs.should_probe(pto, t + pto * 2 + Duration::from_nanos(1)));
+    }
+
+    /// `ack_only` is true only when `limit < ACK_ONLY_SIZE_LIMIT`, not at the limit itself.
+    #[test]
+    fn ack_only_boundary() {
+        assert!(SendProfile::new_limited(ACK_ONLY_SIZE_LIMIT - 1).ack_only());
+        // At the limit itself: limit == ACK_ONLY_SIZE_LIMIT → NOT ack_only.
+        assert!(!SendProfile::new_limited(ACK_ONLY_SIZE_LIMIT).ack_only());
+        assert!(!SendProfile::new_limited(ACK_ONLY_SIZE_LIMIT + 1).ack_only());
+    }
+
+    /// `drop_0rtt` returns packets that were in-flight in the `ApplicationData` space.
+    #[test]
+    fn drop_0rtt_returns_sent_packets() {
+        let mut lr = Fixture::default();
+        pace(&mut lr, 2);
+        let path = Rc::clone(&lr.path);
+        let dropped = lr.drop_0rtt(&path, now());
+        assert_eq!(
+            dropped.len(),
+            2,
+            "drop_0rtt must return all in-flight ApplicationData-space packets"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "discarding application space")]
+    fn discard_application_data_panics() {
+        let mut lr = Fixture::default();
+        lr.discard(PacketNumberSpace::ApplicationData, now());
+    }
+
+    /// `drop_0rtt` returns empty when packets have already been acknowledged.
+    #[test]
+    fn drop_0rtt_already_acked() {
+        let mut lr = setup_lr(2); // sends packets 0..=1 and ACKs packet 0
+        ack(&mut lr, 1, TEST_RTT); // ACK packet 1 — sets largest_acked
+        let path = Rc::clone(&lr.path);
+        assert!(lr.drop_0rtt(&path, now()).is_empty());
+    }
+
     #[test]
     fn loss_timer_set_on_pto() {
         let (_, contents, _) = fire_pto_log();
@@ -2002,6 +2139,38 @@ mod tests {
         assert!(
             log.contains(r#""event_type":"cancelled""#),
             "Expected loss_timer_updated Cancelled event in qlog: {log}"
+        );
+    }
+
+    #[test]
+    fn note_timeout_type_survives_ack() {
+        let (log, contents) = test_fixture::new_neqo_qlog();
+        let mut lr = Fixture::default();
+        lr.lr.set_qlog(log);
+
+        pace(&mut lr, 3);
+
+        // ACK PN 0 to establish RTT, then ACK PN 2 — PN 1 becomes a loss
+        // candidate with a time-based loss timer.
+        ack(&mut lr, 0, TEST_RTT);
+        ack(&mut lr, 2, TEST_RTT);
+        lr.timeout(pn_time(2) + TEST_RTT);
+
+        let pn1_loss_time = pn_time(1) + (TEST_RTT * 9 / 8);
+        assert_eq!(lr.next_timeout(), Some(pn1_loss_time));
+
+        // Snapshot the Ack timer type, then ACK PN 1 to clear the loss candidate.
+        lr.note_timeout_type(pn1_loss_time);
+        ack(&mut lr, 1, TEST_RTT * 9 / 8);
+
+        // timeout() should use the snapshot (Ack), not recompute (would be Pto).
+        lr.timeout(pn1_loss_time);
+        drop(lr);
+
+        let log = contents.to_string();
+        assert!(
+            log.contains(r#""timer_type":"ack""#),
+            "Expected timer_type ack from snapshot, got: {log}"
         );
     }
 }

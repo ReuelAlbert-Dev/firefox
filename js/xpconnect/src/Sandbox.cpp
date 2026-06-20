@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -29,6 +27,7 @@
 #include "nsIURI.h"
 #include "nsJSUtils.h"
 #include "nsNetUtil.h"
+#include "nsPIDOMWindowInlines.h"
 #include "ExpandedPrincipal.h"
 #include "WrapperFactory.h"
 #include "xpcprivate.h"
@@ -584,16 +583,11 @@ static size_t sandbox_moved(JSObject* obj, JSObject* old) {
   (XPCONNECT_GLOBAL_EXTRA_SLOT_OFFSET)
 
 static const JSClassOps SandboxClassOps = {
-    nullptr,                         // addProperty
-    nullptr,                         // delProperty
-    nullptr,                         // enumerate
-    JS_NewEnumerateStandardClasses,  // newEnumerate
-    JS_ResolveStandardClass,         // resolve
-    JS_MayResolveStandardClass,      // mayResolve
-    sandbox_finalize,                // finalize
-    nullptr,                         // call
-    nullptr,                         // construct
-    JS_GlobalObjectTraceHook,        // trace
+    .newEnumerate = JS_NewEnumerateStandardClasses,
+    .resolve = JS_ResolveStandardClass,
+    .mayResolve = JS_MayResolveStandardClass,
+    .finalize = sandbox_finalize,
+    .trace = JS_GlobalObjectTraceHook,
 };
 
 static const js::ClassExtension SandboxClassExtension = {
@@ -1308,6 +1302,14 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
   }
   MOZ_ASSERT(principal);
 
+  nsGlobalWindowInner* windowOfProto = nullptr;
+  if (options.proto) {
+    RootedObject unwrappedProto(cx, js::UncheckedUnwrap(options.proto, false));
+    if (principal->Subsumes(nsContentUtils::ObjectPrincipal(unwrappedProto))) {
+      windowOfProto = WindowGlobalOrNull(unwrappedProto);
+    }
+  }
+
   JS::RealmOptions realmOptions;
 
   auto& creationOptions = realmOptions.creationOptions();
@@ -1324,6 +1326,10 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
   }
 
   xpc::SetPrefableRealmOptions(realmOptions);
+  if (!isSystemPrincipal &&
+      (!windowOfProto || !windowOfProto->CrossOriginIsolated())) {
+    creationOptions.setDefineSharedArrayBufferConstructor(false);
+  }
   if (options.sameZoneAs) {
     creationOptions.setNewCompartmentInExistingZone(
         js::UncheckedUnwrap(options.sameZoneAs));

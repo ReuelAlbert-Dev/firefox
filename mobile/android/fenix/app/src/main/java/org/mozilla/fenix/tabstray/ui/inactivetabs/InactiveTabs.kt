@@ -18,12 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +40,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import mozilla.components.compose.base.button.IconButton
 import mozilla.components.compose.base.button.TextButton
 import mozilla.components.compose.cfr.CFRPopup
 import mozilla.components.compose.cfr.CFRPopupLayout
@@ -54,8 +53,6 @@ import org.mozilla.fenix.tabstray.data.createTab
 import org.mozilla.fenix.tabstray.ui.tabitems.BasicTabListItem
 import org.mozilla.fenix.theme.FirefoxTheme
 import mozilla.components.ui.icons.R as iconsR
-
-private val CardShape = RoundedCornerShape(12.dp)
 
 /**
  * Top-level list for displaying an expandable section of Inactive Tabs.
@@ -96,7 +93,7 @@ fun InactiveTabsList(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             contentColor = MaterialTheme.colorScheme.secondary,
         ),
-        shape = CardShape,
+        shape = MaterialTheme.shapes.medium,
     ) {
         InactiveTabsHeader(
             expanded = expanded,
@@ -240,10 +237,11 @@ private fun InactiveTabsSubHeader(
 
         IconButton(
             onClick = onDeleteAllButtonClick,
+            contentDescription = stringResource(R.string.inactive_tabs_delete_all),
         ) {
             Icon(
                 painter = painterResource(iconsR.drawable.mozac_ic_delete_24),
-                contentDescription = stringResource(R.string.inactive_tabs_delete_all),
+                contentDescription = null,
             )
         }
     }
@@ -262,7 +260,7 @@ private fun InactiveTabsAutoClosePrompt(
 ) {
     Card(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-        shape = CardShape,
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
         border = BorderStroke(
             width = 1.dp,
@@ -287,12 +285,14 @@ private fun InactiveTabsAutoClosePrompt(
 
                 IconButton(
                     onClick = onDismissClick,
+                    contentDescription = stringResource(
+                        R.string.tab_tray_inactive_auto_close_button_content_description,
+                    ),
                     modifier = Modifier.size(20.dp),
                 ) {
                     Icon(
                         painter = painterResource(iconsR.drawable.mozac_ic_cross_20),
-                        contentDescription =
-                        stringResource(R.string.tab_tray_inactive_auto_close_button_content_description),
+                        contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }

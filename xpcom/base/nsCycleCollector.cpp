@@ -163,6 +163,7 @@
 
 #include <utility>
 
+#include "js/friend/CycleCollector.h"
 #include "js/SliceBudget.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
@@ -1259,6 +1260,12 @@ class nsCycleCollector : public nsIMemoryReporter {
   // returns whether anything was collected
   bool CollectWhite();
 
+  void ClearWhiteJSWeakRefTargets();
+
+ public:
+  bool IsGCThingWhiteInCCGraph(JS::GCCellPtr aPtr);
+
+ private:
   void CleanupAfterCollection();
 };
 
@@ -1727,7 +1734,7 @@ class nsCycleCollectorLogSinkToFile final : public nsICycleCollectorLogSink {
     // We don't want any JS to run between ScanRoots and CollectWhite calls,
     // and since ScanRoots calls this method, better to log the message
     // asynchronously.
-    RefPtr<LogStringMessageAsync> log = new LogStringMessageAsync(msg);
+    RefPtr log = MakeRefPtr<LogStringMessageAsync>(msg);
     NS_DispatchToCurrentThread(log);
     return NS_OK;
   }
@@ -3248,6 +3255,8 @@ bool nsCycleCollector::CollectWhite() {
   //   - Unlink(whites), which drops outgoing links on each white.
   //   - Unroot(whites), which returns the whites to normal GC.
 
+  ClearWhiteJSWeakRefTargets();
+
   // Segments are 4 KiB on 32-bit and 8 KiB on 64-bit.
   static const size_t kSegmentSize = sizeof(void*) * 1024;
   SegmentedVector<PtrInfo*, kSegmentSize, InfallibleAllocPolicy> whiteNodes(
@@ -3337,6 +3346,31 @@ bool nsCycleCollector::CollectWhite() {
   mKnownSnowWhiteCount = 0;
 
   return numWhiteNodes > 0 || numWhiteGCed > 0 || numWhiteJSZones > 0;
+}
+
+static bool IsGCThingWhiteInCCGraph(JS::GCCellPtr aPtr, void* aData) {
+  auto* cc = static_cast<nsCycleCollector*>(aData);
+  return cc->IsGCThingWhiteInCCGraph(aPtr);
+}
+
+bool nsCycleCollector::IsGCThingWhiteInCCGraph(JS::GCCellPtr aPtr) {
+  PtrInfo* pinfo = mGraph.FindNode(aPtr.asCell());
+  if (!pinfo) {
+    return false;
+  }
+
+  MOZ_ASSERT(pinfo->mParticipant);
+  bool isWhite = pinfo->mColor == white;
+
+  MOZ_ASSERT_IF(isWhite, pinfo->IsGrayJS());
+  return isWhite;
+}
+
+void nsCycleCollector::ClearWhiteJSWeakRefTargets() {
+  // Clear the targets of JS WeakRef objects whose target is part of a cycle
+  // that we're about to unlink.
+  JSRuntime* runtime = Runtime()->Runtime();
+  JS::MaybeClearWeakRefTargets(runtime, &::IsGCThingWhiteInCCGraph, this);
 }
 
 ////////////////////////
@@ -3586,14 +3620,15 @@ void nsCycleCollector::CleanupAfterCollection() {
 #endif
 
   if (NS_IsMainThread()) {
-    glean::cycle_collector::time.AccumulateRawDuration(interval);
+    glean::cycle_collector::time.ProcessGet().AccumulateRawDuration(interval);
     glean::cycle_collector::visited_ref_counted.AccumulateSingleSample(
         mResults.mVisitedRefCounted);
     glean::cycle_collector::visited_gced.AccumulateSingleSample(
         mResults.mVisitedGCed);
     glean::cycle_collector::collected.AccumulateSingleSample(mWhiteNodeCount);
   } else {
-    glean::cycle_collector::worker_time.AccumulateRawDuration(interval);
+    glean::cycle_collector::worker_time.ProcessGet().AccumulateRawDuration(
+        interval);
     glean::cycle_collector::worker_visited_ref_counted.AccumulateSingleSample(
         mResults.mVisitedRefCounted);
     glean::cycle_collector::worker_visited_gced.AccumulateSingleSample(

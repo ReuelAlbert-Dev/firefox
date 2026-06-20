@@ -71,7 +71,7 @@ class FetchDecodedImageHelper : public imgIContainerCallback,
   }
 
  private:
-  virtual ~FetchDecodedImageHelper() {}
+  virtual ~FetchDecodedImageHelper() = default;
 
   void RequestDecode() {
     if (mSize.Width() && mSize.Height()) {
@@ -138,8 +138,7 @@ RefPtr<FetchDecodedImagePromise> FetchDecodedImage(nsIURI* aURI,
 
   auto promise = MakeRefPtr<FetchDecodedImagePromise::Private>(__func__);
 
-  RefPtr<FetchDecodedImageHelper> helper =
-      new FetchDecodedImageHelper(aSize, promise);
+  auto helper = MakeRefPtr<FetchDecodedImageHelper>(aSize, promise);
 
   rv = imgTools->DecodeImageFromChannelAsync(aURI, aChannel, helper, helper);
   if (NS_FAILED(rv)) {

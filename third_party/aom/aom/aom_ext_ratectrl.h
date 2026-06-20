@@ -12,6 +12,7 @@
 /*!\file
  * \brief Defines structs and callbacks needed for external rate control.
  *
+ * \attention Experimental. Not part of the stable API.
  */
 #ifndef AOM_AOM_AOM_EXT_RATECTRL_H_
 #define AOM_AOM_AOM_EXT_RATECTRL_H_
@@ -20,8 +21,8 @@
 extern "C" {
 #endif
 
-#include "./aom_integer.h"
-#include "./aom_tpl.h"
+#include "aom/aom_integer.h"
+#include "aom/aom_tpl.h"
 
 /*!\brief Current ABI version number
  *
@@ -144,7 +145,7 @@ typedef void *aom_rc_model_t;
 #define AOM_DEFAULT_RDMULT -1
 
 /*!\brief Superblock quantization parameters
- * Store the superblock quantiztaion parameters
+ * Store the superblock quantization parameters
  */
 typedef struct aom_sb_parameters {
   int q_index; /**< Quantizer step index [0..255]*/
@@ -159,6 +160,11 @@ typedef struct aom_sb_parameters {
 typedef struct aom_rc_encodeframe_decision {
   int q_index; /**< Required: Quantizer step index [0..255]*/
   int rdmult;  /**< Required: Frame level Lagrangian multiplier*/
+  // Whether per-superblock delta Q should be used.
+  // The rate control model should set the value pointed to by this member
+  // to 1 if per-superblock delta-Q is used for this frame, or 0 otherwise.
+  // This is a pointer to the flag in cpi->ext_ratectrl.
+  int *use_delta_q;
   /*!
    * Optional: Superblock quantization parameters
    * It is zero initialized by default. It will be set for key and ARF frames
@@ -235,7 +241,7 @@ typedef struct aom_rc_frame_stats {
   /*!
    * Weight assigned to this frame (or total weight for the collection of
    * frames) currently based on intra factor and brightness factor. This is used
-   * to distribute bits betweeen easier and harder frames.
+   * to distribute bits between easier and harder frames.
    */
   double weight;
   /*!

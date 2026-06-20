@@ -526,7 +526,8 @@ nsresult nsPACMan::LoadPACFromURI(const nsACString& aSpec,
   NS_ENSURE_STATE(loader);
 
   LOG(("nsPACMan::LoadPACFromURI aSpec: %s, aResetLoadFailureCount: %s\n",
-       aSpec.BeginReading(), aResetLoadFailureCount ? "true" : "false"));
+       PromiseFlatCString(aSpec).get(),
+       aResetLoadFailureCount ? "true" : "false"));
 
   CancelExistingLoad();
 
@@ -616,7 +617,7 @@ nsresult nsPACMan::GetPACFromDHCP(nsACString& aSpec) {
               LOG(
                   ("nsPACMan::GetPACFromDHCP DHCP option %d query succeeded,"
                    "finding PAC URL %s\n",
-                   MOZ_DHCP_WPAD_OPTION, spec.BeginReading()));
+                   MOZ_DHCP_WPAD_OPTION, spec.get()));
             }
             MonitorAutoLock lock(self->mMonitor);
             self->mPACStringFromDHCP = spec;

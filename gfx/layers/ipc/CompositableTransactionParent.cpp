@@ -17,6 +17,7 @@
 #include "mozilla/mozalloc.h"  // for operator delete
 #include "nsDebug.h"           // for NS_WARNING, NS_ASSERTION
 #include "nsRegion.h"          // for nsIntRegion
+#include "nsTHashSet.h"
 
 namespace mozilla {
 namespace layers {
@@ -127,6 +128,21 @@ void CompositableParentManager::DestroyActor(const OpDestroy& aOp) {
     default: {
       MOZ_ASSERT(false, "unsupported type");
     }
+  }
+}
+
+void CompositableParentManager::DestroyActors(
+    const nsTArray<OpDestroy>& aToDestroy) {
+  nsTHashSet<PTextureParent*> seenTextureParents;
+  for (const auto& op : aToDestroy) {
+    if (op.type() == OpDestroy::TPTexture) {
+      PTextureParent* textureParent = op.get_PTexture().AsParent();
+      if (!seenTextureParents.EnsureInserted(textureParent)) {
+        // Already destroyed this one in the current batch; skip.
+        continue;
+      }
+    }
+    DestroyActor(op);
   }
 }
 

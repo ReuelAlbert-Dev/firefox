@@ -18,6 +18,7 @@
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/ReflowInput.h"
 #include "mozilla/SVGContextPaint.h"
 #include "mozilla/SVGUtils.h"
 #include "mozilla/TextUtils.h"
@@ -383,7 +384,7 @@ nsresult SVGContentUtils::ReportToConsole(const Document* doc,
                                           const char* aWarning,
                                           const nsTArray<nsString>& aParams) {
   return nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "SVG"_ns,
-                                         doc, nsContentUtils::eSVG_PROPERTIES,
+                                         doc, PropertiesFile::SVG_PROPERTIES,
                                          aWarning, aParams);
 }
 

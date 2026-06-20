@@ -49,7 +49,8 @@ UniquePtr<TextureData> CanvasTranslator::CreateTextureData(
   switch (mTextureType) {
     case TextureType::Unknown:
       textureData = BufferTextureData::Create(
-          aSize, aFormat, gfx::BackendType::SKIA, LayersBackend::LAYERS_WR,
+          aSize, aFormat, gfx::ColorSpace2::SRGB, gfx::TransferFunction::SRGB,
+          gfx::BackendType::SKIA, LayersBackend::LAYERS_WR,
           TextureFlags::DEALLOCATE_CLIENT | TextureFlags::REMOTE_TEXTURE,
           allocFlags, nullptr);
       break;
@@ -793,7 +794,7 @@ bool CanvasTranslator::TranslateRecording() {
     }
 
     if (!success && !HandleExtensionEvent(eventType)) {
-      gfxCriticalNote << "Failed to play canvas event type: " << eventType;
+      gfxCriticalNoteOnce << "Failed to play canvas event type: " << eventType;
 
       if (!mCurrentMemReader.good()) {
         mHeader->readerState = State::Failed;
@@ -1567,11 +1568,36 @@ CanvasTranslator::MaybeRecycleDataSurfaceForSurfaceDescriptor(
   if (usedDescriptor.isSome() && usedDescriptor.ref() == aSurfaceDescriptor) {
     MOZ_ASSERT(usedSurf);
     MOZ_ASSERT(usedWrapper);
-    MOZ_ASSERT(aTextureHost->GetSize() == usedSurf->GetSize());
 
-    // Since the data is the same as before, the DataSourceSurfaceWrapper can be
-    // reused.
-    return do_AddRef(usedWrapper);
+    auto* bufferTextureHost = aTextureHost->AsBufferTextureHost();
+    if (bufferTextureHost) {
+      if (usedSurf->GetType() == gfx::SurfaceType::DATA_ALIGNED) {
+        // Buffer of DataSourceSurface is owned by DataSourceSurface
+        MOZ_ASSERT(aTextureHost->GetSize() == usedSurf->GetSize());
+        if (aTextureHost->GetSize() == usedSurf->GetSize()) {
+          // Since the data is the same as before, the DataSourceSurfaceWrapper
+          // can be reused.
+          return do_AddRef(usedWrapper);
+        } else {
+          mUsedDataSurfaceForSurfaceDescriptor = nullptr;
+          mUsedWrapperForSurfaceDescriptor = nullptr;
+          mUsedSurfaceDescriptorForSurfaceDescriptor = Nothing();
+        }
+      } else {
+        // Buffer of DataSourceSurface is owned by BufferTextureHost
+        if (bufferTextureHost->GetBuffer() &&
+            bufferTextureHost->GetBuffer() == usedSurf->GetData() &&
+            aTextureHost->GetSize() == usedSurf->GetSize() &&
+            aTextureHost->GetFormat() == usedSurf->GetFormat()) {
+          // Since the data is the same as before, the DataSourceSurfaceWrapper
+          // can be reused.
+          return do_AddRef(usedWrapper);
+        }
+        mUsedDataSurfaceForSurfaceDescriptor = nullptr;
+        mUsedWrapperForSurfaceDescriptor = nullptr;
+        mUsedSurfaceDescriptorForSurfaceDescriptor = Nothing();
+      }
+    }
   }
 
   bool isYuvVideo = false;
@@ -1618,7 +1644,6 @@ CanvasTranslator::LookupSourceSurfaceFromSurfaceDescriptor(
   RefPtr<VideoBridgeParent> parent =
       VideoBridgeParent::GetSingleton(sdrd.source());
   if (!parent) {
-    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
     gfxCriticalNote << "TexUnpackSurface failed to get VideoBridgeParent";
     return nullptr;
   }

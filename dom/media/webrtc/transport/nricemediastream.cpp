@@ -158,6 +158,7 @@ static bool ToNrIceCandidate(const nr_ice_candidate& candc,
   out->tcp_type = tcp_type;
   out->codeword = candc.codeword;
   out->label = candc.label;
+  out->foundation = candc.foundation;
   out->trickled = candc.trickled;
   out->priority = candc.priority;
   return true;
@@ -168,7 +169,7 @@ static bool ToNrIceCandidate(const nr_ice_candidate& candc,
 // defn of nr_ice_candidate but we pass by reference.
 static UniquePtr<NrIceCandidate> MakeNrIceCandidate(
     const nr_ice_candidate& candc) {
-  UniquePtr<NrIceCandidate> out(new NrIceCandidate());
+  auto out = MakeUnique<NrIceCandidate>();
 
   if (!ToNrIceCandidate(candc, out.get())) {
     return nullptr;
@@ -191,10 +192,9 @@ NrIceMediaStream::NrIceMediaStream(NrIceCtx* ctx, const std::string& id,
       old_stream_(nullptr),
       id_(id) {}
 
-NrIceMediaStream::~NrIceMediaStream() {
-  // We do not need to destroy anything. All major resources
-  // are attached to the ice ctx.
-}
+// We do not need to destroy anything. All major resources
+// are attached to the ice ctx.
+NrIceMediaStream::~NrIceMediaStream() = default;
 
 nsresult NrIceMediaStream::ConnectToPeer(
     const std::string& ufrag, const std::string& pwd,
@@ -451,6 +451,8 @@ nsresult NrIceMediaStream::GetCandidatePairs(
     pair.codeword = p1->codeword;
     pair.bytes_sent = p1->bytes_sent;
     pair.bytes_recvd = p1->bytes_recvd;
+    pair.packets_sent = p1->packets_sent;
+    pair.packets_recvd = p1->packets_recvd;
     pair.ms_since_last_send =
         p1->last_sent.tv_sec * 1000 + p1->last_sent.tv_usec / 1000;
     pair.ms_since_last_recv =
@@ -463,6 +465,8 @@ nsresult NrIceMediaStream::GetCandidatePairs(
         !ToNrIceCandidate(*(p1->remote), &pair.remote)) {
       return NS_ERROR_FAILURE;
     }
+    pair.local.username_fragment = stream_->ufrag;
+    pair.remote.username_fragment = peer_stream->ufrag;
 
     out_pairs->push_back(pair);
   }
@@ -499,6 +503,13 @@ nsresult NrIceMediaStream::GetDefaultCandidate(
   return NS_OK;
 }
 
+std::string NrIceMediaStream::GetUfrag() const {
+  if (!stream_ || !stream_->ufrag) {
+    return "";
+  }
+  return stream_->ufrag;
+}
+
 std::vector<std::string> NrIceMediaStream::GetAttributes() const {
   char** attrs = nullptr;
   int attrct;
@@ -516,11 +527,11 @@ std::vector<std::string> NrIceMediaStream::GetAttributes() const {
   }
 
   for (int i = 0; i < attrct; i++) {
-    ret.push_back(attrs[i]);
-    RFREE(attrs[i]);
+    ret.emplace_back(attrs[i]);
+    free(attrs[i]);
   }
 
-  RFREE(attrs);
+  free(attrs);
 
   return ret;
 }
@@ -539,7 +550,8 @@ static nsresult GetCandidatesFromStream(
         // yet). For the purposes of this code, this isn't a candidate we're
         // interested in, since it is not fully baked yet.
         if (ToNrIceCandidate(*cand, &new_cand)) {
-          candidates->push_back(new_cand);
+          new_cand.username_fragment = stream->ufrag;
+          candidates->push_back(std::move(new_cand));
         }
         cand = TAILQ_NEXT(cand, entry_comp);
       }

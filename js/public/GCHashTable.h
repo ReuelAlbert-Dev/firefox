@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -25,13 +23,6 @@ struct DefaultMapEntryGCPolicy {
   static bool traceWeak(JSTracer* trc, Key* key, Value* value) {
     return GCPolicy<Key>::traceWeak(trc, key) &&
            GCPolicy<Value>::traceWeak(trc, value);
-  }
-  static bool needsSweep(JSTracer* trc, const Key* key, const Value* value) {
-    // This is like a const version of the |traceWeak| method. It has the sense
-    // of the return value reversed and does not mutate keys/values. Used during
-    // incremental sweeping by the WeakCache specializations for maps and sets.
-    return GCPolicy<Key>::needsSweep(trc, key) ||
-           GCPolicy<Value>::needsSweep(trc, value);
   }
 };
 
@@ -104,16 +95,6 @@ class GCHashMap : public js::HashMap<Key, Value, HashPolicy, AllocPolicy> {
         iter.remove();
       }
     }
-  }
-
-  bool needsSweep(JSTracer* trc) const {
-    for (auto iter = this->iter(); !iter.done(); iter.next()) {
-      if (MapEntryGCPolicy::needsSweep(trc, &iter.get().key(),
-                                       &iter.get().value())) {
-        return true;
-      }
-    }
-    return false;
   }
 
   // Get size of allocations using the AllocPolicy.
@@ -299,15 +280,6 @@ class GCHashSet : public js::HashSet<T, HashPolicy, AllocPolicy> {
     }
   }
 
-  bool needsSweep(JSTracer* trc) const {
-    for (auto iter = this->iter(); !iter.done(); iter.next()) {
-      if (GCPolicy<T>::needsSweep(trc, &iter.get())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   // Get size of allocations using the AllocPolicy.
   size_t sizeOfOwnedAllocs(mozilla::MallocSizeOf mallocSizeOf) {
     return SizeOfOwnedAllocs(*this, mallocSizeOf);
@@ -462,8 +434,9 @@ class WeakCache<
   using Entry = typename Map::Entry;
 
   static bool entryNeedsSweep(JSTracer* barrierTracer, const Entry& entry) {
-    return MapEntryGCPolicy::needsSweep(barrierTracer, &entry.key(),
-                                        &entry.value());
+    return !MapEntryGCPolicy::traceWeak(barrierTracer,
+                                        const_cast<Key*>(&entry.key()),
+                                        const_cast<Value*>(&entry.value()));
   }
 
  public:
@@ -673,11 +646,8 @@ class WeakCache<GCHashSet<T, HashPolicy, AllocPolicy>> final
   }
 
  private:
-  static bool entryNeedsSweep(JSTracer* barrierTracer, const Entry& prior) {
-    Entry entry(prior);
-    bool needsSweep = !GCPolicy<T>::traceWeak(barrierTracer, &entry);
-    MOZ_ASSERT_IF(!needsSweep, prior == entry);  // We shouldn't update here.
-    return needsSweep;
+  static bool entryNeedsSweep(JSTracer* barrierTracer, const Entry& entry) {
+    return !GCPolicy<T>::traceWeak(barrierTracer, const_cast<Entry*>(&entry));
   }
 
  public:

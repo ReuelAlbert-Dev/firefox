@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -80,9 +78,7 @@ pid_t gettid_pthread() {
 
 #ifdef XP_WIN
 #  include "util/WindowsWrapper.h"
-#  include <codecvt>
 #  include <evntprov.h>
-#  include <locale>
 #  include <string>
 
 const GUID PROVIDER_JSCRIPT9 = {
@@ -109,8 +105,7 @@ static std::atomic<PerfModeType> PerfMode = PerfModeType::None;
 // profiling is enabled.
 MOZ_RUNINIT static js::Mutex PerfMutex(mutexid::PerfSpewer);
 
-MOZ_RUNINIT static PersistentRooted<
-    GCVector<JitCode*, 0, js::SystemAllocPolicy>>
+static PersistentRooted<GCVector<JitCode*, 0, js::SystemAllocPolicy>>
     jitCodeVector;
 MOZ_RUNINIT static ProfilerJitCodeVector profilerData;
 
@@ -231,6 +226,10 @@ static bool openJitDump() {
   }
 
   // Allocate a large buffer to reduce write() syscall overhead.
+  // On Android, setvbuf is not used because Android processes don't always
+  // shut down cleanly, which would leave buffered data unflushed and produce
+  // incomplete jitdump files.
+#  ifndef ANDROID
   constexpr size_t kJitDumpBufferSize = 2 * 1024 * 1024;
   jitDumpBuffer = js_pod_malloc<char>(kJitDumpBufferSize);
   if (!jitDumpBuffer) {
@@ -239,6 +238,7 @@ static bool openJitDump() {
     return false;
   }
   setvbuf(JitDumpFilePtr, jitDumpBuffer, _IOFBF, kJitDumpBufferSize);
+#  endif
 
 #  ifdef XP_LINUX
   // We need to mmap the jitdump file for perf to find it.
@@ -431,17 +431,24 @@ JS::JitCodeRecord* JS::LookupJitCodeRecord(uint64_t addr) {
     return nullptr;
   }
 
-  AutoLockPerfSpewer lock;
+  // Bug 2032436: Use tryLock to avoid deadlocking when a native allocation
+  // profiler captures a backtrace while the PerfSpewer lock is already held on
+  // this thread (e.g. during JIT compilation).
+  if (!PerfMutex.tryLock()) {
+    return nullptr;
+  }
 
-  // Search through profilerData for a record that contains this address
+  JS::JitCodeRecord* result = nullptr;
   for (auto& record : profilerData) {
     if (addr >= record.code_addr &&
         addr < record.code_addr + record.instructionSize) {
-      return &record;
+      result = &record;
+      break;
     }
   }
 
-  return nullptr;
+  PerfMutex.unlock();
+  return result;
 }
 
 static bool PerfSrcEnabled() {
@@ -639,8 +646,11 @@ static void PrintStackValue(JSContext* maybeCx, StackValue* stackVal,
 }
 #endif
 
+WasmBaselinePerfSpewer::WasmBaselinePerfSpewer()
+    : needsToRecordInstruction_(PerfIREnabled() || PerfSrcEnabled()) {}
+
 [[nodiscard]] bool WasmBaselinePerfSpewer::needsToRecordInstruction() const {
-  return PerfIREnabled() || PerfSrcEnabled();
+  return needsToRecordInstruction_;
 }
 
 void WasmBaselinePerfSpewer::recordInstruction(MacroAssembler& masm,
@@ -793,7 +803,7 @@ void PerfSpewer::CollectJitCodeInfo(UniqueChars& function_name, void* code_addr,
 #endif
 #ifdef XP_WIN
   if (etwCollection) {
-    void* scriptContextId = NULL;
+    void* scriptContextId = nullptr;
     uint32_t flags = 0;
     uint64_t map = 0;
     uint64_t assembly = 0;

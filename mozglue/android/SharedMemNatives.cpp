@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <jni.h>
-#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -52,6 +51,13 @@ Java_org_mozilla_gecko_media_SampleBuffer_nativeWriteToDirectBuffer(
   }
 
   memcpy(to, from + offset, size);
+}
+
+JNIEXPORT
+void JNICALL Java_org_mozilla_gecko_media_SampleBuffer_nativeMemcpy(
+    JNIEnv*, jclass, jlong dest, jlong src, jint size) {
+  memcpy(reinterpret_cast<void*>(dest), reinterpret_cast<const void*>(src),
+         size);
 }
 
 JNIEXPORT

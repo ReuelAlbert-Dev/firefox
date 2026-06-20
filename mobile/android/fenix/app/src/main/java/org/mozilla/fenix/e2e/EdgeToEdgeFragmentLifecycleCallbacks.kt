@@ -10,12 +10,13 @@ import android.os.Bundle
 import android.view.View
 import android.view.Window
 import androidx.core.view.WindowCompat.enableEdgeToEdge
-import androidx.core.view.doOnPreDraw
+import androidx.core.view.doOnAttach
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentManager.FragmentLifecycleCallbacks
 import androidx.navigation.fragment.NavHostFragment
+import mozilla.components.feature.qr.QrFragment
 import mozilla.components.support.ktx.android.view.clearPersistentInsets
 import mozilla.components.support.ktx.android.view.setupPersistentInsets
 
@@ -45,17 +46,28 @@ class EdgeToEdgeFragmentLifecycleCallbacks(
         savedInstanceState: Bundle?,
     ) {
         // Dialog fragments have their own edge-to-edge behavior, separate from Fenix's main activity.
-        if (f is DialogFragment) return
+        // DialogFragments which cycle through inner fragments should not change the edge-to-edge strategy for
+        // Fenix's main activity. One such example is the calendar picker handled in a MaterialDatePicker dialog
+        // which then uses a normal fragment for the actual picker functionality.
+        if (f is DialogFragment || f.parentFragment is DialogFragment) return
+
+        // QRFragment is a generic Android Components fragment that is nested in Fenix.
+        // As such the edge-to-edge behavior is to be controlled only through its Fenix container.
+        if (f is QrFragment) return
+
+        // NavHostFragment loads fragments into it, and when we set the edge to edge strategy for a
+        // NavHostFragment there ends up a race condition between the competing fragments.
+        if (f is NavHostFragment) return
 
         setEdgeToEdgeStrategy(f)
     }
 
     private fun setEdgeToEdgeStrategy(fragment: Fragment) {
         fragment.requireActivity().window.apply {
-            // Change the edge-to-edge behavior right before the new fragment is about to be drawn
-            // to prevent the previous one with a different strategy "jumping".
-            fragment.view?.doOnPreDraw {
-                when (fragment is SystemInsetsPaddedFragment || fragment is NavHostFragment) {
+            // Change the edge-to-edge behavior immediately after the new fragment is attached
+            // to ensure an immediate change.
+            fragment.view?.doOnAttach {
+                when (fragment is SystemInsetsPaddedFragment) {
                     true -> setupPersistentInsets()
                     else -> clearPersistentInsets()
                 }

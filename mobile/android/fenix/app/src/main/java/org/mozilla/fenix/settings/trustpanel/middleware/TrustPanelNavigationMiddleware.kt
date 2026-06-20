@@ -16,6 +16,7 @@ import mozilla.components.lib.state.Middleware
 import mozilla.components.lib.state.Store
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.AppStore
+import org.mozilla.fenix.components.accounts.FenixFxAEntryPoint
 import org.mozilla.fenix.ext.nav
 import org.mozilla.fenix.ext.openToBrowser
 import org.mozilla.fenix.settings.trustpanel.TrustPanelFragmentDirections
@@ -70,6 +71,13 @@ class TrustPanelNavigationMiddleware(
                 is TrustPanelAction.Navigate.QWAC -> {
                     viewCertificate(store.state.websiteInfoState.qwac?.encoded, store.state.sessionState)
                 }
+
+                is TrustPanelAction.Navigate.IPProtectionSettings -> navController.nav(
+                    R.id.trustPanelFragment,
+                    TrustPanelFragmentDirections.actionTrustPanelFragmentToIpProtectionFragment(
+                        entrypoint = FenixFxAEntryPoint.IPProtectionTrustPanel,
+                    ),
+                )
 
                 else -> Unit
             }

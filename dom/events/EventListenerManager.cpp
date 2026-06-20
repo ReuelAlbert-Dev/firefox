@@ -25,10 +25,13 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/ScrollContainerFrame.h"
+#include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/AbortSignal.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/ChromeUtils.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
@@ -55,6 +58,7 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsISupports.h"
 #include "nsJSUtils.h"
+#include "nsLayoutUtils.h"
 #include "nsNameSpaceManager.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -223,6 +227,12 @@ EventListenerManager::GetTargetAsInnerWindow() const {
 }
 
 static mozilla::LazyLogModule sSlowChromeLog("SlowChromeEvent");
+
+// Shared with APZ-side files (APZCTreeManager.cpp). Enable
+// with MOZ_LOG=apz.fastpath:5 (or :4 for Debug) to trace the
+// content -> APZ fast-path notification flow for non-passive APZ-aware
+// event listener registration (bug 2031963).
+static mozilla::LazyLogModule sApzFastPathLog("apz.fastpath");
 
 static void LogForChromeEvent(nsPIDOMWindowInner* aWindow, const char* aMsg) {
   if (!MOZ_LOG_TEST(sSlowChromeLog, LogLevel::Info)) {
@@ -461,7 +471,7 @@ void EventListenerManager::AddEventListenerInternal(
         if (nsScreen* screen = mTarget->GetAsScreen()) {
           if (nsPIDOMWindowOuter* outer = screen->GetOuter()) {
             if (Document* doc = outer->GetExtantDoc()) {
-              doc->WarnOnceAbout(
+              doc->WarnOnceAndReportAbout(
                   DeprecatedOperations::eMozorientationchangeDeprecated);
             }
           }
@@ -565,7 +575,7 @@ void EventListenerManager::AddEventListenerInternal(
   }
 
   if (mIsMainThreadELM && !aFlags.mPassive && IsApzAwareEvent(aTypeAtom)) {
-    ProcessApzAwareEventListenerAdd();
+    ProcessApzAwareEventListenerAdd(aTypeAtom);
   }
 
   if (mTarget) {
@@ -578,16 +588,16 @@ void EventListenerManager::AddEventListenerInternal(
   }
 }
 
-void EventListenerManager::ProcessApzAwareEventListenerAdd() {
+void EventListenerManager::ProcessApzAwareEventListenerAdd(nsAtom* aEvent) {
   Document* doc = nullptr;
 
   // Mark the node as having apz aware listeners
-  if (nsINode* node = nsINode::FromEventTargetOrNull(mTarget)) {
+  nsINode* node = nsINode::FromEventTargetOrNull(mTarget);
+  if (node) {
     node->SetMayBeApzAware();
     doc = node->OwnerDoc();
   }
 
-  // Schedule a paint so event regions on the layer tree gets updated
   if (!doc) {
     if (nsCOMPtr<nsPIDOMWindowInner> window = GetTargetAsInnerWindow()) {
       doc = window->GetExtantDoc();
@@ -601,14 +611,93 @@ void EventListenerManager::ProcessApzAwareEventListenerAdd() {
     }
   }
 
-  if (doc && gfxPlatform::AsyncPanZoomEnabled()) {
-    PresShell* presShell = doc->GetPresShell();
-    if (presShell) {
-      nsIFrame* f = presShell->GetRootFrame();
-      if (f) {
-        f->SchedulePaint();
+  if (!doc || !gfxPlatform::AsyncPanZoomEnabled()) {
+    return;
+  }
+
+  PresShell* presShell = doc->GetPresShell();
+  if (!presShell) {
+    return;
+  }
+
+  // Try to find a ViewID identifying the scroll container the fast path
+  // signal should apply to:
+  //   - Element listener: nearest scroll container ancestor of its frame.
+  //   - Document/Window/other listener: the document's root scroll
+  //     container (events bubble up to it from anywhere in the document).
+  //
+  // We deliberately use FindIDFor (not FindOrCreateIDFor): if no ViewID has
+  // been assigned yet to the scroll container's scrolled content, APZ has
+  // no APZC for it either, so a fast-path entry would never match a hit
+  // test. Same reasoning when the Element has no primary frame yet, or no
+  // scroll container ancestor at all. In any of these cases fall back to
+  // scheduling a paint so the regular slow path (display-list rebuild +
+  // WebRender transaction) propagates eApzAwareListeners.
+  dom::Element* element = dom::Element::FromNodeOrNull(node);
+  nsIFrame* elementFrame = element ? element->GetPrimaryFrame() : nullptr;
+  layers::ScrollableLayerGuid::ViewID scrollId =
+      layers::ScrollableLayerGuid::NULL_SCROLL_ID;
+  ScrollContainerFrame* scrollFrame = nullptr;
+  if (element) {
+    if (elementFrame) {
+      // SCROLLABLE_ONLY_ASYNC_SCROLLABLE is intentionally omitted: this
+      // path can run during frame construction, before an ancestor scroll
+      // container's scrolled child is attached, and WantAsyncScroll would
+      // deref it.
+      scrollFrame = nsLayoutUtils::GetNearestScrollContainerFrame(
+          elementFrame, nsLayoutUtils::SCROLLABLE_ALWAYS_MATCH_ROOT |
+                            nsLayoutUtils::SCROLLABLE_FIXEDPOS_FINDS_ROOT);
+    }
+  } else {
+    scrollFrame = presShell->GetRootScrollContainerFrame();
+  }
+  if (scrollFrame) {
+    if (nsIFrame* scrolled = scrollFrame->GetScrolledFrame()) {
+      if (nsIContent* scrolledContent = scrolled->GetContent()) {
+        nsLayoutUtils::FindIDFor(scrolledContent, &scrollId);
       }
     }
+  }
+
+  if (StaticPrefs::apz_fastpath_apz_aware_listener_enabled()) {
+    // Bug 2042628: Eventually we will end up using the fast-path for other
+    // event type, but for now we restrict it to touchmove.
+    if (aEvent == nsGkAtoms::ontouchmove &&
+        scrollId != layers::ScrollableLayerGuid::NULL_SCROLL_ID) {
+      // Fast path: inform APZ directly via IPC so it can flag subsequent
+      // hit-test results targeting |scrollId| (or any of its APZC-tree
+      // descendants) with eApzAwareListeners. This avoids the long detour
+      // through layout invalidation, display-list rebuild and a WebRender
+      // scene swap that would otherwise let touchmoves arrive at APZ before
+      // the new listener is visible in the compositor scene (bug 2031963).
+      nsIDocShell* docShell = doc->GetDocShell();
+      if (RefPtr<dom::BrowserChild> browserChild =
+              dom::BrowserChild::GetFrom(docShell)) {
+        MOZ_LOG(sApzFastPathLog, LogLevel::Debug,
+                ("ELM: sending NotifyApzAwareListenerAdded scrollId=%" PRIu64
+                 " (targetIsElement=%d, doc=%p)",
+                 scrollId, element != nullptr, doc));
+        browserChild->NotifyApzAwareListenerAdded(scrollId);
+      } else {
+        MOZ_LOG(sApzFastPathLog, LogLevel::Debug,
+                ("ELM: have scrollId=%" PRIu64
+                 " but no BrowserChild (chrome/non-e10s); skipping fast path",
+                 scrollId));
+      }
+    } else {
+      MOZ_LOG(sApzFastPathLog, LogLevel::Debug,
+              ("ELM: no fast-path send (no scrollId; targetIsElement=%d "
+               "elementHasFrame=%d hasScrollContainerAncestor=%d)",
+               element != nullptr, elementFrame != nullptr,
+               scrollFrame != nullptr));
+    }
+  }
+
+  // Once after we've used fast-path for all APZ aware event listener (including
+  // support in the compositor), we will not need to call `SchedulePaint` at
+  // all, but for now we unconditionally call it.
+  if (nsIFrame* root = presShell->GetRootFrame()) {
+    root->SchedulePaint();
   }
 }
 
@@ -1121,6 +1210,8 @@ nsresult EventListenerManager::CompileEventHandlerInternal(
   nsAutoCString url("-moz-evil:lying-event-listener"_ns);
   MOZ_ASSERT(body);
   MOZ_ASSERT(aElement);
+  MOZ_ASSERT(!aElement->ChromeOnlyAccess(),
+             "Don't use inline handlers on NAC/UAWidget");
   nsIURI* uri = aElement->OwnerDoc()->GetDocumentURI();
   if (uri) {
     uri->GetSpec(url);
@@ -1133,17 +1224,16 @@ nsresult EventListenerManager::CompileEventHandlerInternal(
   nsContentUtils::GetEventArgNames(aElement->GetNameSpaceID(), aTypeAtom, win,
                                    &argCount, &argNames);
 
-  // Wrap the event target, so that we can use it as the scope for the event
-  // handler. Note that mTarget is different from aElement in the <body> case,
-  // where mTarget is a Window.
+  // Use the document's realm as per spec:
   //
-  // The wrapScope doesn't really matter here, because the target will create
-  // its reflector in the proper scope, and then we'll enter that realm.
+  //     Let settings object be the relevant settings object of document.
+  //
+  // https://html.spec.whatwg.org/#getting-the-current-value-of-the-event-handler
   JS::Rooted<JSObject*> wrapScope(cx, global->GetGlobalJSObject());
   JS::Rooted<JS::Value> v(cx);
   {
     JSAutoRealm ar(cx, wrapScope);
-    nsresult rv = nsContentUtils::WrapNative(cx, mTarget, &v,
+    nsresult rv = nsContentUtils::WrapNative(cx, global, &v,
                                              /* aAllowWrapping = */ false);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
@@ -1182,8 +1272,10 @@ nsresult EventListenerManager::CompileEventHandlerInternal(
           JS::loader::ParserMetadata::NotParserInserted,
           aElement->OwnerDoc()->NodePrincipal());
 
-  RefPtr<JS::loader::EventScript> eventScript = new JS::loader::EventScript(
-      aElement->OwnerDoc()->GetReferrerPolicy(), fetchOptions, uri);
+  RefPtr<JS::loader::ScriptFetchInfo> fetchInfo =
+      new JS::loader::ScriptFetchInfo(JS::loader::ScriptKind::eEvent,
+                                      aElement->OwnerDoc()->GetReferrerPolicy(),
+                                      fetchOptions, uri);
 
   JS::CompileOptions options(cx);
   // Use line 0 to make the function body starts from line 1.
@@ -1198,7 +1290,7 @@ nsresult EventListenerManager::CompileEventHandlerInternal(
   NS_ENSURE_SUCCESS(result, result);
   NS_ENSURE_TRUE(handler, NS_ERROR_FAILURE);
 
-  JS::Rooted<JS::Value> privateValue(cx, JS::PrivateValue(eventScript));
+  JS::Rooted<JS::Value> privateValue(cx, JS::PrivateValue(fetchInfo));
   result = nsJSUtils::UpdateFunctionDebugMetadata(jsapi, handler, options,
                                                   jsStr, privateValue);
   NS_ENSURE_SUCCESS(result, result);
@@ -1365,7 +1457,7 @@ already_AddRefed<nsPIDOMWindowInner> EventListenerManager::WindowFromListener(
         // listener->mListener.GetXPCOMCallback().
         // In most cases, it would be the same as for
         // the target, so let's do that.
-        if (nsIGlobalObject* global = mTarget->GetOwnerGlobal()) {
+        if (nsIGlobalObject* global = mTarget->GetRelevantGlobal()) {
           innerWindow = global->GetAsInnerWindow();
         }
       }
@@ -2015,9 +2107,13 @@ const TypedEventHandler* EventListenerManager::GetTypedEventHandler(
   }
 
   JSEventHandler* jsEventHandler = listener->GetJSEventHandler();
-
+  Maybe<RefPtr<JSEventHandler>> pin;
   if (listener->mHandlerIsString) {
-    CompileEventHandlerInternal(listener, aEventName, nullptr, nullptr);
+    pin.emplace(jsEventHandler);
+    if (NS_FAILED(CompileEventHandlerInternal(listener, aEventName, nullptr,
+                                              nullptr))) {
+      listener = nullptr;
+    }
   }
 
   const TypedEventHandler& typedHandler =

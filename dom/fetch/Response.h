@@ -39,7 +39,12 @@ class Response final : public FetchBody<Response>, public nsWrapperCache {
   }
 
   ResponseType Type() const { return mInternalResponse->Type(); }
-  void GetUrl(nsACString& aUrl) const { aUrl = mInternalResponse->GetURL(); }
+  void GetUrl(nsACString& aUrl) const {
+    aUrl.Truncate();
+    if (nsIURI* uri = mInternalResponse->GetURL()) {
+      MOZ_ALWAYS_SUCCEEDS(uri->GetSpec(aUrl));
+    }
+  }
   bool Redirected() const { return mInternalResponse->IsRedirected(); }
   uint16_t Status() const { return mInternalResponse->GetStatus(); }
 
@@ -80,11 +85,9 @@ class Response final : public FetchBody<Response>, public nsWrapperCache {
 
   using FetchBody::GetBody;
 
-  using FetchBody::BodyBlobURISpec;
+  using FetchBody::BodyBlobImpl;
 
-  const nsACString& BodyBlobURISpec() const {
-    return mInternalResponse->BodyBlobURISpec();
-  }
+  BlobImpl* BodyBlobImpl() const { return mInternalResponse->BodyBlobImpl(); }
 
   using FetchBody::BodyLocalPath;
 
@@ -110,7 +113,7 @@ class Response final : public FetchBody<Response>, public nsWrapperCache {
       const Nullable<fetch::ResponseBodyInit>& aBody, const ResponseInit& aInit,
       ErrorResult& rv);
 
-  nsIGlobalObject* GetParentObject() const { return mOwner; }
+  nsIGlobalObject* GetParentObject() const { return mGlobal; }
 
   already_AddRefed<Response> Clone(JSContext* aCx, ErrorResult& aRv);
 

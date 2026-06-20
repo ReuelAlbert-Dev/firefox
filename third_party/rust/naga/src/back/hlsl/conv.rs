@@ -23,11 +23,13 @@ impl crate::Scalar {
     pub(super) const fn to_hlsl_str(self) -> Result<&'static str, Error> {
         match self.kind {
             crate::ScalarKind::Sint => match self.width {
+                2 => Ok("int16_t"),
                 4 => Ok("int"),
                 8 => Ok("int64_t"),
                 _ => Err(Error::UnsupportedScalar(self)),
             },
             crate::ScalarKind::Uint => match self.width {
+                2 => Ok("uint16_t"),
                 4 => Ok("uint"),
                 8 => Ok("uint64_t"),
                 _ => Err(Error::UnsupportedScalar(self)),
@@ -149,11 +151,13 @@ impl crate::StorageFormat {
 }
 
 impl crate::BuiltIn {
-    pub(super) fn to_hlsl_str(self) -> Result<&'static str, Error> {
-        Ok(match self {
+    /// Returns `None` for "virtual" builtins, i.e. mesh shader builtins that are
+    /// used by naga but not recognized by HLSL.
+    pub(super) fn to_hlsl_str(self) -> Result<Option<&'static str>, Error> {
+        Ok(Some(match self {
             Self::Position { .. } => "SV_Position",
             // vertex
-            Self::ClipDistance => "SV_ClipDistance",
+            Self::ClipDistances => "SV_ClipDistance",
             Self::CullDistance => "SV_CullDistance",
             Self::InstanceIndex => "SV_InstanceID",
             Self::VertexIndex => "SV_VertexID",
@@ -186,12 +190,14 @@ impl crate::BuiltIn {
                 return Err(Error::Custom(format!("Unsupported builtin {self:?}")))
             }
             Self::CullPrimitive => "SV_CullPrimitive",
-            Self::PointIndex | Self::LineIndices | Self::TriangleIndices => unimplemented!(),
             Self::MeshTaskSize
             | Self::VertexCount
             | Self::PrimitiveCount
             | Self::Vertices
-            | Self::Primitives => unreachable!(),
+            | Self::Primitives
+            | Self::PointIndex
+            | Self::LineIndices
+            | Self::TriangleIndices => return Ok(None),
             Self::RayInvocationId
             | Self::NumRayInvocations
             | Self::InstanceCustomData
@@ -205,7 +211,7 @@ impl crate::BuiltIn {
             | Self::ObjectToWorld
             | Self::WorldToObject
             | Self::HitKind => unreachable!(),
-        })
+        }))
     }
 }
 
@@ -218,7 +224,7 @@ impl crate::Interpolation {
             Self::Perspective => None,
             Self::Linear => Some("noperspective"),
             Self::Flat => Some("nointerpolation"),
-            Self::PerVertex => unreachable!(),
+            Self::PerVertex => Some("nointerpolation"),
         }
     }
 }

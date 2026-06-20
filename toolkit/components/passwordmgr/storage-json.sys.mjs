@@ -52,6 +52,14 @@ function isFXAHost(login) {
 }
 
 export class LoginManagerStorage_json {
+  // Only the active backend fires storage-changed events to avoid duplicates
+  // when both JSON and Rust stores are initialized.
+  // Default is true (rust is inactive)
+  #isActive = true;
+  set isActive(v) {
+    this.#isActive = v;
+  }
+
   constructor() {
     this.__crypto = null; // nsILoginManagerCrypto service
     this.__decryptedPotentiallyVulnerablePasswords = null;
@@ -222,11 +230,8 @@ export class LoginManagerStorage_json {
 
   // Synchronuously stores encrypted login, returns login clone with upserted
   // uuid and updated timestamps
-  #addLogin(login) {
+  async #addLogin(login) {
     this._store.ensureDataReady();
-
-    // Throws if there are bogus values.
-    lazy.LoginHelper.checkLoginValues(login);
 
     // Clone the login, so we don't modify the caller's object.
     let loginClone = login.clone();
@@ -298,7 +303,7 @@ export class LoginManagerStorage_json {
     });
     this._store.saveSoon();
 
-    Glean.pwmgr.numSavedPasswords.set(this.countLogins("", "", ""));
+    Glean.pwmgr.numSavedPasswords.set(await this.countLoginsAsync("", "", ""));
     return loginClone;
   }
 
@@ -330,7 +335,7 @@ export class LoginManagerStorage_json {
         }
       }
 
-      const resultLogin = this.#addLogin(encryptedLogin);
+      const resultLogin = await this.#addLogin(encryptedLogin);
 
       // restore unencrypted username and password for use in `addLogin` event
       // and return value
@@ -338,7 +343,9 @@ export class LoginManagerStorage_json {
       resultLogin.password = login.password;
 
       // Send a notification that a login was added.
-      lazy.LoginHelper.notifyStorageChanged("addLogin", resultLogin);
+      if (this.#isActive) {
+        lazy.LoginHelper.notifyStorageChanged("addLogin", resultLogin);
+      }
 
       resultLogins.push(resultLogin);
     }
@@ -346,14 +353,7 @@ export class LoginManagerStorage_json {
     return resultLogins;
   }
 
-  /**
-   * @deprecated Use removeLoginAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  removeLogin(login, fromSync) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.removeLogin() is deprecated. Use removeLoginAsync(). Will be removed in Bug 2022270."
-    );
+  async removeLoginAsync(login, fromSync) {
     this._store.ensureDataReady();
 
     let [idToDelete, storedLogin] = this._getIdForLogin(login);
@@ -363,14 +363,14 @@ export class LoginManagerStorage_json {
 
     let foundIndex = this._store.data.logins.findIndex(l => l.id == idToDelete);
     if (foundIndex != -1) {
-      let login = this._store.data.logins[foundIndex];
-      if (!login.deleted) {
+      let existingLogin = this._store.data.logins[foundIndex];
+      if (!existingLogin.deleted) {
         if (fromSync) {
-          this.#replaceLoginWithTombstone(login);
-        } else if (login.everSynced) {
+          this.#replaceLoginWithTombstone(existingLogin);
+        } else if (existingLogin.everSynced) {
           // The login has been synced, so mark it as deleted.
-          this.#incrementSyncCounter(login);
-          this.#replaceLoginWithTombstone(login);
+          this.#incrementSyncCounter(existingLogin);
+          this.#replaceLoginWithTombstone(existingLogin);
         } else {
           // The login was never synced, so just remove it from the data.
           this._store.data.logins.splice(foundIndex, 1);
@@ -380,24 +380,13 @@ export class LoginManagerStorage_json {
       }
     }
 
-    Glean.pwmgr.numSavedPasswords.set(this.countLogins("", "", ""));
-    lazy.LoginHelper.notifyStorageChanged("removeLogin", storedLogin);
+    Glean.pwmgr.numSavedPasswords.set(await this.countLoginsAsync("", "", ""));
+    if (this.#isActive) {
+      lazy.LoginHelper.notifyStorageChanged("removeLogin", storedLogin);
+    }
   }
 
-  async removeLoginAsync(login, fromSync) {
-    let result = this.removeLogin(login, fromSync);
-    // Emulate being async:
-    return Promise.resolve(result);
-  }
-
-  /**
-   * @deprecated Use modifyLoginAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  modifyLogin(oldLogin, newLoginData, fromSync) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.modifyLogin() is deprecated. Use modifyLoginAsync(). Will be removed in Bug 2022270."
-    );
+  async modifyLoginAsync(oldLogin, newLoginData, fromSync) {
     this._store.ensureDataReady();
 
     let [idToModify, oldStoredLogin] = this._getIdForLogin(oldLogin);
@@ -420,16 +409,13 @@ export class LoginManagerStorage_json {
 
     // Look for an existing entry in case key properties changed.
     if (!newLogin.matches(oldLogin, true)) {
-      let loginData = {
-        origin: newLogin.origin,
-        formActionOrigin: newLogin.formActionOrigin,
-        httpRealm: newLogin.httpRealm,
-      };
-
-      let logins = this.searchLogins(
-        lazy.LoginHelper.newPropertyBag(loginData)
-      );
-
+      const matchData = {};
+      for (const field of ["origin", "formActionOrigin", "httpRealm"]) {
+        if (newLogin[field] !== "") {
+          matchData[field] = newLogin[field];
+        }
+      }
+      const logins = await this.searchLoginsAsync(matchData);
       let matchingLogin = logins.find(login => newLogin.matches(login, true));
       if (matchingLogin) {
         throw lazy.LoginHelper.createLoginAlreadyExistsError(
@@ -476,16 +462,12 @@ export class LoginManagerStorage_json {
       }
     }
 
-    lazy.LoginHelper.notifyStorageChanged("modifyLogin", [
-      oldStoredLogin,
-      newLogin,
-    ]);
-  }
-
-  async modifyLoginAsync(oldLogin, newLoginData, fromSync) {
-    let result = this.modifyLogin(oldLogin, newLoginData, fromSync);
-    // Emulate being async:
-    return Promise.resolve(result);
+    if (this.#isActive) {
+      lazy.LoginHelper.notifyStorageChanged("modifyLogin", [
+        oldStoredLogin,
+        newLogin,
+      ]);
+    }
   }
 
   // Replace the login with a tombstone. It has a guid and sync-related properties,
@@ -509,27 +491,14 @@ export class LoginManagerStorage_json {
     delete login.encryptedUnknownFields;
   }
 
-  /**
-   * @deprecated Use recordPasswordUseAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  recordPasswordUse(login) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.recordPasswordUse() is deprecated. Use recordPasswordsUseAsync(). Will be removed in Bug 2022270."
-    );
+  async recordPasswordUseAsync(login) {
     // Update the lastUsed timestamp and increment the use count.
     let propBag = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
       Ci.nsIWritablePropertyBag
     );
     propBag.setProperty("timeLastUsed", Date.now());
     propBag.setProperty("timesUsedIncrement", 1);
-    this.modifyLogin(login, propBag);
-  }
-
-  async recordPasswordUseAsync(login) {
-    let result = this.recordPasswordUse(login);
-    // Emulate being async:
-    return Promise.resolve(result);
+    this.modifyLoginAsync(login, propBag);
   }
 
   async recordBreachAlertDismissal(loginGUID) {
@@ -584,60 +553,32 @@ export class LoginManagerStorage_json {
     lazy.logger.log(
       `Searching for matching logins for origin ${matchData.origin}.`
     );
-    let result = this.searchLogins(
-      lazy.LoginHelper.newPropertyBag(matchData),
-      includeDeleted
-    );
-    // Emulate being async:
-    return Promise.resolve(result);
-  }
-
-  /**
-   * @deprecated Use searchLoginsAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  searchLogins(matchData, includeDeleted) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.searchLogin() is deprecated. Use searchLoginAsync(). Will be removed in Bug 2022270."
-    );
     this._store.ensureDataReady();
 
     let realMatchData = {};
     let options = {};
 
-    matchData.QueryInterface(Ci.nsIPropertyBag2);
-    if (matchData.hasKey("guid")) {
-      // Enforce GUID-based filtering when available, since the origin of the
-      // login may not match the origin of the form in the case of scheme
-      // upgrades.
-      realMatchData = { guid: matchData.getProperty("guid") };
+    if ("guid" in matchData) {
+      realMatchData.guid = matchData.guid;
     } else {
-      // Convert nsIPropertyBag to normal JS object.
-      for (let prop of matchData.enumerator) {
-        switch (prop.name) {
-          // Some property names aren't field names but are special options to
-          // affect the search.
+      for (const name in matchData) {
+        switch (name) {
           case "acceptDifferentSubdomains":
           case "schemeUpgrades":
           case "acceptRelatedRealms":
-          case "relatedRealms": {
-            options[prop.name] = prop.value;
+          case "relatedRealms":
+            options[name] = matchData[name];
             break;
-          }
-          default: {
-            realMatchData[prop.name] = prop.value;
+          default:
+            realMatchData[name] = matchData[name];
             break;
-          }
         }
       }
     }
 
     let [logins] = this._searchLogins(realMatchData, includeDeleted, options);
 
-    // Decrypt entries found for the caller.
-    logins = this._decryptLogins(logins);
-
-    return logins;
+    return this._decryptLogins(logins);
   }
 
   /**
@@ -710,34 +651,13 @@ export class LoginManagerStorage_json {
   }
 
   /**
-   * @deprecated Use removeAllLoginsAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  removeAllLogins() {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.removeAllLogins() is deprecated. Use removeAllLoginsAsync(). Will be removed in Bug 2022270."
-    );
-    this.#removeLogins(false, true);
-  }
-
-  /**
    * Removes all logins from local storage, including FxA Sync key.
    *
    * NOTE: You probably want removeAllUserFacingLogins instead of this function.
    *
    */
   async removeAllLoginsAsync() {
-    this.removeAllLogins();
-  }
-  /**
-   * @deprecated Use removeAllUserFacingLoginsAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  removeAllUserFacingLogins(fullyRemove) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.removeAllUserFacingLogins() is deprecated. Use removeAllUserFacingLoginsAsync(). Will be removed in Bug 2022270."
-    );
-    this.#removeLogins(fullyRemove, false);
+    this.#removeLogins(false, true);
   }
   /**
    * Removes all user facing logins from storage. e.g. all logins except the FxA Sync key
@@ -747,7 +667,7 @@ export class LoginManagerStorage_json {
    * @param fullyRemove remove the logins rather than mark them deleted.
    */
   async removeAllUserFacingLoginsAsync(fullyRemove) {
-    this.removeAllUserFacingLogins(fullyRemove);
+    this.#removeLogins(fullyRemove, false);
   }
 
   /**
@@ -814,30 +734,9 @@ export class LoginManagerStorage_json {
     this.__decryptedPotentiallyVulnerablePasswords = null;
     this._store.saveSoon();
 
-    lazy.LoginHelper.notifyStorageChanged("removeAllLogins", removedLogins);
-  }
-
-  findLogins(origin, formActionOrigin, httpRealm) {
-    this._store.ensureDataReady();
-
-    let loginData = {
-      origin,
-      formActionOrigin,
-      httpRealm,
-    };
-    let matchData = {};
-    for (let field of ["origin", "formActionOrigin", "httpRealm"]) {
-      if (loginData[field] != "") {
-        matchData[field] = loginData[field];
-      }
+    if (this.#isActive) {
+      lazy.LoginHelper.notifyStorageChanged("removeAllLogins", removedLogins);
     }
-    let [logins] = this._searchLogins(matchData);
-
-    // Decrypt entries found for the caller.
-    logins = this._decryptLogins(logins);
-
-    lazy.logger.log(`Returning ${logins.length} logins.`);
-    return logins;
   }
 
   /**
@@ -942,14 +841,7 @@ export class LoginManagerStorage_json {
     return true;
   }
 
-  /**
-   * @deprecated Use countLoginsAsync instead.
-   * Will be removed in Bug 2022270.
-   */
-  countLogins(origin, formActionOrigin, httpRealm) {
-    lazy.logger.warn(
-      "DEPRECATED: LoginManagerStorage_json.countLogins() is deprecated. Use countLoginsAsync(). Will be removed in Bug 2022270."
-    );
+  async countLoginsAsync(origin, formActionOrigin, httpRealm) {
     this._store.ensureDataReady();
 
     let loginData = {
@@ -972,12 +864,6 @@ export class LoginManagerStorage_json {
     return foundLogins.length;
   }
 
-  async countLoginsAsync(origin, formActionOrigin, httpRealm) {
-    let result = this.countLogins(origin, formActionOrigin, httpRealm);
-    // Emulate being async:
-    return Promise.resolve(result);
-  }
-
   async addPotentiallyVulnerablePassword(login) {
     this._store.ensureDataReady();
     // this breached password is already stored
@@ -992,10 +878,12 @@ export class LoginManagerStorage_json {
     });
     this._store.saveSoon();
 
-    lazy.LoginHelper.notifyStorageChanged(
-      "addPotentiallyVulnerablePassword",
-      login
-    );
+    if (this.#isActive) {
+      lazy.LoginHelper.notifyStorageChanged(
+        "addPotentiallyVulnerablePassword",
+        login
+      );
+    }
   }
 
   async isPotentiallyVulnerablePassword(login) {
@@ -1022,9 +910,11 @@ export class LoginManagerStorage_json {
     this._store.saveSoon();
     this.__decryptedPotentiallyVulnerablePasswords = null;
 
-    lazy.LoginHelper.notifyStorageChanged(
-      "clearAllPotentiallyVulnerablePasswords"
-    );
+    if (this.#isActive) {
+      lazy.LoginHelper.notifyStorageChanged(
+        "clearAllPotentiallyVulnerablePasswords"
+      );
+    }
   }
 
   get uiBusy() {

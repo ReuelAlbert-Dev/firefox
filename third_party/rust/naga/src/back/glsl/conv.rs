@@ -22,13 +22,27 @@ pub(in crate::back::glsl) const fn glsl_scalar(
     use crate::ScalarKind as Sk;
 
     Ok(match scalar.kind {
-        Sk::Sint => ScalarString {
-            prefix: "i",
-            full: "int",
+        Sk::Sint => match scalar.width {
+            2 => ScalarString {
+                prefix: "i16",
+                full: "int16_t",
+            },
+            4 => ScalarString {
+                prefix: "i",
+                full: "int",
+            },
+            _ => return Err(Error::UnsupportedScalar(scalar)),
         },
-        Sk::Uint => ScalarString {
-            prefix: "u",
-            full: "uint",
+        Sk::Uint => match scalar.width {
+            2 => ScalarString {
+                prefix: "u16",
+                full: "uint16_t",
+            },
+            4 => ScalarString {
+                prefix: "u",
+                full: "uint",
+            },
+            _ => return Err(Error::UnsupportedScalar(scalar)),
         },
         Sk::Float => match scalar.width {
             4 => ScalarString {
@@ -76,7 +90,7 @@ pub(in crate::back::glsl) const fn glsl_built_in(
         // vertex
         Bi::BaseInstance => "uint(gl_BaseInstance)",
         Bi::BaseVertex => "uint(gl_BaseVertex)",
-        Bi::ClipDistance => "gl_ClipDistance",
+        Bi::ClipDistances => "gl_ClipDistance",
         Bi::CullDistance => "gl_CullDistance",
         Bi::InstanceIndex => {
             if options.draw_parameters {

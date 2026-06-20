@@ -34,6 +34,8 @@ module.exports = {
     `${projectRoot}/browser/components/search/**/*.stories.mjs`,
     // Reader View components stories
     `${projectRoot}/toolkit/components/reader/**/*.stories.mjs`,
+    // Password Manager doorhanger components stories
+    `${projectRoot}/browser/components/passwordmgr/content/**/*.stories.mjs`,
     // megalist components stories
     `${projectRoot}/toolkit/components/satchel/megalist/content/**/*.stories.mjs`,
     // autocomplete-row-item stories
@@ -44,6 +46,8 @@ module.exports = {
     `${projectRoot}/browser/components/aiwindow/ui/**/*.stories.mjs`,
     // Multiline editor components stories
     `${projectRoot}/browser/components/multilineeditor/**/*.stories.@(mjs|md)`,
+    // Trust Panel components stories
+    `${projectRoot}/browser/components/controlcenter/content/components/**/*.stories.mjs`,
     // Everything else
     "../stories/**/*.stories.@(js|jsx|mjs|ts|tsx|md)",
     // Design system files

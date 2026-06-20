@@ -55,13 +55,22 @@ class FirefoxDataProvider {
 
     this.owner = owner;
 
-    // This holds stacktraces infomation temporarily. Stacktrace resources
+    // This holds stacktraces information temporarily. Stacktrace resources
     // can come before or after (out of order) their related network events.
     // This will hold stacktrace related info from the NETWORK_EVENT_STACKTRACE resource
     // for the NETWORK_EVENT resource and vice versa.
     this.stackTraces = new Map();
     // Map of the stacktrace information keyed by the actor id's
     this.stackTraceRequestInfoByActorID = new Map();
+
+    // Map from resourceId (channel id) to network event actor id, used to
+    // correlate NETWORK_EVENT_DECODED_BODY_SIZE resources with their network event.
+    this.resourceIdToActorId = new Map();
+
+    // Map of decoded body size resource id (which is a channel id as for other
+    // network event resources), to the decoded body size. Holds temporarily the
+    // information so that we can drop it from the full response if not required.
+    this.decodedBodySizes = new Map();
 
     // For tracking unfinished requests
     this.pendingRequests = new Set();
@@ -98,6 +107,8 @@ class FirefoxDataProvider {
     this.pendingRequests.clear();
     this.lazyRequestData.clear();
     this.stackTraceRequestInfoByActorID.clear();
+    this.decodedBodySizes.clear();
+    this.resourceIdToActorId.clear();
     this.#requestDataEnabled = false;
     this.#lastRequestDataClearId++;
   }
@@ -409,6 +420,26 @@ class FirefoxDataProvider {
   }
 
   /**
+   * The handler for when a decoded body size resource is available from the
+   * content process. Updates the contentSize and headersSize of the network event.
+   *
+   * @param {object} resource The network event decoded body size resource
+   */
+  async onDecodedBodySizeAvailable(resource) {
+    const actor = this.resourceIdToActorId.get(resource.resourceId);
+    this.decodedBodySizes.set(resource.resourceId, resource.decodedBodySize);
+    if (actor && this.actionsEnabled && this.actions.updateRequest) {
+      await this.actions.updateRequest(
+        actor,
+        {
+          contentSize: resource.decodedBodySize,
+        },
+        true
+      );
+    }
+  }
+
+  /**
    * The handler for when the network event resource is available.
    *
    * @param {object} resource The network event resource
@@ -445,6 +476,7 @@ class FirefoxDataProvider {
       // finally comes.
       this.stackTraces.set(stacktraceResourceId, { actor, cause });
     }
+    this.resourceIdToActorId.set(resource.resourceId, actor);
     await this.addRequest(actor, resource);
     this.emitForTests(TEST_EVENTS.NETWORK_EVENT, resource);
   }
@@ -459,6 +491,14 @@ class FirefoxDataProvider {
     // Identify the channel as SSE if mimeType is event-stream.
     if (resource?.mimeType?.includes("text/event-stream")) {
       await this.setEventStreamFlag(resource.actor);
+    }
+
+    // If we already received the decoded body size from the content process,
+    // override the encoded body size received from the parent.
+    // We still include it in the base network event update as a fallback for
+    // requests which fail to be mapped with the correct target actor.
+    if (this.decodedBodySizes.has(resource.resourceId)) {
+      resource.contentSize = this.decodedBodySizes.get(resource.resourceId);
     }
 
     if (this.actionsEnabled && this.actions.updateRequest) {
@@ -631,9 +671,14 @@ class FirefoxDataProvider {
         this.commands.resourceCommand.TYPES.NETWORK_EVENT_STACKTRACE
       )
     ) {
-      const requestInfo = this.stackTraceRequestInfoByActorID.get(actorID);
-      const { stacktrace } = await this.#getStackTraceFromWatcher(requestInfo);
-      this.stackTraceRequestInfoByActorID.delete(actorID);
+      let stacktrace = [];
+      const requestActorInfo = this.stackTraceRequestInfoByActorID.get(actorID);
+      if (requestActorInfo) {
+        const traceData =
+          await this.#getStackTraceFromWatcher(requestActorInfo);
+        stacktrace = traceData.stacktrace;
+        this.stackTraceRequestInfoByActorID.delete(actorID);
+      }
       response = { from: actor, stacktrace };
     } else {
       // We don't create fronts for NetworkEvent actors,
@@ -789,7 +834,7 @@ class FirefoxDataProvider {
       // We have to ensure passing mimeType as fetchResponseContent needs it from
       // updateRequest. It will convert the LongString in `response.content.text` to a
       // string.
-      mimeType: response.content.mimeType,
+      mimeType: response.content?.mimeType || "text/plain",
       responseContent: response,
     });
     this.emitForTests(TEST_EVENTS.RECEIVED_RESPONSE_CONTENT, response);

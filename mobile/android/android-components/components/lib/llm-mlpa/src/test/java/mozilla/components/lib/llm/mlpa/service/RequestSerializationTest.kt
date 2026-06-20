@@ -6,12 +6,14 @@ package mozilla.components.lib.llm.mlpa.service
 
 import kotlinx.serialization.json.Json
 import mozilla.components.concept.integrity.IntegrityToken
+import mozilla.components.concept.llm.LlmProvider
+import mozilla.components.lib.llm.mlpa.mozSummarization
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class RequestSerializationTest {
 
-    val json = Json { ignoreUnknownKeys = true }
+    val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     @Test
     fun `authentication service request gets serialized to json correctly`() {
@@ -34,14 +36,15 @@ class RequestSerializationTest {
     @Test
     fun `chat service completion request gets serialized to json correctly`() {
         val request = ChatService.Request(
-            model = ChatService.Request.ModelID.mistral,
+            model = LlmProvider.ModelID.mozSummarization,
             messages = listOf(
+                ChatService.Request.Message.system("system prompt"),
                 ChatService.Request.Message.user("hello"),
             ),
         )
 
         assertEquals(
-            "{\"model\":\"vertex_ai/mistral-small-2503\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}",
+            "{\"model\":\"moz-summarization\",\"messages\":[{\"role\":\"system\",\"content\":\"system prompt\"},{\"role\":\"user\",\"content\":\"hello\"}],\"stream\":true,\"temperature\":0.1,\"top_p\":0.01}",
             json.encodeToString(request),
         )
     }

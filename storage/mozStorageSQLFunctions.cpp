@@ -56,7 +56,10 @@ int likeCompare(nsAString::const_iterator aPatternItr,
        * MATCH_ALL character.  For each MATCH_ONE character, skip one character
        * in the pattern string.
        */
-      while (*aPatternItr == MATCH_ALL || *aPatternItr == MATCH_ONE) {
+      // The aPatternEnd check is not strictly necessary since the buffer is
+      // null-terminated, but we check defensively in case that changes.
+      while (aPatternItr != aPatternEnd &&
+             (*aPatternItr == MATCH_ALL || *aPatternItr == MATCH_ONE)) {
         if (*aPatternItr == MATCH_ONE) {
           // If we've hit the end of the string we are testing, no match
           if (aStringItr == aStringEnd) return 0;
@@ -93,7 +96,8 @@ int likeCompare(nsAString::const_iterator aPatternItr,
       lastWasEscape = true;
     } else {
       // CASE 4
-      if (::ToUpperCase(*aStringItr) != ::ToUpperCase(*aPatternItr)) {
+      if (aStringItr == aStringEnd ||
+          ::ToUpperCase(*aStringItr) != ::ToUpperCase(*aPatternItr)) {
         // If we've hit a point where the strings don't match, there is no match
         return 0;
       }
@@ -225,21 +229,23 @@ struct Functions {
 
 int registerFunctions(sqlite3* aDB) {
   Functions functions[] = {
-      {"lower", 1, SQLITE_UTF16, 0, caseFunction},
-      {"lower", 1, SQLITE_UTF8, 0, caseFunction},
+      {"lower", 1, SQLITE_UTF16, nullptr, caseFunction},
+      {"lower", 1, SQLITE_UTF8, nullptr, caseFunction},
       {"upper", 1, SQLITE_UTF16, (void*)1, caseFunction},
       {"upper", 1, SQLITE_UTF8, (void*)1, caseFunction},
 
-      {"like", 2, SQLITE_UTF16, 0, likeFunction},
-      {"like", 2, SQLITE_UTF8, 0, likeFunction},
-      {"like", 3, SQLITE_UTF16, 0, likeFunction},
-      {"like", 3, SQLITE_UTF8, 0, likeFunction},
+      {"like", 2, SQLITE_UTF16, nullptr, likeFunction},
+      {"like", 2, SQLITE_UTF8, nullptr, likeFunction},
+      {"like", 3, SQLITE_UTF16, nullptr, likeFunction},
+      {"like", 3, SQLITE_UTF8, nullptr, likeFunction},
 
-      {"levenshteinDistance", 2, SQLITE_UTF16, 0, levenshteinDistanceFunction},
-      {"levenshteinDistance", 2, SQLITE_UTF8, 0, levenshteinDistanceFunction},
+      {"levenshteinDistance", 2, SQLITE_UTF16, nullptr,
+       levenshteinDistanceFunction},
+      {"levenshteinDistance", 2, SQLITE_UTF8, nullptr,
+       levenshteinDistanceFunction},
 
-      {"utf16Length", 1, SQLITE_UTF16, 0, utf16LengthFunction},
-      {"utf16Length", 1, SQLITE_UTF8, 0, utf16LengthFunction},
+      {"utf16Length", 1, SQLITE_UTF16, nullptr, utf16LengthFunction},
+      {"utf16Length", 1, SQLITE_UTF8, nullptr, utf16LengthFunction},
   };
 
   int rv = SQLITE_OK;

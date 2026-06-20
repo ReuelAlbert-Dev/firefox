@@ -314,17 +314,12 @@ nsHtml5StreamParser::GuessEncoding(bool aInitial) {
                         ? kCharsetFromFinalAutoDetectionFile
                         : kCharsetFromFinalAutoDetectionWouldNotHaveBeenUTF8Generic));
   if (source == kCharsetFromFinalAutoDetectionWouldNotHaveBeenUTF8Generic) {
-    if (encoding == ISO_2022_JP_ENCODING) {
-      if (EncodingDetector::TldMayAffectGuess(mTLD)) {
-        source = kCharsetFromFinalAutoDetectionWouldNotHaveBeenUTF8Content;
-      }
-    } else if (!mDetectorHasSeenNonAscii) {
+    if (!mDetectorHasSeenNonAscii) {
       source = kCharsetFromInitialAutoDetectionASCII;  // deliberately Initial
     } else if (ifHadBeenForced == UTF_8_ENCODING) {
       MOZ_ASSERT(mCharsetSource == kCharsetFromInitialAutoDetectionASCII ||
                  mCharsetSource ==
-                     kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8 ||
-                 mEncoding == ISO_2022_JP_ENCODING);
+                     kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8);
       source = kCharsetFromFinalAutoDetectionWouldHaveBeenUTF8InitialWasASCII;
     } else if (encoding != ifHadBeenForced) {
       if (mCharsetSource == kCharsetFromInitialAutoDetectionASCII) {
@@ -347,11 +342,7 @@ nsHtml5StreamParser::GuessEncoding(bool aInitial) {
     }
   } else if (source ==
              kCharsetFromInitialAutoDetectionWouldNotHaveBeenUTF8Generic) {
-    if (encoding == ISO_2022_JP_ENCODING) {
-      if (EncodingDetector::TldMayAffectGuess(mTLD)) {
-        source = kCharsetFromInitialAutoDetectionWouldNotHaveBeenUTF8Content;
-      }
-    } else if (!mDetectorHasSeenNonAscii) {
+    if (!mDetectorHasSeenNonAscii) {
       source = kCharsetFromInitialAutoDetectionASCII;
     } else if (ifHadBeenForced == UTF_8_ENCODING) {
       source = kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8;
@@ -1058,7 +1049,7 @@ nsresult nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest) {
   auto detectorCreator = MakeScopeExit([&] {
     if ((mForceAutoDetection || mCharsetSource < kCharsetFromParentFrame) ||
         !(mMode == LOAD_AS_DATA || mMode == VIEW_SOURCE_XML)) {
-      mDetector = mozilla::EncodingDetector::Create();
+      mDetector = mozilla::EncodingDetector::Create(false);
     }
   });
 
@@ -1126,8 +1117,6 @@ nsresult nsHtml5StreamParser::OnStartRequest(nsIRequest* aRequest) {
       !((mMode == NORMAL) && scriptingEnabled));
   mTreeBuilder->setAllowDeclarativeShadowRoots(
       mExecutor->GetDocument()->AllowsDeclarativeShadowRoots());
-  mTreeBuilder->setNoInSelectMode(
-      StaticPrefs::dom_lift_select_parser_restrictions_enabled());
   mTokenizer->start();
   mExecutor->Start();
   mExecutor->StartReadingFromStage();
@@ -1762,8 +1751,7 @@ bool nsHtml5StreamParser::internalEncodingDeclaration(nsHtml5String aEncoding) {
                                             mTokenizer->getLineNumber());
   }
 
-  if (mForceAutoDetection &&
-      (encoding->IsAsciiCompatible() || encoding == ISO_2022_JP_ENCODING)) {
+  if (mForceAutoDetection && encoding->IsAsciiCompatible()) {
     return false;
   }
 
@@ -2156,8 +2144,7 @@ bool nsHtml5StreamParser::ProcessLookingForMetaCharset(bool aEof) {
         encoding = xmldecl_parse(contiguous.begin(), contiguous.length());
       }
       if (encoding) {
-        if (!(mForceAutoDetection && (encoding->IsAsciiCompatible() ||
-                                      encoding == ISO_2022_JP_ENCODING))) {
+        if (!(mForceAutoDetection && encoding->IsAsciiCompatible())) {
           mForceAutoDetection = false;
           mNeedsEncodingSwitchTo = encoding;
           mEncodingSwitchSource = kCharsetFromXmlDeclaration;
@@ -2671,7 +2658,7 @@ void nsHtml5StreamParser::ContinueAfterScriptsOrEncodingCommitment(
 
       nsContentUtils::ReportToConsole(
           nsIScriptError::warningFlag, "DOM Events"_ns,
-          mExecutor->GetDocument(), nsContentUtils::eDOM_PROPERTIES,
+          mExecutor->GetDocument(), PropertiesFile::DOM_PROPERTIES,
           "SpeculationFailed2", nsTArray<nsString>(),
           SourceLocation(mExecutor->GetDocument()->GetDocumentURI(),
                          speculation->GetStartLineNumber(),
@@ -2874,6 +2861,6 @@ void nsHtml5StreamParser::MarkAsBroken(nsresult aRv) {
 }
 
 nsresult nsHtml5StreamParser::DispatchToMain(
-    already_AddRefed<nsIRunnable>&& aRunnable) {
+    already_AddRefed<nsIRunnable> aRunnable) {
   return SchedulerGroup::Dispatch(std::move(aRunnable));
 }

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +8,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/UsingEnum.h"
 
 #include "jspubtd.h"
 #include "NamespaceImports.h"
@@ -19,7 +18,6 @@
 #include "builtin/intl/LocaleNegotiation.h"
 #include "builtin/intl/ParameterNegotiation.h"
 #include "builtin/intl/StringAsciiChars.h"
-#include "builtin/intl/UsingEnum.h"
 #include "gc/AllocKind.h"
 #include "gc/GCContext.h"
 #include "icu4x/GraphemeClusterSegmenter.hpp"
@@ -47,16 +45,7 @@ using namespace js;
 using namespace js::intl;
 
 const JSClassOps SegmenterObject::classOps_ = {
-    nullptr,                    // addProperty
-    nullptr,                    // delProperty
-    nullptr,                    // enumerate
-    nullptr,                    // newEnumerate
-    nullptr,                    // resolve
-    nullptr,                    // mayResolve
-    SegmenterObject::finalize,  // finalize
-    nullptr,                    // call
-    nullptr,                    // construct
-    nullptr,                    // trace
+    .finalize = SegmenterObject::finalize,
 };
 
 const JSClass SegmenterObject::class_ = {
@@ -115,11 +104,7 @@ const ClassSpec SegmenterObject::classSpec_ = {
 
 static constexpr std::string_view GranularityToString(
     SegmenterGranularity granularity) {
-#ifndef USING_ENUM
-  using enum SegmenterGranularity;
-#else
-  USING_ENUM(SegmenterGranularity, Grapheme, Word, Sentence);
-#endif
+  MOZ_USING_ENUM(SegmenterGranularity, Grapheme, Word, Sentence);
   switch (granularity) {
     case Grapheme:
       return "grapheme";
@@ -217,16 +202,7 @@ static bool Segmenter(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 const JSClassOps SegmentsObject::classOps_ = {
-    nullptr,                   // addProperty
-    nullptr,                   // delProperty
-    nullptr,                   // enumerate
-    nullptr,                   // newEnumerate
-    nullptr,                   // resolve
-    nullptr,                   // mayResolve
-    SegmentsObject::finalize,  // finalize
-    nullptr,                   // call
-    nullptr,                   // construct
-    nullptr,                   // trace
+    .finalize = SegmentsObject::finalize,
 };
 
 const JSClass SegmentsObject::class_ = {
@@ -259,16 +235,7 @@ bool GlobalObject::initSegmentsProto(JSContext* cx,
 }
 
 const JSClassOps SegmentIteratorObject::classOps_ = {
-    nullptr,                          // addProperty
-    nullptr,                          // delProperty
-    nullptr,                          // enumerate
-    nullptr,                          // newEnumerate
-    nullptr,                          // resolve
-    nullptr,                          // mayResolve
-    SegmentIteratorObject::finalize,  // finalize
-    nullptr,                          // call
-    nullptr,                          // construct
-    nullptr,                          // trace
+    .finalize = SegmentIteratorObject::finalize,
 };
 
 const JSClass SegmentIteratorObject::class_ = {
@@ -533,25 +500,10 @@ class ICU4XLocaleDeleter {
 using UniqueICU4XLocale =
     mozilla::UniquePtr<icu4x::capi::Locale, ICU4XLocaleDeleter>;
 
-static UniqueICU4XLocale CreateICU4XLocale(JSContext* cx,
-                                           Handle<JSString*> str) {
-  auto* linear = str->ensureLinear(cx);
-  if (!linear) {
-    return nullptr;
-  }
-
-  icu4x::capi::icu4x_Locale_from_string_mv1_result result{};
-  {
-    StringAsciiChars chars(linear);
-    if (!chars.init(cx)) {
-      return nullptr;
-    }
-
-    auto span = static_cast<mozilla::Span<const char>>(chars);
-    result =
-        icu4x::capi::icu4x_Locale_from_string_mv1({span.data(), span.size()});
-  }
-
+static UniqueICU4XLocale CreateICU4XLocale(JSContext* cx, LanguageId locale) {
+  auto str = locale.toString();
+  auto result =
+      icu4x::capi::icu4x_Locale_from_string_mv1({str.data(), str.length()});
   if (!result.is_ok) {
     ReportInternalError(cx);
     return nullptr;
@@ -571,8 +523,8 @@ static typename Interface::Segmenter* CreateSegmenter() {
  * Create a new ICU4X segmenter instance, tailored for |locale|.
  */
 template <typename Interface>
-static typename Interface::Segmenter* CreateSegmenter(
-    JSContext* cx, Handle<JSString*> locale) {
+static typename Interface::Segmenter* CreateSegmenter(JSContext* cx,
+                                                      LanguageId locale) {
   auto loc = CreateICU4XLocale(cx, locale);
   if (!loc) {
     return nullptr;
@@ -643,7 +595,11 @@ static bool ResolveLocale(JSContext* cx, Handle<SegmenterObject*> segmenter) {
   }
 
   // Finish initialization by setting the actual locale.
-  segmenter->setLocale(resolved.dataLocale());
+  auto* locale = resolved.toLocale(cx);
+  if (!locale) {
+    return false;
+  }
+  segmenter->setLocale(locale);
 
   MOZ_ASSERT(segmenter->isLocaleResolved(), "locale successfully resolved");
   return true;
